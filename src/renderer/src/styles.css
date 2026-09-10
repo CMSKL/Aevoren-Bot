@@ -264,7 +264,6 @@ textarea:focus-visible {
   min-height: 0;
   padding: 14px 28px 80px;
   overflow-y: auto;
-  scroll-behavior: smooth;
 }
 
 .center-state {

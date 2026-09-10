@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AppError, Bot, SendState, TranscriptEntry } from "@shared/contracts";
 import { SendIcon, SettingsIcon, StopIcon } from "./Icons";
 
@@ -79,11 +79,19 @@ export function Conversation({
   onCancel,
 }: ConversationProps): React.JSX.Element {
   const [draft, setDraft] = useState("");
+  const transcriptRef = useRef<HTMLElement>(null);
+  const followTranscriptTailRef = useRef(true);
   const busy = activeNonce !== null;
+
+  useLayoutEffect(() => {
+    const transcript = transcriptRef.current;
+    if (transcript && followTranscriptTailRef.current) transcript.scrollTop = transcript.scrollHeight;
+  }, [entries]);
 
   async function submit(): Promise<void> {
     const text = draft.trim();
     if (!text || !bot || busy) return;
+    followTranscriptTailRef.current = true;
     const accepted = await onSend(text);
     if (accepted) setDraft("");
   }
@@ -101,7 +109,15 @@ export function Conversation({
         </button>
       </header>
 
-      <section className="transcript" aria-live="polite">
+      <section
+        ref={transcriptRef}
+        className="transcript"
+        aria-live="polite"
+        onScroll={(event) => {
+          const transcript = event.currentTarget;
+          followTranscriptTailRef.current = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 96;
+        }}
+      >
         {loading ? <div className="center-state">正在加载会话…</div> : null}
         {!loading && !bot ? <div className="center-state"><strong>从创建第一个 Bot 开始</strong><span>它会使用预设的产品需求分析方法工作。</span></div> : null}
         {!loading && bot && entries.length === 0 ? (

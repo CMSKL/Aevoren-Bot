@@ -35,6 +35,18 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByText("待确认事项", { exact: true })).toBeVisible();
   await expect(page.locator("article.message-assistant")).toHaveAttribute("data-status", "completed");
+
+  for (const [index, supplement] of ["补充目标用户和使用场景。", "补充验收标准和风险。"].entries()) {
+    await page.getByLabel("产品想法").fill(supplement);
+    await page.getByRole("button", { name: "发送" }).click();
+    await expect(page.locator("article.message-assistant")).toHaveCount(index + 2);
+    await expect(page.locator("article.message-assistant").last()).toHaveAttribute("data-status", "completed");
+  }
+  await expect.poll(() => page.locator(".transcript").evaluate((element) => element.scrollHeight - element.clientHeight))
+    .toBeGreaterThan(0);
+  await expect.poll(() => page.locator(".transcript").evaluate(
+    (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+  )).toBeLessThanOrEqual(2);
   await expect(page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).resolves.toBe("undefined");
 
   await page.screenshot({ path: "test-results/p0-a-main.png", fullPage: true });
@@ -54,7 +66,7 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   page = await application.firstWindow();
   await expect(page.getByRole("heading", { name: "产品需求分析助手" })).toBeVisible();
   await expect(page.getByText("做一个帮助团队整理产品需求的桌面应用。")).toBeVisible();
-  await expect(page.getByText("待确认事项", { exact: true })).toBeVisible();
+  await expect(page.getByText("待确认事项", { exact: true }).last()).toBeVisible();
   await expect(page.getByLabel("描述")).toHaveValue("关闭应用前未移焦，也必须可靠保存。");
 
   await application.close();
