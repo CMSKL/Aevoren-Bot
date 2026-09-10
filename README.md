@@ -74,6 +74,7 @@ pnpm validate
 
 - [P0-A 垂直切片计划](docs/plans/p0-a-vertical-slice.md)
 - [P0-A 完整验收标准单](docs/validation/p0-a-acceptance-checklist.md)
+- [P0-A 完整验收结果](docs/validation/p0-a-acceptance-results.md)
 - [P0-A 验收记录](docs/validation/p0-a-validation.md)
 - [Grok Bot 逆向规格包](docs/reverse-engineering/grok-bot/README.md)
 - [试用反馈模板](docs/templates/pilot-feedback.md)
