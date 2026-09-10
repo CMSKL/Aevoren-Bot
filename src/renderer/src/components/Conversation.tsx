@@ -1,18 +1,23 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { AppError, Bot, SendState, TranscriptEntry } from "@shared/contracts";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type {
+  AppError,
+  Bot,
+  RuntimeRun,
+  SessionLiveState,
+  SessionLiveStateName,
+  TranscriptEntry,
+} from "@shared/contracts";
 import { SendIcon, SettingsIcon, StopIcon } from "./Icons";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
-const sendLabels: Partial<Record<SendState, string>> = {
-  prepared: "正在准备",
-  queued: "等待发送",
-  dispatching: "正在连接模型",
-  "accepted-awaiting-echo": "模型已接受，等待确认",
-  acked: "正在生成",
-  "failed-before-acceptance": "发送失败",
-  "interrupted-unknown": "结果未知，请勿重复发送",
-  cancelled: "已取消",
+const liveLabels: Record<Exclude<SessionLiveStateName, "idle">, string> = {
+  starting: "正在连接模型",
+  running: "模型已接受，正在运行",
+  composing: "正在生成回复",
+  retrying: "正在重新生成",
+  cancelling: "正在取消",
+  stale: "连接可能已停滞，仍可停止本次运行",
 };
 
 function StructuredText({ body }: { body: string }): React.JSX.Element {
@@ -20,7 +25,7 @@ function StructuredText({ body }: { body: string }): React.JSX.Element {
   return (
     <div className="structured-text">
       {lines.map((line, index) => {
-        const key = `${index}-${line.slice(0, 12)}`;
+        const key = String(index) + "-" + line.slice(0, 12);
         if (line.startsWith("## ")) return <h3 key={key}>{line.slice(3)}</h3>;
         if (/^\d+\.\s/.test(line)) return <p className="numbered-line" key={key}>{line}</p>;
         if (line.trim().length === 0) return <span className="text-gap" key={key} aria-hidden="true" />;
@@ -30,58 +35,116 @@ function StructuredText({ body }: { body: string }): React.JSX.Element {
   );
 }
 
-function TranscriptItem({ entry, onRetry }: { entry: TranscriptEntry; onRetry(clientNonce: string): void }): React.JSX.Element {
+type TranscriptItemProps = {
+  entry: TranscriptEntry;
+  run: RuntimeRun | null;
+  canRegenerate: boolean;
+  onRetryMessage(clientNonce: string): void;
+  onRetryRun(runId: string): void;
+};
+
+const TranscriptItem = memo(function TranscriptItem({
+  entry,
+  run,
+  canRegenerate,
+  onRetryMessage,
+  onRetryRun,
+}: TranscriptItemProps): React.JSX.Element {
   const failedBeforeAcceptance = entry.sendState === "failed-before-acceptance";
+  const interrupted = run?.state === "interrupted";
+  const cancelled = entry.status === "cancelled";
+  const failed = entry.status === "failed";
+
   return (
-    <article className={`message message-${entry.role}`} data-status={entry.status}>
+    <article className={"message message-" + entry.role} data-status={entry.status}>
       <header>
         <strong>{entry.role === "user" ? "你" : "MS-Bot"}</strong>
         <time>{timeFormatter.format(new Date(entry.createdAt))}</time>
       </header>
-      {entry.role === "assistant" ? <StructuredText body={entry.body} /> : <p className="user-message-body">{entry.body}</p>}
-      {entry.status === "streaming" ? <div className="streaming-indicator">正在生成<span /></div> : null}
-      {entry.status === "cancelled" ? <div className="entry-note">回复已停止</div> : null}
-      {entry.status === "failed" ? (
-        <div className={`entry-note ${entry.sendState === "interrupted-unknown" ? "warning" : "error"}`}>
-          {entry.sendState === "interrupted-unknown" ? "应用中断，模型可能已接受该消息；不会自动重发。" : "消息未成功发送。"}
+      {entry.role === "assistant"
+        ? <StructuredText body={entry.body} />
+        : <p className="user-message-body">{entry.body}</p>}
+      {entry.status === "streaming"
+        ? <div className="streaming-indicator">正在生成<span /></div>
+        : null}
+      {entry.role === "assistant" && entry.status === "completed"
+        ? <div className="entry-note success">已完成</div>
+        : null}
+      {cancelled ? (
+        <div className="entry-note warning">
+          {entry.role === "assistant" ? "回复已停止。" : "消息已取消。"}
+          {canRegenerate && run ? (
+            <button type="button" className="text-button" onClick={() => onRetryRun(run.id)}>重新生成回复</button>
+          ) : null}
+        </div>
+      ) : null}
+      {failed ? (
+        <div className={"entry-note " + (interrupted || entry.sendState === "interrupted-unknown" ? "warning" : "error")}>
+          {entry.role === "assistant"
+            ? interrupted
+              ? "运行被应用中断，没有自动重新发送。"
+              : "回复生成失败，已保留可用的部分内容。"
+            : entry.sendState === "interrupted-unknown"
+              ? "应用中断，模型可能已接受该消息；不会自动重发。"
+              : "消息未成功发送。"}
           {failedBeforeAcceptance && entry.clientNonce ? (
-            <button type="button" className="text-button" onClick={() => onRetry(entry.clientNonce!)}>安全重试</button>
+            <button type="button" className="text-button" onClick={() => onRetryMessage(entry.clientNonce!)}>
+              安全重试发送
+            </button>
+          ) : null}
+          {canRegenerate && run ? (
+            <button type="button" className="text-button" onClick={() => onRetryRun(run.id)}>重新生成回复</button>
           ) : null}
         </div>
       ) : null}
     </article>
   );
-}
+});
 
 type ConversationProps = {
   bot: Bot | null;
   entries: TranscriptEntry[];
+  runs: RuntimeRun[];
+  liveState: SessionLiveState | null;
   loading: boolean;
-  activeNonce: string | null;
-  activeState: SendState | null;
+  submitting: boolean;
   error: AppError | null;
+  closeNotice: string | null;
   onOpenSettings(): void;
   onSend(text: string): Promise<boolean>;
-  onRetry(clientNonce: string): void;
-  onCancel(clientNonce: string): void;
+  onRetryMessage(clientNonce: string): void;
+  onRetryRun(runId: string): void;
+  onCancelRun(runId: string): void;
 };
 
 export function Conversation({
   bot,
   entries,
+  runs,
+  liveState,
   loading,
-  activeNonce,
-  activeState,
+  submitting,
   error,
+  closeNotice,
   onOpenSettings,
   onSend,
-  onRetry,
-  onCancel,
+  onRetryMessage,
+  onRetryRun,
+  onCancelRun,
 }: ConversationProps): React.JSX.Element {
   const [draft, setDraft] = useState("");
   const transcriptRef = useRef<HTMLElement>(null);
   const followTranscriptTailRef = useRef(true);
-  const busy = activeNonce !== null;
+  const activeRunId = liveState?.activeRunId ?? null;
+  const busy = submitting || activeRunId !== null;
+  const latestUserNonce = useMemo(
+    () => entries.toReversed().find((entry) => entry.role === "user")?.clientNonce ?? null,
+    [entries],
+  );
+  const runsByAssistant = useMemo(
+    () => new Map(runs.filter((run) => run.assistantEntryId).map((run) => [run.assistantEntryId, run])),
+    [runs],
+  );
 
   useLayoutEffect(() => {
     const transcript = transcriptRef.current;
@@ -119,16 +182,46 @@ export function Conversation({
         }}
       >
         {loading ? <div className="center-state">正在加载会话…</div> : null}
-        {!loading && !bot ? <div className="center-state"><strong>从创建第一个 Bot 开始</strong><span>它会使用预设的产品需求分析方法工作。</span></div> : null}
-        {!loading && bot && entries.length === 0 ? (
-          <div className="center-state"><strong>描述一个产品想法</strong><span>MS-Bot 会整理背景、范围、需求、验收标准与风险。</span></div>
+        {!loading && !bot ? (
+          <div className="center-state">
+            <strong>从创建第一个 Bot 开始</strong>
+            <span>它会使用预设的产品需求分析方法工作。</span>
+          </div>
         ) : null}
-        {entries.map((entry) => <TranscriptItem key={entry.id} entry={entry} onRetry={onRetry} />)}
+        {!loading && bot && entries.length === 0 ? (
+          <div className="center-state">
+            <strong>描述一个产品想法</strong>
+            <span>MS-Bot 会整理背景、范围、需求、验收标准与风险。</span>
+          </div>
+        ) : null}
+        {entries.map((entry) => {
+          const run = runsByAssistant.get(entry.id) ?? null;
+          const canRegenerate = Boolean(
+            run &&
+            ["failed", "cancelled", "interrupted"].includes(run.state) &&
+            run.clientNonce === latestUserNonce &&
+            !busy,
+          );
+          return (
+            <TranscriptItem
+              key={entry.id}
+              entry={entry}
+              run={run}
+              canRegenerate={canRegenerate}
+              onRetryMessage={onRetryMessage}
+              onRetryRun={onRetryRun}
+            />
+          );
+        })}
       </section>
 
       <footer className="composer-wrap">
+        {closeNotice ? <div className="composer-notice" role="alert">{closeNotice}</div> : null}
         {error ? <div className="composer-error" role="alert">{error.safeMessage}</div> : null}
-        {activeState ? <div className="send-state">{sendLabels[activeState] ?? activeState}</div> : null}
+        {submitting ? <div className="send-state">正在准备</div> : null}
+        {!submitting && liveState && liveState.state !== "idle"
+          ? <div className={"send-state runtime-" + liveState.state}>{liveLabels[liveState.state]}</div>
+          : null}
         <div className="composer">
           <textarea
             aria-label="产品想法"
@@ -144,12 +237,23 @@ export function Conversation({
             disabled={!bot}
             rows={3}
           />
-          {activeNonce ? (
-            <button className="send-button stop" type="button" onClick={() => onCancel(activeNonce)} aria-label="停止回复">
+          {activeRunId ? (
+            <button
+              className="send-button stop"
+              type="button"
+              onClick={() => onCancelRun(activeRunId)}
+              aria-label="停止回复"
+            >
               <StopIcon />
             </button>
           ) : (
-            <button className="send-button" type="button" onClick={() => void submit()} disabled={!bot || !draft.trim()} aria-label="发送">
+            <button
+              className="send-button"
+              type="button"
+              onClick={() => void submit()}
+              disabled={!bot || !draft.trim() || busy}
+              aria-label="发送"
+            >
               <SendIcon />
               <span>发送</span>
             </button>

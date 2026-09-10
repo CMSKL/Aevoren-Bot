@@ -18,6 +18,7 @@ export const botUpdateSchema = z.object({
 export const botIdSchema = z.string().uuid();
 export const sessionIdSchema = z.string().uuid();
 export const nonceSchema = z.string().uuid();
+export const runIdSchema = z.string().uuid();
 
 export const sendCommandSchema = z.object({
   sessionId: sessionIdSchema,

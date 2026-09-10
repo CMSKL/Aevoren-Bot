@@ -1,6 +1,6 @@
 # MS-Bot
 
-MS-Bot 是一个本地 macOS Electron 应用。P0-A 提供一个职责明确的“产品需求分析助手”，支持可靠保存 Profile、发送纯文本消息、流式生成结构化需求，并在应用重启后恢复 Bot、会话和 Transcript。
+MS-Bot 是一个本地 macOS Electron 应用。当前开发版在 P0-A 对话闭环之上增加 P0-B Runtime：每次模型调用具有独立、持久化的运行状态，Renderer 重载可重新附着，取消和重试具有明确的安全边界。
 
 ## 当前范围
 
@@ -14,10 +14,15 @@ MS-Bot 是一个本地 macOS Electron 应用。P0-A 提供一个职责明确的�
 - Fake Provider 与 OpenAI 兼容流式 Provider；
 - 模型设置和 Electron `safeStorage` 加密；
 - 取消、失败和 Interrupted Unknown 状态；
+- Runtime Run、Provider Request ID、Prompt Manifest 和单调 Transcript Cursor；
+- Renderer 重载后的 Snapshot/事件版本合并；
+- 幂等运行取消，以及失败、取消或中断后的显式重新生成；
+- Provider 连接、首事件、流空闲、总运行超时和截断识别；
+- 结构化错误域与跨 IPC 允许字段注册表；
 - Electron 安全 Preload 和类型化 IPC；
 - Unit、Integration 和 Playwright Electron Smoke Test。
 
-Room、Memory synthesis、Routine、Plugin/MCP、Local Exec、Computer Use 和 Cloud Computer 不在 P0-A 范围。
+Room、Memory synthesis、Summary、Routine、Plugin/MCP、Local Exec、Computer Use 和 Cloud Computer 不在 P0-B 范围。
 
 ## 开发环境
 
@@ -64,6 +69,8 @@ pnpm validate
 ## 数据与安全
 
 - SQLite 数据库位于 Electron `userData` 目录；
+- 数据库 v2 会事务化增加 Runtime 表和 Transcript Cursor；旧 Transcript 不会被推断为不存在的 Runtime Run；
+- P0-A beta 与 P0-B 并行验证时必须使用不同的 `MS_BOT_USER_DATA_DIR`；不支持用旧代码继续写入已升级的 v2 数据库；
 - 可用 `MS_BOT_USER_DATA_DIR` 为测试指定隔离目录；
 - 可用 `MS_BOT_DB_PATH` 单独覆盖数据库路径；
 - Renderer 启用 Context Isolation、Sandbox，并禁用 Node Integration 与 WebView；
@@ -77,6 +84,9 @@ pnpm validate
 - [P0-A 完整验收结果](docs/validation/p0-a-acceptance-results.md)
 - [P0-A 缺陷修复与复验报告](docs/validation/p0-a-fix-verification.md)
 - [P0-A 验收记录](docs/validation/p0-a-validation.md)
+- [P0-A beta 基线验证](docs/validation/p0-a-beta-validation.md)
+- [P0-B Runtime 实施计划](docs/plans/p0-b-runtime-recovery.md)
+- [P0-B Runtime 验收标准单](docs/validation/p0-b-acceptance-checklist.md)
 - [Grok Bot 逆向规格包](docs/reverse-engineering/grok-bot/README.md)
 - [试用反馈模板](docs/templates/pilot-feedback.md)
 
