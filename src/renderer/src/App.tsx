@@ -1,12 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppError, Bot, SendState, Session, TranscriptEntry } from "@shared/contracts";
+import type {
+  AppError,
+  Bot,
+  RuntimeEvent,
+  RuntimeRun,
+  Session,
+  SessionLiveState,
+  TranscriptEvent,
+  TranscriptEntry,
+} from "@shared/contracts";
 import { Conversation } from "./components/Conversation";
 import { ModelSettingsDialog } from "./components/ModelSettingsDialog";
 import { ProfileInspector, type ProfileInspectorHandle } from "./components/ProfileInspector";
 import { Sidebar } from "./components/Sidebar";
+import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
 
-function sortEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
-  return entries.toSorted((left, right) => left.generation - right.generation || left.seq - right.seq);
+function idleLiveState(sessionId: string): SessionLiveState {
+  return {
+    sessionId,
+    state: "idle",
+    activeRunId: null,
+    activeClientNonce: null,
+    lastActivityAt: null,
+    staleAfterMs: 30_000,
+  };
 }
 
 export function App(): React.JSX.Element {
@@ -14,72 +31,106 @@ export function App(): React.JSX.Element {
   const [selectedBot, setSelectedBot] = useState<Bot | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
+  const [runs, setRuns] = useState<RuntimeRun[]>([]);
+  const [liveState, setLiveState] = useState<SessionLiveState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
-  const [activeNonce, setActiveNonce] = useState<string | null>(null);
-  const [activeState, setActiveState] = useState<SendState | null>(null);
+  const [closeNotice, setCloseNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const profileRef = useRef<ProfileInspectorHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const loadingSessionIdRef = useRef<string | null>(null);
+  const bufferedTranscriptRef = useRef<TranscriptEvent[]>([]);
+  const bufferedRuntimeRef = useRef<RuntimeEvent[]>([]);
+  const runtimeVersionsRef = useRef(new Map<string, number>());
+  const openRequestRef = useRef(0);
 
   useEffect(() => {
     const unsubscribeTranscript = window.msBot.events.subscribeTranscript((event) => {
-      if (event.sessionId !== sessionIdRef.current) return;
-      setEntries((current) => {
-        const index = current.findIndex((entry) => entry.id === event.entry.id);
-        if (index === -1) return sortEntries([...current, event.entry]);
-        const next = [...current];
-        next[index] = event.entry;
-        return sortEntries(next);
-      });
-      if (event.entry.role === "assistant" && ["completed", "failed", "cancelled"].includes(event.entry.status)) {
-        setActiveNonce(null);
-        setActiveState(null);
+      if (event.sessionId === loadingSessionIdRef.current) {
+        bufferedTranscriptRef.current.push(event);
+        return;
       }
+      if (event.sessionId !== sessionIdRef.current) return;
+      setEntries((current) => mergeTranscriptEntry(current, event.entry));
     });
     const unsubscribeSend = window.msBot.events.subscribeSendState((event) => {
-      if (event.sessionId !== sessionIdRef.current) return;
-      setActiveNonce(event.clientNonce);
-      setActiveState(event.state);
-      if (event.error) setError(event.error);
-      if (["failed-before-acceptance", "refused", "conflict", "cancelled", "interrupted-unknown"].includes(event.state)) {
-        setActiveNonce(null);
+      if (event.sessionId === sessionIdRef.current && event.error) setError(event.error);
+    });
+    const unsubscribeRuntime = window.msBot.events.subscribeRuntime((event) => {
+      if (event.sessionId === loadingSessionIdRef.current) {
+        bufferedRuntimeRef.current.push(event);
+        return;
       }
+      if (event.sessionId !== sessionIdRef.current) return;
+      const knownVersion = runtimeVersionsRef.current.get(event.run.id) ?? 0;
+      if (knownVersion >= event.run.version) return;
+      runtimeVersionsRef.current.set(event.run.id, event.run.version);
+      setRuns((current) => mergeRuntimeRun(current, event.run));
+      setLiveState(event.liveState);
+      if (event.error) setError(event.error);
     });
     const unsubscribeClose = window.msBot.app.subscribeBeforeClose(() => {
       void profileRef.current?.flush().then((saved) => window.msBot.app.confirmClose(saved));
       if (!profileRef.current) window.msBot.app.confirmClose(true);
     });
+    const unsubscribeCloseBlocked = window.msBot.app.subscribeCloseBlocked(() => {
+      setCloseNotice("关闭未完成：资料仍保留在当前窗口，请稍后重试关闭。");
+    });
     window.msBot.app.ready();
     return () => {
       unsubscribeTranscript();
       unsubscribeSend();
+      unsubscribeRuntime();
       unsubscribeClose();
+      unsubscribeCloseBlocked();
     };
   }, []);
 
   const openBot = useCallback(async (bot: Bot, flushCurrent = true): Promise<void> => {
+    const requestId = ++openRequestRef.current;
     if (flushCurrent && profileRef.current && !(await profileRef.current.flush())) return;
     setLoading(true);
     setError(null);
+    setCloseNotice(null);
     const sessionResult = await window.msBot.sessions.getMain(bot.id);
+    if (requestId !== openRequestRef.current) return;
     if (!sessionResult.ok) {
       setError(sessionResult.error);
       setLoading(false);
       return;
     }
-    const transcriptResult = await window.msBot.transcript.list(sessionResult.data.id);
-    if (!transcriptResult.ok) {
-      setError(transcriptResult.error);
+
+    const nextSession = sessionResult.data;
+    loadingSessionIdRef.current = nextSession.id;
+    bufferedTranscriptRef.current = [];
+    bufferedRuntimeRef.current = [];
+    const snapshotResult = await window.msBot.runtime.getSessionSnapshot(nextSession.id);
+    if (requestId !== openRequestRef.current) return;
+    if (!snapshotResult.ok) {
+      loadingSessionIdRef.current = null;
+      setError(snapshotResult.error);
       setLoading(false);
       return;
     }
-    sessionIdRef.current = sessionResult.data.id;
+
+    const buffered = mergeBufferedEvents(
+      snapshotResult.data.entries,
+      snapshotResult.data.runs,
+      bufferedTranscriptRef.current,
+      bufferedRuntimeRef.current,
+    );
+    sessionIdRef.current = nextSession.id;
+    loadingSessionIdRef.current = null;
+    bufferedTranscriptRef.current = [];
+    bufferedRuntimeRef.current = [];
     setSelectedBot(bot);
-    setSession(sessionResult.data);
-    setEntries(sortEntries(transcriptResult.data));
-    setActiveNonce(null);
-    setActiveState(null);
+    setSession(nextSession);
+    setEntries(buffered.entries);
+    setRuns(buffered.runs);
+    runtimeVersionsRef.current = new Map(buffered.runs.map((run) => [run.id, run.version]));
+    setLiveState(buffered.lastRuntimeEvent?.liveState ?? snapshotResult.data.liveState);
     setLoading(false);
   }, []);
 
@@ -104,6 +155,7 @@ export function App(): React.JSX.Element {
   async function createBot(): Promise<void> {
     if (profileRef.current && !(await profileRef.current.flush())) return;
     setError(null);
+    setCloseNotice(null);
     const result = await window.msBot.bots.create();
     if (!result.ok) {
       setError(result.error);
@@ -114,8 +166,9 @@ export function App(): React.JSX.Element {
     setSelectedBot(result.data.bot);
     setSession(result.data.session);
     setEntries([]);
-    setActiveNonce(null);
-    setActiveState(null);
+    setRuns([]);
+    runtimeVersionsRef.current = new Map();
+    setLiveState(idleLiveState(result.data.session.id));
   }
 
   function updateBot(bot: Bot): void {
@@ -124,35 +177,45 @@ export function App(): React.JSX.Element {
   }
 
   async function sendMessage(text: string): Promise<boolean> {
-    if (!session) return false;
+    if (!session || submitting || liveState?.activeRunId) return false;
+    setSubmitting(true);
     setError(null);
-    const clientNonce = crypto.randomUUID();
-    setActiveNonce(clientNonce);
-    setActiveState("prepared");
-    const result = await window.msBot.messages.send({ sessionId: session.id, clientNonce, text });
+    setCloseNotice(null);
+    const result = await window.msBot.messages.send({
+      sessionId: session.id,
+      clientNonce: crypto.randomUUID(),
+      text,
+    });
+    setSubmitting(false);
     if (!result.ok) {
       setError(result.error);
-      setActiveNonce(null);
-      setActiveState(null);
       return false;
     }
     return true;
   }
 
   function retryMessage(clientNonce: string): void {
+    if (submitting || liveState?.activeRunId) return;
+    setSubmitting(true);
     setError(null);
-    setActiveNonce(clientNonce);
-    setActiveState("queued");
     void window.msBot.messages.retry(clientNonce).then((result) => {
-      if (result.ok) return;
-      setError(result.error);
-      setActiveNonce(null);
-      setActiveState(null);
+      setSubmitting(false);
+      if (!result.ok) setError(result.error);
     });
   }
 
-  function cancelMessage(clientNonce: string): void {
-    void window.msBot.messages.cancel(clientNonce).then((result) => {
+  function retryRun(runId: string): void {
+    if (submitting || liveState?.activeRunId) return;
+    setSubmitting(true);
+    setError(null);
+    void window.msBot.runtime.retry(runId).then((result) => {
+      setSubmitting(false);
+      if (!result.ok) setError(result.error);
+    });
+  }
+
+  function cancelRun(runId: string): void {
+    void window.msBot.runtime.cancel(runId).then((result) => {
       if (!result.ok) setError(result.error);
     });
   }
@@ -169,14 +232,17 @@ export function App(): React.JSX.Element {
       <Conversation
         bot={selectedBot}
         entries={entries}
+        runs={runs}
+        liveState={liveState}
         loading={loading}
-        activeNonce={activeNonce}
-        activeState={activeState}
+        submitting={submitting}
         error={error}
+        closeNotice={closeNotice}
         onOpenSettings={() => setSettingsOpen(true)}
         onSend={sendMessage}
-        onRetry={retryMessage}
-        onCancel={cancelMessage}
+        onRetryMessage={retryMessage}
+        onRetryRun={retryRun}
+        onCancelRun={cancelRun}
       />
       <ProfileInspector ref={profileRef} bot={selectedBot} onBotUpdated={updateBot} onError={setError} />
       <ModelSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />

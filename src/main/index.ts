@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { app, BrowserWindow, safeStorage, shell } from "electron";
 import { IPC } from "@shared/channels";
-import type { SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type { RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
 import { AppRepository } from "./database";
 import { registerIpc } from "./ipc";
 import { SendWorker } from "./send-worker";
@@ -12,6 +12,7 @@ if (userDataOverride) app.setPath("userData", userDataOverride);
 
 let mainWindow: BrowserWindow | null = null;
 let repository: AppRepository | null = null;
+let runtimeCoordinator: SendWorker | null = null;
 let allowClose = false;
 let closeRequested = false;
 let quitRequested = false;
@@ -19,6 +20,7 @@ let rendererReady = false;
 let rendererEverReady = false;
 let pendingClose = false;
 let closeConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
+let shutdownPromise: Promise<void> | null = null;
 
 const CLOSE_CONFIRMATION_TIMEOUT_MS = 5_000;
 
@@ -36,6 +38,10 @@ function emitSendState(event: SendStateEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.sendStateEvent, event);
 }
 
+function emitRuntime(event: RuntimeEvent): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.runtimeEvent, event);
+}
+
 function clearCloseConfirmationTimer(): void {
   if (!closeConfirmationTimer) return;
   clearTimeout(closeConfirmationTimer);
@@ -49,7 +55,26 @@ function armCloseConfirmationTimer(): void {
     closeRequested = false;
     pendingClose = false;
     quitRequested = false;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.appCloseBlocked);
   }, CLOSE_CONFIRMATION_TIMEOUT_MS);
+}
+
+async function finishClose(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  shutdownPromise ??= runtimeCoordinator?.shutdown() ?? Promise.resolve();
+  try {
+    await shutdownPromise;
+  } catch {
+    shutdownPromise = null;
+    closeRequested = false;
+    pendingClose = false;
+    quitRequested = false;
+    mainWindow.webContents.send(IPC.appCloseBlocked);
+    return;
+  }
+  allowClose = true;
+  if (quitRequested) app.quit();
+  else mainWindow.close();
 }
 
 function requestRendererFlush(window: BrowserWindow): void {
@@ -116,15 +141,17 @@ app.whenReady().then(() => {
   const databasePath = process.env.MS_BOT_DB_PATH ?? join(app.getPath("userData"), "ms-bot.sqlite");
   repository = new AppRepository(databasePath);
   repository.recoverInterruptedSends();
+  repository.recoverInterruptedRuntimeRuns();
   const settings = new ModelSettingsService(repository, electronSecretCodec);
   mainWindow = createWindow();
   const forceFakeProvider = process.env.MS_BOT_FAKE_PROVIDER === "1";
   const sendWorker = new SendWorker(
     repository,
     settings,
-    { transcript: emitTranscript, sendState: emitSendState },
+    { transcript: emitTranscript, sendState: emitSendState, runtime: emitRuntime },
     forceFakeProvider,
   );
+  runtimeCoordinator = sendWorker;
   registerIpc({
     window: mainWindow,
     repository,
@@ -139,6 +166,7 @@ app.whenReady().then(() => {
     },
     confirmClose(canClose) {
       if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (!closeRequested) return;
       clearCloseConfirmationTimer();
       if (!canClose) {
         closeRequested = false;
@@ -146,9 +174,7 @@ app.whenReady().then(() => {
         quitRequested = false;
         return;
       }
-      allowClose = true;
-      if (quitRequested) app.quit();
-      else mainWindow.close();
+      void finishClose();
     },
   });
 });
@@ -172,4 +198,5 @@ app.on("quit", () => {
   clearCloseConfirmationTimer();
   repository?.close();
   repository = null;
+  runtimeCoordinator = null;
 });

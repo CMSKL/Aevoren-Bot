@@ -375,6 +375,10 @@ textarea:focus-visible {
   color: var(--warning);
 }
 
+.entry-note.success {
+  color: var(--success);
+}
+
 .text-button {
   margin-left: 10px;
   padding: 0;
@@ -454,10 +458,16 @@ textarea:focus-visible {
 }
 
 .send-state,
-.composer-error {
+.composer-error,
+.composer-notice {
   max-width: 820px;
   margin: 0 auto 6px;
   font-size: 11px;
+}
+
+.composer-notice,
+.runtime-stale {
+  color: var(--warning);
 }
 
 .composer-hint {

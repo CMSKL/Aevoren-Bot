@@ -1,6 +1,14 @@
 import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { IPC } from "@shared/channels";
-import { botIdSchema, botUpdateSchema, modelConfigurationSchema, nonceSchema, sendCommandSchema, sessionIdSchema } from "@shared/schemas";
+import {
+  botIdSchema,
+  botUpdateSchema,
+  modelConfigurationSchema,
+  nonceSchema,
+  runIdSchema,
+  sendCommandSchema,
+  sessionIdSchema,
+} from "@shared/schemas";
 import { apiResult, MsBotError } from "./errors";
 import type { AppRepository } from "./database";
 import { OpenAiCompatibleProvider } from "./model";
@@ -56,6 +64,11 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.messagesGetStatus, (_event, clientNonce: unknown) =>
     repository.getSendOrThrow(nonceSchema.parse(clientNonce)),
   );
+  handle(IPC.runtimeGetSessionSnapshot, (_event, sessionId: unknown) =>
+    sendWorker.getSessionSnapshot(sessionIdSchema.parse(sessionId)),
+  );
+  handle(IPC.runtimeCancel, (_event, runId: unknown) => sendWorker.cancelRun(runIdSchema.parse(runId)));
+  handle(IPC.runtimeRetry, (_event, runId: unknown) => sendWorker.retryRun(runIdSchema.parse(runId)));
   handle(IPC.settingsGetModel, () => settings.getConfiguration());
   handle(IPC.settingsSaveModel, (_event, input: unknown) => {
     const parsed = modelConfigurationSchema.parse(input);
@@ -76,6 +89,9 @@ export function registerIpc(dependencies: IpcDependencies): void {
     const timer = setTimeout(() => controller.abort(), 10_000);
     try {
       await provider.testConnection(controller.signal);
+    } catch (error) {
+      if (controller.signal.aborted) throw new MsBotError("MODEL_CONNECTION_TIMEOUT");
+      throw error;
     } finally {
       clearTimeout(timer);
     }

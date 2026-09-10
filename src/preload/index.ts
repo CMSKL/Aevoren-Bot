@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
-import type { MsBotApi, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type { MsBotApi, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
 
 const api: MsBotApi = {
   bots: {
@@ -20,6 +20,11 @@ const api: MsBotApi = {
     cancel: (clientNonce) => ipcRenderer.invoke(IPC.messagesCancel, clientNonce),
     getStatus: (clientNonce) => ipcRenderer.invoke(IPC.messagesGetStatus, clientNonce),
   },
+  runtime: {
+    getSessionSnapshot: (sessionId) => ipcRenderer.invoke(IPC.runtimeGetSessionSnapshot, sessionId),
+    cancel: (runId) => ipcRenderer.invoke(IPC.runtimeCancel, runId),
+    retry: (runId) => ipcRenderer.invoke(IPC.runtimeRetry, runId),
+  },
   settings: {
     getModelConfiguration: () => ipcRenderer.invoke(IPC.settingsGetModel),
     saveModelConfiguration: (input) => ipcRenderer.invoke(IPC.settingsSaveModel, input),
@@ -36,6 +41,11 @@ const api: MsBotApi = {
       ipcRenderer.on(IPC.sendStateEvent, wrapped);
       return () => ipcRenderer.removeListener(IPC.sendStateEvent, wrapped);
     },
+    subscribeRuntime(listener) {
+      const wrapped = (_event: Electron.IpcRendererEvent, value: RuntimeEvent): void => listener(value);
+      ipcRenderer.on(IPC.runtimeEvent, wrapped);
+      return () => ipcRenderer.removeListener(IPC.runtimeEvent, wrapped);
+    },
   },
   app: {
     ready: () => ipcRenderer.send(IPC.appRendererReady),
@@ -43,6 +53,11 @@ const api: MsBotApi = {
       const wrapped = (): void => listener();
       ipcRenderer.on(IPC.appBeforeClose, wrapped);
       return () => ipcRenderer.removeListener(IPC.appBeforeClose, wrapped);
+    },
+    subscribeCloseBlocked(listener) {
+      const wrapped = (): void => listener();
+      ipcRenderer.on(IPC.appCloseBlocked, wrapped);
+      return () => ipcRenderer.removeListener(IPC.appCloseBlocked, wrapped);
     },
     confirmClose: (canClose) => ipcRenderer.send(IPC.appConfirmClose, canClose),
   },
