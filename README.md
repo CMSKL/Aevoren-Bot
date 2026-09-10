@@ -87,6 +87,8 @@ pnpm validate
 - [P0-A beta 基线验证](docs/validation/p0-a-beta-validation.md)
 - [P0-B Runtime 实施计划](docs/plans/p0-b-runtime-recovery.md)
 - [P0-B Runtime 验收标准单](docs/validation/p0-b-acceptance-checklist.md)
+- [P0-B Runtime 验收结果](docs/validation/p0-b-acceptance-results.md)
+- [P0-B 脱敏验收证据](docs/validation/evidence/p0-b/acceptance-evidence.md)
 - [Grok Bot 逆向规格包](docs/reverse-engineering/grok-bot/README.md)
 - [试用反馈模板](docs/templates/pilot-feedback.md)
 
