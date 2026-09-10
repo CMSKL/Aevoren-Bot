@@ -15,6 +15,12 @@ let repository: AppRepository | null = null;
 let allowClose = false;
 let closeRequested = false;
 let quitRequested = false;
+let rendererReady = false;
+let rendererEverReady = false;
+let pendingClose = false;
+let closeConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
+
+const CLOSE_CONFIRMATION_TIMEOUT_MS = 5_000;
 
 const electronSecretCodec: SecretCodec = {
   isAvailable: () => safeStorage.isEncryptionAvailable(),
@@ -30,10 +36,33 @@ function emitSendState(event: SendStateEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.sendStateEvent, event);
 }
 
+function clearCloseConfirmationTimer(): void {
+  if (!closeConfirmationTimer) return;
+  clearTimeout(closeConfirmationTimer);
+  closeConfirmationTimer = null;
+}
+
+function armCloseConfirmationTimer(): void {
+  clearCloseConfirmationTimer();
+  closeConfirmationTimer = setTimeout(() => {
+    closeConfirmationTimer = null;
+    closeRequested = false;
+    pendingClose = false;
+    quitRequested = false;
+  }, CLOSE_CONFIRMATION_TIMEOUT_MS);
+}
+
 function requestRendererFlush(window: BrowserWindow): void {
   if (closeRequested) return;
+  if (!rendererReady) {
+    pendingClose = true;
+    armCloseConfirmationTimer();
+    return;
+  }
   closeRequested = true;
+  pendingClose = false;
   window.webContents.send(IPC.appBeforeClose);
+  armCloseConfirmationTimer();
 }
 
 function createWindow(): BrowserWindow {
@@ -61,8 +90,17 @@ function createWindow(): BrowserWindow {
     const currentUrl = window.webContents.getURL();
     if (url !== currentUrl) event.preventDefault();
   });
+  window.webContents.on("did-start-loading", () => {
+    rendererReady = false;
+    if (!closeRequested) return;
+    clearCloseConfirmationTimer();
+    closeRequested = false;
+    pendingClose = true;
+    armCloseConfirmationTimer();
+  });
   window.on("close", (event) => {
     if (allowClose) return;
+    if (!rendererEverReady) return;
     event.preventDefault();
     requestRendererFlush(window);
   });
@@ -93,10 +131,18 @@ app.whenReady().then(() => {
     settings,
     sendWorker,
     forceFakeProvider,
+    rendererReady() {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      rendererReady = true;
+      rendererEverReady = true;
+      if (pendingClose) requestRendererFlush(mainWindow);
+    },
     confirmClose(canClose) {
       if (!mainWindow || mainWindow.isDestroyed()) return;
+      clearCloseConfirmationTimer();
       if (!canClose) {
         closeRequested = false;
+        pendingClose = false;
         quitRequested = false;
         return;
       }
@@ -110,6 +156,10 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", (event) => {
   if (allowClose) return;
+  if (!rendererEverReady) {
+    allowClose = true;
+    return;
+  }
   event.preventDefault();
   quitRequested = true;
   if (mainWindow && !mainWindow.isDestroyed()) requestRendererFlush(mainWindow);
@@ -119,6 +169,7 @@ app.on("before-quit", (event) => {
   }
 });
 app.on("quit", () => {
+  clearCloseConfirmationTimer();
   repository?.close();
   repository = null;
 });

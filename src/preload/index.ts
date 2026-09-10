@@ -38,6 +38,7 @@ const api: MsBotApi = {
     },
   },
   app: {
+    ready: () => ipcRenderer.send(IPC.appRendererReady),
     subscribeBeforeClose(listener) {
       const wrapped = (): void => listener();
       ipcRenderer.on(IPC.appBeforeClose, wrapped);

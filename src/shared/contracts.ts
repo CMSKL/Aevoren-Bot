@@ -142,6 +142,7 @@ export interface MsBotApi {
     subscribeSendState(listener: (event: SendStateEvent) => void): () => void;
   };
   app: {
+    ready(): void;
     subscribeBeforeClose(listener: () => void): () => void;
     confirmClose(canClose: boolean): void;
   };

@@ -13,6 +13,7 @@ export const IPC = {
   settingsTestModel: "settings:test-model",
   transcriptEvent: "events:transcript",
   sendStateEvent: "events:send-state",
+  appRendererReady: "app:renderer-ready",
   appBeforeClose: "app:before-close",
   appConfirmClose: "app:confirm-close",
 } as const;

@@ -50,6 +50,7 @@ export function App(): React.JSX.Element {
       void profileRef.current?.flush().then((saved) => window.msBot.app.confirmClose(saved));
       if (!profileRef.current) window.msBot.app.confirmClose(true);
     });
+    window.msBot.app.ready();
     return () => {
       unsubscribeTranscript();
       unsubscribeSend();

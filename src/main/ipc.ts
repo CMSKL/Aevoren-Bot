@@ -1,4 +1,4 @@
-import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
+import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { IPC } from "@shared/channels";
 import { botIdSchema, botUpdateSchema, modelConfigurationSchema, nonceSchema, sendCommandSchema, sessionIdSchema } from "@shared/schemas";
 import { apiResult, MsBotError } from "./errors";
@@ -13,11 +13,16 @@ type IpcDependencies = {
   settings: ModelSettingsService;
   sendWorker: SendWorker;
   forceFakeProvider: boolean;
+  rendererReady(): void;
   confirmClose(canClose: boolean): void;
 };
 
+function isTrusted(event: IpcMainEvent | IpcMainInvokeEvent, window: BrowserWindow): boolean {
+  return event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame;
+}
+
 function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
-  if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
+  if (!isTrusted(event, window)) {
     throw new MsBotError("UNTRUSTED_RENDERER", "请求来源不受信任。", false);
   }
 }
@@ -76,8 +81,12 @@ export function registerIpc(dependencies: IpcDependencies): void {
     }
   });
 
+  ipcMain.on(IPC.appRendererReady, (event) => {
+    if (!isTrusted(event, window)) return;
+    dependencies.rendererReady();
+  });
   ipcMain.on(IPC.appConfirmClose, (event, canClose: unknown) => {
-    if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) return;
+    if (!isTrusted(event, window)) return;
     dependencies.confirmClose(canClose === true);
   });
 }

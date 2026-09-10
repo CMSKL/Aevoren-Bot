@@ -35,7 +35,8 @@ export const modelConfigurationSchema = z.object({
       const url = new URL(value);
       if (url.username || url.password) return false;
       if (url.protocol === "https:") return true;
-      return url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+      const hostname = url.hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
+      return url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(hostname);
     }, "Use HTTPS, or HTTP only for a loopback address"),
   modelId: z.string().trim().min(1).max(200),
   apiKey: z.string().trim().min(1).max(8_192).optional(),
