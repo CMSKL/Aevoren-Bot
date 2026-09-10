@@ -1,0 +1,18 @@
+export const IPC = {
+  botsList: "bots:list",
+  botsCreate: "bots:create",
+  botsUpdate: "bots:update",
+  sessionsGetMain: "sessions:get-main",
+  transcriptList: "transcript:list",
+  messagesSend: "messages:send",
+  messagesRetry: "messages:retry",
+  messagesCancel: "messages:cancel",
+  messagesGetStatus: "messages:get-status",
+  settingsGetModel: "settings:get-model",
+  settingsSaveModel: "settings:save-model",
+  settingsTestModel: "settings:test-model",
+  transcriptEvent: "events:transcript",
+  sendStateEvent: "events:send-state",
+  appBeforeClose: "app:before-close",
+  appConfirmClose: "app:confirm-close",
+} as const;
