@@ -8,7 +8,7 @@ import type {
   TranscriptEntry,
 } from "@shared/contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
-import { SendIcon, SettingsIcon, StopIcon } from "./Icons";
+import { BotIcon, MenuIcon, PanelIcon, SendIcon, SettingsIcon, StopIcon } from "./Icons";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
@@ -25,6 +25,8 @@ type TranscriptItemProps = {
   entry: TranscriptEntry;
   run: RuntimeRun | null;
   canRegenerate: boolean;
+  groupedWithPrevious: boolean;
+  groupedWithNext: boolean;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
 };
@@ -33,6 +35,8 @@ const TranscriptItem = memo(function TranscriptItem({
   entry,
   run,
   canRegenerate,
+  groupedWithPrevious,
+  groupedWithNext,
   onRetryMessage,
   onRetryRun,
 }: TranscriptItemProps): React.JSX.Element {
@@ -40,49 +44,66 @@ const TranscriptItem = memo(function TranscriptItem({
   const interrupted = run?.state === "interrupted";
   const cancelled = entry.status === "cancelled";
   const failed = entry.status === "failed";
+  const longAssistant = entry.role === "assistant" && entry.body.length > 160;
 
   return (
-    <article className={"message message-" + entry.role} data-status={entry.status}>
-      <header>
-        <strong>{entry.role === "user" ? "你" : "MS-Bot"}</strong>
-        <time>{timeFormatter.format(new Date(entry.createdAt))}</time>
-      </header>
-      {entry.role === "assistant"
-        ? <AssistantMarkdown body={entry.body} />
-        : <p className="user-message-body">{entry.body}</p>}
-      {entry.status === "streaming"
-        ? <div className="streaming-indicator">正在生成<span /></div>
-        : null}
-      {entry.role === "assistant" && entry.status === "completed"
-        ? <div className="entry-note success">已完成</div>
-        : null}
-      {cancelled ? (
-        <div className="entry-note warning">
-          {entry.role === "assistant" ? "回复已停止。" : "消息已取消。"}
-          {canRegenerate && run ? (
-            <button type="button" className="text-button" onClick={() => onRetryRun(run.id)}>重新生成回复</button>
+    <article
+      className={`message message-${entry.role}${longAssistant ? " message-long" : ""}${groupedWithPrevious ? " message-group-continuation" : ""}${groupedWithNext ? " message-group-has-next" : ""}`}
+      data-status={entry.status}
+    >
+      <div className="message-row">
+        {entry.role === "assistant" ? (
+          <span className={`message-avatar${groupedWithPrevious ? " message-avatar-placeholder" : ""}`} aria-hidden="true">
+            {groupedWithPrevious ? null : <BotIcon />}
+          </span>
+        ) : null}
+        <div className="message-stack">
+          {!groupedWithPrevious ? (
+            <header className="message-meta">
+              <strong>{entry.role === "user" ? "你" : "MS-Bot"}</strong>
+              <time>{timeFormatter.format(new Date(entry.createdAt))}</time>
+            </header>
+          ) : null}
+          <div className={`message-bubble${longAssistant ? " message-bubble-long" : ""}`}>
+            {entry.role === "assistant"
+              ? <AssistantMarkdown body={entry.body} />
+              : <p className="user-message-body">{entry.body}</p>}
+          </div>
+          {entry.status === "streaming"
+            ? <div className="streaming-indicator">正在生成<span /></div>
+            : null}
+          {entry.role === "assistant" && entry.status === "completed"
+            ? <div className="entry-note success">已完成</div>
+            : null}
+          {cancelled ? (
+            <div className="entry-note warning">
+              {entry.role === "assistant" ? "回复已停止。" : "消息已取消。"}
+              {canRegenerate && run ? (
+                <button type="button" className="text-button" onClick={() => onRetryRun(run.id)}>重新生成回复</button>
+              ) : null}
+            </div>
+          ) : null}
+          {failed ? (
+            <div className={"entry-note " + (interrupted || entry.sendState === "interrupted-unknown" ? "warning" : "error")}>
+              {entry.role === "assistant"
+                ? interrupted
+                  ? "运行被应用中断，没有自动重新发送。"
+                  : "回复生成失败，已保留可用的部分内容。"
+                : entry.sendState === "interrupted-unknown"
+                  ? "应用中断，模型可能已接受该消息；不会自动重发。"
+                  : "消息未成功发送。"}
+              {failedBeforeAcceptance && entry.clientNonce ? (
+                <button type="button" className="text-button" onClick={() => onRetryMessage(entry.clientNonce!)}>
+                  安全重试发送
+                </button>
+              ) : null}
+              {canRegenerate && run ? (
+                <button type="button" className="text-button" onClick={() => onRetryRun(run.id)}>重新生成回复</button>
+              ) : null}
+            </div>
           ) : null}
         </div>
-      ) : null}
-      {failed ? (
-        <div className={"entry-note " + (interrupted || entry.sendState === "interrupted-unknown" ? "warning" : "error")}>
-          {entry.role === "assistant"
-            ? interrupted
-              ? "运行被应用中断，没有自动重新发送。"
-              : "回复生成失败，已保留可用的部分内容。"
-            : entry.sendState === "interrupted-unknown"
-              ? "应用中断，模型可能已接受该消息；不会自动重发。"
-              : "消息未成功发送。"}
-          {failedBeforeAcceptance && entry.clientNonce ? (
-            <button type="button" className="text-button" onClick={() => onRetryMessage(entry.clientNonce!)}>
-              安全重试发送
-            </button>
-          ) : null}
-          {canRegenerate && run ? (
-            <button type="button" className="text-button" onClick={() => onRetryRun(run.id)}>重新生成回复</button>
-          ) : null}
-        </div>
-      ) : null}
+      </div>
     </article>
   );
 });
@@ -96,6 +117,8 @@ type ConversationProps = {
   submitting: boolean;
   error: AppError | null;
   closeNotice: string | null;
+  onOpenBots(): void;
+  onOpenProfile(): void;
   onOpenSettings(): void;
   onSend(text: string): Promise<boolean>;
   onRetryMessage(clientNonce: string): void;
@@ -112,6 +135,8 @@ export function Conversation({
   submitting,
   error,
   closeNotice,
+  onOpenBots,
+  onOpenProfile,
   onOpenSettings,
   onSend,
   onRetryMessage,
@@ -148,14 +173,22 @@ export function Conversation({
   return (
     <main className="conversation">
       <header className="conversation-header">
-        <div>
+        <button className="mobile-panel-button" type="button" aria-label="打开 Bot 列表" onClick={onOpenBots}>
+          <MenuIcon />
+        </button>
+        <div className="conversation-title">
           <h1>{bot?.name ?? "MS-Bot"}</h1>
           <p>{bot?.description || (bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
         </div>
-        <button className="secondary-button" type="button" onClick={onOpenSettings}>
-          <SettingsIcon />
-          模型设置
-        </button>
+        <div className="conversation-actions">
+          <button className="secondary-button model-settings-button" type="button" onClick={onOpenSettings}>
+            <SettingsIcon />
+            <span>模型设置</span>
+          </button>
+          <button className="mobile-panel-button" type="button" aria-label="打开 Bot 设置" onClick={onOpenProfile}>
+            <PanelIcon />
+          </button>
+        </div>
       </header>
 
       <section
@@ -180,7 +213,7 @@ export function Conversation({
             <span>告诉这个 Bot 你希望它完成什么。</span>
           </div>
         ) : null}
-        {entries.map((entry) => {
+        {entries.map((entry, index) => {
           const run = runsByAssistant.get(entry.id) ?? null;
           const canRegenerate = Boolean(
             run &&
@@ -194,6 +227,8 @@ export function Conversation({
               entry={entry}
               run={run}
               canRegenerate={canRegenerate}
+              groupedWithPrevious={entries[index - 1]?.role === entry.role}
+              groupedWithNext={entries[index + 1]?.role === entry.role}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
             />
@@ -221,7 +256,7 @@ export function Conversation({
               }
             }}
             disabled={!bot}
-            rows={3}
+            rows={2}
           />
           {activeRunId ? (
             <button
@@ -241,7 +276,6 @@ export function Conversation({
               aria-label="发送"
             >
               <SendIcon />
-              <span>发送</span>
             </button>
           )}
         </div>

@@ -40,6 +40,7 @@ export function App(): React.JSX.Element {
   const [closeNotice, setCloseNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<"bots" | "profile" | null>(null);
   const [creatingBot, setCreatingBot] = useState(false);
   const [createError, setCreateError] = useState<AppError | null>(null);
   const newBotButtonRef = useRef<HTMLButtonElement>(null);
@@ -139,8 +140,23 @@ export function App(): React.JSX.Element {
     setLiveState(buffered.lastRuntimeEvent?.liveState ?? snapshotResult.data.liveState);
     setNewBotOpen(false);
     setCreateError(null);
+    setMobilePanel(null);
     setLoading(false);
   }, []);
+
+  const closeMobilePanel = useCallback(async (): Promise<void> => {
+    if (mobilePanel === "profile" && profileRef.current && !(await profileRef.current.flush())) return;
+    setMobilePanel(null);
+  }, [mobilePanel]);
+
+  useEffect(() => {
+    if (!mobilePanel) return;
+    function closeOnEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape") void closeMobilePanel();
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [closeMobilePanel, mobilePanel]);
 
   useEffect(() => {
     let cancelled = false;
@@ -261,12 +277,15 @@ export function App(): React.JSX.Element {
         bots={bots}
         selectedBotId={selectedBot?.id ?? null}
         busy={loading}
+        mobileOpen={mobilePanel === "bots"}
         createButtonRef={newBotButtonRef}
         onCreate={() => {
           if (chooserActionRef.current) return;
           setCreateError(null);
+          setMobilePanel(null);
           setNewBotOpen(true);
         }}
+        onMobileClose={() => setMobilePanel(null)}
         onSelect={(bot) => void openBot(bot)}
       />
       <Conversation
@@ -278,13 +297,25 @@ export function App(): React.JSX.Element {
         submitting={submitting}
         error={error}
         closeNotice={closeNotice}
+        onOpenBots={() => setMobilePanel("bots")}
+        onOpenProfile={() => setMobilePanel("profile")}
         onOpenSettings={() => setSettingsOpen(true)}
         onSend={sendMessage}
         onRetryMessage={retryMessage}
         onRetryRun={retryRun}
         onCancelRun={cancelRun}
       />
-      <ProfileInspector ref={profileRef} bot={selectedBot} onBotUpdated={updateBot} onError={setError} />
+      <ProfileInspector
+        ref={profileRef}
+        bot={selectedBot}
+        mobileOpen={mobilePanel === "profile"}
+        onBotUpdated={updateBot}
+        onError={setError}
+        onMobileClose={() => void closeMobilePanel()}
+      />
+      {mobilePanel ? (
+        <button className="drawer-backdrop" type="button" aria-label="关闭侧边面板" onClick={() => void closeMobilePanel()} />
+      ) : null}
       <ModelSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       {newBotOpen ? (
         <NewBotChooser

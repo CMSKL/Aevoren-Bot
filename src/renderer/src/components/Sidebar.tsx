@@ -1,20 +1,36 @@
 import type { RefObject } from "react";
 import type { Bot } from "@shared/contracts";
-import { BotIcon, PlusIcon } from "./Icons";
+import { BotIcon, CloseIcon, PlusIcon } from "./Icons";
 
 type SidebarProps = {
   bots: Bot[];
   selectedBotId: string | null;
   busy: boolean;
+  mobileOpen: boolean;
   createButtonRef: RefObject<HTMLButtonElement | null>;
   onCreate(): void;
+  onMobileClose(): void;
   onSelect(bot: Bot): void;
 };
 
-export function Sidebar({ bots, selectedBotId, busy, createButtonRef, onCreate, onSelect }: SidebarProps): React.JSX.Element {
+export function Sidebar({
+  bots,
+  selectedBotId,
+  busy,
+  mobileOpen,
+  createButtonRef,
+  onCreate,
+  onMobileClose,
+  onSelect,
+}: SidebarProps): React.JSX.Element {
   return (
-    <aside className="sidebar" aria-label="Bot 列表">
-      <div className="brand">MS-Bot</div>
+    <aside className={`sidebar${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 列表">
+      <div className="sidebar-header">
+        <div className="brand">MS-Bot</div>
+        <button className="drawer-close-button" type="button" aria-label="关闭 Bot 列表" onClick={onMobileClose}>
+          <CloseIcon />
+        </button>
+      </div>
       <button ref={createButtonRef} className="new-bot-button" type="button" onClick={onCreate} disabled={busy}>
         <PlusIcon />
         新建聊天

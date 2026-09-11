@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { AppError, Bot, BotPatch } from "@shared/contracts";
-import { CheckIcon } from "./Icons";
+import { CheckIcon, CloseIcon } from "./Icons";
 
 type ProfileDraft = Pick<Bot, "name" | "label" | "description" | "instructions">;
 export type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
@@ -11,8 +11,10 @@ export type ProfileInspectorHandle = {
 
 type ProfileInspectorProps = {
   bot: Bot | null;
+  mobileOpen: boolean;
   onBotUpdated(bot: Bot): void;
   onError(error: AppError | null): void;
+  onMobileClose(): void;
 };
 
 function toDraft(bot: Bot): ProfileDraft {
@@ -34,7 +36,7 @@ function sameDraft(left: ProfileDraft, right: ProfileDraft): boolean {
 }
 
 export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspectorProps>(function ProfileInspector(
-  { bot, onBotUpdated, onError },
+  { bot, mobileOpen, onBotUpdated, onError, onMobileClose },
   ref,
 ) {
   const [draft, setDraft] = useState<ProfileDraft | null>(bot ? toDraft(bot) : null);
@@ -125,18 +127,30 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   }
 
   if (!bot || !draft) {
-    return <aside className="inspector inspector-empty">创建 Bot 后，可在这里定义它的职责。</aside>;
+    return (
+      <aside className={`inspector inspector-empty${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
+        <button className="drawer-close-button" type="button" aria-label="关闭 Bot 设置" onClick={onMobileClose}>
+          <CloseIcon />
+        </button>
+        <span>创建 Bot 后，可在这里定义它的职责。</span>
+      </aside>
+    );
   }
 
   return (
-    <aside className="inspector" aria-label="Bot 设置">
+    <aside className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
       <header className="inspector-header">
         <h2>Bot 设置</h2>
-        <div className={`save-status status-${status}`} data-testid="profile-save-status">
-          {status === "saving" ? "保存中…" : null}
-          {status === "dirty" ? "未保存" : null}
-          {status === "failed" ? "保存失败" : null}
-          {status === "idle" || status === "saved" ? <><CheckIcon />已保存</> : null}
+        <div className="inspector-header-actions">
+          <div className={`save-status status-${status}`} data-testid="profile-save-status">
+            {status === "saving" ? "保存中…" : null}
+            {status === "dirty" ? "未保存" : null}
+            {status === "failed" ? "保存失败" : null}
+            {status === "idle" || status === "saved" ? <><CheckIcon />已保存</> : null}
+          </div>
+          <button className="drawer-close-button" type="button" aria-label="关闭 Bot 设置" onClick={onMobileClose}>
+            <CloseIcon />
+          </button>
         </div>
       </header>
 
