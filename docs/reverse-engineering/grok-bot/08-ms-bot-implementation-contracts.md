@@ -264,12 +264,14 @@ ErrorDescriptor {
 
 ## 17. 交付顺序
 
-1. P0-A：Agent/Profile + Session/Transcript + Send journal。
-2. P0-B：Runtime routing + live state + structured errors。
-3. P0-C：Approval + sandboxed local computer（先文件只读）。
-4. P0-D：Memory proposal/CAS + Routine exactly-once。
-5. P1-A：Room orchestration。
-6. P1-B：Plugin/MCP/OAuth/structured forms。
-7. P1-C：Box desktop、Cookie、Messages、credential provider。
+2026-09-11 根据 P0-B 完成状态和第四阶段逆向证据调整顺序，当前权威执行计划见 [P1-A1 确定性多 Bot Room](../../plans/p1-a-deterministic-room-collaboration.md)：
 
-每一阶段先通过上述不变量与故障注入，再进入 `dev -> beta -> master` 的验证链；当前任务仅提交规格，不实现产品代码。
+1. 已完成 P0-A：Agent/Profile + Session/Transcript + Send Journal。
+2. 已完成 P0-B：Runtime routing + live state + structured errors。
+3. 下一阶段 P1-A1：用户显式选择成员、稳定串行的确定性 Room。
+4. 显式 Memory + CAS；不包含自动 synthesis。
+5. Approval + sandboxed local computer（先文件只读）。
+6. P1-A2 自动 Room 协作；必须先冻结 fan-out、预算、循环和迟到结果规则。
+7. Routine/Plugin/MCP/OAuth/Box desktop 等有副作用能力；必须先具备后台 owner、Effect Ledger、凭据 scope 和审批链。
+
+调整理由是确定性 Room 已有足够证据且不扩大系统权限面，而自动 Memory、Routine 和外部 Effect 仍存在关键服务端语义或安全依赖。原合同不删除，只调整实施先后。每一阶段仍必须按 `dev -> beta -> master` 的验证链推进，不得跳级。
