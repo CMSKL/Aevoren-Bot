@@ -582,6 +582,140 @@ textarea:focus-visible {
   backdrop-filter: blur(2px);
 }
 
+.new-bot-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  justify-content: center;
+  padding: 48px 30px 30px 250px;
+  background: rgba(20, 25, 35, 0.1);
+}
+
+.new-bot-chooser {
+  align-self: flex-start;
+  width: min(560px, calc(100vw - 340px));
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  box-shadow: var(--shadow-dialog);
+}
+
+.recipient-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px 10px 8px 15px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.recipient-header input {
+  min-width: 0;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+}
+
+.recipient-header input::placeholder {
+  color: #929ba8;
+}
+
+.recipient-options {
+  max-height: min(420px, calc(100vh - 190px));
+  padding: 7px;
+  overflow-y: auto;
+}
+
+.recipient-option {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 44px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recipient-option:hover,
+.recipient-option:focus-visible,
+.recipient-option.create-option {
+  background: var(--surface-soft);
+}
+
+.recipient-option:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.recipient-option-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-muted);
+  background: #edf1f6;
+}
+
+.recipient-option-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.recipient-option-copy,
+.recipient-option-copy strong,
+.recipient-option-copy small {
+  display: block;
+  min-width: 0;
+}
+
+.recipient-option-copy strong,
+.recipient-option-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipient-option-copy strong {
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.recipient-option-copy small {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.recipient-empty,
+.chooser-error {
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.recipient-empty {
+  color: var(--text-muted);
+}
+
+.chooser-error {
+  border-top: 1px solid #f2d9d9;
+  color: var(--danger);
+  background: #fff8f8;
+}
+
 .settings-dialog {
   width: min(520px, 100%);
   padding: 24px;
@@ -662,5 +796,9 @@ textarea:focus-visible {
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 220px minmax(500px, 1fr) 290px;
+  }
+
+  .new-bot-backdrop {
+    padding-left: 220px;
   }
 }

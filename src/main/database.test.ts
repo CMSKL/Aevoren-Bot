@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { AppRepository } from "./database";
 import { MsBotError } from "./errors";
@@ -23,13 +24,62 @@ afterEach(() => {
 });
 
 describe("AppRepository", () => {
-  it("creates a product requirements bot with one MAIN session", () => {
+  it("creates a neutral Grok-shaped bot with one MAIN session", () => {
     const repository = memoryRepository();
     const created = repository.createBot();
-    expect(created.bot.name).toBe("产品需求分析助手");
+    expect(created.bot).toMatchObject({
+      name: "新建 Bot",
+      label: "",
+      description: "",
+      instructions: "",
+      version: 1,
+    });
     expect(created.session.kind).toBe("MAIN");
     expect(repository.listBots()).toHaveLength(1);
     expect(repository.getMainSession(created.bot.id).id).toBe(created.session.id);
+  });
+
+  it("rolls back the bot when its MAIN session cannot be created", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ms-bot-create-rollback-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const repository = new AppRepository(filename);
+    repositories.push(repository);
+    const injector = new DatabaseSync(filename);
+    injector.exec("CREATE TRIGGER reject_main BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'test'); END;");
+    injector.close();
+
+    expect(() => repository.createBot()).toThrow();
+    expect(repository.listBots()).toHaveLength(0);
+  });
+
+  it("does not rewrite an existing product requirements bot when creating a neutral bot", () => {
+    const repository = memoryRepository();
+    const existing = repository.createBot();
+    const legacy = repository.updateBot(existing.bot.id, existing.bot.version, {
+      name: "产品需求分析助手",
+      label: "产品需求分析",
+      description: "已有描述",
+      instructions: "已有 Instructions",
+    });
+    repository.prepareMessage({
+      sessionId: existing.session.id,
+      clientNonce: crypto.randomUUID(),
+      text: "已有 Transcript",
+    });
+
+    const created = repository.createBot();
+
+    expect(repository.getBot(legacy.id)).toMatchObject({
+      name: "产品需求分析助手",
+      label: "产品需求分析",
+      description: "已有描述",
+      instructions: "已有 Instructions",
+    });
+    expect(repository.getMainSession(legacy.id).id).toBe(existing.session.id);
+    expect(repository.listTranscript(existing.session.id)[0]?.body).toBe("已有 Transcript");
+    expect(created.bot).toMatchObject({ name: "新建 Bot", label: "", description: "", instructions: "" });
+    expect(repository.listTranscript(created.session.id)).toHaveLength(0);
   });
 
   it("uses expectedVersion to reject a stale profile update", () => {

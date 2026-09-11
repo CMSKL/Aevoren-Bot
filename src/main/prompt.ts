@@ -37,16 +37,21 @@ export function buildPrompt(
   entries: TranscriptEntry[],
   inputSeq: number,
 ): BuiltPrompt {
+  const profileField = bot.instructions.trim() ? "instructions" : "description";
+  const profileContent = bot[profileField];
+  const profileBlocks: PromptBlock[] = profileContent.trim()
+    ? [{
+        authority: "agent-profile",
+        provenance: `bot:${bot.id}:${profileField}:v${bot.version}`,
+        scope: `bot:${bot.id}`,
+        content: profileContent,
+        digest: digest(profileContent),
+        createdAt: bot.updatedAt,
+        sourceEntryId: null,
+      }]
+    : [];
   const blocks: PromptBlock[] = [
-    {
-      authority: "agent-profile",
-      provenance: `bot:${bot.id}:instructions:v${bot.version}`,
-      scope: `bot:${bot.id}`,
-      content: bot.instructions,
-      digest: digest(bot.instructions),
-      createdAt: bot.updatedAt,
-      sourceEntryId: null,
-    },
+    ...profileBlocks,
     ...entries
       .filter(
         (entry) =>

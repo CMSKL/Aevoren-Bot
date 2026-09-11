@@ -63,4 +63,12 @@ describe("buildPrompt", () => {
     expect(persisted).not.toContain("Profile instructions");
     expect(first.manifest.blocks.every((block) => block.digest.length === 64)).toBe(true);
   });
+
+  it("uses the visible description as the profile for a new bot without legacy Instructions", () => {
+    const newBot = { ...bot, description: "帮助我整理研究结论。", instructions: "" };
+    const prompt = buildPrompt(newBot, session, [entry(1, "user", "开始")], 1);
+
+    expect(prompt.messages[0]).toEqual({ role: "system", content: "帮助我整理研究结论。" });
+    expect(prompt.manifest.blocks[0]?.provenance).toBe(`bot:${bot.id}:description:v${bot.version}`);
+  });
 });

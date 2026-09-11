@@ -15,7 +15,6 @@ import type {
   TranscriptRole,
   TranscriptStatus,
 } from "@shared/contracts";
-import { DEFAULT_BOT } from "@shared/contracts";
 import { MsBotError } from "./errors";
 
 const ACTIVE_RUNTIME_STATES: readonly RuntimeState[] = [
@@ -405,7 +404,7 @@ export class AppRepository {
           `INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
         )
-        .run(botId, DEFAULT_BOT.name, DEFAULT_BOT.label, DEFAULT_BOT.description, DEFAULT_BOT.instructions, timestamp, timestamp);
+        .run(botId, "新建 Bot", "", "", "", timestamp, timestamp);
       this.database
         .prepare(
           `INSERT INTO sessions(id, bot_id, kind, generation, transcript_cursor, created_at, updated_at)

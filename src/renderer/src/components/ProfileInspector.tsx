@@ -142,20 +142,22 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
 
       <label className="field">
         <span>名称</span>
-        <input value={draft.name} maxLength={80} onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
+        <input value={draft.name} maxLength={80} placeholder="Bob" onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
       </label>
       <label className="field">
-        <span>标签</span>
-        <input value={draft.label} maxLength={120} onChange={(event) => update("label", event.target.value)} onBlur={() => void flush()} />
+        <span>标签（可选）</span>
+        <input value={draft.label} maxLength={120} placeholder="研究、市场、行政" onChange={(event) => update("label", event.target.value)} onBlur={() => void flush()} />
       </label>
       <label className="field">
         <span>描述</span>
-        <textarea value={draft.description} maxLength={2_000} rows={5} onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
+        <textarea value={draft.description} maxLength={2_000} rows={5} placeholder="详细说明用途和工作方式" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
       </label>
-      <label className="field field-grow">
-        <span>Instructions</span>
-        <textarea value={draft.instructions} maxLength={20_000} rows={10} onChange={(event) => update("instructions", event.target.value)} onBlur={() => void flush()} />
-      </label>
+      {bot.instructions.trim() ? (
+        <label className="field field-grow">
+          <span>Instructions</span>
+          <textarea value={draft.instructions} maxLength={20_000} rows={10} onChange={(event) => update("instructions", event.target.value)} onBlur={() => void flush()} />
+        </label>
+      ) : null}
       {status === "failed" ? <button className="secondary-button full-width" type="button" onClick={() => void flush()}>重试保存</button> : null}
     </aside>
   );
