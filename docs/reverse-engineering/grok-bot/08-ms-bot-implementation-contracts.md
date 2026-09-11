@@ -193,7 +193,8 @@ Resolution：allow-once、deny、standing-allow、standing-deny；财务、crede
 ## 13. Room 合同（P1）
 
 - Room 是 kind=ROOM 的 Agent，拥有独立 session/transcript。
-- members 至少 2，成员变更版本化。
+- `[MS-Bot proposal]` members 为 2～6；Grok 0.47 的实测/静态边界是 1～6，至少 2 是 MS-Bot 对“多 Bot 协作”的产品约束，不是兼容事实。[E4-006]
+- 成员变更必须版本化；不复制 Grok 当前无 `expected_version` 的完整列表覆盖写法。
 - member turn nonce 唯一；parent/root 形成 DAG。
 - 最大深度、最大 fan-out、turn budget 和 deadline 必须配置。
 - winding_down 后只收敛已开始 turn。
@@ -254,10 +255,12 @@ ErrorDescriptor {
 | AC-019 | 模型伪造 approval flag | 拒绝 |
 | AC-020 | approval target 被修改 | digest mismatch |
 | AC-021 | account 切换后旧 port 调用 | rejected/stale |
-| AC-022 | Room turn 重复 deliver | intake duplicate |
+| AC-022 | Room turn 重复 request | dispatch duplicate，不开启第二次成员运行 |
 | AC-023 | Room winding down | 不再扇出新 turn |
 | AC-024 | credential catalog 更新 | 旧批准失效 |
 | AC-025 | secure storage 不可用 | session-only 或 fail closed，无明文盘 |
+| AC-026 | Room result 使用未知/过期 nonce | intake unknown nonce，不把迟到结果写成新消息 |
+| AC-027 | Room result 在 Host 不可用时提交 | intake host unavailable；保留可诊断状态，不伪造 accepted |
 
 ## 17. 交付顺序
 
