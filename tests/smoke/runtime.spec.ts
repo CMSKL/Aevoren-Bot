@@ -30,8 +30,9 @@ async function launch(
 }
 
 async function createAndSend(page: Page, text: string): Promise<void> {
-  await page.getByRole("button", { name: "新建 Bot" }).click();
-  await page.locator('textarea[aria-label="产品想法"]').fill(text);
+  await page.getByRole("button", { name: "新建聊天" }).click();
+  await page.getByRole("button", { name: "创建新 Bot" }).click();
+  await page.locator('textarea[aria-label="消息"]').fill(text);
   await page.getByRole("button", { name: "发送", exact: true }).click();
 }
 
@@ -262,7 +263,8 @@ test("keeps the window open and explains a close handshake timeout", async () =>
   try {
     const launched = await launch(userDataDir);
     application = launched.application;
-    await launched.page.getByRole("button", { name: "新建 Bot" }).click();
+    await launched.page.getByRole("button", { name: "新建聊天" }).click();
+    await launched.page.getByRole("button", { name: "创建新 Bot" }).click();
     const blocker = launched.page.evaluate(() => {
       const startedAt = Date.now();
       while (Date.now() - startedAt < 7_000) {

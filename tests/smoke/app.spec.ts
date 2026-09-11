@@ -16,8 +16,10 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   let page = await application.firstWindow();
 
   await expect(page.getByText("从创建第一个 Bot 开始")).toBeVisible();
-  await page.getByRole("button", { name: "新建 Bot" }).click();
-  await expect(page.getByRole("heading", { name: "产品需求分析助手" })).toBeVisible();
+  await page.getByRole("button", { name: "新建聊天" }).click();
+  await page.getByRole("button", { name: "创建新 Bot" }).click();
+  await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
+  await expect(page.getByText("产品需求分析助手")).toHaveCount(0);
 
   await page.getByRole("button", { name: "模型设置" }).click();
   await page.getByLabel("Model ID").fill("smoke-model");
@@ -31,13 +33,13 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await description.blur();
   await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
 
-  await page.getByLabel("产品想法").fill("做一个帮助团队整理产品需求的桌面应用。");
+  await page.getByLabel("消息").fill("做一个帮助团队整理产品需求的桌面应用。");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByText("待确认事项", { exact: true })).toBeVisible();
   await expect(page.locator("article.message-assistant")).toHaveAttribute("data-status", "completed");
 
   for (const [index, supplement] of ["补充目标用户和使用场景。", "补充验收标准和风险。"].entries()) {
-    await page.getByLabel("产品想法").fill(supplement);
+    await page.getByLabel("消息").fill(supplement);
     await page.getByRole("button", { name: "发送" }).click();
     await expect(page.locator("article.message-assistant")).toHaveCount(index + 2);
     await expect(page.locator("article.message-assistant").last()).toHaveAttribute("data-status", "completed");
@@ -64,7 +66,7 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
 
   application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
   page = await application.firstWindow();
-  await expect(page.getByRole("heading", { name: "产品需求分析助手" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
   await expect(page.getByText("做一个帮助团队整理产品需求的桌面应用。")).toBeVisible();
   await expect(page.getByText("待确认事项", { exact: true }).last()).toBeVisible();
   await expect(page.getByLabel("描述")).toHaveValue("关闭应用前未移焦，也必须可靠保存。");

@@ -163,8 +163,8 @@ export function Conversation({
     <main className="conversation">
       <header className="conversation-header">
         <div>
-          <h1>{bot?.name ?? "产品需求分析助手"}</h1>
-          <p>{bot?.description ?? "创建一个 Bot，将模糊想法转化为结构化、可执行的产品需求。"}</p>
+          <h1>{bot?.name ?? "MS-Bot"}</h1>
+          <p>{bot?.description || (bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
         </div>
         <button className="secondary-button" type="button" onClick={onOpenSettings}>
           <SettingsIcon />
@@ -185,13 +185,13 @@ export function Conversation({
         {!loading && !bot ? (
           <div className="center-state">
             <strong>从创建第一个 Bot 开始</strong>
-            <span>它会使用预设的产品需求分析方法工作。</span>
+            <span>明确选择创建后，再为它定义名称和职责。</span>
           </div>
         ) : null}
         {!loading && bot && entries.length === 0 ? (
           <div className="center-state">
-            <strong>描述一个产品想法</strong>
-            <span>MS-Bot 会整理背景、范围、需求、验收标准与风险。</span>
+            <strong>开始对话</strong>
+            <span>告诉这个 Bot 你希望它完成什么。</span>
           </div>
         ) : null}
         {entries.map((entry) => {
@@ -224,8 +224,8 @@ export function Conversation({
           : null}
         <div className="composer">
           <textarea
-            aria-label="产品想法"
-            placeholder="描述你的产品想法…"
+            aria-label="消息"
+            placeholder={bot ? `给 ${bot.name} 发消息…` : "给 Bot 发消息…"}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {

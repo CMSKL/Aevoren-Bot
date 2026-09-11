@@ -11,6 +11,7 @@ import type {
 } from "@shared/contracts";
 import { Conversation } from "./components/Conversation";
 import { ModelSettingsDialog } from "./components/ModelSettingsDialog";
+import { NewBotChooser } from "./components/NewBotChooser";
 import { ProfileInspector, type ProfileInspectorHandle } from "./components/ProfileInspector";
 import { Sidebar } from "./components/Sidebar";
 import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
@@ -38,6 +39,10 @@ export function App(): React.JSX.Element {
   const [error, setError] = useState<AppError | null>(null);
   const [closeNotice, setCloseNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [newBotOpen, setNewBotOpen] = useState(false);
+  const [creatingBot, setCreatingBot] = useState(false);
+  const [createError, setCreateError] = useState<AppError | null>(null);
+  const newBotButtonRef = useRef<HTMLButtonElement>(null);
   const profileRef = useRef<ProfileInspectorHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
   const loadingSessionIdRef = useRef<string | null>(null);
@@ -45,6 +50,7 @@ export function App(): React.JSX.Element {
   const bufferedRuntimeRef = useRef<RuntimeEvent[]>([]);
   const runtimeVersionsRef = useRef(new Map<string, number>());
   const openRequestRef = useRef(0);
+  const chooserActionRef = useRef<"create" | "select" | null>(null);
 
   useEffect(() => {
     const unsubscribeTranscript = window.msBot.events.subscribeTranscript((event) => {
@@ -131,6 +137,8 @@ export function App(): React.JSX.Element {
     setRuns(buffered.runs);
     runtimeVersionsRef.current = new Map(buffered.runs.map((run) => [run.id, run.version]));
     setLiveState(buffered.lastRuntimeEvent?.liveState ?? snapshotResult.data.liveState);
+    setNewBotOpen(false);
+    setCreateError(null);
     setLoading(false);
   }, []);
 
@@ -153,27 +161,54 @@ export function App(): React.JSX.Element {
   }, [openBot]);
 
   async function createBot(): Promise<void> {
-    if (profileRef.current && !(await profileRef.current.flush())) return;
-    setError(null);
-    setCloseNotice(null);
-    const result = await window.msBot.bots.create();
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    if (chooserActionRef.current) return;
+    chooserActionRef.current = "create";
+    setCreatingBot(true);
+    try {
+      if (profileRef.current && !(await profileRef.current.flush())) return;
+      setError(null);
+      setCloseNotice(null);
+      setCreateError(null);
+      const result = await window.msBot.bots.create();
+      if (!result.ok) {
+        setCreateError(result.error);
+        return;
+      }
+      openRequestRef.current += 1;
+      setBots((current) => [...current, result.data.bot]);
+      sessionIdRef.current = result.data.session.id;
+      setSelectedBot(result.data.bot);
+      setSession(result.data.session);
+      setEntries([]);
+      setRuns([]);
+      runtimeVersionsRef.current = new Map();
+      setLiveState(idleLiveState(result.data.session.id));
+      setNewBotOpen(false);
+    } finally {
+      chooserActionRef.current = null;
+      setCreatingBot(false);
     }
-    setBots((current) => [...current, result.data.bot]);
-    sessionIdRef.current = result.data.session.id;
-    setSelectedBot(result.data.bot);
-    setSession(result.data.session);
-    setEntries([]);
-    setRuns([]);
-    runtimeVersionsRef.current = new Map();
-    setLiveState(idleLiveState(result.data.session.id));
+  }
+
+  function selectBotFromChooser(bot: Bot): void {
+    if (chooserActionRef.current) return;
+    chooserActionRef.current = "select";
+    setCreateError(null);
+    setNewBotOpen(false);
+    void openBot(bot).finally(() => {
+      chooserActionRef.current = null;
+    });
   }
 
   function updateBot(bot: Bot): void {
     setBots((current) => current.map((item) => (item.id === bot.id ? bot : item)));
     setSelectedBot((current) => (current?.id === bot.id ? bot : current));
+  }
+
+  function closeNewBotChooser(): void {
+    setCreateError(null);
+    setNewBotOpen(false);
+    requestAnimationFrame(() => newBotButtonRef.current?.focus());
   }
 
   async function sendMessage(text: string): Promise<boolean> {
@@ -226,7 +261,12 @@ export function App(): React.JSX.Element {
         bots={bots}
         selectedBotId={selectedBot?.id ?? null}
         busy={loading}
-        onCreate={() => void createBot()}
+        createButtonRef={newBotButtonRef}
+        onCreate={() => {
+          if (chooserActionRef.current) return;
+          setCreateError(null);
+          setNewBotOpen(true);
+        }}
         onSelect={(bot) => void openBot(bot)}
       />
       <Conversation
@@ -246,6 +286,16 @@ export function App(): React.JSX.Element {
       />
       <ProfileInspector ref={profileRef} bot={selectedBot} onBotUpdated={updateBot} onError={setError} />
       <ModelSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      {newBotOpen ? (
+        <NewBotChooser
+          bots={bots}
+          creating={creatingBot}
+          error={createError}
+          onClose={closeNewBotChooser}
+          onCreate={() => void createBot()}
+          onSelect={selectBotFromChooser}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,12 +1,14 @@
 # MS-Bot
 
-MS-Bot 是一个本地 macOS Electron 应用。当前开发版在 P0-A 对话闭环之上增加 P0-B Runtime：每次模型调用具有独立、持久化的运行状态，Renderer 重载可重新附着，取消和重试具有明确的安全边界。
+MS-Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在 P0-A 对话闭环之上增加 P0-B Runtime：每次模型调用具有独立、持久化的运行状态，Renderer 重载可重新附着，取消和重试具有明确的安全边界。
 
 ## 当前范围
 
 已实现：
 
-- Bot 创建、列表、切换；
+- 与 Grok Bot 对齐的“新建聊天 → 创建新 Bot”入口、现有 Bot 搜索与切换；
+- 通用新 Bot（名称为“新建 Bot”，标签、描述和 Instructions 为空）及原子 MAIN Session 创建；
+- 新 Bot 以 Description 作为用户可见 Runtime Profile；已有 Bot 的非空 Instructions 继续兼容显示和优先生效；
 - 名称、标签、描述和 Instructions 的版本化保存；
 - 每个 Bot 一个 MAIN Session；
 - SQLite Transcript 与 Send Journal；
@@ -89,6 +91,11 @@ pnpm validate
 - [P0-B Runtime 验收标准单](docs/validation/p0-b-acceptance-checklist.md)
 - [P0-B Runtime 验收结果](docs/validation/p0-b-acceptance-results.md)
 - [P0-B 脱敏验收证据](docs/validation/evidence/p0-b/acceptance-evidence.md)
+- [新建 Bot 与 Grok Bot 差异矩阵](docs/plans/grok-new-bot-parity.md)
+- [新建 Bot 对齐实施说明](docs/plans/grok-new-bot-parity-implementation.md)
+- [新建 Bot 对齐验收清单](docs/validation/grok-new-bot-parity-checklist.md)
+- [新建 Bot 对齐验收结果](docs/validation/grok-new-bot-parity-results.md)
+- [新建 Bot 对齐脱敏证据](docs/validation/evidence/grok-new-bot-parity/2026-09-11/README.md)
 - [Grok Bot 逆向规格包](docs/reverse-engineering/grok-bot/README.md)
 - [试用反馈模板](docs/templates/pilot-feedback.md)
 

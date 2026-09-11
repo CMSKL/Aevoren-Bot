@@ -1,11 +1,3 @@
-export const DEFAULT_BOT = {
-  name: "产品需求分析助手",
-  label: "产品需求分析",
-  description: "将模糊的产品想法转化为结构化、可执行的产品需求。",
-  instructions:
-    "你是一位专业的产品需求分析助手。请将用户输入整理为：背景、目标用户、问题、目标、范围、非目标、功能需求、验收标准、风险、待确认事项。不得补造未知事实，缺失信息必须进入待确认事项。",
-} as const;
-
 export type Bot = {
   id: string;
   name: string;
