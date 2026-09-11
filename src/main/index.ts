@@ -94,8 +94,8 @@ function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 1080,
-    minHeight: 680,
+    minWidth: 420,
+    minHeight: 640,
     backgroundColor: "#ffffff",
     title: "MS-Bot",
     webPreferences: {
