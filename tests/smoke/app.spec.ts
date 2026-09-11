@@ -35,6 +35,10 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
 
   await page.getByLabel("消息").fill("做一个帮助团队整理产品需求的桌面应用。");
   await page.getByRole("button", { name: "发送" }).click();
+  const assistant = page.locator("article.message-assistant").first();
+  await expect(assistant.locator("h2", { hasText: "背景" })).toBeVisible();
+  await expect(assistant.locator("ol > li")).toHaveCount(2);
+  await expect(assistant).not.toContainText("## 背景");
   await expect(page.getByText("待确认事项", { exact: true })).toBeVisible();
   await expect(page.locator("article.message-assistant")).toHaveAttribute("data-status", "completed");
 
