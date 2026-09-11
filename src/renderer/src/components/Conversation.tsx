@@ -7,6 +7,7 @@ import type {
   SessionLiveStateName,
   TranscriptEntry,
 } from "@shared/contracts";
+import { AssistantMarkdown } from "./AssistantMarkdown";
 import { SendIcon, SettingsIcon, StopIcon } from "./Icons";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -19,21 +20,6 @@ const liveLabels: Record<Exclude<SessionLiveStateName, "idle">, string> = {
   cancelling: "正在取消",
   stale: "连接可能已停滞，仍可停止本次运行",
 };
-
-function StructuredText({ body }: { body: string }): React.JSX.Element {
-  const lines = useMemo(() => body.split("\n"), [body]);
-  return (
-    <div className="structured-text">
-      {lines.map((line, index) => {
-        const key = String(index) + "-" + line.slice(0, 12);
-        if (line.startsWith("## ")) return <h3 key={key}>{line.slice(3)}</h3>;
-        if (/^\d+\.\s/.test(line)) return <p className="numbered-line" key={key}>{line}</p>;
-        if (line.trim().length === 0) return <span className="text-gap" key={key} aria-hidden="true" />;
-        return <p key={key}>{line}</p>;
-      })}
-    </div>
-  );
-}
 
 type TranscriptItemProps = {
   entry: TranscriptEntry;
@@ -62,7 +48,7 @@ const TranscriptItem = memo(function TranscriptItem({
         <time>{timeFormatter.format(new Date(entry.createdAt))}</time>
       </header>
       {entry.role === "assistant"
-        ? <StructuredText body={entry.body} />
+        ? <AssistantMarkdown body={entry.body} />
         : <p className="user-message-body">{entry.body}</p>}
       {entry.status === "streaming"
         ? <div className="streaming-indicator">正在生成<span /></div>
