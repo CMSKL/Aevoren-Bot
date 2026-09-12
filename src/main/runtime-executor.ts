@@ -7,6 +7,7 @@ import type {
   TranscriptEvent,
   TranscriptStatus,
 } from "@shared/contracts";
+import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import { asAppError, MsBotError } from "./errors";
 import type { AppRepository } from "./database";
 import { FakeModelProvider, OpenAiCompatibleProvider, type ChatMessage, type ModelProvider } from "./model";
@@ -55,6 +56,7 @@ type ActiveRun = {
   attribution?: RuntimeExecutionInput["attribution"];
   onDispatchStart?: RuntimeExecutionInput["onDispatchStart"];
   onProviderStarted?: RuntimeExecutionInput["onProviderStarted"];
+  providerBody: string;
   body: string;
   persistedBody: string;
   assistantEntryId: string | null;
@@ -118,6 +120,7 @@ export class RuntimeExecutor {
       attribution: input.attribution,
       onDispatchStart: input.onDispatchStart,
       onProviderStarted: input.onProviderStarted,
+      providerBody: "",
       body: "",
       persistedBody: "",
       assistantEntryId: null,
@@ -249,7 +252,10 @@ export class RuntimeExecutor {
             run = this.repository.transitionRuntimeRun(runId, "streaming");
             this.emitRuntime(run);
           }
-          active.body += event.text;
+          active.providerBody += event.text;
+          active.body = active.attribution
+            ? sanitizeRoomSpeakerOutput(active.providerBody, true)
+            : active.providerBody;
           if (active.body.length - active.persistedBody.length >= DELTA_FLUSH_CHARS) this.flush(active, "streaming");
           else this.scheduleFlush(active);
           this.armStaleTimer(active);
@@ -324,6 +330,7 @@ export class RuntimeExecutor {
   }
 
   private finalizeAssistant(active: ActiveRun, status: TranscriptStatus): void {
+    if (active.attribution) active.body = sanitizeRoomSpeakerOutput(active.providerBody, true);
     if (active.assistantEntryId) this.flush(active, status);
   }
 

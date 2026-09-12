@@ -235,6 +235,49 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
   }
 });
 
+test("renders historical Room speaker envelopes as clean Grok-style speaker messages", async () => {
+  test.setTimeout(30_000);
+  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-speaker-display-"));
+  let application: ElectronApplication | undefined;
+  try {
+    const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+    const created = repository.createBot();
+    const speaker = repository.updateBot(created.bot.id, created.bot.version, { name: "运营师" });
+    const observer = repository.createBot().bot;
+    const room = repository.createRoom({ name: "发言者展示群聊", memberBotIds: [speaker.id, observer.id] });
+    const marker = `[room-speaker id="${speaker.id}" name="运营师"]`;
+    const assistant = repository.createAssistantEntry(room.session.id, {
+      speakerBotId: speaker.id,
+      speakerNameSnapshot: speaker.name,
+    });
+    repository.updateTranscriptEntry(assistant.id, `开场说明。\n\n${marker} 我现在在整理执行表。`, "completed");
+    repository.close();
+
+    const launched = await launch(userDataDir);
+    application = launched.application;
+    await launched.page.emulateMedia({ colorScheme: "dark" });
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1040, 707));
+    await expect.poll(() => launched.page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(1040);
+    await launched.page.locator(".bot-row").filter({ hasText: room.room.name }).click();
+    await expect(launched.page.getByRole("heading", { name: room.room.name })).toBeVisible();
+    await expect(launched.page.locator(".speaker-link").filter({ hasText: "运营师" })).toBeVisible();
+    await expect(launched.page.getByText("开场说明。", { exact: true })).toBeVisible();
+    await expect(launched.page.getByText("我现在在整理执行表。", { exact: true })).toBeVisible();
+    await expect(launched.page.getByText(marker, { exact: false })).toHaveCount(0);
+    await expect(launched.page.locator(".assistant-markdown")).not.toContainText("room-speaker");
+    await launched.page.screenshot({ path: "/tmp/ms-bot-room-speaker-sanitized.png", fullPage: true });
+
+    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    expect(database.prepare("SELECT body FROM transcript_entries WHERE id = ?").get(assistant.id)).toEqual({
+      body: `开场说明。\n\n${marker} 我现在在整理执行表。`,
+    });
+    database.close();
+  } finally {
+    if (application) application.process().kill("SIGKILL");
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
 test("disambiguates duplicate Bot identities across Room controls and speaker links", async () => {
   test.setTimeout(45_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-duplicate-identities-"));
