@@ -334,6 +334,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
   try {
     const launched = await launch(userDataDir);
     application = launched.application;
+    expect(await application.evaluate(({ app }) => app.getName())).toBe("ms-bot");
     const result = await launched.page.evaluate(() =>
       (window as unknown as { msBot: MsBotApi }).msBot.runtime.cancel("not-a-uuid"),
     );
