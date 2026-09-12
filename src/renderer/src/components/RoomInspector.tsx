@@ -1,5 +1,6 @@
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { AppError, Bot, RoomDetail, RoomPatch } from "@shared/contracts";
+import { buildBotIdentityMap } from "../bot-identity";
 import { CheckIcon, CloseIcon } from "./Icons";
 
 type Draft = Pick<RoomDetail["room"], "name" | "description">;
@@ -44,6 +45,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
     () => bots.filter((bot) => !detail?.members.some((member) => member.botId === bot.id)),
     [bots, detail],
   );
+  const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);
 
   async function saveCurrent(): Promise<boolean> {
     const currentDetail = detailRef.current;
@@ -147,22 +149,23 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
       </label>
       <section className="room-members" aria-label="群聊成员">
         <div className="room-section-title"><strong>成员</strong><span>{detail.members.length}/6</span></div>
-        {detail.members.map((member) => (
-          <div className="room-member-row" key={member.botId}>
-            <button className="member-main-link" type="button" onClick={() => onOpenBot(member.bot)}>{member.bot.name}</button>
+        {detail.members.map((member) => {
+          const identity = botIdentities.get(member.botId)!;
+          return <div className="room-member-row" key={member.botId}>
+            <button className="member-main-link" type="button" title={identity.inline} onClick={() => onOpenBot(member.bot)}>{identity.inline}</button>
             <button
               className="text-button danger-button"
               type="button"
               disabled={active || memberPending || detail.members.length <= 2}
               onClick={() => void changeMember("remove", member.botId)}
             >移除</button>
-          </div>
-        ))}
+          </div>;
+        })}
         {detail.members.length < 6 && availableBots.length > 0 ? (
           <div className="room-add-member">
             <select aria-label="选择要添加的 Bot" value={selectedBotId} onChange={(event) => setSelectedBotId(event.target.value)} disabled={active || memberPending}>
               <option value="">选择 Bot…</option>
-              {availableBots.map((bot) => <option value={bot.id} key={bot.id}>{bot.name}</option>)}
+              {availableBots.map((bot) => <option value={bot.id} key={bot.id}>{botIdentities.get(bot.id)!.inline}</option>)}
             </select>
             <button className="secondary-button" type="button" disabled={!selectedBotId || active || memberPending} onClick={() => void changeMember("add", selectedBotId)}>添加</button>
           </div>

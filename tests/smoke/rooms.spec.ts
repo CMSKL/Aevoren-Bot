@@ -237,6 +237,86 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
   }
 });
 
+test("disambiguates duplicate Bot identities across Room controls and speaker links", async () => {
+  test.setTimeout(45_000);
+  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-duplicate-identities-"));
+  let application: ElectronApplication | undefined;
+  try {
+    const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+    const firstCreated = repository.createBot();
+    const first = repository.updateBot(firstCreated.bot.id, firstCreated.bot.version, {
+      name: "重复身份",
+      label: "相同标签",
+      description: "第一位重复身份 Bot",
+    });
+    const secondCreated = repository.createBot();
+    const second = repository.updateBot(secondCreated.bot.id, secondCreated.bot.version, {
+      name: "重复身份",
+      label: "相同标签",
+      description: "第二位重复身份 Bot",
+    });
+    const room = repository.createRoom({
+      name: "重复身份验证群聊",
+      memberBotIds: [first.id, second.id],
+    });
+    repository.close();
+
+    const launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
+    application = launched.application;
+    const consoleErrors: string[] = [];
+    launched.page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await launched.page.locator(".bot-row").filter({ hasText: room.room.name }).click();
+    await expect(launched.page.getByRole("heading", { name: room.room.name })).toBeVisible();
+
+    const sidebarRows = launched.page.locator('.bot-row[aria-label]').filter({ hasText: "重复身份" });
+    await expect(sidebarRows).toHaveCount(2);
+    const sidebarDetails = await sidebarRows.locator(".bot-copy small").allTextContents();
+    expect(new Set(sidebarDetails).size).toBe(2);
+    expect(sidebarDetails.every((value) => value.includes("#"))).toBe(true);
+
+    const memberLabels = await launched.page.locator(".member-main-link").allTextContents();
+    expect(memberLabels).toHaveLength(2);
+    expect(new Set(memberLabels).size).toBe(2);
+    expect(memberLabels.every((value) => value.includes("#"))).toBe(true);
+    const targetLabels = await launched.page.locator(".target-chip").allTextContents();
+    expect(targetLabels).toEqual(memberLabels);
+
+    await launched.page.getByRole("button", { name: "新建聊天" }).click();
+    await launched.page.locator(".recipient-option").filter({ hasText: "创建群聊" }).click();
+    const duplicateOptions = launched.page.locator(".recipient-option").filter({ hasText: "重复身份" });
+    await expect(duplicateOptions).toHaveCount(2);
+    const optionLabels = await duplicateOptions.evaluateAll((options) => options.map((option) => option.getAttribute("aria-label")));
+    expect(new Set(optionLabels).size).toBe(2);
+    expect(optionLabels.every((value) => value?.includes("#"))).toBe(true);
+    await launched.page.getByRole("button", { name: "关闭新聊天" }).click();
+
+    await launched.page.getByLabel("消息").fill("验证同名 Bot 的 speaker 归因");
+    await launched.page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
+    const speakerLabels = await launched.page.locator(".speaker-link").allTextContents();
+    expect(speakerLabels).toEqual(memberLabels);
+    const turnLabels = await launched.page.locator(".room-turn-state").allTextContents();
+    expect(turnLabels).toHaveLength(2);
+    expect(turnLabels[0]).toContain(memberLabels[0]);
+    expect(turnLabels[1]).toContain(memberLabels[1]);
+
+    await launched.page.locator(".speaker-link").nth(0).click();
+    await expect(launched.page.getByLabel("描述")).toHaveValue("第一位重复身份 Bot");
+    await launched.page.locator(".bot-row").filter({ hasText: room.room.name }).click();
+    await launched.page.locator(".speaker-link").nth(1).click();
+    await expect(launched.page.getByLabel("描述")).toHaveValue("第二位重复身份 Bot");
+    await launched.page.locator(".bot-row").filter({ hasText: room.room.name }).click();
+    await expect(launched.page.getByRole("heading", { name: room.room.name })).toBeVisible();
+    await launched.page.screenshot({ path: "/tmp/msbot-room-duplicate-identities.png", fullPage: true });
+    expect(consoleErrors).toEqual([]);
+  } finally {
+    if (application) application.process().kill("SIGKILL");
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
 test("reattaches Room streaming after five reloads and recovers a Main crash without auto-running", async () => {
   test.setTimeout(120_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-recovery-"));

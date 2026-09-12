@@ -1,5 +1,6 @@
-import { useState, type RefObject } from "react";
+import { useMemo, useState, type RefObject } from "react";
 import type { Bot, Room } from "@shared/contracts";
+import { buildBotIdentityMap } from "../bot-identity";
 import { BotIcon, CloseIcon, PlusIcon, RoomIcon } from "./Icons";
 
 type SidebarProps = {
@@ -32,6 +33,7 @@ export function Sidebar({
   onRestoreRoom,
 }: SidebarProps): React.JSX.Element {
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);
   const activeRooms = rooms.filter((room) => room.archivedAt === null);
   const archivedRooms = rooms.filter((room) => room.archivedAt !== null);
   return (
@@ -65,21 +67,25 @@ export function Sidebar({
             </button>
           ))}
           {bots.length > 0 ? <div className="sidebar-label">Bot</div> : null}
-          {bots.map((bot) => (
-            <button
-              type="button"
-              className={`bot-row${bot.id === selectedBotId ? " selected" : ""}`}
-              key={bot.id}
-              onClick={() => onSelectBot(bot)}
-              role="listitem"
-            >
-              <span className="bot-icon"><BotIcon /></span>
-              <span className="bot-copy">
-                <strong>{bot.name}</strong>
-                <small>{bot.label || "未设置标签"}</small>
-              </span>
-            </button>
-          ))}
+          {bots.map((bot) => {
+            const identity = botIdentities.get(bot.id)!;
+            return (
+              <button
+                type="button"
+                className={`bot-row${bot.id === selectedBotId ? " selected" : ""}`}
+                key={bot.id}
+                onClick={() => onSelectBot(bot)}
+                role="listitem"
+                aria-label={identity.inline}
+              >
+                <span className="bot-icon"><BotIcon /></span>
+                <span className="bot-copy">
+                  <strong>{identity.primary}</strong>
+                  <small>{identity.secondary}</small>
+                </span>
+              </button>
+            );
+          })}
           {archivedRooms.length > 0 ? (
             <>
               <button className="archived-toggle" type="button" aria-expanded={archivedOpen} onClick={() => setArchivedOpen((open) => !open)}>
