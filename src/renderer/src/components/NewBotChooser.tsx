@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppError, Bot } from "@shared/contracts";
+import { buildBotIdentityMap } from "../bot-identity";
 import { BotIcon, PlusIcon, RoomIcon } from "./Icons";
 
 type NewBotChooserProps = {
@@ -30,6 +31,7 @@ export function NewBotChooser({
     if (!normalized) return bots;
     return bots.filter((bot) => `${bot.name}\n${bot.label}`.toLocaleLowerCase().includes(normalized));
   }, [bots, query]);
+  const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
@@ -102,33 +104,36 @@ export function NewBotChooser({
             <span className="recipient-option-icon"><RoomIcon /></span>
             <span className="recipient-option-copy"><strong>创建群聊</strong><small>选择 2～6 个现有 Bot</small></span>
           </button>
-          {filteredBots.map((bot) => (
-            <button
-              className={`recipient-option${selectedIds.has(bot.id) ? " selected" : ""}`}
-              type="button"
-              key={bot.id}
-              aria-label={bot.name}
-              disabled={creating || (groupMode && selectedIds.size >= 6 && !selectedIds.has(bot.id))}
-              onClick={() => {
-                if (!groupMode) {
-                  onSelect(bot);
-                  return;
-                }
-                setSelectedIds((current) => {
-                  const next = new Set(current);
-                  if (next.has(bot.id)) next.delete(bot.id);
-                  else next.add(bot.id);
-                  return next;
-                });
-              }}
-            >
-              <span className="recipient-option-icon"><BotIcon /></span>
-              <span className="recipient-option-copy">
-                <strong>{groupMode ? `${selectedIds.has(bot.id) ? "✓ " : ""}${bot.name}` : bot.name}</strong>
-                {bot.label ? <small>{bot.label}</small> : null}
-              </span>
-            </button>
-          ))}
+          {filteredBots.map((bot) => {
+            const identity = botIdentities.get(bot.id)!;
+            return (
+              <button
+                className={`recipient-option${selectedIds.has(bot.id) ? " selected" : ""}`}
+                type="button"
+                key={bot.id}
+                aria-label={identity.inline}
+                disabled={creating || (groupMode && selectedIds.size >= 6 && !selectedIds.has(bot.id))}
+                onClick={() => {
+                  if (!groupMode) {
+                    onSelect(bot);
+                    return;
+                  }
+                  setSelectedIds((current) => {
+                    const next = new Set(current);
+                    if (next.has(bot.id)) next.delete(bot.id);
+                    else next.add(bot.id);
+                    return next;
+                  });
+                }}
+              >
+                <span className="recipient-option-icon"><BotIcon /></span>
+                <span className="recipient-option-copy">
+                  <strong>{groupMode ? `${selectedIds.has(bot.id) ? "✓ " : ""}${identity.primary}` : identity.primary}</strong>
+                  {bot.label || identity.disambiguated ? <small>{identity.secondary}</small> : null}
+                </span>
+              </button>
+            );
+          })}
           {query.trim() && filteredBots.length === 0 ? (
             <div className="recipient-empty">没有匹配的现有 Bot。</div>
           ) : null}

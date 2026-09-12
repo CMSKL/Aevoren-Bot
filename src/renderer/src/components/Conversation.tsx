@@ -10,6 +10,7 @@ import type {
   SessionLiveStateName,
   TranscriptEntry,
 } from "@shared/contracts";
+import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { BotIcon, MenuIcon, PanelIcon, SendIcon, SettingsIcon, StopIcon } from "./Icons";
 
@@ -31,6 +32,7 @@ type TranscriptItemProps = {
   canRetryRoomTurn: boolean;
   groupedWithPrevious: boolean;
   groupedWithNext: boolean;
+  speakerDisplayName: string | null;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onRetryRoomTurn(turnId: string): void;
@@ -44,6 +46,7 @@ const TranscriptItem = memo(function TranscriptItem({
   canRetryRoomTurn,
   groupedWithPrevious,
   groupedWithNext,
+  speakerDisplayName,
   onRetryMessage,
   onRetryRun,
   onRetryRoomTurn,
@@ -54,7 +57,7 @@ const TranscriptItem = memo(function TranscriptItem({
   const cancelled = entry.status === "cancelled";
   const failed = entry.status === "failed";
   const longAssistant = entry.role === "assistant" && entry.body.length > 160;
-  const speakerName = entry.role === "assistant" ? entry.speakerNameSnapshot ?? "MS-Bot" : "你";
+  const speakerName = entry.role === "assistant" ? speakerDisplayName ?? entry.speakerNameSnapshot ?? "MS-Bot" : "你";
 
   return (
     <article
@@ -215,6 +218,16 @@ export function Conversation({
     }
     return { byId, latestByMember };
   }, [roomTurns]);
+  const roomMemberIdentities = useMemo(
+    () => buildBotIdentityMap(room?.members.map((member) => member.bot) ?? []),
+    [room],
+  );
+  const snapshotIdentities = useMemo(() => buildSnapshotIdentityMap([
+    ...entries.flatMap((entry) => entry.speakerBotId && entry.speakerNameSnapshot
+      ? [{ id: entry.speakerBotId, name: entry.speakerNameSnapshot }]
+      : []),
+    ...roomTurns.map((turn) => ({ id: turn.memberBotId, name: turn.memberNameSnapshot })),
+  ]), [entries, roomTurns]);
 
   useLayoutEffect(() => {
     const transcript = transcriptRef.current;
@@ -298,6 +311,9 @@ export function Conversation({
               canRetryRoomTurn={canRetryRoomTurn}
               groupedWithPrevious={entries[index - 1]?.role === entry.role && entries[index - 1]?.speakerBotId === entry.speakerBotId}
               groupedWithNext={entries[index + 1]?.role === entry.role && entries[index + 1]?.speakerBotId === entry.speakerBotId}
+              speakerDisplayName={entry.speakerBotId
+                ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? snapshotIdentities.get(entry.speakerBotId) ?? null
+                : null}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
               onRetryRoomTurn={onRetryRoomTurn}
@@ -319,7 +335,7 @@ export function Conversation({
             <span>{latestBatch.state === "running" ? `正在按顺序调用 ${latestTurns.length} 个 Bot` : `本批状态：${latestBatch.state}`}</span>
             {latestTurns.map((turn) => (
               <span className={`room-turn-state turn-${turn.state}`} key={turn.id}>
-                {turn.memberNameSnapshot}：{turn.state}
+                {roomMemberIdentities.get(turn.memberBotId)?.inline ?? snapshotIdentities.get(turn.memberBotId) ?? turn.memberNameSnapshot}：{turn.state}
                 {(turn.state === "failed" || turn.state === "cancelled" || turn.state === "interrupted" && turn.promptCutoffSeq !== null) && !busy ? (
                   <button className="text-button" type="button" onClick={() => onRetryRoomTurn(turn.id)}>重试</button>
                 ) : null}
@@ -335,6 +351,7 @@ export function Conversation({
             <span>回复成员</span>
             {room.members.map((member) => {
               const selected = targetBotIds.includes(member.botId);
+              const identity = roomMemberIdentities.get(member.botId)!;
               return (
                 <button
                   type="button"
@@ -345,7 +362,7 @@ export function Conversation({
                   onClick={() => onRoomTargetBotIdsChange(
                     selected ? targetBotIds.filter((id) => id !== member.botId) : [...targetBotIds, member.botId],
                   )}
-                >{member.bot.name}</button>
+                >{identity.inline}</button>
               );
             })}
             <small>将调用 {targetBotIds.length} 个 Bot</small>
