@@ -210,7 +210,9 @@ export function Conversation({
   const busy = submitting || activeRunId !== null || activeBatch !== null;
   const memberBotIds = useMemo(() => room?.members.map((member) => member.botId) ?? [], [room]);
   const effectiveRoomMentions = roomMentions.filter((mention) => mention.kind === "everyone" || memberBotIds.includes(mention.id));
-  const targetBotIds = room ? resolveRoomTargetIds(effectiveRoomMentions, memberBotIds) : [];
+  const invalidRoomMentions = roomMentions.filter((mention) => mention.kind === "bot" && !memberBotIds.includes(mention.id));
+  const hasInvalidRoomMentions = invalidRoomMentions.length > 0;
+  const targetBotIds = room ? resolveRoomTargetIds(roomMentions, memberBotIds) : [];
   const subjectName = bot?.name ?? room?.room.name ?? "MS-Bot";
   const latestUserNonce = useMemo(
     () => entries.toReversed().find((entry) => entry.role === "user")?.clientNonce ?? null,
@@ -294,7 +296,7 @@ export function Conversation({
 
   async function submit(): Promise<void> {
     const text = draft.trim();
-    if (!text || (!bot && !room) || busy) return;
+    if (!text || (!bot && !room) || busy || hasInvalidRoomMentions || Boolean(room && targetBotIds.length === 0)) return;
     followTranscriptTailRef.current = true;
     const accepted = await onSend(text, room ? targetBotIds : undefined);
     if (accepted) {
@@ -324,12 +326,14 @@ export function Conversation({
 
   function selectMention(itemId: string): void {
     if (!mentionQuery) return;
+    const selectedItem = mentionItems.find((item) => item.id === itemId);
+    if (!selectedItem) return;
     const nextDraft = removeMentionQuery(draft, mentionQuery);
     setRoomMentions((current) => addRoomMention(
-      current.filter((mention) => mention.kind === "everyone" || memberBotIds.includes(mention.id)),
+      current,
       itemId === EVERYONE_MENTION_ID
         ? { kind: "everyone", id: EVERYONE_MENTION_ID }
-        : { kind: "bot", id: itemId },
+        : { kind: "bot", id: itemId, label: selectedItem.label },
     ));
     setDraft(nextDraft.text);
     setMentionQuery(null);
@@ -447,8 +451,10 @@ export function Conversation({
             ) : null}
           </div>
         ) : null}
-        {room ? <div className="room-routing-hint">
-          {effectiveRoomMentions.length === 0
+        {room ? <div className={`room-routing-hint${hasInvalidRoomMentions ? " invalid" : ""}`} role={hasInvalidRoomMentions ? "alert" : undefined}>
+          {hasInvalidRoomMentions
+            ? `${invalidRoomMentions.map((mention) => mention.kind === "bot" ? `@${mention.label}` : "").join("、")} 已不在群聊，请移除后重新选择`
+            : effectiveRoomMentions.length === 0
             ? `未 @ 时，全部 ${room.members.length} 个成员按顺序响应`
             : effectiveRoomMentions.some((mention) => mention.kind === "everyone")
               ? `已 @所有人，将调用 ${room.members.length} 个 Bot`
@@ -485,17 +491,19 @@ export function Conversation({
             </div>
           ) : null}
           <div className="composer-editor">
-            {effectiveRoomMentions.length > 0 ? <div className="mention-chips" aria-label="已提及的 Bot">
-              {effectiveRoomMentions.map((mention) => {
+            {roomMentions.length > 0 ? <div className="mention-chips" aria-label="已提及的 Bot">
+              {roomMentions.map((mention) => {
+                const invalid = mention.kind === "bot" && !memberBotIds.includes(mention.id);
                 const label = mention.kind === "everyone"
                   ? "所有人"
-                  : roomMemberIdentities.get(mention.id)?.inline ?? "Bot";
+                  : roomMemberIdentities.get(mention.id)?.inline ?? mention.label;
                 return (
                   <button
-                    className="mention-chip"
+                    className={`mention-chip${invalid ? " invalid" : ""}`}
                     type="button"
                     key={`${mention.kind}:${mention.id}`}
                     aria-label={`移除 @${label}`}
+                    aria-invalid={invalid || undefined}
                     disabled={busy}
                     onClick={() => setRoomMentions((current) => current.filter((item) => item.id !== mention.id))}
                   >@{label}<span aria-hidden="true">×</span></button>
@@ -541,7 +549,7 @@ export function Conversation({
                     return;
                   }
                 }
-                if (event.key === "Backspace" && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0 && draft.length === 0 && effectiveRoomMentions.length > 0) {
+                if (event.key === "Backspace" && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0 && draft.length === 0 && roomMentions.length > 0) {
                   event.preventDefault();
                   setRoomMentions((current) => current.slice(0, -1));
                   return;
@@ -571,7 +579,7 @@ export function Conversation({
               className="send-button"
               type="button"
               onClick={() => void submit()}
-              disabled={(!bot && !room) || !draft.trim() || busy}
+              disabled={(!bot && !room) || !draft.trim() || busy || hasInvalidRoomMentions || Boolean(room && targetBotIds.length === 0)}
               aria-label="发送"
             >
               <SendIcon />

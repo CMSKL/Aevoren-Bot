@@ -888,6 +888,11 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
+.room-routing-hint.invalid {
+  color: var(--danger);
+  font-weight: 650;
+}
+
 .mention-chips {
   display: flex;
   min-width: 0;
@@ -920,6 +925,12 @@ textarea:focus-visible {
   color: var(--text-muted);
   font-size: 14px;
   line-height: 1;
+}
+
+.mention-chip.invalid {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel-bg));
 }
 
 .mention-menu {

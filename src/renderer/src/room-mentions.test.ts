@@ -31,15 +31,16 @@ describe("room mention helpers", () => {
     expect(resolveRoomTargetIds([], ["a", "b", "c"])).toEqual(["a", "b", "c"]);
     expect(resolveRoomTargetIds([{ kind: "everyone", id: EVERYONE_MENTION_ID }], ["a", "b"])).toEqual(["a", "b"]);
 
-    const first = addRoomMention([], { kind: "bot", id: "c" });
-    const multiple = addRoomMention(first, { kind: "bot", id: "a" });
-    expect(addRoomMention(multiple, { kind: "bot", id: "c" })).toEqual(multiple);
+    const first = addRoomMention([], { kind: "bot", id: "c", label: "C" });
+    const multiple = addRoomMention(first, { kind: "bot", id: "a", label: "A" });
+    expect(addRoomMention(multiple, { kind: "bot", id: "c", label: "C" })).toEqual(multiple);
     expect(resolveRoomTargetIds(multiple, ["a", "b", "c"])).toEqual(["a", "c"]);
     expect(addRoomMention(multiple, { kind: "everyone", id: EVERYONE_MENTION_ID })).toEqual([
       { kind: "everyone", id: EVERYONE_MENTION_ID },
     ]);
-    expect(addRoomMention([{ kind: "everyone", id: EVERYONE_MENTION_ID }], { kind: "bot", id: "b" })).toEqual([
-      { kind: "bot", id: "b" },
+    expect(resolveRoomTargetIds([{ kind: "bot", id: "removed", label: "已移除" }], ["a", "b"])).toEqual([]);
+    expect(addRoomMention([{ kind: "everyone", id: EVERYONE_MENTION_ID }], { kind: "bot", id: "b", label: "B" })).toEqual([
+      { kind: "bot", id: "b", label: "B" },
     ]);
   });
 

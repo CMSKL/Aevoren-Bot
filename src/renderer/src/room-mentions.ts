@@ -2,7 +2,7 @@ export const EVERYONE_MENTION_ID = "everyone";
 
 export type RoomMention =
   | { kind: "everyone"; id: typeof EVERYONE_MENTION_ID }
-  | { kind: "bot"; id: string };
+  | { kind: "bot"; id: string; label: string };
 
 export type MentionSearchItem = {
   id: string;
