@@ -202,6 +202,7 @@ export function Conversation({
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const transcriptRef = useRef<HTMLElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingComposerCaretRef = useRef<number | null>(null);
   const dismissedMentionStartRef = useRef<number | null>(null);
   const followTranscriptTailRef = useRef(true);
   const activeRunId = liveState?.activeRunId ?? null;
@@ -294,6 +295,14 @@ export function Conversation({
     if (transcript && followTranscriptTailRef.current) transcript.scrollTop = transcript.scrollHeight;
   }, [entries]);
 
+  useLayoutEffect(() => {
+    const caret = pendingComposerCaretRef.current;
+    if (caret === null) return;
+    pendingComposerCaretRef.current = null;
+    composerInputRef.current?.focus();
+    composerInputRef.current?.setSelectionRange(caret, caret);
+  }, [draft, roomMentions]);
+
   async function submit(): Promise<void> {
     const text = draft.trim();
     if (!text || (!bot && !room) || busy || hasInvalidRoomMentions || Boolean(room && targetBotIds.length === 0)) return;
@@ -335,13 +344,10 @@ export function Conversation({
         ? { kind: "everyone", id: EVERYONE_MENTION_ID }
         : { kind: "bot", id: itemId, label: selectedItem.label },
     ));
+    pendingComposerCaretRef.current = nextDraft.caret;
     setDraft(nextDraft.text);
     setMentionQuery(null);
     dismissedMentionStartRef.current = null;
-    requestAnimationFrame(() => {
-      composerInputRef.current?.focus();
-      composerInputRef.current?.setSelectionRange(nextDraft.caret, nextDraft.caret);
-    });
   }
 
   return (
