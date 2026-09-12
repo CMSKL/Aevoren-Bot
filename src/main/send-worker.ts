@@ -129,6 +129,7 @@ export class RuntimeCoordinator {
         executorBotId: session.botId,
         executionKey: clientNonce,
         inputSeq,
+        onDispatchStart: () => this.markDirectDispatching(clientNonce),
         onProviderStarted: (requestId) => this.acknowledgeDirect(clientNonce, requestId),
       });
     } catch (error) {
@@ -136,6 +137,13 @@ export class RuntimeCoordinator {
     }
     void started.completion.then((result) => this.settleDirect(clientNonce, result));
     return { clientNonce, runId: started.run.id, disposition: "accepted", state: "queued" };
+  }
+
+  private markDirectDispatching(clientNonce: string): void {
+    const journal = this.repository.getSendOrThrow(clientNonce);
+    if (journal.state === "acked" || journal.state === "dispatching") return;
+    this.repository.setSendState(clientNonce, "dispatching");
+    this.emitSendState(journal.sessionId, clientNonce, "dispatching");
   }
 
   private acknowledgeDirect(clientNonce: string, requestId: string): void {

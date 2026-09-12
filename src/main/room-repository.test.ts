@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import type { PromptManifest, RoomDetail, RoomTurn, RuntimeRun } from "@shared/contracts";
 import { AppRepository } from "./database";
 
 const repositories: AppRepository[] = [];
@@ -20,6 +21,48 @@ function createBots(value: AppRepository, count: number) {
     const bot = value.updateBot(created.bot.id, created.bot.version, { name: `Bot ${index + 1}` });
     return { ...created, bot };
   });
+}
+
+function createCompletedRoomRun(
+  value: AppRepository,
+  detail: RoomDetail,
+  turn: RoomTurn,
+  clientNonce: string,
+): { run: RuntimeRun; assistantId: string } {
+  const input = value.getUserMessage(clientNonce);
+  const promptCutoffSeq = turn.promptCutoffSeq ?? input.seq;
+  const manifest: PromptManifest = {
+    schemaVersion: 2,
+    botId: turn.memberBotId,
+    profileVersion: 1,
+    sessionId: detail.session.id,
+    generation: detail.session.generation,
+    inputSeq: input.seq,
+    promptCutoffSeq,
+    roomId: detail.room.id,
+    roomMembershipVersion: detail.room.membershipVersion,
+    executorBotId: turn.memberBotId,
+    sourceTurnId: turn.id,
+    blocks: [],
+    digest: "room-recovery-test",
+  };
+  const run = value.createRuntimeRun(clientNonce, "fake", manifest, {
+    executorBotId: turn.memberBotId,
+    executionKey: `${turn.batchId}:${turn.memberBotId}`,
+    promptCutoffSeq,
+  });
+  value.attachRoomTurnRuntime(turn.id, run.id);
+  value.transitionRuntimeRun(run.id, "dispatching");
+  value.transitionRuntimeRun(run.id, "running", { providerRequestId: `request-${turn.memberBotId}` });
+  const assistant = value.createAssistantEntry(detail.session.id, {
+    speakerBotId: turn.memberBotId,
+    speakerNameSnapshot: turn.memberNameSnapshot,
+    sourceTurnId: turn.id,
+  });
+  value.attachAssistantEntry(run.id, assistant.id);
+  value.updateTranscriptEntry(assistant.id, `reply-${turn.memberBotId}`, "completed");
+  value.transitionRuntimeRun(run.id, "completed");
+  return { run: value.getRuntimeRun(run.id), assistantId: assistant.id };
 }
 
 afterEach(() => {
@@ -134,26 +177,116 @@ describe("Room repository", () => {
     expect(value.prepareRoomMessage(command)).toMatchObject({ disposition: "duplicate", batch: { id: batch.id } });
   });
 
-  it("settles a running Turn under a cancelled Batch during crash recovery", () => {
+  it("settles a cancelled Batch across Turn, RuntimeRun and Assistant during crash recovery", () => {
     const value = repository();
-    const bots = createBots(value, 3);
+    const bots = createBots(value, 2);
     const detail = value.createRoom({ memberBotIds: bots.map(({ bot }) => bot.id) });
+    const clientNonce = crypto.randomUUID();
     const prepared = value.prepareRoomMessage({
       roomId: detail.room.id,
       sessionId: detail.session.id,
-      clientNonce: crypto.randomUUID(),
+      clientNonce,
       text: "cancel then crash",
       targetBotIds: bots.map(({ bot }) => bot.id),
     });
     value.transitionRoomBatch(prepared.batch.id, "running");
     const turns = value.listRoomTurns(prepared.batch.id);
-    value.transitionRoomTurn(turns[0]!.id, "running", { promptCutoffSeq: 1 });
+    const runningTurn = value.transitionRoomTurn(turns[0]!.id, "running", { promptCutoffSeq: 1 });
+    const input = value.getUserMessage(clientNonce);
+    const manifest: PromptManifest = {
+      schemaVersion: 2,
+      botId: runningTurn.memberBotId,
+      profileVersion: 1,
+      sessionId: detail.session.id,
+      generation: detail.session.generation,
+      inputSeq: input.seq,
+      promptCutoffSeq: input.seq,
+      roomId: detail.room.id,
+      roomMembershipVersion: detail.room.membershipVersion,
+      executorBotId: runningTurn.memberBotId,
+      sourceTurnId: runningTurn.id,
+      blocks: [],
+      digest: "cancel-recovery-test",
+    };
+    const run = value.createRuntimeRun(clientNonce, "fake", manifest, {
+      executorBotId: runningTurn.memberBotId,
+      executionKey: `${prepared.batch.id}:${runningTurn.memberBotId}`,
+      promptCutoffSeq: input.seq,
+    });
+    value.attachRoomTurnRuntime(runningTurn.id, run.id);
+    value.transitionRuntimeRun(run.id, "dispatching");
+    value.transitionRuntimeRun(run.id, "running", { providerRequestId: "cancel-request" });
+    const assistant = value.createAssistantEntry(detail.session.id, {
+      speakerBotId: runningTurn.memberBotId,
+      speakerNameSnapshot: runningTurn.memberNameSnapshot,
+      sourceTurnId: runningTurn.id,
+    });
+    value.attachAssistantEntry(run.id, assistant.id);
+    value.updateTranscriptEntry(assistant.id, "partial", "streaming");
+    value.transitionRuntimeRun(run.id, "cancel-requested");
     value.transitionRoomTurn(turns[1]!.id, "cancelled");
-    value.transitionRoomTurn(turns[2]!.id, "cancelled");
     value.transitionRoomBatch(prepared.batch.id, "cancelled");
+
     expect(value.recoverInterruptedRooms()).toBe(1);
+    expect(value.recoverInterruptedRuntimeRuns()).toBe(0);
     expect(value.getRoomBatch(prepared.batch.id).state).toBe("cancelled");
-    expect(value.listRoomTurns(prepared.batch.id).map((turn) => turn.state)).toEqual(["cancelled", "cancelled", "cancelled"]);
+    expect(value.listRoomTurns(prepared.batch.id).map((turn) => turn.state)).toEqual(["cancelled", "cancelled"]);
+    expect(value.getRuntimeRun(run.id).state).toBe("cancelled");
+    expect(value.getTranscriptEntry(assistant.id)).toMatchObject({ body: "partial", status: "cancelled" });
+  });
+
+  it("reconciles a completed Runtime before interrupting the remaining Room Turns", () => {
+    const value = repository();
+    const bots = createBots(value, 2);
+    const detail = value.createRoom({ memberBotIds: bots.map(({ bot }) => bot.id) });
+    const clientNonce = crypto.randomUUID();
+    const prepared = value.prepareRoomMessage({
+      roomId: detail.room.id,
+      sessionId: detail.session.id,
+      clientNonce,
+      text: "completed before Turn settlement",
+      targetBotIds: bots.map(({ bot }) => bot.id),
+    });
+    value.transitionRoomBatch(prepared.batch.id, "running");
+    const turns = value.listRoomTurns(prepared.batch.id);
+    const running = value.transitionRoomTurn(turns[0]!.id, "running", { promptCutoffSeq: 1 });
+    const completed = createCompletedRoomRun(value, detail, running, clientNonce);
+
+    expect(value.recoverInterruptedRooms()).toBe(1);
+    expect(value.recoverInterruptedRuntimeRuns()).toBe(0);
+    expect(value.getRuntimeRun(completed.run.id).state).toBe("completed");
+    expect(value.getTranscriptEntry(completed.assistantId).status).toBe("completed");
+    expect(value.listRoomTurns(prepared.batch.id).map((turn) => turn.state)).toEqual(["completed", "interrupted"]);
+    expect(value.getRoomBatch(prepared.batch.id).state).toBe("partial");
+    expect(() => value.createRoomTurnRetry(running.id)).toThrowError(expect.objectContaining({ code: "ROOM_TURN_RETRY_UNSAFE" }));
+    const continued = value.continueInterruptedRoomBatch(prepared.batch.id);
+    expect(continued).toHaveLength(1);
+    expect(continued[0]).toMatchObject({ memberBotId: turns[1]!.memberBotId, attemptNo: 2, state: "queued" });
+  });
+
+  it("recomputes an active Batch as completed when every latest Turn already completed", () => {
+    const value = repository();
+    const bots = createBots(value, 2);
+    const detail = value.createRoom({ memberBotIds: bots.map(({ bot }) => bot.id) });
+    const clientNonce = crypto.randomUUID();
+    const prepared = value.prepareRoomMessage({
+      roomId: detail.room.id,
+      sessionId: detail.session.id,
+      clientNonce,
+      text: "all completed before Batch settlement",
+      targetBotIds: bots.map(({ bot }) => bot.id),
+    });
+    value.transitionRoomBatch(prepared.batch.id, "running");
+    for (const pending of value.listRoomTurns(prepared.batch.id)) {
+      const running = value.transitionRoomTurn(pending.id, "running", { promptCutoffSeq: value.getTranscriptHighWater(detail.session.id) });
+      createCompletedRoomRun(value, detail, running, clientNonce);
+      value.transitionRoomTurn(running.id, "completed");
+    }
+
+    expect(value.getRoomBatch(prepared.batch.id).state).toBe("running");
+    expect(value.recoverInterruptedRooms()).toBe(1);
+    expect(value.getRoomBatch(prepared.batch.id).state).toBe("completed");
+    expect(value.listRoomTurns(prepared.batch.id).map((turn) => turn.state)).toEqual(["completed", "completed"]);
   });
 
   it("keeps Room and Bot MAIN transcripts isolated and archives recoverably", () => {

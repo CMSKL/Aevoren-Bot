@@ -332,4 +332,31 @@ describe("RoomCoordinator", () => {
     expect(repository.listRoomTurns(sent.batchId).map((turn) => turn.state)).toEqual(["interrupted", "interrupted"]);
     expect(repository.getRuntimeRun(repository.listRoomTurns(sent.batchId)[0]!.runtimeRunId!).state).toBe("interrupted");
   }, 8_000);
+
+  it("preserves an explicit Room cancel while shutting down an Abort-ignoring Provider", async () => {
+    let waitingForever = false;
+    const provider: ModelProvider = {
+      async *run() {
+        yield { type: "started", requestId: "cancel-forever" };
+        yield { type: "delta", text: "partial" };
+        waitingForever = true;
+        await new Promise<void>(() => {});
+      },
+      testConnection: async () => {},
+    };
+    const { repository, bots, detail, executor, coordinator } = setup(provider, 2);
+    const sent = coordinator.send(command(detail, bots.map(({ bot }) => bot.id)));
+    await vi.waitFor(() => expect(waitingForever).toBe(true));
+    coordinator.cancel(sent.batchId);
+    coordinator.beginShutdown();
+    await executor.shutdown();
+    await coordinator.shutdown();
+
+    const turns = repository.listRoomTurns(sent.batchId);
+    const run = repository.getRuntimeRun(turns[0]!.runtimeRunId!);
+    expect(repository.getRoomBatch(sent.batchId).state).toBe("cancelled");
+    expect(turns.map((turn) => turn.state)).toEqual(["cancelled", "cancelled"]);
+    expect(run.state).toBe("cancelled");
+    expect(repository.getTranscriptEntry(run.assistantEntryId!)).toMatchObject({ body: "partial", status: "cancelled" });
+  }, 10_000);
 });

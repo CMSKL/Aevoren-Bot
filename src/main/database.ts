@@ -1660,17 +1660,30 @@ export class AppRepository {
   }
 
   recoverInterruptedRooms(): number {
-    const batches = this.database
-      .prepare("SELECT id FROM room_batches WHERE state IN ('queued', 'running')")
-      .all() as Array<{ id: string }>;
     const turns = this.database
       .prepare(
-        `SELECT room_turns.id, room_turns.batch_id, room_batches.state AS batch_state
-         FROM room_turns INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+        `SELECT room_turns.id, room_turns.batch_id, room_turns.runtime_run_id,
+          room_batches.state AS batch_state, runtime_runs.state AS runtime_state,
+          runtime_runs.assistant_entry_id, runtime_runs.last_error_code AS runtime_last_error_code
+         FROM room_turns
+         INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+         LEFT JOIN runtime_runs ON runtime_runs.id = room_turns.runtime_run_id
          WHERE room_turns.state IN ('queued', 'running')`,
       )
-      .all() as Array<{ id: string; batch_id: string; batch_state: RoomBatchState }>;
-    if (batches.length === 0 && turns.length === 0) return 0;
+      .all() as Array<{
+        id: string;
+        batch_id: string;
+        runtime_run_id: string | null;
+        batch_state: RoomBatchState;
+        runtime_state: RuntimeState | null;
+        assistant_entry_id: string | null;
+        runtime_last_error_code: string | null;
+      }>;
+    const batchIds = new Set((this.database
+      .prepare("SELECT id FROM room_batches WHERE state IN ('queued', 'running')")
+      .all() as Array<{ id: string }>).map((batch) => batch.id));
+    for (const turn of turns) batchIds.add(turn.batch_id);
+    if (batchIds.size === 0) return 0;
     const timestamp = now();
     this.transaction(() => {
       const updateTurn = this.database.prepare(
@@ -1678,17 +1691,55 @@ export class AppRepository {
          last_error_code = ?, updated_at = ?, finished_at = ? WHERE id = ?`,
       );
       for (const turn of turns) {
-        const cancelled = turn.batch_state === "cancelled";
-        updateTurn.run(cancelled ? "cancelled" : "interrupted", cancelled ? "MESSAGE_CANCELLED" : "APP_INTERRUPTED", timestamp, timestamp, turn.id);
+        let nextState: RoomTurnState;
+        let errorCode: string | null;
+        if (turn.batch_state === "cancelled" && turn.runtime_run_id && turn.runtime_state && ACTIVE_RUNTIME_STATES.includes(turn.runtime_state)) {
+          if (turn.runtime_state !== "cancel-requested") {
+            this.transitionRuntimeRun(turn.runtime_run_id, "cancel-requested", { errorCode: "MESSAGE_CANCELLED" });
+          }
+          this.transitionRuntimeRun(turn.runtime_run_id, "cancelled", { errorCode: "MESSAGE_CANCELLED" });
+          if (turn.assistant_entry_id) {
+            const assistant = this.getTranscriptEntry(turn.assistant_entry_id);
+            if (assistant.status === "streaming") this.updateTranscriptRecord(assistant.id, undefined, "cancelled");
+          }
+          nextState = "cancelled";
+          errorCode = "MESSAGE_CANCELLED";
+        } else if (turn.runtime_state && TERMINAL_RUNTIME_STATES.includes(turn.runtime_state)) {
+          nextState = turn.runtime_state as RoomTurnState;
+          errorCode = nextState === "completed"
+            ? null
+            : nextState === "cancelled"
+              ? "MESSAGE_CANCELLED"
+              : turn.runtime_last_error_code ?? "APP_INTERRUPTED";
+        } else if (turn.batch_state === "cancelled") {
+          nextState = "cancelled";
+          errorCode = "MESSAGE_CANCELLED";
+        } else {
+          nextState = "interrupted";
+          errorCode = "APP_INTERRUPTED";
+        }
+        updateTurn.run(nextState, errorCode, timestamp, timestamp, turn.id);
       }
-      this.database
-        .prepare(
-          `UPDATE room_batches SET state = 'interrupted', version = version + 1,
-           updated_at = ?, finished_at = ? WHERE state IN ('queued', 'running')`,
-        )
-        .run(timestamp, timestamp);
+      for (const batchId of batchIds) {
+        const batch = this.getRoomBatch(batchId);
+        if (!["queued", "running"].includes(batch.state)) continue;
+        const latest = new Map<string, RoomTurn>();
+        for (const turn of this.listRoomTurns(batchId)) {
+          const previous = latest.get(turn.memberBotId);
+          if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.memberBotId, turn);
+        }
+        const states = [...latest.values()].map((turn) => turn.state);
+        const batchState: RoomBatchState = states.every((state) => state === "completed")
+          ? "completed"
+          : states.every((state) => state === "cancelled")
+            ? "cancelled"
+            : states.every((state) => state === "interrupted")
+              ? "interrupted"
+              : "partial";
+        this.transitionRoomBatch(batchId, batchState);
+      }
     });
-    return new Set([...batches.map((batch) => batch.id), ...turns.map((turn) => turn.batch_id)]).size;
+    return batchIds.size;
   }
 
   listRoomTurnsForRoom(roomId: string): RoomTurn[] {

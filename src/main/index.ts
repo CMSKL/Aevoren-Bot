@@ -151,8 +151,8 @@ app.whenReady().then(() => {
   const databasePath = process.env.MS_BOT_DB_PATH ?? join(app.getPath("userData"), "ms-bot.sqlite");
   repository = new AppRepository(databasePath);
   repository.recoverInterruptedSends();
-  repository.recoverInterruptedRuntimeRuns();
   repository.recoverInterruptedRooms();
+  repository.recoverInterruptedRuntimeRuns();
   const settings = new ModelSettingsService(repository, electronSecretCodec);
   mainWindow = createWindow();
   const forceFakeProvider = process.env.MS_BOT_FAKE_PROVIDER === "1";

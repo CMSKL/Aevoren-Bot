@@ -320,12 +320,12 @@ export function Conversation({
             {latestTurns.map((turn) => (
               <span className={`room-turn-state turn-${turn.state}`} key={turn.id}>
                 {turn.memberNameSnapshot}：{turn.state}
-                {["failed", "cancelled", "interrupted"].includes(turn.state) && !busy ? (
+                {(turn.state === "failed" || turn.state === "cancelled" || turn.state === "interrupted" && turn.promptCutoffSeq !== null) && !busy ? (
                   <button className="text-button" type="button" onClick={() => onRetryRoomTurn(turn.id)}>重试</button>
                 ) : null}
               </span>
             ))}
-            {latestBatch.state === "interrupted" && latestTurns.some((turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null) ? (
+            {["interrupted", "partial"].includes(latestBatch.state) && latestTurns.some((turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null) ? (
               <button className="text-button" type="button" onClick={() => onContinueRoomBatch(latestBatch.id)}>继续未开始成员</button>
             ) : null}
           </div>

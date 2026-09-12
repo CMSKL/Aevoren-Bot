@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import type { MsBotApi } from "@shared/contracts";
+import type { MsBotApi, PromptManifest } from "@shared/contracts";
+import { AppRepository } from "../../src/main/database";
 
 function environment(userDataDir: string, overrides: Record<string, string> = {}): Record<string, string> {
   return {
@@ -44,6 +45,73 @@ async function forceKill(application: ElectronApplication): Promise<void> {
   const exited = new Promise<void>((resolve) => process.once("exit", () => resolve()));
   process.kill("SIGKILL");
   await exited;
+}
+
+async function requestWindowClose(application: ElectronApplication, timeoutMs = 5_000): Promise<boolean> {
+  const process = application.process();
+  const exited = new Promise<boolean>((resolve) => process.once("exit", () => resolve(true)));
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
+  return Promise.race([
+    exited,
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+}
+
+function seedCompletedRuntimeBeforeTurnSettlement(userDataDir: string): { batchId: string; firstRunId: string } {
+  const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+  try {
+    const bots = ["先行者", "收尾者"].map((name) => {
+      const created = repository.createBot();
+      return repository.updateBot(created.bot.id, created.bot.version, { name });
+    });
+    const detail = repository.createRoom({ name: "恢复边界群聊", memberBotIds: bots.map((bot) => bot.id) });
+    const clientNonce = crypto.randomUUID();
+    const prepared = repository.prepareRoomMessage({
+      roomId: detail.room.id,
+      sessionId: detail.session.id,
+      clientNonce,
+      text: "不要重复已经完成的成员",
+      targetBotIds: bots.map((bot) => bot.id),
+    });
+    repository.transitionRoomBatch(prepared.batch.id, "running");
+    const turn = repository.transitionRoomTurn(repository.listRoomTurns(prepared.batch.id)[0]!.id, "running", {
+      promptCutoffSeq: 1,
+    });
+    const manifest: PromptManifest = {
+      schemaVersion: 2,
+      botId: turn.memberBotId,
+      profileVersion: 1,
+      sessionId: detail.session.id,
+      generation: detail.session.generation,
+      inputSeq: 1,
+      promptCutoffSeq: 1,
+      roomId: detail.room.id,
+      roomMembershipVersion: detail.room.membershipVersion,
+      executorBotId: turn.memberBotId,
+      sourceTurnId: turn.id,
+      blocks: [],
+      digest: "smoke-recovery-boundary",
+    };
+    const run = repository.createRuntimeRun(clientNonce, "fake", manifest, {
+      executorBotId: turn.memberBotId,
+      executionKey: `${prepared.batch.id}:${turn.memberBotId}`,
+      promptCutoffSeq: 1,
+    });
+    repository.attachRoomTurnRuntime(turn.id, run.id);
+    repository.transitionRuntimeRun(run.id, "dispatching");
+    repository.transitionRuntimeRun(run.id, "running", { providerRequestId: "completed-before-turn" });
+    const assistant = repository.createAssistantEntry(detail.session.id, {
+      speakerBotId: turn.memberBotId,
+      speakerNameSnapshot: turn.memberNameSnapshot,
+      sourceTurnId: turn.id,
+    });
+    repository.attachAssistantEntry(run.id, assistant.id);
+    repository.updateTranscriptEntry(assistant.id, "已经完成的唯一回复", "completed");
+    repository.transitionRuntimeRun(run.id, "completed");
+    return { batchId: prepared.batch.id, firstRunId: run.id };
+  } finally {
+    repository.close();
+  }
 }
 
 test("creates and manages a deterministic multi-Bot Room with speaker bubbles", async () => {
@@ -239,6 +307,42 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
   }
 });
 
+test("reconciles a completed Room Runtime and exposes Continue for only the unstarted member", async () => {
+  test.setTimeout(30_000);
+  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-settle-boundary-"));
+  let application: ElectronApplication | undefined;
+  try {
+    const fixture = seedCompletedRuntimeBeforeTurnSettlement(userDataDir);
+    const launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
+    application = launched.application;
+    await launched.page.locator(".bot-row").filter({ hasText: "恢复边界群聊" }).click();
+    await expect(launched.page.getByTestId("room-batch-state")).toContainText("partial");
+    await expect(launched.page.locator(".room-turn-state.turn-completed")).toContainText("先行者：completed");
+    await expect(launched.page.locator(".room-turn-state.turn-interrupted")).toContainText("收尾者：interrupted");
+    await expect(launched.page.getByRole("button", { name: "重试" })).toHaveCount(0);
+    await launched.page.getByRole("button", { name: "继续未开始成员" }).click();
+    await expect(launched.page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
+    await application.close();
+    application = undefined;
+
+    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    expect(database.prepare("SELECT state FROM runtime_runs WHERE id = ?").get(fixture.firstRunId)).toEqual({ state: "completed" });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 2 });
+    expect(database.prepare("SELECT state FROM room_batches WHERE id = ?").get(fixture.batchId)).toEqual({ state: "completed" });
+    expect(database.prepare("SELECT state,attempt_no FROM room_turns ORDER BY position,attempt_no").all()).toEqual([
+      { state: "completed", attempt_no: 1 },
+      { state: "interrupted", attempt_no: 1 },
+      { state: "completed", attempt_no: 2 },
+    ]);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM transcript_entries WHERE role='assistant'").get()).toEqual({ count: 2 });
+    database.close();
+  } finally {
+    if (application) application.process().kill("SIGKILL");
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
 test("offers a Turn retry when a Room member fails before Provider acceptance", async () => {
   test.setTimeout(45_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-prestart-retry-"));
@@ -298,6 +402,47 @@ test("settles Cancel then SIGKILL without leaving a running Turn or auto-resumin
     expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual(runCount);
     expect(database.prepare("SELECT state FROM room_batches").get()).toEqual({ state: "cancelled" });
     expect(database.prepare("SELECT DISTINCT state FROM room_turns").all()).toEqual([{ state: "cancelled" }]);
+    expect(database.prepare("SELECT DISTINCT state FROM runtime_runs").all()).toEqual([{ state: "cancelled" }]);
+    expect(database.prepare("SELECT DISTINCT status FROM transcript_entries WHERE role='assistant'").all()).toEqual([{ status: "cancelled" }]);
+    database.close();
+  } finally {
+    if (application) application.process().kill("SIGKILL");
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+test("preserves Room user-cancel intent through a normal close when the Provider ignores Abort", async () => {
+  test.setTimeout(30_000);
+  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-cancel-close-"));
+  let application: ElectronApplication | undefined;
+  try {
+    let launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "1000", MS_BOT_FAKE_IGNORE_ABORT: "1" });
+    application = launched.application;
+    await createNamedBot(launched.page, "关闭取消甲");
+    await createNamedBot(launched.page, "关闭取消乙");
+    await createRoom(launched.page, ["关闭取消甲", "关闭取消乙"]);
+    await launched.page.getByLabel("消息").fill("取消后正常关闭");
+    await launched.page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(launched.page.getByText("正在生成回复", { exact: true })).toBeVisible();
+    await launched.page.getByRole("button", { name: "停止群聊回复" }).click();
+    expect(await requestWindowClose(application)).toBe(true);
+    application = undefined;
+
+    const databasePath = join(userDataDir, "ms-bot.sqlite");
+    let database = new DatabaseSync(databasePath, { readOnly: true });
+    const runCount = database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get();
+    expect(database.prepare("SELECT DISTINCT state FROM room_batches").all()).toEqual([{ state: "cancelled" }]);
+    expect(database.prepare("SELECT DISTINCT state FROM room_turns").all()).toEqual([{ state: "cancelled" }]);
+    expect(database.prepare("SELECT DISTINCT state FROM runtime_runs").all()).toEqual([{ state: "cancelled" }]);
+    expect(database.prepare("SELECT DISTINCT status FROM transcript_entries WHERE role='assistant'").all()).toEqual([{ status: "cancelled" }]);
+    database.close();
+
+    launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
+    application = launched.application;
+    await launched.page.waitForTimeout(500);
+    database = new DatabaseSync(databasePath, { readOnly: true });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual(runCount);
+    expect(database.prepare("SELECT DISTINCT state FROM runtime_runs").all()).toEqual([{ state: "cancelled" }]);
     database.close();
   } finally {
     if (application) application.process().kill("SIGKILL");

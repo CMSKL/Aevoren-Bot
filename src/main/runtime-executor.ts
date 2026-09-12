@@ -34,6 +34,7 @@ export type RuntimeExecutionInput = {
     membershipVersion: number;
     sourceTurnId: string;
   };
+  onDispatchStart?(): void;
   onProviderStarted?(requestId: string): void;
 };
 
@@ -52,6 +53,7 @@ type ActiveRun = {
   sessionId: string;
   messages: ChatMessage[];
   attribution?: RuntimeExecutionInput["attribution"];
+  onDispatchStart?: RuntimeExecutionInput["onDispatchStart"];
   onProviderStarted?: RuntimeExecutionInput["onProviderStarted"];
   body: string;
   persistedBody: string;
@@ -114,6 +116,7 @@ export class RuntimeExecutor {
       sessionId: session.id,
       messages: prompt.messages,
       attribution: input.attribution,
+      onDispatchStart: input.onDispatchStart,
       onProviderStarted: input.onProviderStarted,
       body: "",
       persistedBody: "",
@@ -183,7 +186,7 @@ export class RuntimeExecutor {
     this.shuttingDown = true;
     for (const active of this.active.values()) {
       this.flush(active, "streaming");
-      active.abortReason = "app-shutdown";
+      active.abortReason ??= "app-shutdown";
       active.controller.abort("app-shutdown");
     }
     const pending = [...this.inFlight.values()];
@@ -197,9 +200,13 @@ export class RuntimeExecutor {
       this.clearTimers(active);
       const run = this.repository.getRuntimeRun(active.runId);
       if (!["completed", "failed", "cancelled", "interrupted"].includes(run.state)) {
-        const interrupted = this.repository.transitionRuntimeRun(run.id, "interrupted", { errorCode: "APP_INTERRUPTED" });
-        this.finalizeAssistant(active, "failed");
-        this.emitRuntime(interrupted, new MsBotError("APP_INTERRUPTED").toAppError());
+        const userCancelled = active.abortReason === "user" || run.state === "cancel-requested";
+        const error = new MsBotError(userCancelled ? "MESSAGE_CANCELLED" : "APP_INTERRUPTED").toAppError();
+        const settled = this.repository.transitionRuntimeRun(run.id, userCancelled ? "cancelled" : "interrupted", {
+          errorCode: error.code,
+        });
+        this.finalizeAssistant(active, userCancelled ? "cancelled" : "failed");
+        this.emitRuntime(settled, error);
       }
     }
   }
@@ -214,6 +221,7 @@ export class RuntimeExecutor {
     let run = this.repository.transitionRuntimeRun(runId, "dispatching");
     this.emitRuntime(run);
     try {
+      active.onDispatchStart?.();
       const provider = this.createProvider();
       for await (const event of provider.run(active.messages, active.controller.signal)) {
         if (active.controller.signal.aborted) throw new DOMException("Aborted", "AbortError");

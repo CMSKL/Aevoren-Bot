@@ -229,6 +229,50 @@ test("recovers running, streaming and cancel-requested runs after SIGKILL", asyn
   }
 });
 
+test("recovers a Direct pre-start SIGKILL as unknown without offering a safe retry", async () => {
+  test.setTimeout(30_000);
+  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-direct-pre-start-"));
+  let application: ElectronApplication | undefined;
+  try {
+    let launched = await launch(userDataDir, { MS_BOT_FAKE_START_DELAY_MS: "20000" });
+    application = launched.application;
+    await createAndSend(launched.page, "crash after Direct dispatch starts");
+    await expect(launched.page.getByText("正在连接模型", { exact: true })).toBeVisible();
+
+    const databasePath = join(userDataDir, "ms-bot.sqlite");
+    let database = new DatabaseSync(databasePath, { readOnly: true });
+    expect(database.prepare("SELECT state FROM send_journal").get()).toEqual({ state: "dispatching" });
+    expect(database.prepare("SELECT state FROM runtime_runs").get()).toEqual({ state: "dispatching" });
+    expect(database.prepare("SELECT status FROM transcript_entries WHERE role='user'").get()).toEqual({ status: "pending" });
+    database.close();
+
+    await forceKill(application);
+    application = undefined;
+    launched = await launch(userDataDir, { MS_BOT_FAKE_START_DELAY_MS: "20000" });
+    application = launched.application;
+    await expect(launched.page.getByText("应用中断，模型可能已接受该消息；不会自动重发。", { exact: true })).toBeVisible();
+    await expect(launched.page.getByRole("button", { name: "安全重试发送" })).toHaveCount(0);
+    database = new DatabaseSync(databasePath, { readOnly: true });
+    expect(database.prepare("SELECT state,attempt_count FROM send_journal").get()).toEqual({
+      state: "interrupted-unknown",
+      attempt_count: 0,
+    });
+    expect(database.prepare("SELECT state FROM runtime_runs").get()).toEqual({ state: "interrupted" });
+    expect(database.prepare("SELECT status FROM transcript_entries WHERE role='user'").get()).toEqual({ status: "failed" });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM transcript_entries WHERE role='assistant'").get()).toEqual({ count: 0 });
+    database.close();
+    await launched.page.waitForTimeout(500);
+    database = new DatabaseSync(databasePath, { readOnly: true });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 1 });
+    database.close();
+    await application.close();
+    application = undefined;
+  } finally {
+    if (application) await forceKill(application);
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
 test("shows stale after thirty seconds without provider activity and remains cancellable", async () => {
   test.setTimeout(45_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-runtime-stale-"));
