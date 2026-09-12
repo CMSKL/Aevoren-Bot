@@ -361,7 +361,7 @@ export function Conversation({
           <p>{room?.room.description || bot?.description || (room ? `${room.members.length} 个 Bot 按成员顺序协作。` : bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
         </div>
         <div className="conversation-actions">
-          <button className="secondary-button model-settings-button" type="button" onClick={onOpenSettings}>
+          <button className="secondary-button model-settings-button" type="button" aria-label="模型设置" title="模型设置" onClick={onOpenSettings}>
             <SettingsIcon />
             <span>模型设置</span>
           </button>

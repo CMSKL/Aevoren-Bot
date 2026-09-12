@@ -1,6 +1,6 @@
 import "./identity";
 import { join } from "node:path";
-import { app, BrowserWindow, safeStorage, shell } from "electron";
+import { app, BrowserWindow, nativeTheme, safeStorage, shell } from "electron";
 import { IPC } from "@shared/channels";
 import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
 import { AppRepository } from "./database";
@@ -107,8 +107,11 @@ function createWindow(): BrowserWindow {
     height: 900,
     minWidth: 390,
     minHeight: 640,
-    backgroundColor: "#ffffff",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#080808" : "#f5f5f5",
     title: "MS-Bot",
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 12, y: 12 } }
+      : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,

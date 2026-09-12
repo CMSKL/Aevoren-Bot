@@ -38,7 +38,12 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
       const user = document.querySelector<HTMLElement>(".message-user .message-bubble");
       const assistant = document.querySelector<HTMLElement>(".message-assistant .message-bubble");
       const composer = document.querySelector<HTMLElement>(".composer");
-      if (!transcriptElement || !user || !assistant || !composer) throw new Error("missing chat layout");
+      const composerEditor = document.querySelector<HTMLElement>(".composer-editor");
+      const conversationHeader = document.querySelector<HTMLElement>(".conversation-header");
+      const selectedChat = document.querySelector<HTMLElement>(".bot-row.selected");
+      if (!transcriptElement || !user || !assistant || !composer || !composerEditor || !conversationHeader || !selectedChat) {
+        throw new Error("missing chat layout");
+      }
       const transcriptRect = transcriptElement.getBoundingClientRect();
       const userRect = user.getBoundingClientRect();
       const assistantRect = assistant.getBoundingClientRect();
@@ -50,6 +55,9 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
         userRadius: Number.parseFloat(getComputedStyle(user).borderTopLeftRadius),
         assistantRadius: Number.parseFloat(getComputedStyle(assistant).borderTopLeftRadius),
         composerRadius: Number.parseFloat(getComputedStyle(composer).borderTopLeftRadius),
+        composerEditorHeight: composerEditor.getBoundingClientRect().height,
+        headerHeight: conversationHeader.getBoundingClientRect().height,
+        selectedChatHeight: selectedChat.getBoundingClientRect().height,
       };
     });
     expect(desktopLayout.userRatio).toBeLessThan(0.76);
@@ -60,6 +68,9 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     expect(desktopLayout.userRadius).toBeGreaterThanOrEqual(18);
     expect(desktopLayout.assistantRadius).toBeGreaterThanOrEqual(18);
     expect(desktopLayout.composerRadius).toBeGreaterThanOrEqual(20);
+    expect(desktopLayout.composerEditorHeight).toBeLessThanOrEqual(50);
+    expect(desktopLayout.headerHeight).toBeLessThanOrEqual(56);
+    expect(desktopLayout.selectedChatHeight).toBeLessThanOrEqual(52);
     await transcript.evaluate((element) => element.scrollTo({ top: 0 }));
     await page.screenshot({ path: "/tmp/ms-bot-chat-bubbles-desktop.png", fullPage: true });
 
