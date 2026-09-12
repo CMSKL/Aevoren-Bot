@@ -2,6 +2,7 @@ import { _electron as electron, expect, test, type Page } from "@playwright/test
 import type { MsBotApi } from "@shared/contracts";
 
 const isolatedUserData = process.env.MS_BOT_REAL_PROVIDER_USER_DATA_DIR;
+const isolatedDatabase = process.env.MS_BOT_REAL_PROVIDER_DB_PATH;
 
 async function createNamedBot(page: Page, name: string): Promise<void> {
   const before = await page.locator(".bot-row").count();
@@ -14,14 +15,26 @@ async function createNamedBot(page: Page, name: string): Promise<void> {
 }
 
 test("completes three two-member Room batches with the configured real Provider", async () => {
-  test.skip(!isolatedUserData, "requires an isolated userData copy with an existing safeStorage configuration");
+  test.skip(
+    !isolatedDatabase && !isolatedUserData,
+    "requires an isolated database with the default safeStorage context, or isolated userData with a newly entered Key",
+  );
   test.setTimeout(300_000);
+  expect(
+    !(isolatedDatabase && isolatedUserData),
+    "set only one of MS_BOT_REAL_PROVIDER_DB_PATH or MS_BOT_REAL_PROVIDER_USER_DATA_DIR",
+  ).toBe(true);
   const environment = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] =>
-      entry[1] !== undefined && entry[0] !== "MS_BOT_FAKE_PROVIDER",
+      entry[1] !== undefined && ![
+        "MS_BOT_FAKE_PROVIDER",
+        "MS_BOT_DB_PATH",
+        "MS_BOT_USER_DATA_DIR",
+      ].includes(entry[0]),
     ),
   );
-  environment.MS_BOT_USER_DATA_DIR = isolatedUserData!;
+  if (isolatedDatabase) environment.MS_BOT_DB_PATH = isolatedDatabase;
+  else environment.MS_BOT_USER_DATA_DIR = isolatedUserData!;
   const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
   try {
     const page = await application.firstWindow();
