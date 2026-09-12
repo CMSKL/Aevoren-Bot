@@ -131,7 +131,7 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await createRoom(page, ["研究员", "评审员", "执行员"]);
 
     await expect(page.getByRole("heading", { name: "研究员、评审员、执行员" })).toBeVisible();
-    await expect(page.getByText("将调用 3 个 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("未 @ 时，全部 3 个成员按顺序响应", { exact: true })).toBeVisible();
     await page.getByLabel("消息").fill("请依次给出分析。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(3);
@@ -156,14 +156,12 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await page.getByLabel("选择要添加的 Bot").selectOption({ label: "观察员" });
     await page.getByRole("button", { name: "添加", exact: true }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(3);
-    await page.locator(".target-chip").filter({ hasText: "观察员" }).click();
-    await expect(page.getByText("将调用 2 个 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("未 @ 时，全部 3 个成员按顺序响应", { exact: true })).toBeVisible();
     await page.locator(".bot-row").filter({ hasText: "观察员" }).click();
     await expect(page.getByRole("heading", { name: "观察员" })).toBeVisible();
     await page.locator(".bot-row").filter({ hasText: "产品协作室" }).click();
     await expect(page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
-    await expect(page.getByText("将调用 2 个 Bot", { exact: true })).toBeVisible();
-    await expect(page.locator(".target-chip").filter({ hasText: "观察员" })).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByText("未 @ 时，全部 3 个成员按顺序响应", { exact: true })).toBeVisible();
     await page.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
 
     await page.screenshot({ path: "/tmp/ms-bot-room-desktop-light.png", fullPage: true });
@@ -280,8 +278,10 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     expect(memberLabels).toHaveLength(2);
     expect(new Set(memberLabels).size).toBe(2);
     expect(memberLabels.every((value) => value.includes("#"))).toBe(true);
-    const targetLabels = await launched.page.locator(".target-chip").allTextContents();
+    await launched.page.getByLabel("消息").fill("@重复");
+    const targetLabels = await launched.page.locator(".mention-option-copy strong").allTextContents();
     expect(targetLabels).toEqual(memberLabels);
+    await launched.page.getByLabel("消息").press("Escape");
 
     await launched.page.getByRole("button", { name: "新建聊天" }).click();
     await launched.page.locator(".recipient-option").filter({ hasText: "创建群聊" }).click();

@@ -53,7 +53,6 @@ export function App(): React.JSX.Element {
   const [runs, setRuns] = useState<RuntimeRun[]>([]);
   const [roomBatches, setRoomBatches] = useState<RoomBatch[]>([]);
   const [roomTurns, setRoomTurns] = useState<RoomTurn[]>([]);
-  const [roomTargetSelections, setRoomTargetSelections] = useState<Record<string, string[]>>({});
   const [liveState, setLiveState] = useState<SessionLiveState | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -367,10 +366,6 @@ export function App(): React.JSX.Element {
   }
 
   const activeRoomBatch = roomBatches.some((batch) => batch.state === "queued" || batch.state === "running");
-  const selectedRoomTargetIds = selectedRoom
-    ? (roomTargetSelections[selectedRoom.room.id] ?? selectedRoom.members.map((member) => member.botId))
-        .filter((botId) => selectedRoom.members.some((member) => member.botId === botId))
-    : [];
 
   return (
     <div className="app-shell">
@@ -410,7 +405,6 @@ export function App(): React.JSX.Element {
         room={selectedRoom}
         roomBatches={roomBatches}
         roomTurns={roomTurns}
-        roomTargetBotIds={selectedRoomTargetIds}
         entries={entries}
         runs={runs}
         liveState={liveState}
@@ -443,10 +437,6 @@ export function App(): React.JSX.Element {
         onOpenSpeaker={(botId) => {
           const bot = bots.find((item) => item.id === botId);
           if (bot) void openBot(bot);
-        }}
-        onRoomTargetBotIdsChange={(botIds) => {
-          if (!selectedRoom) return;
-          setRoomTargetSelections((current) => ({ ...current, [selectedRoom.room.id]: botIds }));
         }}
       />
       {selectedRoom ? (
