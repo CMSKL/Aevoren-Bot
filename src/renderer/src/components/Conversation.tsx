@@ -11,6 +11,16 @@ import type {
   TranscriptEntry,
 } from "@shared/contracts";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
+import {
+  EVERYONE_MENTION_ID,
+  addRoomMention,
+  filterMentionItems,
+  findActiveMentionQuery,
+  removeMentionQuery,
+  resolveRoomTargetIds,
+  type ActiveMentionQuery,
+  type RoomMention,
+} from "../room-mentions";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { BotIcon, MenuIcon, PanelIcon, SendIcon, SettingsIcon, StopIcon } from "./Icons";
 
@@ -33,6 +43,7 @@ type TranscriptItemProps = {
   groupedWithPrevious: boolean;
   groupedWithNext: boolean;
   speakerDisplayName: string | null;
+  routeDisplayNames: string[];
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onRetryRoomTurn(turnId: string): void;
@@ -47,6 +58,7 @@ const TranscriptItem = memo(function TranscriptItem({
   groupedWithPrevious,
   groupedWithNext,
   speakerDisplayName,
+  routeDisplayNames,
   onRetryMessage,
   onRetryRun,
   onRetryRoomTurn,
@@ -80,6 +92,12 @@ const TranscriptItem = memo(function TranscriptItem({
             </header>
           ) : null}
           <div className={`message-bubble${longAssistant ? " message-bubble-long" : ""}`}>
+            {entry.role === "user" && routeDisplayNames.length > 0 ? (
+              <div className="message-route" aria-label={`响应 Bot：${routeDisplayNames.join("、")}`}>
+                <span>响应</span>
+                {routeDisplayNames.map((name, index) => <span className="message-route-chip" key={`${index}:${name}`}>@{name}</span>)}
+              </div>
+            ) : null}
             {entry.role === "assistant"
               ? <AssistantMarkdown body={entry.body} />
               : <p className="user-message-body">{entry.body}</p>}
@@ -134,7 +152,6 @@ type ConversationProps = {
   room: RoomDetail | null;
   roomBatches: RoomBatch[];
   roomTurns: RoomTurn[];
-  roomTargetBotIds: string[];
   entries: TranscriptEntry[];
   runs: RuntimeRun[];
   liveState: SessionLiveState | null;
@@ -153,7 +170,6 @@ type ConversationProps = {
   onRetryRoomTurn(turnId: string): void;
   onContinueRoomBatch(batchId: string): void;
   onOpenSpeaker(botId: string): void;
-  onRoomTargetBotIdsChange(botIds: string[]): void;
 };
 
 export function Conversation({
@@ -161,7 +177,6 @@ export function Conversation({
   room,
   roomBatches,
   roomTurns,
-  roomTargetBotIds,
   entries,
   runs,
   liveState,
@@ -180,16 +195,24 @@ export function Conversation({
   onRetryRoomTurn,
   onContinueRoomBatch,
   onOpenSpeaker,
-  onRoomTargetBotIdsChange,
 }: ConversationProps): React.JSX.Element {
   const [draft, setDraft] = useState("");
+  const [roomMentions, setRoomMentions] = useState<RoomMention[]>([]);
+  const [mentionQuery, setMentionQuery] = useState<ActiveMentionQuery | null>(null);
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const transcriptRef = useRef<HTMLElement>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  const dismissedMentionStartRef = useRef<number | null>(null);
   const followTranscriptTailRef = useRef(true);
   const activeRunId = liveState?.activeRunId ?? null;
   const activeBatch = roomBatches.toReversed().find((batch) => batch.state === "queued" || batch.state === "running") ?? null;
   const latestBatch = roomBatches.at(-1) ?? null;
   const busy = submitting || activeRunId !== null || activeBatch !== null;
-  const targetBotIds = room ? roomTargetBotIds : [];
+  const memberBotIds = useMemo(() => room?.members.map((member) => member.botId) ?? [], [room]);
+  const effectiveRoomMentions = roomMentions.filter((mention) => mention.kind === "everyone" || memberBotIds.includes(mention.id));
+  const invalidRoomMentions = roomMentions.filter((mention) => mention.kind === "bot" && !memberBotIds.includes(mention.id));
+  const hasInvalidRoomMentions = invalidRoomMentions.length > 0;
+  const targetBotIds = room ? resolveRoomTargetIds(roomMentions, memberBotIds) : [];
   const subjectName = bot?.name ?? room?.room.name ?? "MS-Bot";
   const latestUserNonce = useMemo(
     () => entries.toReversed().find((entry) => entry.role === "user")?.clientNonce ?? null,
@@ -228,6 +251,43 @@ export function Conversation({
       : []),
     ...roomTurns.map((turn) => ({ id: turn.memberBotId, name: turn.memberNameSnapshot })),
   ]), [entries, roomTurns]);
+  const mentionItems = useMemo(() => room ? [
+    {
+      id: EVERYONE_MENTION_ID,
+      label: "所有人",
+      keywords: ["all", "everyone", "全部", "全员"],
+    },
+    ...room.members.map((member) => {
+      const identity = roomMemberIdentities.get(member.botId)!;
+      return {
+        id: member.botId,
+        label: identity.inline,
+        keywords: [member.bot.name, member.bot.label, identity.secondary],
+      };
+    }),
+  ] : [], [room, roomMemberIdentities]);
+  const mentionCandidates = useMemo(
+    () => mentionQuery ? filterMentionItems(mentionItems, mentionQuery.query) : [],
+    [mentionItems, mentionQuery],
+  );
+  const roomRoutesByNonce = useMemo(() => {
+    const result = new Map<string, string[]>();
+    for (const batch of roomBatches) {
+      const seen = new Set<string>();
+      const names: string[] = [];
+      for (const turn of roomTurns
+        .filter((item) => item.batchId === batch.id)
+        .toSorted((left, right) => left.position - right.position || left.attemptNo - right.attemptNo)) {
+        if (seen.has(turn.memberBotId)) continue;
+        seen.add(turn.memberBotId);
+        names.push(roomMemberIdentities.get(turn.memberBotId)?.inline
+          ?? snapshotIdentities.get(turn.memberBotId)
+          ?? turn.memberNameSnapshot);
+      }
+      result.set(batch.clientNonce, names);
+    }
+    return result;
+  }, [roomBatches, roomMemberIdentities, roomTurns, snapshotIdentities]);
 
   useLayoutEffect(() => {
     const transcript = transcriptRef.current;
@@ -236,10 +296,52 @@ export function Conversation({
 
   async function submit(): Promise<void> {
     const text = draft.trim();
-    if (!text || (!bot && !room) || busy || (room && targetBotIds.length === 0)) return;
+    if (!text || (!bot && !room) || busy || hasInvalidRoomMentions || Boolean(room && targetBotIds.length === 0)) return;
     followTranscriptTailRef.current = true;
     const accepted = await onSend(text, room ? targetBotIds : undefined);
-    if (accepted) setDraft("");
+    if (accepted) {
+      setDraft("");
+      setRoomMentions([]);
+      setMentionQuery(null);
+      dismissedMentionStartRef.current = null;
+    }
+  }
+
+  function refreshMentionQuery(text: string, caret: number): void {
+    if (!room) return;
+    const next = findActiveMentionQuery(text, caret);
+    if (!next) {
+      dismissedMentionStartRef.current = null;
+      setMentionQuery(null);
+      return;
+    }
+    if (dismissedMentionStartRef.current === next.start) {
+      setMentionQuery(null);
+      return;
+    }
+    dismissedMentionStartRef.current = null;
+    setActiveMentionIndex(0);
+    setMentionQuery(next);
+  }
+
+  function selectMention(itemId: string): void {
+    if (!mentionQuery) return;
+    const selectedItem = mentionItems.find((item) => item.id === itemId);
+    if (!selectedItem) return;
+    const nextDraft = removeMentionQuery(draft, mentionQuery);
+    setRoomMentions((current) => addRoomMention(
+      current,
+      itemId === EVERYONE_MENTION_ID
+        ? { kind: "everyone", id: EVERYONE_MENTION_ID }
+        : { kind: "bot", id: itemId, label: selectedItem.label },
+    ));
+    setDraft(nextDraft.text);
+    setMentionQuery(null);
+    dismissedMentionStartRef.current = null;
+    requestAnimationFrame(() => {
+      composerInputRef.current?.focus();
+      composerInputRef.current?.setSelectionRange(nextDraft.caret, nextDraft.caret);
+    });
   }
 
   return (
@@ -282,7 +384,7 @@ export function Conversation({
         {!loading && (bot || room) && entries.length === 0 ? (
           <div className="center-state">
             <strong>开始对话</strong>
-            <span>{room ? "选择回复成员，然后发出第一条协作消息。" : "告诉这个 Bot 你希望它完成什么。"}</span>
+            <span>{room ? "输入 @ 指定 Bot；未指定时由全部成员按顺序响应。" : "告诉这个 Bot 你希望它完成什么。"}</span>
           </div>
         ) : null}
         {entries.map((entry, index) => {
@@ -314,6 +416,9 @@ export function Conversation({
               speakerDisplayName={entry.speakerBotId
                 ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? snapshotIdentities.get(entry.speakerBotId) ?? null
                 : null}
+              routeDisplayNames={entry.role === "user" && entry.clientNonce
+                ? roomRoutesByNonce.get(entry.clientNonce) ?? []
+                : []}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
               onRetryRoomTurn={onRetryRoomTurn}
@@ -346,43 +451,118 @@ export function Conversation({
             ) : null}
           </div>
         ) : null}
-        {room ? (
-          <div className="room-targets" aria-label="选择回复成员">
-            <span>回复成员</span>
-            {room.members.map((member) => {
-              const selected = targetBotIds.includes(member.botId);
-              const identity = roomMemberIdentities.get(member.botId)!;
-              return (
-                <button
-                  type="button"
-                  className={`target-chip${selected ? " selected" : ""}`}
-                  aria-pressed={selected}
-                  disabled={busy}
-                  key={member.botId}
-                  onClick={() => onRoomTargetBotIdsChange(
-                    selected ? targetBotIds.filter((id) => id !== member.botId) : [...targetBotIds, member.botId],
-                  )}
-                >{identity.inline}</button>
-              );
-            })}
-            <small>将调用 {targetBotIds.length} 个 Bot</small>
-          </div>
-        ) : null}
+        {room ? <div className={`room-routing-hint${hasInvalidRoomMentions ? " invalid" : ""}`} role={hasInvalidRoomMentions ? "alert" : undefined}>
+          {hasInvalidRoomMentions
+            ? `${invalidRoomMentions.map((mention) => mention.kind === "bot" ? `@${mention.label}` : "").join("、")} 已不在群聊，请移除后重新选择`
+            : effectiveRoomMentions.length === 0
+            ? `未 @ 时，全部 ${room.members.length} 个成员按顺序响应`
+            : effectiveRoomMentions.some((mention) => mention.kind === "everyone")
+              ? `已 @所有人，将调用 ${room.members.length} 个 Bot`
+              : `将调用 ${targetBotIds.length} 个被 @ 的 Bot`}
+        </div> : null}
         <div className="composer">
-          <textarea
-            aria-label="消息"
-            placeholder={room ? `给 ${room.room.name} 发消息…` : bot ? `给 ${bot.name} 发消息…` : "给 Bot 发消息…"}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void submit();
-              }
-            }}
-            disabled={!bot && !room}
-            rows={2}
-          />
+          {room && mentionQuery ? (
+            <div className="mention-menu" role="listbox" aria-label="提及 Bot" id="room-mention-menu">
+              <div className="mention-menu-header">提及</div>
+              {mentionCandidates.length === 0 ? (
+                <div className="mention-empty">未找到与“{mentionQuery.query}”匹配的 Bot <span>按 Esc 关闭</span></div>
+              ) : mentionCandidates.map((item, index) => {
+                const selected = effectiveRoomMentions.some((mention) => mention.id === item.id);
+                return (
+                  <button
+                    className={`mention-option${index === activeMentionIndex ? " active" : ""}${selected ? " selected" : ""}`}
+                    id={`room-mention-option-${index}`}
+                    key={item.id}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => selectMention(item.id)}
+                  >
+                    <span className="mention-option-icon"><BotIcon /></span>
+                    <span className="mention-option-copy">
+                      <strong>{item.label}</strong>
+                      <small>{item.id === EVERYONE_MENTION_ID ? "Bot · 群聊中的全部成员" : "Bot"}</small>
+                    </span>
+                    {selected ? <span className="mention-selected">已选择</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          <div className="composer-editor">
+            {roomMentions.length > 0 ? <div className="mention-chips" aria-label="已提及的 Bot">
+              {roomMentions.map((mention) => {
+                const invalid = mention.kind === "bot" && !memberBotIds.includes(mention.id);
+                const label = mention.kind === "everyone"
+                  ? "所有人"
+                  : roomMemberIdentities.get(mention.id)?.inline ?? mention.label;
+                return (
+                  <button
+                    className={`mention-chip${invalid ? " invalid" : ""}`}
+                    type="button"
+                    key={`${mention.kind}:${mention.id}`}
+                    aria-label={`移除 @${label}`}
+                    aria-invalid={invalid || undefined}
+                    disabled={busy}
+                    onClick={() => setRoomMentions((current) => current.filter((item) => item.id !== mention.id))}
+                  >@{label}<span aria-hidden="true">×</span></button>
+                );
+              })}
+            </div> : null}
+            <textarea
+              ref={composerInputRef}
+              aria-label="消息"
+              aria-autocomplete={room ? "list" : undefined}
+              aria-controls={mentionQuery ? "room-mention-menu" : undefined}
+              aria-expanded={room ? Boolean(mentionQuery) : undefined}
+              aria-activedescendant={mentionQuery && mentionCandidates.length > 0 ? `room-mention-option-${activeMentionIndex}` : undefined}
+              placeholder={room ? `给 ${room.room.name} 发消息，输入 @ 指定 Bot…` : bot ? `给 ${bot.name} 发消息…` : "给 Bot 发消息…"}
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.currentTarget.value);
+                refreshMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart);
+              }}
+              onClick={(event) => refreshMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart)}
+              onFocus={(event) => refreshMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart)}
+              onBlur={() => setMentionQuery(null)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if (mentionQuery) {
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    if (mentionCandidates.length > 0) setActiveMentionIndex((current) => (
+                      current + (event.key === "ArrowDown" ? 1 : -1) + mentionCandidates.length
+                    ) % mentionCandidates.length);
+                    return;
+                  }
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    const selectedCandidate = mentionCandidates[activeMentionIndex];
+                    if (selectedCandidate) selectMention(selectedCandidate.id);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    dismissedMentionStartRef.current = mentionQuery.start;
+                    setMentionQuery(null);
+                    return;
+                  }
+                }
+                if (event.key === "Backspace" && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0 && draft.length === 0 && roomMentions.length > 0) {
+                  event.preventDefault();
+                  setRoomMentions((current) => current.slice(0, -1));
+                  return;
+                }
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void submit();
+                }
+              }}
+              disabled={!bot && !room}
+              rows={2}
+            />
+          </div>
           {activeBatch ? (
             <button className="send-button stop" type="button" onClick={() => onCancelRoomBatch(activeBatch.id)} aria-label="停止群聊回复"><StopIcon /></button>
           ) : activeRunId ? (
@@ -399,7 +579,7 @@ export function Conversation({
               className="send-button"
               type="button"
               onClick={() => void submit()}
-              disabled={(!bot && !room) || !draft.trim() || busy || Boolean(room && targetBotIds.length === 0)}
+              disabled={(!bot && !room) || !draft.trim() || busy || hasInvalidRoomMentions || Boolean(room && targetBotIds.length === 0)}
               aria-label="发送"
             >
               <SendIcon />
