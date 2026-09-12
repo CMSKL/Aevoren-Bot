@@ -128,7 +128,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   return (
     <aside className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="群聊设置">
       <header className="inspector-header">
-        <h2>群聊设置</h2>
+        <h2>对话详情</h2>
         <div className="inspector-header-actions">
           <div className={`save-status status-${status}`} data-testid="room-save-status">
             {status === "saving" ? "保存中…" : null}
@@ -139,14 +139,6 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
           <button className="drawer-close-button" type="button" aria-label="关闭群聊设置" onClick={onMobileClose}><CloseIcon /></button>
         </div>
       </header>
-      <label className="field">
-        <span>名称</span>
-        <input value={draft.name} maxLength={72} onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
-      </label>
-      <label className="field">
-        <span>描述</span>
-        <textarea value={draft.description} maxLength={2_000} rows={4} placeholder="说明这个群聊的协作目标" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
-      </label>
       <section className="room-members" aria-label="群聊成员">
         <div className="room-section-title"><strong>成员</strong><span>{detail.members.length}/6</span></div>
         {detail.members.map((member) => {
@@ -172,6 +164,14 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
         ) : null}
         {active ? <p className="room-lock-note">本批回复完成或取消后才能修改成员。</p> : null}
       </section>
+      <label className="field">
+        <span>名称</span>
+        <input value={draft.name} maxLength={72} onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
+      </label>
+      <label className="field">
+        <span>描述</span>
+        <textarea value={draft.description} maxLength={2_000} rows={4} placeholder="说明这个群聊的协作目标" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
+      </label>
       {status === "failed" ? <button className="secondary-button full-width" type="button" onClick={() => void flush()}>重试保存</button> : null}
       <button
         className="secondary-button full-width archive-button"

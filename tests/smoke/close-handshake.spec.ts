@@ -25,7 +25,12 @@ async function createBot(page: Page): Promise<void> {
 async function requestWindowClose(application: ElectronApplication, timeoutMs = 3_000): Promise<boolean> {
   const process = application.process();
   const exited = new Promise<boolean>((resolve) => process.once("exit", () => resolve(true)));
-  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
+  try {
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
+  } catch {
+    // A successful immediate close can destroy Playwright's main-process context
+    // before evaluate resolves. The process exit below remains the authority.
+  }
   const didExit = await Promise.race([
     exited,
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),

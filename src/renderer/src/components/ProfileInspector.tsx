@@ -140,7 +140,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   return (
     <aside className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
       <header className="inspector-header">
-        <h2>Bot 设置</h2>
+        <h2>Bot 详情</h2>
         <div className="inspector-header-actions">
           <div className={`save-status status-${status}`} data-testid="profile-save-status">
             {status === "saving" ? "保存中…" : null}

@@ -170,7 +170,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await page.getByRole("button", { name: "添加", exact: true }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(3);
 
-    for (const [width, height] of [[1440, 900], [1180, 800], [981, 780], [980, 780], [768, 800], [390, 844]] as const) {
+    for (const [width, height] of [[1440, 900], [1180, 800], [1040, 708], [981, 780], [980, 780], [768, 800], [390, 844]] as const) {
       await application.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]?.setSize(size.width, size.height), { width, height });
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(width);
       await assertViewportContained(page);
@@ -185,6 +185,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
       const rect = element.getBoundingClientRect();
       return rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight;
     })).toBe(true);
+    expect(await page.locator(".mention-option").first().evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(38);
     const longCandidate = page.locator(".mention-option").filter({ hasText: seeded.botNames[2]! }).locator("strong");
     expect(await longCandidate.evaluate((element) => {
       const rect = element.getBoundingClientRect();
