@@ -27,16 +27,17 @@ function setup(provider: ModelProvider, memberCount = 3) {
   });
   const detail = repository.createRoom({ memberBotIds: bots.map(({ bot }) => bot.id), name: "Test Room" });
   const settings = new ModelSettingsService(repository, codec);
+  const transcriptEvents = vi.fn();
   const executor = new RuntimeExecutor(
     repository,
     settings,
-    { transcript: vi.fn(), runtime: vi.fn() },
+    { transcript: transcriptEvents, runtime: vi.fn() },
     false,
     provider,
   );
   const roomEvents = vi.fn();
   const coordinator = new RoomCoordinator(repository, executor, { roomRuntime: roomEvents, transcript: vi.fn() });
-  return { repository, bots, detail, executor, coordinator, roomEvents };
+  return { repository, bots, detail, executor, coordinator, roomEvents, transcriptEvents };
 }
 
 function command(detail: ReturnType<AppRepository["createRoom"]>, targetBotIds: string[]) {
@@ -126,6 +127,34 @@ describe("RoomCoordinator", () => {
       roomMembershipVersion: 1,
     });
     expect(JSON.stringify(secondRun.promptManifest)).not.toContain("first answer");
+  });
+
+  it("removes a leaked attribution envelope before persistence and subsequent Room prompts", async () => {
+    const captured: ChatMessage[][] = [];
+    let leakedMarker = "";
+    const provider: ModelProvider = {
+      async *run(messages) {
+        captured.push(messages);
+        yield { type: "started", requestId: `request-${captured.length}` };
+        const reply = captured.length === 1 ? `intro\n${leakedMarker} first answer` : "second answer";
+        yield { type: "delta", text: reply.slice(0, 18) };
+        yield { type: "delta", text: reply.slice(18) };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, bots, detail, coordinator, transcriptEvents } = setup(provider, 2);
+    leakedMarker = `[room-speaker id="${bots[1]!.bot.id}" name="Member 2"]`;
+    const sent = coordinator.send(command(detail, bots.map(({ bot }) => bot.id)));
+    await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
+
+    const assistants = repository.listTranscript(detail.session.id).filter((entry) => entry.role === "assistant");
+    expect(assistants.map((entry) => entry.body)).toEqual(["intro\nfirst answer", "second answer"]);
+    expect(JSON.stringify(transcriptEvents.mock.calls)).not.toContain("room-speaker");
+    expect(captured[1]!.some((message) => message.content === leakedMarker)).toBe(false);
+    expect(captured[1]!.some((message) =>
+      message.content === `[room-speaker id="${bots[0]!.bot.id}" name="Member 1"]\nintro\nfirst answer`,
+    )).toBe(true);
   });
 
   it("continues after a middle member failure and marks the batch partial", async () => {

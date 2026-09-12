@@ -10,6 +10,7 @@ import type {
   SessionLiveStateName,
   TranscriptEntry,
 } from "@shared/contracts";
+import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
 import {
   EVERYONE_MENTION_ID,
@@ -68,7 +69,10 @@ const TranscriptItem = memo(function TranscriptItem({
   const interrupted = run?.state === "interrupted";
   const cancelled = entry.status === "cancelled";
   const failed = entry.status === "failed";
-  const longAssistant = entry.role === "assistant" && entry.body.length > 160;
+  const assistantBody = entry.role === "assistant" && entry.speakerBotId
+    ? sanitizeRoomSpeakerOutput(entry.body, entry.status === "streaming")
+    : entry.body;
+  const longAssistant = entry.role === "assistant" && assistantBody.length > 160;
   const speakerName = entry.role === "assistant" ? speakerDisplayName ?? entry.speakerNameSnapshot ?? "MS-Bot" : "你";
 
   return (
@@ -99,7 +103,7 @@ const TranscriptItem = memo(function TranscriptItem({
               </div>
             ) : null}
             {entry.role === "assistant"
-              ? <AssistantMarkdown body={entry.body} />
+              ? <AssistantMarkdown body={assistantBody} />
               : <p className="user-message-body">{entry.body}</p>}
           </div>
           {entry.status === "streaming"

@@ -8,6 +8,7 @@ import type {
   TranscriptEntry,
   TranscriptRole,
 } from "@shared/contracts";
+import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 
 export type PromptMessage = {
   role: "system" | TranscriptRole;
@@ -31,7 +32,7 @@ function transcriptAuthority(entry: TranscriptEntry): PromptAuthority {
   return entry.role;
 }
 
-function attributedAssistantContent(entry: TranscriptEntry): string {
+function attributedAssistantContent(entry: TranscriptEntry, body: string): string {
   const safeName = [...(entry.speakerNameSnapshot ?? "")]
     .map((character) => {
       const codePoint = character.codePointAt(0) ?? 0;
@@ -41,7 +42,7 @@ function attributedAssistantContent(entry: TranscriptEntry): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 80);
-  return `[room-speaker id="${entry.speakerBotId ?? "unknown"}" name=${JSON.stringify(safeName)}]\n${entry.body}`;
+  return `[room-speaker id="${entry.speakerBotId ?? "unknown"}" name=${JSON.stringify(safeName)}]\n${body}`;
 }
 
 export function buildPrompt(
@@ -83,9 +84,12 @@ export function buildPrompt(
       )
       .toSorted((left, right) => left.seq - right.seq)
       .map((entry) => {
-        const content = context && entry.role === "assistant" && entry.speakerBotId
-          ? attributedAssistantContent(entry)
+        const body = entry.role === "assistant" && entry.speakerBotId
+          ? sanitizeRoomSpeakerOutput(entry.body)
           : entry.body;
+        const content = context && entry.role === "assistant" && entry.speakerBotId
+          ? attributedAssistantContent(entry, body)
+          : body;
         return {
           authority: transcriptAuthority(entry),
           provenance: `transcript:${entry.id}:u${entry.updatedSeq}`,
