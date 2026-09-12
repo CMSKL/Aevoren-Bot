@@ -335,6 +335,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     const launched = await launch(userDataDir);
     application = launched.application;
     expect(await application.evaluate(({ app }) => app.getName())).toBe("ms-bot");
+    expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("use-mock-keychain"))).toBe(true);
     const result = await launched.page.evaluate(() =>
       (window as unknown as { msBot: MsBotApi }).msBot.runtime.cancel("not-a-uuid"),
     );

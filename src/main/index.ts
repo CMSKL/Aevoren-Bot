@@ -1,3 +1,4 @@
+import "./identity";
 import { join } from "node:path";
 import { app, BrowserWindow, safeStorage, shell } from "electron";
 import { IPC } from "@shared/channels";
@@ -7,8 +8,6 @@ import { registerIpc } from "./ipc";
 import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
 import { ModelSettingsService, type SecretCodec } from "./settings";
-
-app.setName("ms-bot");
 
 const userDataOverride = process.env.MS_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);

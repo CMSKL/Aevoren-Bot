@@ -33,6 +33,7 @@ test("completes three two-member Room batches with the configured real Provider"
       ].includes(entry[0]),
     ),
   );
+  environment.MS_BOT_USE_SYSTEM_SAFE_STORAGE = "1";
   if (isolatedDatabase) environment.MS_BOT_DB_PATH = isolatedDatabase;
   else environment.MS_BOT_USER_DATA_DIR = isolatedUserData!;
   const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
