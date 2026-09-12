@@ -19,11 +19,50 @@ export const botIdSchema = z.string().uuid();
 export const sessionIdSchema = z.string().uuid();
 export const nonceSchema = z.string().uuid();
 export const runIdSchema = z.string().uuid();
+export const roomIdSchema = z.string().uuid();
+export const batchIdSchema = z.string().uuid();
+export const turnIdSchema = z.string().uuid();
 
 export const sendCommandSchema = z.object({
   sessionId: sessionIdSchema,
   clientNonce: nonceSchema,
   text: nonEmptyText,
+});
+
+const roomMemberIdsSchema = z.array(botIdSchema).min(2).max(6).refine(
+  (ids) => new Set(ids).size === ids.length,
+  "Room members must be unique",
+);
+
+export const roomCreateSchema = z.object({
+  memberBotIds: roomMemberIdsSchema,
+  name: z.string().trim().min(1).max(72).optional(),
+  description: z.string().trim().max(2_000).optional(),
+});
+
+export const roomUpdateSchema = z.object({
+  id: roomIdSchema,
+  expectedVersion: z.number().int().positive(),
+  patch: z.object({
+    name: z.string().trim().min(1).max(72).optional(),
+    description: z.string().trim().max(2_000).optional(),
+  }).refine((patch) => Object.keys(patch).length > 0, "At least one field is required"),
+});
+
+export const roomArchiveSchema = z.object({ id: roomIdSchema, archived: z.boolean() });
+export const roomListSchema = z.object({ includeArchived: z.boolean().optional() }).optional();
+export const roomMembershipSchema = z.object({
+  roomId: roomIdSchema,
+  botId: botIdSchema,
+  expectedMembershipVersion: z.number().int().positive(),
+});
+
+export const roomSendCommandSchema = sendCommandSchema.extend({
+  roomId: roomIdSchema,
+  targetBotIds: z.array(botIdSchema).min(1).max(6).refine(
+    (ids) => new Set(ids).size === ids.length,
+    "Room targets must be unique",
+  ),
 });
 
 export const modelConfigurationSchema = z.object({

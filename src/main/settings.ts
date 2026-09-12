@@ -49,6 +49,10 @@ export class ModelSettingsService {
     if (!setting.encrypted || !this.secretCodec.isAvailable()) {
       throw new MsBotError("SECURE_STORAGE_UNAVAILABLE", "无法安全读取模型 API Key。", false);
     }
-    return this.secretCodec.decrypt(setting.value);
+    try {
+      return this.secretCodec.decrypt(setting.value);
+    } catch {
+      throw new MsBotError("SECURE_STORAGE_UNAVAILABLE", "无法安全读取模型 API Key。", false);
+    }
   }
 }

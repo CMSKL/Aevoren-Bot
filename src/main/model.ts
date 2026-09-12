@@ -70,6 +70,9 @@ export class FakeModelProvider implements ModelProvider {
   async *run(_messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
     if (signal.aborted) throw abortError();
     fakeRunCount += 1;
+    if (this.failureMode === "first-run-before-start" && fakeRunCount === 1) {
+      throw new MsBotError("MODEL_CONNECTION_FAILED");
+    }
     if (this.startDelayMs > 0) {
       if (this.ignoreAbort) await new Promise((resolve) => setTimeout(resolve, this.startDelayMs));
       else await delay(this.startDelayMs, signal);

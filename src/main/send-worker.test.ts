@@ -170,6 +170,7 @@ describe("RuntimeCoordinator", () => {
     const first = worker.send({ sessionId: session.id, clientNonce: crypto.randomUUID(), text: "retry" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(first.runId).state).toBe("failed"));
     const second = worker.retryRun(first.runId);
+    expect(second.state).toBe("acked");
     await vi.waitFor(() => expect(repository.getRuntimeRun(second.runId).state).toBe("completed"));
 
     expect(repository.listTranscript(session.id).filter((entry) => entry.role === "user")).toHaveLength(1);
