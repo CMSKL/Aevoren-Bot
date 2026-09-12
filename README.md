@@ -1,6 +1,6 @@
 # MS-Bot
 
-MS-Bot 是一个本地 macOS Electron Bot 工作台。当前 Feature 版本在 P0-A/P0-B 可靠对话和 Runtime 之上增加 P1-A1 确定性多 Bot Room。
+MS-Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在 P0-A/P0-B 可靠对话和 Runtime 之上增加 P1-A1 确定性多 Bot Room。
 
 ## 当前范围
 
