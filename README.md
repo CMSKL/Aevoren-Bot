@@ -99,7 +99,7 @@ pnpm validate
 - [P1-A1 Room 验收标准单](docs/validation/p1-a-room-acceptance-checklist.md)
 - [P1-A1 Room 验收结果](docs/validation/p1-a-room-acceptance-results.md)
 - [P1-A1 Room 验收证据](docs/validation/evidence/p1-a-room/acceptance-evidence.md)
-- [P1-A1 Room 演示与真实 Provider 补验脚本](docs/validation/p1-a-room-demo-script.md)
+- [P1-A1 Room 演示与真实 Provider 验收脚本](docs/validation/p1-a-room-demo-script.md)
 - [新建 Bot 与 Grok Bot 差异矩阵](docs/plans/grok-new-bot-parity.md)
 - [新建 Bot 对齐实施说明](docs/plans/grok-new-bot-parity-implementation.md)
 - [新建 Bot 对齐验收清单](docs/validation/grok-new-bot-parity-checklist.md)
