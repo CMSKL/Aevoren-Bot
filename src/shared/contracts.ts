@@ -13,7 +13,8 @@ export type BotPatch = Partial<Pick<Bot, "name" | "label" | "description" | "ins
 
 export type Session = {
   id: string;
-  botId: string;
+  botId: string | null;
+  roomId: string | null;
   kind: "MAIN";
   generation: number;
   createdAt: string;
@@ -45,6 +46,9 @@ export type TranscriptEntry = {
   body: string;
   status: TranscriptStatus;
   sendState: SendState | null;
+  speakerBotId: string | null;
+  speakerNameSnapshot: string | null;
+  sourceTurnId: string | null;
   updatedSeq: number;
   createdAt: string;
   updatedAt: string;
@@ -96,15 +100,21 @@ export type PromptManifestBlock = {
   digest: string;
   createdAt: string;
   sourceEntryId: string | null;
+  speakerBotId?: string;
 };
 
 export type PromptManifest = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   botId: string;
   profileVersion: number;
   sessionId: string;
   generation: number;
   inputSeq: number;
+  promptCutoffSeq?: number;
+  roomId?: string;
+  roomMembershipVersion?: number;
+  executorBotId?: string;
+  sourceTurnId?: string;
   blocks: PromptManifestBlock[];
   digest: string;
 };
@@ -113,11 +123,14 @@ export type RuntimeRun = {
   id: string;
   sessionId: string;
   clientNonce: string;
+  executorBotId: string;
+  executionKey: string;
   attemptNo: number;
   state: RuntimeState;
   route: RuntimeRoute;
   inputGeneration: number;
   inputSeq: number;
+  promptCutoffSeq: number;
   assistantEntryId: string | null;
   providerRequestId: string | null;
   promptManifest: PromptManifest;
@@ -127,6 +140,96 @@ export type RuntimeRun = {
   acceptedAt: string | null;
   lastActivityAt: string;
   finishedAt: string | null;
+};
+
+export type Room = {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  membershipVersion: number;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RoomPatch = Partial<Pick<Room, "name" | "description">>;
+
+export type RoomMember = {
+  roomId: string;
+  botId: string;
+  position: number;
+  bot: Bot;
+};
+
+export type RoomDetail = {
+  room: Room;
+  members: RoomMember[];
+  session: Session;
+};
+
+export type RoomBatchState = "queued" | "running" | "completed" | "partial" | "cancelled" | "interrupted";
+export type RoomTurnState = "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+
+export type RoomBatch = {
+  id: string;
+  roomId: string;
+  sessionId: string;
+  clientNonce: string;
+  targetDigest: string;
+  state: RoomBatchState;
+  membershipVersion: number;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+};
+
+export type RoomTurn = {
+  id: string;
+  batchId: string;
+  memberBotId: string;
+  memberNameSnapshot: string;
+  position: number;
+  attemptNo: number;
+  version: number;
+  state: RoomTurnState;
+  runtimeRunId: string | null;
+  promptCutoffSeq: number | null;
+  lastErrorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+};
+
+export type RoomSendCommand = SendCommand & {
+  roomId: string;
+  targetBotIds: string[];
+};
+
+export type RoomSendResult = {
+  clientNonce: string;
+  batchId: string;
+  disposition: "accepted" | "duplicate";
+  state: RoomBatchState;
+};
+
+export type RoomRuntimeSnapshot = {
+  detail: RoomDetail;
+  transcriptCursor: number;
+  entries: TranscriptEntry[];
+  runs: RuntimeRun[];
+  batches: RoomBatch[];
+  turns: RoomTurn[];
+  liveState: SessionLiveState;
+};
+
+export type RoomRuntimeEvent = {
+  roomId: string;
+  sessionId: string;
+  batch: RoomBatch;
+  turns: RoomTurn[];
+  error?: AppError;
 };
 
 export type SessionLiveStateName =
@@ -172,6 +275,7 @@ export type ErrorDomain =
   | "validation"
   | "bot"
   | "session"
+  | "room"
   | "message"
   | "runtime"
   | "provider"
@@ -217,6 +321,15 @@ export interface MsBotApi {
   sessions: {
     getMain(botId: string): Promise<ApiResult<Session>>;
   };
+  rooms: {
+    list(input?: { includeArchived?: boolean }): Promise<ApiResult<Room[]>>;
+    create(input: { memberBotIds: string[]; name?: string; description?: string }): Promise<ApiResult<RoomDetail>>;
+    get(id: string): Promise<ApiResult<RoomDetail>>;
+    update(input: { id: string; expectedVersion: number; patch: RoomPatch }): Promise<ApiResult<Room>>;
+    archive(input: { id: string; archived: boolean }): Promise<ApiResult<Room>>;
+    addMember(input: { roomId: string; botId: string; expectedMembershipVersion: number }): Promise<ApiResult<RoomDetail>>;
+    removeMember(input: { roomId: string; botId: string; expectedMembershipVersion: number }): Promise<ApiResult<RoomDetail>>;
+  };
   transcript: {
     list(sessionId: string): Promise<ApiResult<TranscriptEntry[]>>;
   };
@@ -231,6 +344,13 @@ export interface MsBotApi {
     cancel(runId: string): Promise<ApiResult<RuntimeRun>>;
     retry(runId: string): Promise<ApiResult<SendResult>>;
   };
+  roomRuntime: {
+    getSnapshot(roomId: string): Promise<ApiResult<RoomRuntimeSnapshot>>;
+    send(command: RoomSendCommand): Promise<ApiResult<RoomSendResult>>;
+    cancel(batchId: string): Promise<ApiResult<RoomBatch>>;
+    continue(batchId: string): Promise<ApiResult<RoomBatch>>;
+    retryTurn(turnId: string): Promise<ApiResult<RoomTurn>>;
+  };
   settings: {
     getModelConfiguration(): Promise<ApiResult<ModelConfiguration>>;
     saveModelConfiguration(input: SaveModelConfigurationInput): Promise<ApiResult<ModelConfiguration>>;
@@ -240,6 +360,7 @@ export interface MsBotApi {
     subscribeTranscript(listener: (event: TranscriptEvent) => void): () => void;
     subscribeSendState(listener: (event: SendStateEvent) => void): () => void;
     subscribeRuntime(listener: (event: RuntimeEvent) => void): () => void;
+    subscribeRoomRuntime(listener: (event: RoomRuntimeEvent) => void): () => void;
   };
   app: {
     ready(): void;

@@ -4,6 +4,15 @@ import type {
   Bot,
   BotPatch,
   PromptManifest,
+  Room,
+  RoomBatch,
+  RoomBatchState,
+  RoomDetail,
+  RoomMember,
+  RoomPatch,
+  RoomSendCommand,
+  RoomTurn,
+  RoomTurnState,
   RuntimeRoute,
   RuntimeRun,
   RuntimeState,
@@ -38,7 +47,25 @@ const RUNTIME_TRANSITIONS: Record<RuntimeState, readonly RuntimeState[]> = {
   interrupted: [],
 };
 
-const MIGRATIONS = [
+const ROOM_BATCH_TRANSITIONS: Record<RoomBatchState, readonly RoomBatchState[]> = {
+  queued: ["running", "cancelled", "interrupted"],
+  running: ["completed", "partial", "cancelled", "interrupted"],
+  completed: [],
+  partial: ["running"],
+  cancelled: ["running"],
+  interrupted: ["running"],
+};
+
+const ROOM_TURN_TRANSITIONS: Record<RoomTurnState, readonly RoomTurnState[]> = {
+  queued: ["running", "cancelled", "interrupted"],
+  running: ["completed", "failed", "cancelled", "interrupted"],
+  completed: [],
+  failed: [],
+  cancelled: [],
+  interrupted: [],
+};
+
+export const MIGRATIONS = [
   {
     version: 1,
     sql: `
@@ -143,6 +170,176 @@ const MIGRATIONS = [
         WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested');
     `,
   },
+  {
+    version: 3,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE rooms (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        membership_version INTEGER NOT NULL CHECK (membership_version > 0),
+        archived_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE room_members (
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE RESTRICT,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (room_id, bot_id),
+        UNIQUE (room_id, position)
+      );
+
+      CREATE TABLE sessions_v3 (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE,
+        room_id TEXT REFERENCES rooms(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind = 'MAIN'),
+        generation INTEGER NOT NULL CHECK (generation > 0),
+        transcript_cursor INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK ((bot_id IS NOT NULL AND room_id IS NULL) OR (bot_id IS NULL AND room_id IS NOT NULL))
+      );
+      INSERT INTO sessions_v3(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+      SELECT id, bot_id, NULL, kind, generation, transcript_cursor, created_at, updated_at FROM sessions;
+
+      CREATE TABLE transcript_entries_v3 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions_v3(id) ON DELETE CASCADE,
+        generation INTEGER NOT NULL,
+        seq INTEGER NOT NULL,
+        client_nonce TEXT,
+        role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+        body TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'streaming', 'completed', 'failed', 'cancelled')),
+        updated_seq INTEGER NOT NULL DEFAULT 0,
+        speaker_bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL,
+        speaker_name_snapshot TEXT,
+        source_turn_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (session_id, generation, seq)
+      );
+      INSERT INTO transcript_entries_v3(
+        id, session_id, generation, seq, client_nonce, role, body, status, updated_seq,
+        speaker_bot_id, speaker_name_snapshot, source_turn_id, created_at, updated_at
+      )
+      SELECT id, session_id, generation, seq, client_nonce, role, body, status, updated_seq,
+             NULL, NULL, NULL, created_at, updated_at FROM transcript_entries;
+
+      CREATE TABLE send_journal_v3 (
+        client_nonce TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions_v3(id) ON DELETE CASCADE,
+        body_digest TEXT NOT NULL,
+        state TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        provider_request_id TEXT,
+        last_error_code TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO send_journal_v3
+      SELECT client_nonce, session_id, body_digest, state, attempt_count, provider_request_id,
+             last_error_code, created_at, updated_at FROM send_journal;
+
+      CREATE TABLE runtime_runs_v3 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions_v3(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal_v3(client_nonce) ON DELETE CASCADE,
+        execution_key TEXT NOT NULL,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE RESTRICT,
+        attempt_no INTEGER NOT NULL CHECK (attempt_no > 0),
+        state TEXT NOT NULL CHECK (state IN (
+          'created', 'dispatching', 'running', 'streaming', 'cancel-requested',
+          'completed', 'failed', 'cancelled', 'interrupted'
+        )),
+        route TEXT NOT NULL CHECK (route IN ('fake', 'openai-compatible')),
+        input_generation INTEGER NOT NULL,
+        input_seq INTEGER NOT NULL,
+        prompt_cutoff_seq INTEGER NOT NULL,
+        assistant_entry_id TEXT REFERENCES transcript_entries_v3(id) ON DELETE SET NULL,
+        provider_request_id TEXT,
+        prompt_manifest_json TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        last_error_code TEXT,
+        created_at TEXT NOT NULL,
+        accepted_at TEXT,
+        last_activity_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (execution_key, attempt_no)
+      );
+      INSERT INTO runtime_runs_v3(
+        id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route,
+        input_generation, input_seq, prompt_cutoff_seq, assistant_entry_id, provider_request_id,
+        prompt_manifest_json, version, last_error_code, created_at, accepted_at, last_activity_at, finished_at
+      )
+      SELECT runtime_runs.id, runtime_runs.session_id, runtime_runs.client_nonce, runtime_runs.client_nonce,
+             sessions.bot_id, runtime_runs.attempt_no, runtime_runs.state, runtime_runs.route,
+             runtime_runs.input_generation, runtime_runs.input_seq, runtime_runs.input_seq,
+             runtime_runs.assistant_entry_id, runtime_runs.provider_request_id, runtime_runs.prompt_manifest_json,
+             runtime_runs.version, runtime_runs.last_error_code, runtime_runs.created_at,
+             runtime_runs.accepted_at, runtime_runs.last_activity_at, runtime_runs.finished_at
+      FROM runtime_runs INNER JOIN sessions ON sessions.id = runtime_runs.session_id;
+
+      DROP TABLE runtime_runs;
+      DROP TABLE transcript_entries;
+      DROP TABLE send_journal;
+      DROP TABLE sessions;
+      ALTER TABLE sessions_v3 RENAME TO sessions;
+      ALTER TABLE transcript_entries_v3 RENAME TO transcript_entries;
+      ALTER TABLE send_journal_v3 RENAME TO send_journal;
+      ALTER TABLE runtime_runs_v3 RENAME TO runtime_runs;
+
+      CREATE UNIQUE INDEX sessions_one_main_per_bot ON sessions(bot_id, kind) WHERE bot_id IS NOT NULL;
+      CREATE UNIQUE INDEX sessions_one_main_per_room ON sessions(room_id, kind) WHERE room_id IS NOT NULL;
+      CREATE UNIQUE INDEX transcript_client_nonce
+        ON transcript_entries(client_nonce) WHERE client_nonce IS NOT NULL;
+      CREATE UNIQUE INDEX runtime_one_active_per_session
+        ON runtime_runs(session_id)
+        WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested');
+
+      CREATE TABLE room_batches (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        target_digest TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'partial', 'cancelled', 'interrupted')),
+        membership_version INTEGER NOT NULL CHECK (membership_version > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (client_nonce)
+      );
+      CREATE UNIQUE INDEX room_one_active_batch_per_session
+        ON room_batches(session_id)
+        WHERE state IN ('queued', 'running');
+
+      CREATE TABLE room_turns (
+        id TEXT PRIMARY KEY,
+        batch_id TEXT NOT NULL REFERENCES room_batches(id) ON DELETE CASCADE,
+        member_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE RESTRICT,
+        member_name_snapshot TEXT NOT NULL,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        attempt_no INTEGER NOT NULL CHECK (attempt_no > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted')),
+        runtime_run_id TEXT REFERENCES runtime_runs(id) ON DELETE SET NULL,
+        prompt_cutoff_seq INTEGER,
+        last_error_code TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (batch_id, member_bot_id, attempt_no)
+      );
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -158,7 +355,8 @@ type BotRow = {
 
 type SessionRow = {
   id: string;
-  bot_id: string;
+  bot_id: string | null;
+  room_id: string | null;
   kind: "MAIN";
   generation: number;
   transcript_cursor: number;
@@ -176,6 +374,9 @@ type TranscriptRow = {
   body: string;
   status: TranscriptStatus;
   send_state?: SendState | null;
+  speaker_bot_id: string | null;
+  speaker_name_snapshot: string | null;
+  source_turn_id: string | null;
   updated_seq: number;
   created_at: string;
   updated_at: string;
@@ -197,11 +398,14 @@ type RuntimeRow = {
   id: string;
   session_id: string;
   client_nonce: string;
+  executor_bot_id: string;
+  execution_key: string;
   attempt_no: number;
   state: RuntimeState;
   route: RuntimeRoute;
   input_generation: number;
   input_seq: number;
+  prompt_cutoff_seq: number;
   assistant_entry_id: string | null;
   provider_request_id: string | null;
   prompt_manifest_json: string;
@@ -210,6 +414,62 @@ type RuntimeRow = {
   created_at: string;
   accepted_at: string | null;
   last_activity_at: string;
+  finished_at: string | null;
+};
+
+type RoomRow = {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  membership_version: number;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type RoomMemberRow = {
+  room_id: string;
+  bot_id: string;
+  position: number;
+  id: string;
+  name: string;
+  label: string;
+  description: string;
+  instructions: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type RoomBatchRow = {
+  id: string;
+  room_id: string;
+  session_id: string;
+  client_nonce: string;
+  target_digest: string;
+  state: RoomBatchState;
+  membership_version: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+type RoomTurnRow = {
+  id: string;
+  batch_id: string;
+  member_bot_id: string;
+  member_name_snapshot: string;
+  position: number;
+  attempt_no: number;
+  version: number;
+  state: RoomTurnState;
+  runtime_run_id: string | null;
+  prompt_cutoff_seq: number | null;
+  last_error_code: string | null;
+  created_at: string;
+  updated_at: string;
   finished_at: string | null;
 };
 
@@ -234,6 +494,7 @@ function toSession(row: SessionRow): Session {
   return {
     id: row.id,
     botId: row.bot_id,
+    roomId: row.room_id,
     kind: row.kind,
     generation: row.generation,
     createdAt: row.created_at,
@@ -252,6 +513,9 @@ function toTranscript(row: TranscriptRow): TranscriptEntry {
     body: row.body,
     status: row.status,
     sendState: row.send_state ?? null,
+    speakerBotId: row.speaker_bot_id,
+    speakerNameSnapshot: row.speaker_name_snapshot,
+    sourceTurnId: row.source_turn_id,
     updatedSeq: row.updated_seq,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -272,6 +536,54 @@ function toSend(row: SendRow): SendJournalEntry {
   };
 }
 
+function toRoom(row: RoomRow): Room {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    version: row.version,
+    membershipVersion: row.membership_version,
+    archivedAt: row.archived_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toRoomBatch(row: RoomBatchRow): RoomBatch {
+  return {
+    id: row.id,
+    roomId: row.room_id,
+    sessionId: row.session_id,
+    clientNonce: row.client_nonce,
+    targetDigest: row.target_digest,
+    state: row.state,
+    membershipVersion: row.membership_version,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at,
+  };
+}
+
+function toRoomTurn(row: RoomTurnRow): RoomTurn {
+  return {
+    id: row.id,
+    batchId: row.batch_id,
+    memberBotId: row.member_bot_id,
+    memberNameSnapshot: row.member_name_snapshot,
+    position: row.position,
+    attemptNo: row.attempt_no,
+    version: row.version,
+    state: row.state,
+    runtimeRunId: row.runtime_run_id,
+    promptCutoffSeq: row.prompt_cutoff_seq,
+    lastErrorCode: row.last_error_code,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at,
+  };
+}
+
 function toRuntime(row: RuntimeRow): RuntimeRun {
   let promptManifest: PromptManifest;
   try {
@@ -283,11 +595,14 @@ function toRuntime(row: RuntimeRow): RuntimeRun {
     id: row.id,
     sessionId: row.session_id,
     clientNonce: row.client_nonce,
+    executorBotId: row.executor_bot_id,
+    executionKey: row.execution_key,
     attemptNo: row.attempt_no,
     state: row.state,
     route: row.route,
     inputGeneration: row.input_generation,
     inputSeq: row.input_seq,
+    promptCutoffSeq: row.prompt_cutoff_seq,
     assistantEntryId: row.assistant_entry_id,
     providerRequestId: row.provider_request_id,
     promptManifest,
@@ -302,6 +617,10 @@ function toRuntime(row: RuntimeRow): RuntimeRun {
 
 export function digestMessage(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+export function digestRoomCommand(roomId: string, sessionId: string, text: string, targetBotIds: string[]): string {
+  return digestMessage(JSON.stringify({ roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() }));
 }
 
 export function isRuntimeTerminal(state: RuntimeState): boolean {
@@ -336,12 +655,25 @@ export class AppRepository {
     );
     for (const migration of MIGRATIONS) {
       if (applied.has(migration.version)) continue;
-      this.transaction(() => {
-        this.database.exec(migration.sql);
-        this.database
-          .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
-          .run(migration.version, now());
-      });
+      const foreignKeysOff = "foreignKeysOff" in migration && migration.foreignKeysOff;
+      if (foreignKeysOff) this.database.exec("PRAGMA foreign_keys = OFF;");
+      try {
+        this.transaction(() => {
+          this.database.exec(migration.sql);
+          if (foreignKeysOff) {
+            const violations = this.database.prepare("PRAGMA foreign_key_check").all();
+            if (violations.length > 0) throw new Error("Migration produced foreign-key violations");
+          }
+          this.database
+            .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+            .run(migration.version, now());
+        });
+      } finally {
+        if (foreignKeysOff) {
+          this.database.exec("PRAGMA legacy_alter_table = OFF;");
+          this.database.exec("PRAGMA foreign_keys = ON;");
+        }
+      }
     }
   }
 
@@ -407,8 +739,8 @@ export class AppRepository {
         .run(botId, "新建 Bot", "", "", "", timestamp, timestamp);
       this.database
         .prepare(
-          `INSERT INTO sessions(id, bot_id, kind, generation, transcript_cursor, created_at, updated_at)
-           VALUES (?, ?, 'MAIN', 1, 0, ?, ?)`,
+          `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+           VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
         )
         .run(sessionId, botId, timestamp, timestamp);
     });
@@ -440,11 +772,163 @@ export class AppRepository {
     return this.getBot(id);
   }
 
+  listRooms(includeArchived = false): Room[] {
+    const rows = this.database
+      .prepare(`SELECT * FROM rooms ${includeArchived ? "" : "WHERE archived_at IS NULL"} ORDER BY created_at ASC`)
+      .all() as RoomRow[];
+    return rows.map(toRoom);
+  }
+
+  getRoom(id: string): Room {
+    const row = this.database.prepare("SELECT * FROM rooms WHERE id = ?").get(id) as RoomRow | undefined;
+    if (!row) throw new MsBotError("ROOM_NOT_FOUND");
+    return toRoom(row);
+  }
+
+  getRoomDetail(id: string): RoomDetail {
+    return { room: this.getRoom(id), members: this.listRoomMembers(id), session: this.getRoomMainSession(id) };
+  }
+
+  listRoomMembers(roomId: string): RoomMember[] {
+    this.getRoom(roomId);
+    const rows = this.database
+      .prepare(
+        `SELECT room_members.room_id, room_members.bot_id, room_members.position, bots.*
+         FROM room_members INNER JOIN bots ON bots.id = room_members.bot_id
+         WHERE room_members.room_id = ? ORDER BY room_members.position ASC`,
+      )
+      .all(roomId) as RoomMemberRow[];
+    return rows.map((row) => ({ roomId: row.room_id, botId: row.bot_id, position: row.position, bot: toBot(row) }));
+  }
+
+  createRoom(input: { memberBotIds: string[]; name?: string; description?: string }): RoomDetail {
+    if (input.memberBotIds.length < 2 || input.memberBotIds.length > 6 || new Set(input.memberBotIds).size !== input.memberBotIds.length) {
+      throw new MsBotError("ROOM_MEMBER_INVALID");
+    }
+    const roomId = randomUUID();
+    const sessionId = randomUUID();
+    const timestamp = now();
+    this.transaction(() => {
+      const bots = input.memberBotIds.map((id) => this.getBot(id));
+      const generatedName = bots.map((bot) => bot.name).join("、").replace(/\s+/g, " ").trim().slice(0, 72);
+      this.database
+        .prepare(
+          `INSERT INTO rooms(id, name, description, version, membership_version, archived_at, created_at, updated_at)
+           VALUES (?, ?, ?, 1, 1, NULL, ?, ?)`,
+        )
+        .run(roomId, input.name?.trim() || generatedName || "新群聊", input.description?.trim() ?? "", timestamp, timestamp);
+      const insertMember = this.database.prepare(
+        "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
+      );
+      input.memberBotIds.forEach((botId, position) => insertMember.run(roomId, botId, position, timestamp));
+      this.database
+        .prepare(
+          `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+           VALUES (?, NULL, ?, 'MAIN', 1, 0, ?, ?)`,
+        )
+        .run(sessionId, roomId, timestamp, timestamp);
+    });
+    return this.getRoomDetail(roomId);
+  }
+
+  updateRoom(id: string, expectedVersion: number, patch: RoomPatch): Room {
+    const fields = (Object.keys(patch) as Array<keyof RoomPatch>)
+      .filter((field) => patch[field] !== undefined)
+      .map((field) => [field, patch[field] as string] as const);
+    if (fields.length === 0) return this.getRoom(id);
+    const columns: Record<keyof RoomPatch, string> = { name: "name", description: "description" };
+    const result = this.database
+      .prepare(
+        `UPDATE rooms SET ${fields.map(([field]) => `${columns[field]} = ?`).join(", ")},
+         version = version + 1, updated_at = ? WHERE id = ? AND version = ?`,
+      )
+      .run(...fields.map(([, value]) => value), now(), id, expectedVersion);
+    if (Number(result.changes) === 0) {
+      const current = this.getRoom(id);
+      throw new MsBotError("ROOM_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+    }
+    return this.getRoom(id);
+  }
+
+  archiveRoom(id: string, archived: boolean): Room {
+    const room = this.getRoom(id);
+    const sessionId = this.getRoomMainSession(room.id).id;
+    if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new MsBotError("ROOM_BUSY");
+    const timestamp = now();
+    const result = this.database
+      .prepare("UPDATE rooms SET archived_at = ?, version = version + 1, updated_at = ? WHERE id = ?")
+      .run(archived ? timestamp : null, timestamp, id);
+    if (Number(result.changes) === 0) throw new MsBotError("ROOM_NOT_FOUND");
+    return this.getRoom(id);
+  }
+
+  addRoomMember(roomId: string, botId: string, expectedMembershipVersion: number): RoomDetail {
+    this.transaction(() => {
+      const room = this.getRoom(roomId);
+      const sessionId = this.getRoomMainSession(roomId).id;
+      if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new MsBotError("ROOM_BUSY");
+      this.getBot(botId);
+      if (room.membershipVersion !== expectedMembershipVersion) {
+        throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+      }
+      const members = this.listRoomMembers(roomId);
+      if (members.some((member) => member.botId === botId) || members.length >= 6) throw new MsBotError("ROOM_MEMBER_INVALID");
+      this.database
+        .prepare("INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)")
+        .run(roomId, botId, members.length, now());
+      this.bumpMembership(roomId, expectedMembershipVersion);
+    });
+    return this.getRoomDetail(roomId);
+  }
+
+  removeRoomMember(roomId: string, botId: string, expectedMembershipVersion: number): RoomDetail {
+    this.transaction(() => {
+      const room = this.getRoom(roomId);
+      const sessionId = this.getRoomMainSession(roomId).id;
+      if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new MsBotError("ROOM_BUSY");
+      if (room.membershipVersion !== expectedMembershipVersion) {
+        throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+      }
+      const members = this.listRoomMembers(roomId);
+      if (members.length <= 2) throw new MsBotError("ROOM_MEMBER_INVALID");
+      if (!members.some((member) => member.botId === botId)) throw new MsBotError("ROOM_MEMBER_NOT_FOUND");
+      this.database.prepare("DELETE FROM room_members WHERE room_id = ? AND bot_id = ?").run(roomId, botId);
+      const remaining = this.database
+        .prepare("SELECT bot_id FROM room_members WHERE room_id = ? ORDER BY position ASC")
+        .all(roomId) as Array<{ bot_id: string }>;
+      const updatePosition = this.database.prepare("UPDATE room_members SET position = ? WHERE room_id = ? AND bot_id = ?");
+      remaining.forEach((member, position) => updatePosition.run(position, roomId, member.bot_id));
+      this.bumpMembership(roomId, expectedMembershipVersion);
+    });
+    return this.getRoomDetail(roomId);
+  }
+
+  private bumpMembership(roomId: string, expectedVersion: number): void {
+    const result = this.database
+      .prepare(
+        `UPDATE rooms SET membership_version = membership_version + 1, updated_at = ?
+         WHERE id = ? AND membership_version = ?`,
+      )
+      .run(now(), roomId, expectedVersion);
+    if (Number(result.changes) === 0) {
+      const current = this.getRoom(roomId);
+      throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: current.membershipVersion });
+    }
+  }
+
   getMainSession(botId: string): Session {
     const row = this.database
       .prepare("SELECT * FROM sessions WHERE bot_id = ? AND kind = 'MAIN'")
       .get(botId) as SessionRow | undefined;
     if (!row) throw new MsBotError("SESSION_NOT_FOUND", "没有找到该 Bot 的主会话。");
+    return toSession(row);
+  }
+
+  getRoomMainSession(roomId: string): Session {
+    const row = this.database
+      .prepare("SELECT * FROM sessions WHERE room_id = ? AND kind = 'MAIN'")
+      .get(roomId) as SessionRow | undefined;
+    if (!row) throw new MsBotError("SESSION_NOT_FOUND", "没有找到该群聊的主会话。");
     return toSession(row);
   }
 
@@ -460,6 +944,14 @@ export class AppRepository {
       | undefined;
     if (!row) throw new MsBotError("SESSION_NOT_FOUND");
     return Number(row.transcript_cursor);
+  }
+
+  getTranscriptHighWater(sessionId: string): number {
+    const session = this.getSession(sessionId);
+    const row = this.database
+      .prepare("SELECT COALESCE(MAX(seq), 0) AS value FROM transcript_entries WHERE session_id = ? AND generation = ?")
+      .get(sessionId, session.generation) as { value: number };
+    return Number(row.value);
   }
 
   getBotForSession(sessionId: string): Bot {
@@ -539,6 +1031,75 @@ export class AppRepository {
     return { disposition: "prepared", journal: this.getSendOrThrow(command.clientNonce) };
   }
 
+  prepareRoomMessage(command: RoomSendCommand): { disposition: "prepared" | "duplicate"; batch: RoomBatch } {
+    const canonicalTargetIds = command.targetBotIds.toSorted();
+    const bodyDigest = digestRoomCommand(command.roomId, command.sessionId, command.text, canonicalTargetIds);
+    const existing = this.getSend(command.clientNonce);
+    if (existing) {
+      if (existing.bodyDigest !== bodyDigest) throw new MsBotError("MESSAGE_NONCE_CONFLICT");
+      const batch = this.getRoomBatchByNonce(command.clientNonce);
+      if (!batch) throw new MsBotError("ROOM_BATCH_NOT_FOUND");
+      return { disposition: "duplicate", batch };
+    }
+    const room = this.getRoom(command.roomId);
+    if (room.archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    const session = this.getSession(command.sessionId);
+    if (session.roomId !== room.id) throw new MsBotError("SESSION_NOT_FOUND");
+    if (
+      command.targetBotIds.length < 1 ||
+      command.targetBotIds.length > 6 ||
+      new Set(command.targetBotIds).size !== command.targetBotIds.length
+    ) {
+      throw new MsBotError("ROOM_MEMBER_INVALID");
+    }
+    const members = this.listRoomMembers(room.id);
+    const memberById = new Map(members.map((member) => [member.botId, member]));
+    if (command.targetBotIds.some((botId) => !memberById.has(botId))) throw new MsBotError("ROOM_MEMBER_INVALID");
+    const orderedTargets = members.filter((member) => command.targetBotIds.includes(member.botId));
+    if (this.getActiveRoomBatch(command.sessionId) || this.getActiveRuntimeRun(command.sessionId)) {
+      throw new MsBotError("ROOM_BATCH_BUSY");
+    }
+
+    const timestamp = now();
+    const batchId = randomUUID();
+    this.transaction(() => {
+      const sequence = this.nextSequence(session.id, session.generation);
+      const updatedSeq = this.nextTranscriptUpdateSeq(session.id);
+      this.database
+        .prepare(
+          `INSERT INTO send_journal(
+             client_nonce, session_id, body_digest, state, attempt_count,
+             provider_request_id, last_error_code, created_at, updated_at
+           ) VALUES (?, ?, ?, 'acked', 0, NULL, NULL, ?, ?)`,
+        )
+        .run(command.clientNonce, session.id, bodyDigest, timestamp, timestamp);
+      this.database
+        .prepare(
+          `INSERT INTO transcript_entries(
+             id, session_id, generation, seq, client_nonce, role, body, status, updated_seq,
+             speaker_bot_id, speaker_name_snapshot, source_turn_id, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, 'user', ?, 'completed', ?, NULL, NULL, NULL, ?, ?)`,
+        )
+        .run(randomUUID(), session.id, session.generation, sequence, command.clientNonce, command.text, updatedSeq, timestamp, timestamp);
+      this.database
+        .prepare(
+          `INSERT INTO room_batches(
+             id, room_id, session_id, client_nonce, target_digest, state, membership_version,
+             version, created_at, updated_at, finished_at
+           ) VALUES (?, ?, ?, ?, ?, 'queued', ?, 1, ?, ?, NULL)`,
+        )
+        .run(batchId, room.id, session.id, command.clientNonce, digestMessage(JSON.stringify(canonicalTargetIds)), room.membershipVersion, timestamp, timestamp);
+      const insertTurn = this.database.prepare(
+        `INSERT INTO room_turns(
+           id, batch_id, member_bot_id, member_name_snapshot, position, attempt_no, version, state,
+           runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at
+         ) VALUES (?, ?, ?, ?, ?, 1, 1, 'queued', NULL, NULL, NULL, ?, ?, NULL)`,
+      );
+      orderedTargets.forEach((member) => insertTurn.run(randomUUID(), batchId, member.botId, member.bot.name, member.position, timestamp, timestamp));
+    });
+    return { disposition: "prepared", batch: this.getRoomBatch(batchId) };
+  }
+
   getSend(clientNonce: string): SendJournalEntry | null {
     const row = this.database.prepare("SELECT * FROM send_journal WHERE client_nonce = ?").get(clientNonce) as SendRow | undefined;
     return row ? toSend(row) : null;
@@ -548,6 +1109,223 @@ export class AppRepository {
     const entry = this.getSend(clientNonce);
     if (!entry) throw new MsBotError("MESSAGE_NOT_FOUND");
     return entry;
+  }
+
+  getRoomBatch(id: string): RoomBatch {
+    const row = this.database.prepare("SELECT * FROM room_batches WHERE id = ?").get(id) as RoomBatchRow | undefined;
+    if (!row) throw new MsBotError("ROOM_BATCH_NOT_FOUND");
+    return toRoomBatch(row);
+  }
+
+  getRoomBatchByNonce(clientNonce: string): RoomBatch | null {
+    const row = this.database.prepare("SELECT * FROM room_batches WHERE client_nonce = ?").get(clientNonce) as RoomBatchRow | undefined;
+    return row ? toRoomBatch(row) : null;
+  }
+
+  getActiveRoomBatch(sessionId: string): RoomBatch | null {
+    const row = this.database
+      .prepare("SELECT * FROM room_batches WHERE session_id = ? AND state IN ('queued', 'running') LIMIT 1")
+      .get(sessionId) as RoomBatchRow | undefined;
+    return row ? toRoomBatch(row) : null;
+  }
+
+  listRoomBatches(roomId: string): RoomBatch[] {
+    this.getRoom(roomId);
+    return (this.database
+      .prepare("SELECT * FROM room_batches WHERE room_id = ? ORDER BY created_at ASC")
+      .all(roomId) as RoomBatchRow[]).map(toRoomBatch);
+  }
+
+  getRoomTurn(id: string): RoomTurn {
+    const row = this.database.prepare("SELECT * FROM room_turns WHERE id = ?").get(id) as RoomTurnRow | undefined;
+    if (!row) throw new MsBotError("ROOM_TURN_NOT_FOUND");
+    return toRoomTurn(row);
+  }
+
+  listRoomTurns(batchId: string): RoomTurn[] {
+    this.getRoomBatch(batchId);
+    return (this.database
+      .prepare("SELECT * FROM room_turns WHERE batch_id = ? ORDER BY position ASC, attempt_no ASC")
+      .all(batchId) as RoomTurnRow[]).map(toRoomTurn);
+  }
+
+  transitionRoomBatch(id: string, state: RoomBatchState): RoomBatch {
+    const current = this.getRoomBatch(id);
+    if (!ROOM_BATCH_TRANSITIONS[current.state].includes(state)) {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
+    const timestamp = now();
+    const terminal = !["queued", "running"].includes(state);
+    this.database
+      .prepare(
+        `UPDATE room_batches SET state = ?, version = version + 1, updated_at = ?,
+         finished_at = CASE WHEN ? THEN ? ELSE NULL END WHERE id = ?`,
+      )
+      .run(state, timestamp, terminal ? 1 : 0, timestamp, id);
+    return this.getRoomBatch(id);
+  }
+
+  transitionRoomTurn(
+    id: string,
+    state: RoomTurnState,
+    options: { runtimeRunId?: string; promptCutoffSeq?: number; errorCode?: string | null } = {},
+  ): RoomTurn {
+    const current = this.getRoomTurn(id);
+    if (!ROOM_TURN_TRANSITIONS[current.state].includes(state)) {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
+    const timestamp = now();
+    const terminal = !["queued", "running"].includes(state);
+    this.database
+      .prepare(
+        `UPDATE room_turns SET state = ?, runtime_run_id = COALESCE(?, runtime_run_id), version = version + 1,
+         prompt_cutoff_seq = COALESCE(?, prompt_cutoff_seq), last_error_code = ?,
+         updated_at = ?, finished_at = CASE WHEN ? THEN ? ELSE NULL END
+         WHERE id = ?`,
+      )
+      .run(
+        state,
+        options.runtimeRunId ?? null,
+        options.promptCutoffSeq ?? null,
+        options.errorCode ?? null,
+        timestamp,
+        terminal ? 1 : 0,
+        timestamp,
+        id,
+      );
+    return this.getRoomTurn(id);
+  }
+
+  attachRoomTurnRuntime(id: string, runtimeRunId: string): RoomTurn {
+    this.database
+      .prepare("UPDATE room_turns SET runtime_run_id = ?, version = version + 1, updated_at = ? WHERE id = ?")
+      .run(runtimeRunId, now(), id);
+    return this.getRoomTurn(id);
+  }
+
+  createRoomTurnRetry(turnId: string): RoomTurn {
+    const previous = this.getRoomTurn(turnId);
+    if (!["failed", "cancelled", "interrupted"].includes(previous.state)) {
+      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "state" });
+    }
+    const batch = this.getRoomBatch(previous.batchId);
+    if (this.getRoom(batch.roomId).archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    if (!["partial", "cancelled", "interrupted"].includes(batch.state)) {
+      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "batch-state" });
+    }
+    const latestBatch = this.database
+      .prepare("SELECT id FROM room_batches WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1")
+      .get(batch.sessionId) as { id: string } | undefined;
+    if (latestBatch?.id !== batch.id) {
+      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest-batch" });
+    }
+    if (this.getActiveRoomBatch(batch.sessionId) || this.getActiveRuntimeRun(batch.sessionId)) {
+      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "active-batch" });
+    }
+    const attempt = this.database
+      .prepare("SELECT COALESCE(MAX(attempt_no), 0) AS value FROM room_turns WHERE batch_id = ? AND member_bot_id = ?")
+      .get(previous.batchId, previous.memberBotId) as { value: number };
+    if (Number(attempt.value) !== previous.attemptNo) {
+      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest" });
+    }
+    const id = randomUUID();
+    const timestamp = now();
+    this.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO room_turns(
+             id, batch_id, member_bot_id, member_name_snapshot, position, attempt_no, version, state,
+             runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at
+           ) VALUES (?, ?, ?, ?, ?, ?, 1, 'queued', NULL, ?, NULL, ?, ?, NULL)`,
+        )
+        .run(
+          id,
+          previous.batchId,
+          previous.memberBotId,
+          previous.memberNameSnapshot,
+          previous.position,
+          Number(attempt.value) + 1,
+          previous.promptCutoffSeq,
+          timestamp,
+          timestamp,
+        );
+      this.transitionRoomBatch(previous.batchId, "running");
+    });
+    return this.getRoomTurn(id);
+  }
+
+  continueInterruptedRoomBatch(batchId: string): RoomTurn[] {
+    const batch = this.getRoomBatch(batchId);
+    if (this.getRoom(batch.roomId).archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    if (!["interrupted", "partial"].includes(batch.state)) {
+      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "batch-state" });
+    }
+    const latestBatch = this.database
+      .prepare("SELECT id FROM room_batches WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1")
+      .get(batch.sessionId) as { id: string } | undefined;
+    if (latestBatch?.id !== batch.id) {
+      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest-batch" });
+    }
+    if (this.getActiveRoomBatch(batch.sessionId) || this.getActiveRuntimeRun(batch.sessionId)) {
+      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "active-batch" });
+    }
+    const allTurns = this.listRoomTurns(batchId);
+    const latest = new Map<string, RoomTurn>();
+    for (const turn of allTurns) {
+      const previous = latest.get(turn.memberBotId);
+      if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.memberBotId, turn);
+    }
+    const remaining = [...latest.values()].filter(
+      (turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null,
+    );
+    if (remaining.length === 0) {
+      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "no-remaining" });
+    }
+    const timestamp = now();
+    const created: string[] = [];
+    this.transaction(() => {
+      const insert = this.database.prepare(
+        `INSERT INTO room_turns(
+           id, batch_id, member_bot_id, member_name_snapshot, position, attempt_no, version, state,
+           runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at
+         ) VALUES (?, ?, ?, ?, ?, ?, 1, 'queued', NULL, NULL, NULL, ?, ?, NULL)`,
+      );
+      for (const turn of remaining) {
+        const id = randomUUID();
+        created.push(id);
+        insert.run(
+          id,
+          batchId,
+          turn.memberBotId,
+          turn.memberNameSnapshot,
+          turn.position,
+          turn.attemptNo + 1,
+          timestamp,
+          timestamp,
+        );
+      }
+      this.transitionRoomBatch(batchId, "running");
+    });
+    return created.map((id) => this.getRoomTurn(id));
+  }
+
+  finishRoomBatchFromTurns(batchId: string): RoomBatch {
+    const turns = this.listRoomTurns(batchId);
+    const latest = new Map<string, RoomTurn>();
+    for (const turn of turns) {
+      const previous = latest.get(turn.memberBotId);
+      if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.memberBotId, turn);
+    }
+    const states = [...latest.values()].map((turn) => turn.state);
+    if (states.some((state) => state === "queued" || state === "running")) return this.getRoomBatch(batchId);
+    const next: RoomBatchState = states.every((state) => state === "completed")
+      ? "completed"
+      : states.every((state) => state === "cancelled")
+        ? "cancelled"
+        : "partial";
+    const current = this.getRoomBatch(batchId);
+    if (current.state === next) return current;
+    return this.transitionRoomBatch(batchId, next);
   }
 
   getUserMessage(clientNonce: string): TranscriptEntry {
@@ -629,7 +1407,10 @@ export class AppRepository {
     return this.getUserMessage(clientNonce);
   }
 
-  createAssistantEntry(sessionId: string): TranscriptEntry {
+  createAssistantEntry(
+    sessionId: string,
+    attribution: { speakerBotId?: string; speakerNameSnapshot?: string; sourceTurnId?: string } = {},
+  ): TranscriptEntry {
     const session = this.getSession(sessionId);
     const timestamp = now();
     const id = randomUUID();
@@ -638,10 +1419,22 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO transcript_entries(
-             id, session_id, generation, seq, client_nonce, role, body, status, updated_seq, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, NULL, 'assistant', '', 'streaming', ?, ?, ?)`,
+             id, session_id, generation, seq, client_nonce, role, body, status, updated_seq,
+             speaker_bot_id, speaker_name_snapshot, source_turn_id, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, NULL, 'assistant', '', 'streaming', ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, session.id, session.generation, this.nextSequence(session.id, session.generation), updatedSeq, timestamp, timestamp);
+        .run(
+          id,
+          session.id,
+          session.generation,
+          this.nextSequence(session.id, session.generation),
+          updatedSeq,
+          attribution.speakerBotId ?? null,
+          attribution.speakerNameSnapshot ?? null,
+          attribution.sourceTurnId ?? null,
+          timestamp,
+          timestamp,
+        );
     });
     return this.getTranscriptEntry(id);
   }
@@ -657,32 +1450,43 @@ export class AppRepository {
     return this.getTranscriptEntry(id);
   }
 
-  createRuntimeRun(clientNonce: string, route: RuntimeRoute, promptManifest: PromptManifest): RuntimeRun {
+  createRuntimeRun(
+    clientNonce: string,
+    route: RuntimeRoute,
+    promptManifest: PromptManifest,
+    options: { executorBotId?: string; executionKey?: string; promptCutoffSeq?: number } = {},
+  ): RuntimeRun {
     const journal = this.getSendOrThrow(clientNonce);
     const input = this.getUserMessage(clientNonce);
     if (this.getActiveRuntimeRun(journal.sessionId)) throw new MsBotError("SESSION_BUSY");
+    const executorBotId = options.executorBotId ?? this.getBotForSession(journal.sessionId).id;
+    const executionKey = options.executionKey ?? clientNonce;
     const attempt = this.database
-      .prepare("SELECT COALESCE(MAX(attempt_no), 0) AS current FROM runtime_runs WHERE client_nonce = ?")
-      .get(clientNonce) as { current: number };
+      .prepare("SELECT COALESCE(MAX(attempt_no), 0) AS current FROM runtime_runs WHERE execution_key = ?")
+      .get(executionKey) as { current: number };
     const timestamp = now();
     const id = randomUUID();
     try {
       this.database
         .prepare(
           `INSERT INTO runtime_runs(
-             id, session_id, client_nonce, attempt_no, state, route, input_generation, input_seq,
+             id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route,
+             input_generation, input_seq, prompt_cutoff_seq,
              assistant_entry_id, provider_request_id, prompt_manifest_json, version, last_error_code,
              created_at, accepted_at, last_activity_at, finished_at
-           ) VALUES (?, ?, ?, ?, 'created', ?, ?, ?, NULL, NULL, ?, 1, NULL, ?, NULL, ?, NULL)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, NULL, NULL, ?, 1, NULL, ?, NULL, ?, NULL)`,
         )
         .run(
           id,
           journal.sessionId,
           clientNonce,
+          executionKey,
+          executorBotId,
           Number(attempt.current) + 1,
           route,
           input.generation,
           input.seq,
+          options.promptCutoffSeq ?? input.seq,
           JSON.stringify(promptManifest),
           timestamp,
           timestamp,
@@ -853,6 +1657,100 @@ export class AppRepository {
       }
     });
     return active.length;
+  }
+
+  recoverInterruptedRooms(): number {
+    const turns = this.database
+      .prepare(
+        `SELECT room_turns.id, room_turns.batch_id, room_turns.runtime_run_id,
+          room_batches.state AS batch_state, runtime_runs.state AS runtime_state,
+          runtime_runs.assistant_entry_id, runtime_runs.last_error_code AS runtime_last_error_code
+         FROM room_turns
+         INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+         LEFT JOIN runtime_runs ON runtime_runs.id = room_turns.runtime_run_id
+         WHERE room_turns.state IN ('queued', 'running')`,
+      )
+      .all() as Array<{
+        id: string;
+        batch_id: string;
+        runtime_run_id: string | null;
+        batch_state: RoomBatchState;
+        runtime_state: RuntimeState | null;
+        assistant_entry_id: string | null;
+        runtime_last_error_code: string | null;
+      }>;
+    const batchIds = new Set((this.database
+      .prepare("SELECT id FROM room_batches WHERE state IN ('queued', 'running')")
+      .all() as Array<{ id: string }>).map((batch) => batch.id));
+    for (const turn of turns) batchIds.add(turn.batch_id);
+    if (batchIds.size === 0) return 0;
+    const timestamp = now();
+    this.transaction(() => {
+      const updateTurn = this.database.prepare(
+        `UPDATE room_turns SET state = ?, version = version + 1,
+         last_error_code = ?, updated_at = ?, finished_at = ? WHERE id = ?`,
+      );
+      for (const turn of turns) {
+        let nextState: RoomTurnState;
+        let errorCode: string | null;
+        if (turn.batch_state === "cancelled" && turn.runtime_run_id && turn.runtime_state && ACTIVE_RUNTIME_STATES.includes(turn.runtime_state)) {
+          if (turn.runtime_state !== "cancel-requested") {
+            this.transitionRuntimeRun(turn.runtime_run_id, "cancel-requested", { errorCode: "MESSAGE_CANCELLED" });
+          }
+          this.transitionRuntimeRun(turn.runtime_run_id, "cancelled", { errorCode: "MESSAGE_CANCELLED" });
+          if (turn.assistant_entry_id) {
+            const assistant = this.getTranscriptEntry(turn.assistant_entry_id);
+            if (assistant.status === "streaming") this.updateTranscriptRecord(assistant.id, undefined, "cancelled");
+          }
+          nextState = "cancelled";
+          errorCode = "MESSAGE_CANCELLED";
+        } else if (turn.runtime_state && TERMINAL_RUNTIME_STATES.includes(turn.runtime_state)) {
+          nextState = turn.runtime_state as RoomTurnState;
+          errorCode = nextState === "completed"
+            ? null
+            : nextState === "cancelled"
+              ? "MESSAGE_CANCELLED"
+              : turn.runtime_last_error_code ?? "APP_INTERRUPTED";
+        } else if (turn.batch_state === "cancelled") {
+          nextState = "cancelled";
+          errorCode = "MESSAGE_CANCELLED";
+        } else {
+          nextState = "interrupted";
+          errorCode = "APP_INTERRUPTED";
+        }
+        updateTurn.run(nextState, errorCode, timestamp, timestamp, turn.id);
+      }
+      for (const batchId of batchIds) {
+        const batch = this.getRoomBatch(batchId);
+        if (!["queued", "running"].includes(batch.state)) continue;
+        const latest = new Map<string, RoomTurn>();
+        for (const turn of this.listRoomTurns(batchId)) {
+          const previous = latest.get(turn.memberBotId);
+          if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.memberBotId, turn);
+        }
+        const states = [...latest.values()].map((turn) => turn.state);
+        const batchState: RoomBatchState = states.every((state) => state === "completed")
+          ? "completed"
+          : states.every((state) => state === "cancelled")
+            ? "cancelled"
+            : states.every((state) => state === "interrupted")
+              ? "interrupted"
+              : "partial";
+        this.transitionRoomBatch(batchId, batchState);
+      }
+    });
+    return batchIds.size;
+  }
+
+  listRoomTurnsForRoom(roomId: string): RoomTurn[] {
+    this.getRoom(roomId);
+    return (this.database
+      .prepare(
+        `SELECT room_turns.* FROM room_turns
+         INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+         WHERE room_batches.room_id = ? ORDER BY room_batches.created_at ASC, room_turns.position ASC, room_turns.attempt_no ASC`,
+      )
+      .all(roomId) as RoomTurnRow[]).map(toRoomTurn);
   }
 
   getSetting(key: string): { value: string; encrypted: boolean } | null {

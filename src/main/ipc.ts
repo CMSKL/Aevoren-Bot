@@ -1,25 +1,36 @@
 import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { IPC } from "@shared/channels";
 import {
+  batchIdSchema,
   botIdSchema,
   botUpdateSchema,
   modelConfigurationSchema,
   nonceSchema,
+  roomArchiveSchema,
+  roomCreateSchema,
+  roomIdSchema,
+  roomListSchema,
+  roomMembershipSchema,
+  roomSendCommandSchema,
+  roomUpdateSchema,
   runIdSchema,
   sendCommandSchema,
   sessionIdSchema,
+  turnIdSchema,
 } from "@shared/schemas";
 import { apiResult, MsBotError } from "./errors";
 import type { AppRepository } from "./database";
 import { OpenAiCompatibleProvider } from "./model";
 import type { ModelSettingsService } from "./settings";
 import type { SendWorker } from "./send-worker";
+import type { RoomCoordinator } from "./room-coordinator";
 
 type IpcDependencies = {
   window: BrowserWindow;
   repository: AppRepository;
   settings: ModelSettingsService;
   sendWorker: SendWorker;
+  roomCoordinator: RoomCoordinator;
   forceFakeProvider: boolean;
   rendererReady(): void;
   confirmClose(canClose: boolean): void;
@@ -36,7 +47,7 @@ function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
 }
 
 export function registerIpc(dependencies: IpcDependencies): void {
-  const { window, repository, settings, sendWorker } = dependencies;
+  const { window, repository, settings, sendWorker, roomCoordinator } = dependencies;
 
   const handle = <TArgs extends unknown[], TResult>(
     channel: string,
@@ -56,6 +67,25 @@ export function registerIpc(dependencies: IpcDependencies): void {
     const parsed = botUpdateSchema.parse(input);
     return repository.updateBot(parsed.id, parsed.expectedVersion, parsed.patch);
   });
+  handle(IPC.roomsList, (_event, input: unknown) => repository.listRooms(roomListSchema.parse(input)?.includeArchived ?? false));
+  handle(IPC.roomsCreate, (_event, input: unknown) => repository.createRoom(roomCreateSchema.parse(input)));
+  handle(IPC.roomsGet, (_event, id: unknown) => repository.getRoomDetail(roomIdSchema.parse(id)));
+  handle(IPC.roomsUpdate, (_event, input: unknown) => {
+    const parsed = roomUpdateSchema.parse(input);
+    return repository.updateRoom(parsed.id, parsed.expectedVersion, parsed.patch);
+  });
+  handle(IPC.roomsArchive, (_event, input: unknown) => {
+    const parsed = roomArchiveSchema.parse(input);
+    return repository.archiveRoom(parsed.id, parsed.archived);
+  });
+  handle(IPC.roomsAddMember, (_event, input: unknown) => {
+    const parsed = roomMembershipSchema.parse(input);
+    return repository.addRoomMember(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion);
+  });
+  handle(IPC.roomsRemoveMember, (_event, input: unknown) => {
+    const parsed = roomMembershipSchema.parse(input);
+    return repository.removeRoomMember(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion);
+  });
   handle(IPC.sessionsGetMain, (_event, botId: unknown) => repository.getMainSession(botIdSchema.parse(botId)));
   handle(IPC.transcriptList, (_event, sessionId: unknown) => repository.listTranscript(sessionIdSchema.parse(sessionId)));
   handle(IPC.messagesSend, (_event, command: unknown) => sendWorker.send(sendCommandSchema.parse(command)));
@@ -69,6 +99,11 @@ export function registerIpc(dependencies: IpcDependencies): void {
   );
   handle(IPC.runtimeCancel, (_event, runId: unknown) => sendWorker.cancelRun(runIdSchema.parse(runId)));
   handle(IPC.runtimeRetry, (_event, runId: unknown) => sendWorker.retryRun(runIdSchema.parse(runId)));
+  handle(IPC.roomRuntimeSnapshot, (_event, roomId: unknown) => roomCoordinator.getSnapshot(roomIdSchema.parse(roomId)));
+  handle(IPC.roomRuntimeSend, (_event, command: unknown) => roomCoordinator.send(roomSendCommandSchema.parse(command)));
+  handle(IPC.roomRuntimeCancel, (_event, batchId: unknown) => roomCoordinator.cancel(batchIdSchema.parse(batchId)));
+  handle(IPC.roomRuntimeContinue, (_event, batchId: unknown) => roomCoordinator.continue(batchIdSchema.parse(batchId)));
+  handle(IPC.roomRuntimeRetryTurn, (_event, turnId: unknown) => roomCoordinator.retryTurn(turnIdSchema.parse(turnId)));
   handle(IPC.settingsGetModel, () => settings.getConfiguration());
   handle(IPC.settingsSaveModel, (_event, input: unknown) => {
     const parsed = modelConfigurationSchema.parse(input);

@@ -4,10 +4,22 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PromptManifest } from "@shared/contracts";
-import { AppRepository } from "./database";
+import { AppRepository, MIGRATIONS } from "./database";
 
 const repositories: AppRepository[] = [];
 const temporaryDirectories: string[] = [];
+
+function logicalV2Hash(database: DatabaseSync): string {
+  const snapshot = {
+    bots: database.prepare("SELECT id,name,label,description,instructions,version,created_at,updated_at FROM bots ORDER BY id").all(),
+    sessions: database.prepare("SELECT id,bot_id,kind,generation,transcript_cursor,created_at,updated_at FROM sessions ORDER BY id").all(),
+    transcript: database.prepare("SELECT id,session_id,generation,seq,client_nonce,role,body,status,updated_seq,created_at,updated_at FROM transcript_entries ORDER BY id").all(),
+    journal: database.prepare("SELECT client_nonce,session_id,body_digest,state,attempt_count,provider_request_id,last_error_code,created_at,updated_at FROM send_journal ORDER BY client_nonce").all(),
+    runs: database.prepare("SELECT id,session_id,client_nonce,attempt_no,state,route,input_generation,input_seq,assistant_entry_id,provider_request_id,prompt_manifest_json,version,last_error_code,created_at,accepted_at,last_activity_at,finished_at FROM runtime_runs ORDER BY id").all(),
+    settings: database.prepare("SELECT key,value,encrypted,updated_at FROM app_settings ORDER BY key").all(),
+  };
+  return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
+}
 
 function manifest(sessionId: string, botId: string, inputSeq = 1): PromptManifest {
   return {
@@ -31,6 +43,32 @@ afterEach(() => {
 });
 
 describe("P0-B repository and migration", () => {
+  function createV2Database(filename: string): DatabaseSync {
+    const database = new DatabaseSync(filename);
+    database.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);");
+    database.exec(MIGRATIONS[0].sql);
+    database.prepare("INSERT INTO schema_migrations VALUES(1, 't')").run();
+    database.exec([
+      "INSERT INTO bots VALUES('b','Bot','Label','Description','Instructions',1,'t','t');",
+      "INSERT INTO sessions VALUES('s','b','MAIN',1,'t','t');",
+      "INSERT INTO transcript_entries VALUES('e','s',1,1,'n','user','runtime-body','completed','t','t');",
+      "INSERT INTO send_journal VALUES('n','s','digest','acked',0,'provider',NULL,'t','t');",
+      "INSERT INTO app_settings VALUES('model.apiKey','ciphertext',1,'t');",
+    ].join("\n"));
+    database.exec(MIGRATIONS[1].sql);
+    database.prepare("INSERT INTO schema_migrations VALUES(2, 't')").run();
+    database
+      .prepare(
+        `INSERT INTO runtime_runs(
+          id,session_id,client_nonce,attempt_no,state,route,input_generation,input_seq,
+          assistant_entry_id,provider_request_id,prompt_manifest_json,version,last_error_code,
+          created_at,accepted_at,last_activity_at,finished_at
+        ) VALUES('run','s','n',1,'completed','fake',1,1,NULL,'provider',?,4,NULL,'t','t','t','t')`,
+      )
+      .run(JSON.stringify(manifest("s", "b")));
+    return database;
+  }
+
   it("migrates a v1 database without changing existing logical records", () => {
     const directory = mkdtempSync(join(tmpdir(), "ms-bot-v1-"));
     temporaryDirectories.push(directory);
@@ -72,8 +110,11 @@ describe("P0-B repository and migration", () => {
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
       { version: 1 },
       { version: 2 },
+      { version: 3 },
     ]);
     expect(inspected.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 0 });
+    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(inspected.prepare("SELECT bot_id, room_id FROM sessions WHERE id='s'").get()).toEqual({ bot_id: "b", room_id: null });
     inspected.close();
   });
 
@@ -93,6 +134,53 @@ describe("P0-B repository and migration", () => {
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(inspected.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version=2").get()).toEqual({ count: 0 });
     expect(inspected.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='runtime_runs'").get()).toEqual({ count: 0 });
+    inspected.close();
+  });
+
+  it("migrates a populated v2 runtime to v3 without changing logical data", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v2-room-migration-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const legacy = createV2Database(filename);
+    const beforeHash = logicalV2Hash(legacy);
+    legacy.close();
+
+    const repository = new AppRepository(filename);
+    repositories.push(repository);
+    expect(repository.getSession("s")).toMatchObject({ botId: "b", roomId: null, generation: 1 });
+    expect(repository.listTranscript("s")[0]).toMatchObject({ id: "e", body: "runtime-body", speakerBotId: null });
+    expect(repository.getRuntimeRun("run")).toMatchObject({
+      executorBotId: "b",
+      executionKey: "n",
+      attemptNo: 1,
+      promptCutoffSeq: 1,
+      state: "completed",
+    });
+    expect(repository.getSetting("model.apiKey")).toEqual({ value: "ciphertext", encrypted: true });
+    repository.close();
+    repositories.pop();
+    const inspected = new DatabaseSync(filename, { readOnly: true });
+    expect(logicalV2Hash(inspected)).toBe(beforeHash);
+    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
+      { version: 1 }, { version: 2 }, { version: 3 },
+    ]);
+    inspected.close();
+  });
+
+  it("rolls back every v3 shadow table when migration fails", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v3-failure-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const legacy = createV2Database(filename);
+    legacy.exec("CREATE TABLE rooms(id TEXT PRIMARY KEY);");
+    legacy.close();
+    expect(() => new AppRepository(filename)).toThrow();
+    const inspected = new DatabaseSync(filename, { readOnly: true });
+    expect(inspected.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version=3").get()).toEqual({ count: 0 });
+    expect(inspected.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name LIKE '%_v3'").get()).toEqual({ count: 0 });
+    expect(inspected.prepare("SELECT body FROM transcript_entries WHERE id='e'").get()).toEqual({ body: "runtime-body" });
+    expect(inspected.prepare("SELECT state FROM runtime_runs WHERE id='run'").get()).toEqual({ state: "completed" });
     inspected.close();
   });
 
@@ -138,3 +226,4 @@ describe("P0-B repository and migration", () => {
     expect(repository.listRuntimeRuns(session.id)).toHaveLength(1);
   });
 });
+import { createHash } from "node:crypto";

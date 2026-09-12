@@ -19,6 +19,16 @@ export function BotIcon(props: IconProps): React.JSX.Element {
   );
 }
 
+export function RoomIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <circle cx="9" cy="9" r="3" />
+      <circle cx="17" cy="10" r="2.5" />
+      <path d="M3.5 19c.6-3.2 2.4-5 5.5-5s4.9 1.8 5.5 5M14 15c2.9-.4 5 .9 6 3.7" />
+    </IconBase>
+  );
+}
+
 export function SettingsIcon(props: IconProps): React.JSX.Element {
   return (
     <IconBase {...props}>

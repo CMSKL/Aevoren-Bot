@@ -1,5 +1,6 @@
 {
   "name": "ms-bot",
+  "productName": "ms-bot",
   "version": "0.1.0",
   "private": true,
   "description": "A reliable local desktop workspace for persistent AI bots.",

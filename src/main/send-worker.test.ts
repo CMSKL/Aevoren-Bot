@@ -32,22 +32,54 @@ function createWorker(provider: ModelProvider = new TestProvider()): {
   repository: AppRepository;
   worker: RuntimeCoordinator;
   runtimeEvents: ReturnType<typeof vi.fn>;
+  sendStateEvents: ReturnType<typeof vi.fn>;
 } {
   const repository = new AppRepository(":memory:");
   repositories.push(repository);
   const settings = new ModelSettingsService(repository, codec);
   const runtimeEvents = vi.fn();
+  const sendStateEvents = vi.fn();
   const worker = new RuntimeCoordinator(
     repository,
     settings,
-    { transcript: vi.fn(), sendState: vi.fn(), runtime: runtimeEvents },
+    { transcript: vi.fn(), sendState: sendStateEvents, runtime: runtimeEvents },
     false,
     provider,
   );
-  return { repository, worker, runtimeEvents };
+  return { repository, worker, runtimeEvents, sendStateEvents };
 }
 
 describe("RuntimeCoordinator", () => {
+  it("persists Direct dispatching before the Provider request starts", async () => {
+    const dispatchContext: { repository?: AppRepository; nonce: string } = { nonce: "" };
+    let journalStateAtDispatch: string | undefined;
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => { releaseProvider = resolve; });
+    const provider: ModelProvider = {
+      async *run() {
+        journalStateAtDispatch = dispatchContext.repository?.getSendOrThrow(dispatchContext.nonce).state;
+        await providerGate;
+        yield { type: "started", requestId: "dispatch-gate" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, worker, sendStateEvents } = createWorker(provider);
+    dispatchContext.repository = repository;
+    const { session } = repository.createBot();
+    dispatchContext.nonce = crypto.randomUUID();
+
+    const sent = worker.send({ sessionId: session.id, clientNonce: dispatchContext.nonce, text: "dispatch boundary" });
+    await vi.waitFor(() => expect(journalStateAtDispatch).toBe("dispatching"));
+    expect(repository.getSendOrThrow(dispatchContext.nonce).state).toBe("dispatching");
+    expect(repository.getUserMessage(dispatchContext.nonce).status).toBe("pending");
+    expect(sendStateEvents.mock.calls.map(([event]) => event.state)).toEqual(["queued", "dispatching"]);
+
+    releaseProvider();
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    expect(repository.getSendOrThrow(dispatchContext.nonce).state).toBe("acked");
+  });
+
   it("persists one completed run and one assistant for one logical message", async () => {
     const { repository, worker } = createWorker();
     const { session } = repository.createBot();
@@ -170,6 +202,7 @@ describe("RuntimeCoordinator", () => {
     const first = worker.send({ sessionId: session.id, clientNonce: crypto.randomUUID(), text: "retry" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(first.runId).state).toBe("failed"));
     const second = worker.retryRun(first.runId);
+    expect(second.state).toBe("acked");
     await vi.waitFor(() => expect(repository.getRuntimeRun(second.runId).state).toBe("completed"));
 
     expect(repository.listTranscript(session.id).filter((entry) => entry.role === "user")).toHaveLength(1);

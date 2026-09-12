@@ -1,10 +1,12 @@
+import "./identity";
 import { join } from "node:path";
 import { app, BrowserWindow, safeStorage, shell } from "electron";
 import { IPC } from "@shared/channels";
-import type { RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
 import { AppRepository } from "./database";
 import { registerIpc } from "./ipc";
 import { SendWorker } from "./send-worker";
+import { RoomCoordinator } from "./room-coordinator";
 import { ModelSettingsService, type SecretCodec } from "./settings";
 
 const userDataOverride = process.env.MS_BOT_USER_DATA_DIR;
@@ -13,6 +15,7 @@ if (userDataOverride) app.setPath("userData", userDataOverride);
 let mainWindow: BrowserWindow | null = null;
 let repository: AppRepository | null = null;
 let runtimeCoordinator: SendWorker | null = null;
+let roomCoordinator: RoomCoordinator | null = null;
 let allowClose = false;
 let closeRequested = false;
 let quitRequested = false;
@@ -42,6 +45,10 @@ function emitRuntime(event: RuntimeEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.runtimeEvent, event);
 }
 
+function emitRoomRuntime(event: RoomRuntimeEvent): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.roomRuntimeEvent, event);
+}
+
 function clearCloseConfirmationTimer(): void {
   if (!closeConfirmationTimer) return;
   clearTimeout(closeConfirmationTimer);
@@ -61,7 +68,11 @@ function armCloseConfirmationTimer(): void {
 
 async function finishClose(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  shutdownPromise ??= runtimeCoordinator?.shutdown() ?? Promise.resolve();
+  roomCoordinator?.beginShutdown();
+  shutdownPromise ??= (async () => {
+    await runtimeCoordinator?.shutdown();
+    await roomCoordinator?.shutdown();
+  })();
   try {
     await shutdownPromise;
   } catch {
@@ -94,7 +105,7 @@ function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 420,
+    minWidth: 390,
     minHeight: 640,
     backgroundColor: "#ffffff",
     title: "MS-Bot",
@@ -141,6 +152,7 @@ app.whenReady().then(() => {
   const databasePath = process.env.MS_BOT_DB_PATH ?? join(app.getPath("userData"), "ms-bot.sqlite");
   repository = new AppRepository(databasePath);
   repository.recoverInterruptedSends();
+  repository.recoverInterruptedRooms();
   repository.recoverInterruptedRuntimeRuns();
   const settings = new ModelSettingsService(repository, electronSecretCodec);
   mainWindow = createWindow();
@@ -152,11 +164,16 @@ app.whenReady().then(() => {
     forceFakeProvider,
   );
   runtimeCoordinator = sendWorker;
+  roomCoordinator = new RoomCoordinator(repository, sendWorker.executor, {
+    transcript: emitTranscript,
+    roomRuntime: emitRoomRuntime,
+  });
   registerIpc({
     window: mainWindow,
     repository,
     settings,
     sendWorker,
+    roomCoordinator,
     forceFakeProvider,
     rendererReady() {
       if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -199,4 +216,5 @@ app.on("quit", () => {
   repository?.close();
   repository = null;
   runtimeCoordinator = null;
+  roomCoordinator = null;
 });

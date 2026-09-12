@@ -1,6 +1,6 @@
 # MS-Bot
 
-MS-Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在 P0-A 对话闭环之上增加 P0-B Runtime：每次模型调用具有独立、持久化的运行状态，Renderer 重载可重新附着，取消和重试具有明确的安全边界。
+MS-Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在 P0-A/P0-B 可靠对话和 Runtime 之上增加 P1-A1 确定性多 Bot Room。
 
 ## 当前范围
 
@@ -23,8 +23,12 @@ MS-Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在 P0-A �
 - 结构化错误域与跨 IPC 允许字段注册表；
 - Electron 安全 Preload 和类型化 IPC；
 - Unit、Integration 和 Playwright Electron Smoke Test。
+- 2～6 个现有 Bot 的原子 Room 创建、Profile、成员 CAS、归档和恢复；
+- 用户显式选择回复成员，按 roster 顺序串行执行；
+- 共享 Transcript、稳定 speaker/source Turn、Partial、批次取消和单成员重试；
+- Room Renderer Reload、Main crash 中断恢复和禁止自动重发。
 
-Room、Memory synthesis、Summary、Routine、Plugin/MCP、Local Exec、Computer Use 和 Cloud Computer 不在 P0-B 范围。
+自动 fan-out、Memory synthesis、Summary、Routine、Plugin/MCP、Local Exec、Computer Use 和 Cloud Computer 不在 P1-A1 范围。
 
 ## 开发环境
 
@@ -71,7 +75,7 @@ pnpm validate
 ## 数据与安全
 
 - SQLite 数据库位于 Electron `userData` 目录；
-- 数据库 v2 会事务化增加 Runtime 表和 Transcript Cursor；旧 Transcript 不会被推断为不存在的 Runtime Run；
+- 数据库 v3 使用事务化 shadow-table migration 增加 Room、Member、Batch、Turn、speaker 和 executor identity；旧 v2 逻辑记录保持不变；
 - P0-A beta 与 P0-B 并行验证时必须使用不同的 `MS_BOT_USER_DATA_DIR`；不支持用旧代码继续写入已升级的 v2 数据库；
 - 可用 `MS_BOT_USER_DATA_DIR` 为测试指定隔离目录；
 - 可用 `MS_BOT_DB_PATH` 单独覆盖数据库路径；
@@ -91,6 +95,11 @@ pnpm validate
 - [P0-B Runtime 验收标准单](docs/validation/p0-b-acceptance-checklist.md)
 - [P0-B Runtime 验收结果](docs/validation/p0-b-acceptance-results.md)
 - [P0-B 脱敏验收证据](docs/validation/evidence/p0-b/acceptance-evidence.md)
+- [P1-A1 确定性 Room 计划](docs/plans/p1-a-deterministic-room-collaboration.md)
+- [P1-A1 Room 验收标准单](docs/validation/p1-a-room-acceptance-checklist.md)
+- [P1-A1 Room 验收结果](docs/validation/p1-a-room-acceptance-results.md)
+- [P1-A1 Room 验收证据](docs/validation/evidence/p1-a-room/acceptance-evidence.md)
+- [P1-A1 Room 演示与真实 Provider 验收脚本](docs/validation/p1-a-room-demo-script.md)
 - [新建 Bot 与 Grok Bot 差异矩阵](docs/plans/grok-new-bot-parity.md)
 - [新建 Bot 对齐实施说明](docs/plans/grok-new-bot-parity-implementation.md)
 - [新建 Bot 对齐验收清单](docs/validation/grok-new-bot-parity-checklist.md)

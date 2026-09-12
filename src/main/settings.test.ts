@@ -42,4 +42,19 @@ describe("ModelSettingsService", () => {
     ).toThrowError(expect.objectContaining({ code: "SECURE_STORAGE_UNAVAILABLE" }));
     expect(repository.getSetting("model.apiKey")).toBeNull();
   });
+
+  it("maps safeStorage decryption failures to a stable storage error", () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    new ModelSettingsService(repository, codec).saveConfiguration({
+      baseUrl: "https://example.com/v1",
+      modelId: "test",
+      apiKey: "secret",
+    });
+    const service = new ModelSettingsService(repository, {
+      ...codec,
+      decrypt: () => { throw new Error("native decryption failed"); },
+    });
+    expect(() => service.getApiKey()).toThrowError(expect.objectContaining({ code: "SECURE_STORAGE_UNAVAILABLE" }));
+  });
 });
