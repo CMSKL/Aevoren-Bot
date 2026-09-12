@@ -1,12 +1,21 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
-import type { MsBotApi, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type { MsBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
 
 const api: MsBotApi = {
   bots: {
     list: () => ipcRenderer.invoke(IPC.botsList),
     create: () => ipcRenderer.invoke(IPC.botsCreate),
     update: (input) => ipcRenderer.invoke(IPC.botsUpdate, input),
+  },
+  rooms: {
+    list: (input) => ipcRenderer.invoke(IPC.roomsList, input),
+    create: (input) => ipcRenderer.invoke(IPC.roomsCreate, input),
+    get: (id) => ipcRenderer.invoke(IPC.roomsGet, id),
+    update: (input) => ipcRenderer.invoke(IPC.roomsUpdate, input),
+    archive: (input) => ipcRenderer.invoke(IPC.roomsArchive, input),
+    addMember: (input) => ipcRenderer.invoke(IPC.roomsAddMember, input),
+    removeMember: (input) => ipcRenderer.invoke(IPC.roomsRemoveMember, input),
   },
   sessions: {
     getMain: (botId) => ipcRenderer.invoke(IPC.sessionsGetMain, botId),
@@ -19,6 +28,18 @@ const api: MsBotApi = {
     retry: (clientNonce) => ipcRenderer.invoke(IPC.messagesRetry, clientNonce),
     cancel: (clientNonce) => ipcRenderer.invoke(IPC.messagesCancel, clientNonce),
     getStatus: (clientNonce) => ipcRenderer.invoke(IPC.messagesGetStatus, clientNonce),
+  },
+  runtime: {
+    getSessionSnapshot: (sessionId) => ipcRenderer.invoke(IPC.runtimeGetSessionSnapshot, sessionId),
+    cancel: (runId) => ipcRenderer.invoke(IPC.runtimeCancel, runId),
+    retry: (runId) => ipcRenderer.invoke(IPC.runtimeRetry, runId),
+  },
+  roomRuntime: {
+    getSnapshot: (roomId) => ipcRenderer.invoke(IPC.roomRuntimeSnapshot, roomId),
+    send: (command) => ipcRenderer.invoke(IPC.roomRuntimeSend, command),
+    cancel: (batchId) => ipcRenderer.invoke(IPC.roomRuntimeCancel, batchId),
+    continue: (batchId) => ipcRenderer.invoke(IPC.roomRuntimeContinue, batchId),
+    retryTurn: (turnId) => ipcRenderer.invoke(IPC.roomRuntimeRetryTurn, turnId),
   },
   settings: {
     getModelConfiguration: () => ipcRenderer.invoke(IPC.settingsGetModel),
@@ -36,6 +57,16 @@ const api: MsBotApi = {
       ipcRenderer.on(IPC.sendStateEvent, wrapped);
       return () => ipcRenderer.removeListener(IPC.sendStateEvent, wrapped);
     },
+    subscribeRuntime(listener) {
+      const wrapped = (_event: Electron.IpcRendererEvent, value: RuntimeEvent): void => listener(value);
+      ipcRenderer.on(IPC.runtimeEvent, wrapped);
+      return () => ipcRenderer.removeListener(IPC.runtimeEvent, wrapped);
+    },
+    subscribeRoomRuntime(listener) {
+      const wrapped = (_event: Electron.IpcRendererEvent, value: RoomRuntimeEvent): void => listener(value);
+      ipcRenderer.on(IPC.roomRuntimeEvent, wrapped);
+      return () => ipcRenderer.removeListener(IPC.roomRuntimeEvent, wrapped);
+    },
   },
   app: {
     ready: () => ipcRenderer.send(IPC.appRendererReady),
@@ -43,6 +74,11 @@ const api: MsBotApi = {
       const wrapped = (): void => listener();
       ipcRenderer.on(IPC.appBeforeClose, wrapped);
       return () => ipcRenderer.removeListener(IPC.appBeforeClose, wrapped);
+    },
+    subscribeCloseBlocked(listener) {
+      const wrapped = (): void => listener();
+      ipcRenderer.on(IPC.appCloseBlocked, wrapped);
+      return () => ipcRenderer.removeListener(IPC.appCloseBlocked, wrapped);
     },
     confirmClose: (canClose) => ipcRenderer.send(IPC.appConfirmClose, canClose),
   },

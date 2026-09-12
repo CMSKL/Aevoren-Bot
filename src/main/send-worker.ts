@@ -1,159 +1,192 @@
-import type { SendCommand, SendResult, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type {
+  AppError,
+  RuntimeEvent,
+  RuntimeRun,
+  SendCommand,
+  SendResult,
+  SendState,
+  SendStateEvent,
+  SessionRuntimeSnapshot,
+  TranscriptEvent,
+} from "@shared/contracts";
 import { asAppError, MsBotError } from "./errors";
 import type { AppRepository } from "./database";
+import type { ModelProvider } from "./model";
+import { RuntimeExecutor, type RuntimeExecutionResult } from "./runtime-executor";
 import type { ModelSettingsService } from "./settings";
-import { FakeModelProvider, OpenAiCompatibleProvider, type ChatMessage, type ModelProvider } from "./model";
 
-type WorkerEvents = {
+export type WorkerEvents = {
   transcript: (event: TranscriptEvent) => void;
   sendState: (event: SendStateEvent) => void;
+  runtime: (event: RuntimeEvent) => void;
 };
 
-type ActiveSend = {
-  controller: AbortController;
-  assistantEntryId?: string;
-};
-
-export class SendWorker {
-  private readonly active = new Map<string, ActiveSend>();
-  private readonly activeSessions = new Set<string>();
+export class RuntimeCoordinator {
+  readonly executor: RuntimeExecutor;
+  private shuttingDown = false;
 
   constructor(
     private readonly repository: AppRepository,
-    private readonly settings: ModelSettingsService,
+    settings: ModelSettingsService,
     private readonly events: WorkerEvents,
-    private readonly forceFakeProvider = false,
-    private readonly providerOverride?: ModelProvider,
-  ) {}
-
-  send(command: SendCommand): SendResult {
-    const prepared = this.repository.prepareMessage(command);
-    if (prepared.disposition === "duplicate") {
-      return { clientNonce: command.clientNonce, disposition: "duplicate", state: prepared.journal.state };
-    }
-    this.events.transcript({
-      sessionId: command.sessionId,
-      entry: this.repository.getUserMessage(command.clientNonce),
-    });
-    this.repository.setSendState(command.clientNonce, "queued");
-    this.emitState(command.sessionId, command.clientNonce, "queued");
-    void this.dispatch(command.clientNonce);
-    return { clientNonce: command.clientNonce, disposition: "accepted", state: "queued" };
-  }
-
-  retry(clientNonce: string): SendResult {
-    const journal = this.repository.queueRetry(clientNonce);
-    this.emitState(journal.sessionId, clientNonce, "queued");
-    void this.dispatch(clientNonce);
-    return { clientNonce, disposition: "accepted", state: "queued" };
-  }
-
-  cancel(clientNonce: string): void {
-    const active = this.active.get(clientNonce);
-    if (!active) throw new MsBotError("MESSAGE_NOT_RUNNING", "这条消息当前没有正在运行的请求。");
-    active.controller.abort();
-  }
-
-  private async dispatch(clientNonce: string): Promise<void> {
-    const journal = this.repository.getSendOrThrow(clientNonce);
-    if (this.activeSessions.has(journal.sessionId)) {
-      this.repository.setSendState(clientNonce, "failed-before-acceptance", "SESSION_BUSY");
-      const entry = this.repository.setUserMessageStatus(clientNonce, "failed");
-      this.events.transcript({ sessionId: journal.sessionId, entry });
-      this.emitState(journal.sessionId, clientNonce, "failed-before-acceptance", {
-        code: "SESSION_BUSY",
-        retryable: true,
-        safeMessage: "该 Bot 正在回复，请稍后重试。",
-      });
-      return;
-    }
-
-    const active: ActiveSend = { controller: new AbortController() };
-    this.active.set(clientNonce, active);
-    this.activeSessions.add(journal.sessionId);
-    let accepted = false;
-    try {
-      this.repository.setSendState(clientNonce, "dispatching");
-      this.emitState(journal.sessionId, clientNonce, "dispatching");
-
-      const provider = this.createProvider();
-      const messages = this.buildPrompt(journal.sessionId);
-      const stream = await provider.start(messages, active.controller.signal);
-      accepted = true;
-      this.repository.setSendState(clientNonce, "accepted-awaiting-echo");
-      this.emitState(journal.sessionId, clientNonce, "accepted-awaiting-echo");
-
-      const userEntry = this.repository.acknowledgeUserMessage(clientNonce);
-      this.events.transcript({ sessionId: journal.sessionId, entry: userEntry });
-      this.emitState(journal.sessionId, clientNonce, "acked");
-
-      let assistant = this.repository.createAssistantEntry(journal.sessionId);
-      active.assistantEntryId = assistant.id;
-      this.events.transcript({ sessionId: journal.sessionId, entry: assistant });
-      let body = "";
-      for await (const chunk of stream.chunks) {
-        if (active.controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-        body += chunk;
-        assistant = this.repository.updateTranscriptEntry(assistant.id, body, "streaming");
-        this.events.transcript({ sessionId: journal.sessionId, entry: assistant });
-      }
-      assistant = this.repository.updateTranscriptEntry(assistant.id, body, "completed");
-      this.events.transcript({ sessionId: journal.sessionId, entry: assistant });
-    } catch (error) {
-      const aborted = error instanceof DOMException && error.name === "AbortError";
-      const appError = aborted
-        ? { code: "MESSAGE_CANCELLED", retryable: false, safeMessage: "已停止本次回复。" }
-        : asAppError(error);
-      if (active.assistantEntryId) {
-        const assistant = this.repository.getTranscriptEntry(active.assistantEntryId);
-        const updated = this.repository.updateTranscriptEntry(
-          assistant.id,
-          assistant.body,
-          aborted ? "cancelled" : "failed",
-        );
-        this.events.transcript({ sessionId: journal.sessionId, entry: updated });
-      } else {
-        const state = accepted ? "interrupted-unknown" : aborted ? "cancelled" : "failed-before-acceptance";
-        this.repository.setSendState(clientNonce, state, appError.code);
-        const userEntry = this.repository.setUserMessageStatus(clientNonce, aborted ? "cancelled" : "failed");
-        this.events.transcript({ sessionId: journal.sessionId, entry: userEntry });
-        this.emitState(journal.sessionId, clientNonce, state, appError);
-      }
-    } finally {
-      this.active.delete(clientNonce);
-      this.activeSessions.delete(journal.sessionId);
-    }
-  }
-
-  private buildPrompt(sessionId: string): ChatMessage[] {
-    const bot = this.repository.getBotForSession(sessionId);
-    const transcript = this.repository.listPromptEntries(sessionId);
-    return [
-      { role: "system", content: bot.instructions },
-      ...transcript.map((entry) => ({ role: entry.role, content: entry.body })),
-    ];
-  }
-
-  private createProvider(): ModelProvider {
-    if (this.providerOverride) return this.providerOverride;
-    if (this.forceFakeProvider) return new FakeModelProvider();
-    const configuration = this.settings.getConfiguration();
-    if (!configuration.modelId || !configuration.apiKeyConfigured) {
-      throw new MsBotError("MODEL_NOT_CONFIGURED", "请先完成模型设置。", false);
-    }
-    return new OpenAiCompatibleProvider(
-      configuration.baseUrl,
-      configuration.modelId,
-      this.settings.getApiKey(),
+    forceFakeProvider = false,
+    providerOverride?: ModelProvider,
+    executorOverride?: RuntimeExecutor,
+  ) {
+    this.executor = executorOverride ?? new RuntimeExecutor(
+      repository,
+      settings,
+      { transcript: events.transcript, runtime: events.runtime },
+      forceFakeProvider,
+      providerOverride,
     );
   }
 
-  private emitState(
-    sessionId: string,
-    clientNonce: string,
-    state: SendStateEvent["state"],
-    error?: SendStateEvent["error"],
-  ): void {
+  send(command: SendCommand): SendResult {
+    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    const session = this.repository.getSession(command.sessionId);
+    if (!session.botId || session.roomId) throw new MsBotError("SESSION_NOT_FOUND");
+    const prepared = this.repository.prepareMessage(command);
+    if (prepared.disposition === "duplicate") {
+      const existingRun = this.repository.getLatestRuntimeRun(command.clientNonce);
+      if (!existingRun) throw new MsBotError("RUNTIME_NOT_FOUND");
+      return {
+        clientNonce: command.clientNonce,
+        runId: existingRun.id,
+        disposition: "duplicate",
+        state: prepared.journal.state,
+      };
+    }
+    this.events.transcript({ sessionId: command.sessionId, entry: this.repository.getUserMessage(command.clientNonce) });
+    this.repository.setSendState(command.clientNonce, "queued");
+    this.emitSendState(command.sessionId, command.clientNonce, "queued");
+    return this.startDirect(command.clientNonce);
+  }
+
+  retry(clientNonce: string): SendResult {
+    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    const journal = this.repository.queueRetry(clientNonce);
+    const session = this.repository.getSession(journal.sessionId);
+    if (!session.botId || session.roomId) throw new MsBotError("MESSAGE_RETRY_UNSAFE");
+    this.emitSendState(journal.sessionId, clientNonce, "queued");
+    return this.startDirect(clientNonce);
+  }
+
+  retryRun(runId: string): SendResult {
+    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    const previous = this.repository.assertRuntimeRetryEligible(runId);
+    const session = this.repository.getSession(previous.sessionId);
+    if (!session.botId || session.roomId) {
+      throw new MsBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "room-run" });
+    }
+    const result = this.startDirect(previous.clientNonce, previous.inputSeq);
+    return { ...result, state: this.repository.getSendOrThrow(previous.clientNonce).state };
+  }
+
+  cancel(clientNonce: string): void {
+    const journal = this.repository.getSendOrThrow(clientNonce);
+    const session = this.repository.getSession(journal.sessionId);
+    if (!session.botId || session.roomId) throw new MsBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    const run = this.repository.getLatestRuntimeRun(clientNonce);
+    if (!run || ["completed", "failed", "cancelled", "interrupted"].includes(run.state)) {
+      throw new MsBotError("MESSAGE_NOT_RUNNING");
+    }
+    this.cancelRun(run.id);
+  }
+
+  cancelRun(runId: string): RuntimeRun {
+    const run = this.repository.getRuntimeRun(runId);
+    const session = this.repository.getSession(run.sessionId);
+    if (!session.botId || session.roomId) throw new MsBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    return this.executor.cancelRun(runId);
+  }
+
+  getSessionSnapshot(sessionId: string): SessionRuntimeSnapshot {
+    const session = this.repository.getSession(sessionId);
+    return {
+      sessionId,
+      generation: session.generation,
+      transcriptCursor: this.repository.getTranscriptCursor(sessionId),
+      entries: this.repository.listTranscript(sessionId),
+      runs: this.repository.listRuntimeRuns(sessionId),
+      liveState: this.executor.getLiveState(sessionId),
+    };
+  }
+
+  async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    await this.executor.shutdown();
+  }
+
+  private startDirect(clientNonce: string, inputSeq?: number): SendResult {
+    const journal = this.repository.getSendOrThrow(clientNonce);
+    const session = this.repository.getSession(journal.sessionId);
+    if (!session.botId) throw new MsBotError("SESSION_NOT_FOUND");
+    let started: ReturnType<RuntimeExecutor["start"]>;
+    try {
+      started = this.executor.start({
+        clientNonce,
+        executorBotId: session.botId,
+        executionKey: clientNonce,
+        inputSeq,
+        onDispatchStart: () => this.markDirectDispatching(clientNonce),
+        onProviderStarted: (requestId) => this.acknowledgeDirect(clientNonce, requestId),
+      });
+    } catch (error) {
+      this.failBeforeRun(clientNonce, error);
+    }
+    void started.completion.then((result) => this.settleDirect(clientNonce, result));
+    return { clientNonce, runId: started.run.id, disposition: "accepted", state: "queued" };
+  }
+
+  private markDirectDispatching(clientNonce: string): void {
+    const journal = this.repository.getSendOrThrow(clientNonce);
+    if (journal.state === "acked" || journal.state === "dispatching") return;
+    this.repository.setSendState(clientNonce, "dispatching");
+    this.emitSendState(journal.sessionId, clientNonce, "dispatching");
+  }
+
+  private acknowledgeDirect(clientNonce: string, requestId: string): void {
+    const journal = this.repository.getSendOrThrow(clientNonce);
+    if (journal.state === "acked") return;
+    this.repository.setSendProviderRequestId(clientNonce, requestId);
+    this.repository.setSendState(clientNonce, "accepted-awaiting-echo");
+    this.emitSendState(journal.sessionId, clientNonce, "accepted-awaiting-echo");
+    const user = this.repository.acknowledgeUserMessage(clientNonce);
+    this.events.transcript({ sessionId: journal.sessionId, entry: user });
+    this.emitSendState(journal.sessionId, clientNonce, "acked");
+  }
+
+  private settleDirect(clientNonce: string, result: RuntimeExecutionResult): void {
+    if (!result.error) return;
+    const journal = this.repository.getSendOrThrow(clientNonce);
+    if (journal.state === "acked") return;
+    const targetState = result.run.state;
+    const sendState: SendState = targetState === "cancelled"
+      ? "cancelled"
+      : result.error.code === "MODEL_REQUEST_REFUSED" && !result.error.retryable
+        ? "refused"
+        : targetState === "interrupted"
+          ? "interrupted-unknown"
+          : "failed-before-acceptance";
+    this.repository.setSendState(clientNonce, sendState, result.error.code);
+    const user = this.repository.setUserMessageStatus(clientNonce, targetState === "cancelled" ? "cancelled" : "failed");
+    this.events.transcript({ sessionId: journal.sessionId, entry: user });
+    this.emitSendState(journal.sessionId, clientNonce, sendState, result.error);
+  }
+
+  private failBeforeRun(clientNonce: string, error: unknown): never {
+    const appError = asAppError(error);
+    const journal = this.repository.setSendState(clientNonce, "failed-before-acceptance", appError.code);
+    const user = this.repository.setUserMessageStatus(clientNonce, "failed");
+    this.events.transcript({ sessionId: journal.sessionId, entry: user });
+    this.emitSendState(journal.sessionId, clientNonce, "failed-before-acceptance", appError);
+    throw error;
+  }
+
+  private emitSendState(sessionId: string, clientNonce: string, state: SendState, error?: AppError): void {
     this.events.sendState({ sessionId, clientNonce, state, ...(error ? { error } : {}) });
   }
 }
+
+export { RuntimeCoordinator as SendWorker };

@@ -17,6 +17,11 @@ async function launch(userDataDir: string): Promise<{ application: ElectronAppli
   return { application, page: await application.firstWindow() };
 }
 
+async function createBot(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "新建聊天" }).click();
+  await page.getByRole("button", { name: "创建新 Bot" }).click();
+}
+
 async function requestWindowClose(application: ElectronApplication, timeoutMs = 3_000): Promise<boolean> {
   const process = application.process();
   const exited = new Promise<boolean>((resolve) => process.once("exit", () => resolve(true)));
@@ -91,7 +96,7 @@ test("flushes a dirty profile and preserves its database hash across three resta
     let launched = await launch(userDataDir);
     application = launched.application;
     let page = launched.page;
-    await page.getByRole("button", { name: "新建 Bot" }).click();
+    await createBot(page);
     await page.getByLabel("描述").fill("关闭前未移焦也必须保存");
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
@@ -121,7 +126,7 @@ test("keeps the window open when a dirty profile cannot be saved, then closes af
     const launched = await launch(userDataDir);
     application = launched.application;
     const page = launched.page;
-    await page.getByRole("button", { name: "新建 Bot" }).click();
+    await createBot(page);
     execute(
       databasePath,
       "CREATE TRIGGER reject_bot_updates BEFORE UPDATE ON bots BEGIN SELECT RAISE(ABORT, 'close test'); END;",
@@ -151,7 +156,7 @@ test("flushes a dirty profile through the application quit path", async () => {
     let launched = await launch(userDataDir);
     application = launched.application;
     let page = launched.page;
-    await page.getByRole("button", { name: "新建 Bot" }).click();
+    await createBot(page);
     await page.getByLabel("描述").fill("Quit 路径也必须保存");
     expect(await requestAppQuit(application)).toBe(true);
     application = undefined;

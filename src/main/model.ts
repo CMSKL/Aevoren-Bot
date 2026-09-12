@@ -1,43 +1,212 @@
 import { randomUUID } from "node:crypto";
-import type { TranscriptRole } from "@shared/contracts";
+import type { PromptMessage } from "./prompt";
 import { MsBotError } from "./errors";
 
-export type ChatMessage = {
-  role: "system" | TranscriptRole;
-  content: string;
+export type ChatMessage = PromptMessage;
+
+export type ModelEvent =
+  | { type: "started"; requestId: string }
+  | { type: "activity" }
+  | { type: "delta"; text: string }
+  | { type: "completed"; finishReason: string };
+
+export type ProviderTimeouts = {
+  connectMs: number;
+  firstEventMs: number;
+  idleMs: number;
+  totalMs: number;
 };
 
-export type ModelStream = {
-  requestId: string;
-  chunks: AsyncIterable<string>;
+export const DEFAULT_PROVIDER_TIMEOUTS: ProviderTimeouts = {
+  connectMs: 30_000,
+  firstEventMs: 120_000,
+  idleMs: 60_000,
+  totalMs: 600_000,
 };
 
 export interface ModelProvider {
-  start(messages: ChatMessage[], signal: AbortSignal): Promise<ModelStream>;
+  run(messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent>;
   testConnection(signal: AbortSignal): Promise<void>;
 }
 
-async function* fakeChunks(): AsyncIterable<string> {
-  const output = [
-    "## 背景\n将模糊产品想法转化为可执行需求。\n\n",
-    "## 目标用户\n产品经理与创业团队。\n\n## 问题\n需求信息容易缺失或混杂。\n\n",
-    "## 目标\n形成可评审的结构化需求。\n\n## 范围\n单 Bot 纯文本分析。\n\n",
-    "## 非目标\n本阶段不执行外部工具。\n\n## 功能需求\n1. 接收产品想法。\n2. 输出结构化分析。\n\n",
-    "## 验收标准\n输出包含约定章节。\n\n## 风险\n输入信息可能不足。\n\n## 待确认事项\n请补充业务约束与成功指标。",
-  ];
-  for (const chunk of output) {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    yield chunk;
-  }
+const FAKE_OUTPUT = [
+  "## 背景\n将模糊产品想法转化为可执行需求。\n\n",
+  "## 目标用户\n产品经理与创业团队。\n\n## 问题\n需求信息容易缺失或混杂。\n\n",
+  "## 目标\n形成可评审的结构化需求。\n\n## 范围\n单 Bot 纯文本分析。\n\n",
+  "## 非目标\n本阶段不执行外部工具。\n\n## 功能需求\n1. 接收产品想法。\n2. 输出结构化分析。\n\n",
+  "## 验收标准\n输出包含约定章节。\n\n## 风险\n输入信息可能不足。\n\n## 待确认事项\n请补充业务约束与成功指标。",
+];
+
+let fakeRunCount = 0;
+
+function abortError(): DOMException {
+  return new DOMException("Aborted", "AbortError");
+}
+
+function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, milliseconds);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(abortError());
+      },
+      { once: true },
+    );
+  });
 }
 
 export class FakeModelProvider implements ModelProvider {
-  async start(_messages: ChatMessage[], signal: AbortSignal): Promise<ModelStream> {
-    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-    return { requestId: `fake-${randomUUID()}`, chunks: fakeChunks() };
+  constructor(
+    private readonly delayMs = Number(process.env.MS_BOT_FAKE_DELAY_MS ?? 20),
+    private readonly output: readonly string[] = FAKE_OUTPUT,
+    private readonly startDelayMs = Number(process.env.MS_BOT_FAKE_START_DELAY_MS ?? 0),
+    private readonly failureMode = process.env.MS_BOT_FAKE_FAILURE ?? "",
+    private readonly ignoreAbort = process.env.MS_BOT_FAKE_IGNORE_ABORT === "1",
+  ) {}
+
+  async *run(_messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
+    if (signal.aborted) throw abortError();
+    fakeRunCount += 1;
+    if (this.failureMode === "first-run-before-start" && fakeRunCount === 1) {
+      throw new MsBotError("MODEL_CONNECTION_FAILED");
+    }
+    if (this.startDelayMs > 0) {
+      if (this.ignoreAbort) await new Promise((resolve) => setTimeout(resolve, this.startDelayMs));
+      else await delay(this.startDelayMs, signal);
+    }
+    yield { type: "started", requestId: `fake-${randomUUID()}` };
+    for (const [index, text] of this.output.entries()) {
+      if (this.ignoreAbort) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+      else await delay(this.delayMs, signal);
+      yield { type: "delta", text };
+      if (index === 0 && this.failureMode === "first-run-after-delta" && fakeRunCount === 1) {
+        throw new MsBotError("MODEL_STREAM_TRUNCATED");
+      }
+    }
+    yield { type: "completed", finishReason: "stop" };
   }
 
   async testConnection(_signal: AbortSignal): Promise<void> {}
+}
+
+type DecodedSse = {
+  events: ModelEvent[];
+  terminal: boolean;
+};
+
+function decodeSseEvent(event: string): DecodedSse {
+  const data = event
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim())
+    .join("\n");
+  if (!data) return { events: [{ type: "activity" }], terminal: false };
+  if (data === "[DONE]") {
+    return { events: [{ type: "completed", finishReason: "done" }], terminal: true };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    throw new MsBotError("MODEL_STREAM_INVALID");
+  }
+  const choice = (parsed as {
+    choices?: Array<{ delta?: { content?: unknown }; finish_reason?: unknown }>;
+  }).choices?.[0];
+  const events: ModelEvent[] = [];
+  const content = choice?.delta?.content;
+  if (typeof content === "string" && content.length > 0) events.push({ type: "delta", text: content });
+  if (typeof choice?.finish_reason === "string" && choice.finish_reason.length > 0) {
+    events.push({ type: "completed", finishReason: choice.finish_reason });
+    return { events, terminal: true };
+  }
+  if (events.length === 0) events.push({ type: "activity" });
+  return { events, terminal: false };
+}
+
+function readWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  milliseconds: number,
+  timeoutCode: "MODEL_FIRST_EVENT_TIMEOUT" | "MODEL_STREAM_IDLE_TIMEOUT" | "MODEL_RUN_TIMEOUT",
+  signal: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new MsBotError(timeoutCode)), milliseconds);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void reader.read().then(
+      (result) => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+export async function* parseOpenAiStream(
+  stream: ReadableStream<Uint8Array>,
+  signal: AbortSignal = new AbortController().signal,
+  timeouts: Pick<ProviderTimeouts, "firstEventMs" | "idleMs" | "totalMs"> = DEFAULT_PROVIDER_TIMEOUTS,
+): AsyncIterable<ModelEvent> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const startedAt = Date.now();
+  let buffer = "";
+  let sawEvent = false;
+  let terminal = false;
+  try {
+    while (!terminal) {
+      const remaining = timeouts.totalMs - (Date.now() - startedAt);
+      if (remaining <= 0) throw new MsBotError("MODEL_RUN_TIMEOUT");
+      const timeoutMs = Math.min(remaining, sawEvent ? timeouts.idleMs : timeouts.firstEventMs);
+      const timeoutCode = remaining <= (sawEvent ? timeouts.idleMs : timeouts.firstEventMs)
+        ? "MODEL_RUN_TIMEOUT"
+        : sawEvent
+          ? "MODEL_STREAM_IDLE_TIMEOUT"
+          : "MODEL_FIRST_EVENT_TIMEOUT";
+      const { done, value } = await readWithTimeout(reader, timeoutMs, timeoutCode, signal);
+      buffer += decoder.decode(value, { stream: !done });
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() ?? "";
+      for (const rawEvent of events) {
+        sawEvent = true;
+        const decoded = decodeSseEvent(rawEvent);
+        for (const modelEvent of decoded.events) yield modelEvent;
+        if (decoded.terminal) {
+          terminal = true;
+          break;
+        }
+      }
+      if (done) break;
+    }
+    if (!terminal && buffer.trim()) {
+      sawEvent = true;
+      const decoded = decodeSseEvent(buffer);
+      for (const modelEvent of decoded.events) yield modelEvent;
+      terminal = decoded.terminal;
+    }
+    if (!terminal) throw new MsBotError("MODEL_STREAM_TRUNCATED");
+  } catch (error) {
+    if (signal.aborted) throw abortError();
+    if (error instanceof MsBotError) throw error;
+    throw new MsBotError("MODEL_TRANSPORT_ERROR");
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 export class OpenAiCompatibleProvider implements ModelProvider {
@@ -45,86 +214,66 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     private readonly baseUrl: string,
     private readonly modelId: string,
     private readonly apiKey: string,
+    private readonly timeouts: ProviderTimeouts = DEFAULT_PROVIDER_TIMEOUTS,
   ) {}
 
-  async start(messages: ChatMessage[], signal: AbortSignal): Promise<ModelStream> {
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({ model: this.modelId, messages, stream: true }),
-      signal,
-    });
+  async *run(messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
+    const controller = new AbortController();
+    const relayAbort = (): void => controller.abort(signal.reason);
+    signal.addEventListener("abort", relayAbort, { once: true });
+    const connectTimer = setTimeout(
+      () => controller.abort(new MsBotError("MODEL_CONNECTION_TIMEOUT")),
+      this.timeouts.connectMs,
+    );
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({ model: this.modelId, messages, stream: true }),
+        signal: controller.signal,
+      });
+    } catch {
+      if (signal.aborted) throw abortError();
+      if (controller.signal.reason instanceof MsBotError) throw controller.signal.reason;
+      throw new MsBotError("MODEL_TRANSPORT_ERROR");
+    } finally {
+      clearTimeout(connectTimer);
+      signal.removeEventListener("abort", relayAbort);
+    }
     if (!response.ok || !response.body) {
       throw new MsBotError(
         "MODEL_REQUEST_REFUSED",
         `模型服务拒绝了请求（HTTP ${response.status}）。`,
         response.status >= 500,
+        { status: response.status },
       );
     }
-    return {
-      requestId: response.headers.get("x-request-id") ?? randomUUID(),
-      chunks: parseOpenAiStream(response.body),
-    };
+    yield { type: "started", requestId: response.headers.get("x-request-id") ?? randomUUID() };
+    yield* parseOpenAiStream(response.body, signal, this.timeouts);
   }
 
   async testConnection(signal: AbortSignal): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/models`, {
-      headers: { authorization: `Bearer ${this.apiKey}` },
-      signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/models`, {
+        headers: { authorization: `Bearer ${this.apiKey}` },
+        signal,
+      });
+    } catch {
+      if (signal.aborted) throw abortError();
+      throw new MsBotError("MODEL_CONNECTION_FAILED");
+    }
     if (!response.ok) {
       throw new MsBotError(
         "MODEL_CONNECTION_FAILED",
         `无法连接模型服务（HTTP ${response.status}）。`,
         response.status >= 500,
+        { status: response.status },
       );
     }
-  }
-}
-
-function decodeSseEvent(event: string): { done: boolean; content: string | null } {
-  const data = event
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trim())
-    .join("\n");
-  if (!data) return { done: false, content: null };
-  if (data === "[DONE]") return { done: true, content: null };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(data);
-  } catch {
-    throw new MsBotError("MODEL_STREAM_INVALID", "模型返回了无法解析的流式数据。", true);
-  }
-  const content = (parsed as { choices?: Array<{ delta?: { content?: unknown } }> }).choices?.[0]?.delta?.content;
-  return { done: false, content: typeof content === "string" && content.length > 0 ? content : null };
-}
-
-export async function* parseOpenAiStream(stream: ReadableStream<Uint8Array>): AsyncIterable<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done });
-      const events = buffer.split(/\r?\n\r?\n/);
-      buffer = events.pop() ?? "";
-      for (const event of events) {
-        const decoded = decodeSseEvent(event);
-        if (decoded.done) return;
-        if (decoded.content) yield decoded.content;
-      }
-      if (done) break;
-    }
-    if (buffer.trim()) {
-      const decoded = decodeSseEvent(buffer);
-      if (decoded.content) yield decoded.content;
-    }
-  } finally {
-    reader.releaseLock();
   }
 }
