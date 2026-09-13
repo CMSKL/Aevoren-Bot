@@ -128,7 +128,7 @@ export class RoomCoordinator {
         const started = this.executor.start({
           clientNonce: batch.clientNonce,
           executorBotId: turn.memberBotId,
-          executionKey: `${batch.id}:${turn.memberBotId}`,
+          executionKey: `${batch.id}:${turn.logicalTurnId}`,
           inputSeq: user.seq,
           promptCutoffSeq,
           attribution: {
@@ -137,8 +137,10 @@ export class RoomCoordinator {
             sourceTurnId: turn.id,
           },
           room: { id: room.id, membershipVersion: batch.membershipVersion, sourceTurnId: turn.id },
+          onRunCreated: (run) => {
+            turn = this.repository.attachRoomTurnRuntime(turn.id, run.id);
+          },
         });
-        turn = this.repository.attachRoomTurnRuntime(turn.id, started.run.id);
         this.emit(this.repository.getRoomBatch(batchId));
         const result = await started.completion;
         this.settleTurn(turn.id, result);

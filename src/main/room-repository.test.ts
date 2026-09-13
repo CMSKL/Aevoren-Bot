@@ -48,7 +48,7 @@ function createCompletedRoomRun(
   };
   const run = value.createRuntimeRun(clientNonce, "fake", manifest, {
     executorBotId: turn.memberBotId,
-    executionKey: `${turn.batchId}:${turn.memberBotId}`,
+    executionKey: `${turn.batchId}:${turn.logicalTurnId}`,
     promptCutoffSeq,
   });
   value.attachRoomTurnRuntime(turn.id, run.id);
@@ -210,7 +210,7 @@ describe("Room repository", () => {
     };
     const run = value.createRuntimeRun(clientNonce, "fake", manifest, {
       executorBotId: runningTurn.memberBotId,
-      executionKey: `${prepared.batch.id}:${runningTurn.memberBotId}`,
+      executionKey: `${prepared.batch.id}:${runningTurn.logicalTurnId}`,
       promptCutoffSeq: input.seq,
     });
     value.attachRoomTurnRuntime(runningTurn.id, run.id);

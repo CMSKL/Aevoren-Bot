@@ -35,6 +35,7 @@ export type RuntimeExecutionInput = {
     membershipVersion: number;
     sourceTurnId: string;
   };
+  onRunCreated?(run: RuntimeRun): void;
   onDispatchStart?(): void;
   onProviderStarted?(requestId: string): void;
 };
@@ -111,6 +112,12 @@ export class RuntimeExecutor {
       executionKey: input.executionKey,
       promptCutoffSeq,
     });
+    try {
+      input.onRunCreated?.(run);
+    } catch (error) {
+      this.repository.transitionRuntimeRun(run.id, "failed", { errorCode: asAppError(error).code });
+      throw error;
+    }
     const active: ActiveRun = {
       controller: new AbortController(),
       runId: run.id,
