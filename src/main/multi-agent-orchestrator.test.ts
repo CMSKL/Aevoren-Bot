@@ -96,6 +96,19 @@ function completedSteps(text: string): ModelEvent[] {
   ];
 }
 
+function expectRoomRosterMessage(message: ChatMessage, bots: Bot[]): void {
+  expect(message.role).toBe("system");
+  const parsed = JSON.parse(message.content) as { notice: string; peers: Array<Record<string, string>> };
+  expect(parsed.notice).toContain("UNTRUSTED_ROOM_PEER_DATA");
+  expect(parsed.peers).toEqual(bots.map((bot) => ({
+    id: bot.id,
+    name: bot.name,
+    label: bot.label,
+    description: bot.description,
+  })));
+  expect(message.content).not.toMatch(/PROFILE_[ABC]/);
+}
+
 function synchronousThrowingReturnProvider(mode: "completed" | "pending"): ModelProvider {
   return {
     run(): AsyncIterable<ModelEvent> {
@@ -241,7 +254,13 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     const persistedHandoff = value.repository.listHandoffs(sent.batchId)[0]!;
     expect(persistedHandoff).toMatchObject({ state: "accepted", targetTurnId: turns[1]!.id });
     expect(turns[1]!.nonce).toBe("TOOL_CALL_SECRET");
-    expect(bMessages.map((message) => message.content)).toEqual(["PROFILE_B", "ROOT_QUESTION", "HANDOFF_TASK_FOR_B"]);
+    expect(bMessages).toHaveLength(4);
+    expect(bMessages[0]).toEqual({ role: "system", content: "PROFILE_B" });
+    expectRoomRosterMessage(bMessages[1]!, value.bots);
+    expect(bMessages.slice(2)).toEqual([
+      { role: "user", content: "ROOT_QUESTION" },
+      { role: "user", content: "HANDOFF_TASK_FOR_B" },
+    ]);
     expect(bContext?.incomingHandoff).toMatchObject({
       id: persistedHandoff.id,
       fromAgentId: value.bots[0]!.id,
@@ -325,11 +344,13 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     )!;
     expect(bTurn.promptCutoffSeq).toBe(aEntry.seq);
     expect(cTurn).toMatchObject({ inputSeq: bTurn.promptCutoffSeq, promptCutoffSeq: bTurn.promptCutoffSeq });
-    expect(cMessages.map((message) => message.content)).toEqual([
-      "PROFILE_C",
-      "ROOT_QUESTION",
-      `[room-speaker id="${value.bots[0]!.id}" name="Agent A"]\nA_AUTHORITY_OUTPUT`,
-      "C_REVIEW_TASK",
+    expect(cMessages).toHaveLength(5);
+    expect(cMessages[0]).toEqual({ role: "system", content: "PROFILE_C" });
+    expectRoomRosterMessage(cMessages[1]!, value.bots);
+    expect(cMessages.slice(2)).toEqual([
+      { role: "user", content: "ROOT_QUESTION" },
+      { role: "assistant", content: `[room-speaker id="${value.bots[0]!.id}" name="Agent A"]\nA_AUTHORITY_OUTPUT` },
+      { role: "user", content: "C_REVIEW_TASK" },
     ]);
     expect(JSON.stringify(cMessages)).not.toMatch(/B_FUTURE_OUTPUT|A_MAIN_PRIVATE|C_MAIN_PRIVATE|OTHER_ROOM_PRIVATE/);
     const cRun = value.repository.getRuntimeRun(cTurn.runtimeRunId!);

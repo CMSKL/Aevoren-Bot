@@ -1,6 +1,7 @@
 import type {
   AppError,
   RoomBatch,
+  RoomHandoffView,
   RoomRuntimeEvent,
   RoomRuntimeSnapshot,
   RoomSendCommand,
@@ -45,6 +46,24 @@ const EXPECTED_HANDOFF_REJECTIONS = new Set([
   "RUNTIME_STATE_INVALID",
 ]);
 
+function publicHandoffs(repository: AppRepository, runId: string): RoomHandoffView[] {
+  return repository.listHandoffs(runId)
+    .filter((handoff) => handoff.visibility === "room")
+    .map(({ id, runId: handoffRunId, fromTurnId, toAgentId, targetTurnId, task, state, version, createdAt, updatedAt, finishedAt }) => ({
+      id,
+      runId: handoffRunId,
+      fromTurnId,
+      toAgentId,
+      targetTurnId,
+      task,
+      state,
+      version,
+      createdAt,
+      updatedAt,
+      finishedAt,
+    }));
+}
+
 export class RoomCoordinator {
   private readonly inFlight = new Map<string, Promise<void>>();
   private readonly deadlineTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -58,13 +77,15 @@ export class RoomCoordinator {
 
   getSnapshot(roomId: string): RoomRuntimeSnapshot {
     const detail = this.repository.getRoomDetail(roomId);
+    const batches = this.repository.listRoomBatches(roomId);
     return {
       detail,
       transcriptCursor: this.repository.getTranscriptCursor(detail.session.id),
       entries: this.repository.listTranscript(detail.session.id),
       runs: this.repository.listRuntimeRuns(detail.session.id),
-      batches: this.repository.listRoomBatches(roomId),
+      batches,
       turns: this.repository.listRoomTurnsForRoom(roomId),
+      handoffs: batches.flatMap((batch) => publicHandoffs(this.repository, batch.id)),
       liveState: this.executor.getLiveState(detail.session.id),
     };
   }
@@ -199,6 +220,14 @@ export class RoomCoordinator {
   private async process(batchId: string, onlyTurnIds?: Set<string>, coordinated = false): Promise<void> {
     const batch = this.repository.getRoomBatch(batchId);
     const room = this.repository.getRoom(batch.roomId);
+    const roomRoster = coordinated
+      ? this.repository.listRoomMembers(room.id).map((member) => ({
+          id: member.botId,
+          name: member.bot.name,
+          label: member.bot.label,
+          description: member.bot.description,
+        }))
+      : undefined;
     while (true) {
       if (this.shuttingDown || this.repository.getRoomBatch(batchId).state !== "running") break;
       const pending = this.repository
@@ -246,7 +275,12 @@ export class RoomCoordinator {
             speakerNameSnapshot: turn.memberNameSnapshot,
             sourceTurnId: turn.id,
           },
-          room: { id: room.id, membershipVersion: batch.membershipVersion, sourceTurnId: turn.id },
+          room: {
+            id: room.id,
+            membershipVersion: batch.membershipVersion,
+            sourceTurnId: turn.id,
+            ...(roomRoster ? { roster: roomRoster } : {}),
+          },
           ...(incoming && source
             ? {
                 incomingHandoff: {
@@ -271,6 +305,7 @@ export class RoomCoordinator {
                   const handoff = this.repository.getHandoff(incoming.id);
                   if (handoff.state === "dispatching") {
                     this.repository.transitionHandoff(handoff.id, "accepted", handoff.version);
+                    this.emit(this.repository.getRoomRun(batchId));
                   }
                 },
               }
@@ -333,6 +368,7 @@ export class RoomCoordinator {
       sessionId: batch.sessionId,
       batch,
       turns: this.repository.listRoomTurns(batch.id),
+      handoffs: publicHandoffs(this.repository, batch.id),
       ...(error ? { error } : {}),
     });
   }

@@ -4,6 +4,7 @@ import type {
   Bot,
   RoomBatch,
   RoomDetail,
+  RoomHandoffView,
   RoomTurn,
   RuntimeRun,
   SessionLiveState,
@@ -12,6 +13,7 @@ import type {
 } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
+import { initialRoomRouteAgentIds, latestRoomTurnsByLogicalTurn } from "../room-runtime-state";
 import {
   EVERYONE_MENTION_ID,
   addRoomMention,
@@ -36,6 +38,21 @@ const liveLabels: Record<Exclude<SessionLiveStateName, "idle">, string> = {
   stale: "连接可能已停滞，仍可停止本次运行",
 };
 
+const handoffLabels: Record<RoomHandoffView["state"], string> = {
+  queued: "等待接收",
+  dispatching: "正在转交",
+  accepted: "已接收",
+  failed: "转交失败",
+  cancelled: "已取消",
+};
+
+function summarizeHandoffTask(task: string): string {
+  const compact = task.replace(/\s+/g, " ").trim();
+  return compact.length > 120 ? `${compact.slice(0, 119)}…` : compact;
+}
+
+type HandoffDisplay = RoomHandoffView & { fromName: string; toName: string };
+
 type TranscriptItemProps = {
   entry: TranscriptEntry;
   run: RuntimeRun | null;
@@ -45,6 +62,7 @@ type TranscriptItemProps = {
   groupedWithNext: boolean;
   speakerDisplayName: string | null;
   routeDisplayNames: string[];
+  handoffs: HandoffDisplay[];
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onRetryRoomTurn(turnId: string): void;
@@ -60,6 +78,7 @@ const TranscriptItem = memo(function TranscriptItem({
   groupedWithNext,
   speakerDisplayName,
   routeDisplayNames,
+  handoffs,
   onRetryMessage,
   onRetryRun,
   onRetryRoomTurn,
@@ -73,6 +92,7 @@ const TranscriptItem = memo(function TranscriptItem({
     ? sanitizeRoomSpeakerOutput(entry.body, entry.status === "streaming")
     : entry.body;
   const longAssistant = entry.role === "assistant" && assistantBody.length > 160;
+  const hasVisibleBody = entry.role === "user" || assistantBody.trim().length > 0;
   const speakerName = entry.role === "assistant" ? speakerDisplayName ?? entry.speakerNameSnapshot ?? "MS-Bot" : "你";
 
   return (
@@ -95,7 +115,7 @@ const TranscriptItem = memo(function TranscriptItem({
               <time>{timeFormatter.format(new Date(entry.createdAt))}</time>
             </header>
           ) : null}
-          <div className={`message-bubble${longAssistant ? " message-bubble-long" : ""}`}>
+          {hasVisibleBody ? <div className={`message-bubble${longAssistant ? " message-bubble-long" : ""}`}>
             {entry.role === "user" && routeDisplayNames.length > 0 ? (
               <div className="message-route" aria-label={`响应 Bot：${routeDisplayNames.join("、")}`}>
                 <span>响应</span>
@@ -105,7 +125,18 @@ const TranscriptItem = memo(function TranscriptItem({
             {entry.role === "assistant"
               ? <AssistantMarkdown body={assistantBody} />
               : <p className="user-message-body">{entry.body}</p>}
-          </div>
+          </div> : null}
+          {handoffs.length > 0 ? (
+            <div className="message-handoffs" aria-label="Agent 任务转交" data-testid="room-handoff-list">
+              {handoffs.map((handoff) => (
+                <div className={`room-handoff-row handoff-${handoff.state}`} key={handoff.id}>
+                  <span className="room-handoff-route">{handoff.fromName}<span aria-hidden="true">→</span>{handoff.toName}</span>
+                  <span className="room-handoff-task" title={handoff.task}>{summarizeHandoffTask(handoff.task)}</span>
+                  <span className="room-handoff-status">{handoffLabels[handoff.state]}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
           {entry.status === "streaming"
             ? <div className="streaming-indicator">正在生成<span /></div>
             : null}
@@ -156,6 +187,7 @@ type ConversationProps = {
   room: RoomDetail | null;
   roomBatches: RoomBatch[];
   roomTurns: RoomTurn[];
+  roomHandoffs: RoomHandoffView[];
   entries: TranscriptEntry[];
   runs: RuntimeRun[];
   liveState: SessionLiveState | null;
@@ -181,6 +213,7 @@ export function Conversation({
   room,
   roomBatches,
   roomTurns,
+  roomHandoffs,
   entries,
   runs,
   liveState,
@@ -229,22 +262,17 @@ export function Conversation({
   );
   const latestTurns = useMemo(() => {
     if (!latestBatch) return [];
-    const byMember = new Map<string, RoomTurn>();
-    for (const turn of roomTurns.filter((item) => item.batchId === latestBatch.id)) {
-      const current = byMember.get(turn.memberBotId);
-      if (!current || current.attemptNo < turn.attemptNo) byMember.set(turn.memberBotId, turn);
-    }
-    return [...byMember.values()].toSorted((left, right) => left.position - right.position);
+    return latestRoomTurnsByLogicalTurn(roomTurns, latestBatch.id);
   }, [latestBatch, roomTurns]);
   const roomTurnState = useMemo(() => {
     const byId = new Map(roomTurns.map((turn) => [turn.id, turn]));
-    const latestByMember = new Map<string, RoomTurn>();
+    const latestByLogicalTurn = new Map<string, RoomTurn>();
     for (const turn of roomTurns) {
-      const key = `${turn.batchId}:${turn.memberBotId}`;
-      const current = latestByMember.get(key);
-      if (!current || current.attemptNo < turn.attemptNo) latestByMember.set(key, turn);
+      const key = `${turn.batchId}:${turn.logicalTurnId}`;
+      const current = latestByLogicalTurn.get(key);
+      if (!current || current.attemptNo < turn.attemptNo) latestByLogicalTurn.set(key, turn);
     }
-    return { byId, latestByMember };
+    return { byId, latestByLogicalTurn };
   }, [roomTurns]);
   const roomMemberIdentities = useMemo(
     () => buildBotIdentityMap(room?.members.map((member) => member.bot) ?? []),
@@ -256,6 +284,25 @@ export function Conversation({
       : []),
     ...roomTurns.map((turn) => ({ id: turn.memberBotId, name: turn.memberNameSnapshot })),
   ]), [entries, roomTurns]);
+  const handoffsByAssistantEntry = useMemo(() => {
+    const runsById = new Map(runs.map((run) => [run.id, run]));
+    const result = new Map<string, HandoffDisplay[]>();
+    for (const handoff of roomHandoffs.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))) {
+      const sourceTurn = roomTurnState.byId.get(handoff.fromTurnId);
+      const targetTurn = roomTurnState.byId.get(handoff.targetTurnId);
+      const assistantEntryId = sourceTurn?.runtimeRunId ? runsById.get(sourceTurn.runtimeRunId)?.assistantEntryId : null;
+      if (!sourceTurn || !assistantEntryId) continue;
+      const display: HandoffDisplay = {
+        ...handoff,
+        fromName: snapshotIdentities.get(sourceTurn.memberBotId) ?? sourceTurn.memberNameSnapshot,
+        toName: targetTurn
+          ? snapshotIdentities.get(targetTurn.memberBotId) ?? targetTurn.memberNameSnapshot
+          : snapshotIdentities.get(handoff.toAgentId) ?? "未知 Bot",
+      };
+      result.set(assistantEntryId, [...(result.get(assistantEntryId) ?? []), display]);
+    }
+    return result;
+  }, [roomHandoffs, roomTurnState, runs, snapshotIdentities]);
   const mentionItems = useMemo(() => room ? [
     {
       id: EVERYONE_MENTION_ID,
@@ -278,17 +325,9 @@ export function Conversation({
   const roomRoutesByNonce = useMemo(() => {
     const result = new Map<string, string[]>();
     for (const batch of roomBatches) {
-      const seen = new Set<string>();
-      const names: string[] = [];
-      for (const turn of roomTurns
-        .filter((item) => item.batchId === batch.id)
-        .toSorted((left, right) => left.position - right.position || left.attemptNo - right.attemptNo)) {
-        if (seen.has(turn.memberBotId)) continue;
-        seen.add(turn.memberBotId);
-        names.push(roomMemberIdentities.get(turn.memberBotId)?.inline
-          ?? snapshotIdentities.get(turn.memberBotId)
-          ?? turn.memberNameSnapshot);
-      }
+      const names = initialRoomRouteAgentIds(roomTurns, batch.id).map((agentId) => (
+        roomMemberIdentities.get(agentId)?.inline ?? snapshotIdentities.get(agentId) ?? "未知 Bot"
+      ));
       result.set(batch.clientNonce, names);
     }
     return result;
@@ -410,7 +449,7 @@ export function Conversation({
           const canRetryRoomTurn = Boolean(
             sourceTurn &&
             sourceTurn.batchId === latestBatch?.id &&
-            roomTurnState.latestByMember.get(`${sourceTurn.batchId}:${sourceTurn.memberBotId}`)?.id === sourceTurn.id &&
+            roomTurnState.latestByLogicalTurn.get(`${sourceTurn.batchId}:${sourceTurn.logicalTurnId}`)?.id === sourceTurn.id &&
             ["failed", "cancelled", "interrupted"].includes(sourceTurn.state) &&
             !busy,
           );
@@ -429,6 +468,7 @@ export function Conversation({
               routeDisplayNames={entry.role === "user" && entry.clientNonce
                 ? roomRoutesByNonce.get(entry.clientNonce) ?? []
                 : []}
+              handoffs={handoffsByAssistantEntry.get(entry.id) ?? []}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
               onRetryRoomTurn={onRetryRoomTurn}
@@ -447,7 +487,7 @@ export function Conversation({
           : null}
         {room && latestBatch ? (
           <div className={`room-batch-state batch-${latestBatch.state}`} data-testid="room-batch-state">
-            <span>{latestBatch.state === "running" ? `正在按顺序调用 ${latestTurns.length} 个 Bot` : `本批状态：${latestBatch.state}`}</span>
+            <span>{latestBatch.state === "running" ? `正在按顺序执行 ${latestTurns.length} 个协作回合` : `本批状态：${latestBatch.state}`}</span>
             {latestTurns.map((turn) => (
               <span className={`room-turn-state turn-${turn.state}`} key={turn.id}>
                 {roomMemberIdentities.get(turn.memberBotId)?.inline ?? snapshotIdentities.get(turn.memberBotId) ?? turn.memberNameSnapshot}：{turn.state}
