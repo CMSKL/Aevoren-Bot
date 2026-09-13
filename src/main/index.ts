@@ -27,6 +27,12 @@ let shutdownPromise: Promise<void> | null = null;
 
 const CLOSE_CONFIRMATION_TIMEOUT_MS = 5_000;
 
+function appIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, "icon.png")
+    : join(app.getAppPath(), "resources", "icon.png");
+}
+
 const electronSecretCodec: SecretCodec = {
   isAvailable: () => safeStorage.isEncryptionAvailable(),
   encrypt: (value) => safeStorage.encryptString(value).toString("base64"),
@@ -107,6 +113,7 @@ function createWindow(): BrowserWindow {
     height: 900,
     minWidth: 390,
     minHeight: 640,
+    icon: appIconPath(),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#080808" : "#f5f5f5",
     title: "MS-Bot",
     ...(process.platform === "darwin"
@@ -152,6 +159,7 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === "darwin") app.dock?.setIcon(appIconPath());
   const databasePath = process.env.MS_BOT_DB_PATH ?? join(app.getPath("userData"), "ms-bot.sqlite");
   repository = new AppRepository(databasePath);
   repository.recoverInterruptedSends();
