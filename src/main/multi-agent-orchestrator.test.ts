@@ -27,6 +27,7 @@ type Harness = {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   while (repositories.length > 0) repositories.pop()?.close();
   while (temporaryDirectories.length > 0) {
     const directory = temporaryDirectories.pop();
@@ -69,6 +70,7 @@ function command(detail: RoomDetail, agentId: string, text = "ROOT_QUESTION"): R
     clientNonce: randomUUID(),
     text,
     targetBotIds: [agentId],
+    routingMode: "explicit",
   };
 }
 
@@ -728,6 +730,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   });
 
   it("hard-stops a Provider permanently awaiting next and releases the Room for a new batch", async () => {
+    vi.useFakeTimers();
     const calls: string[] = [];
     const value = harness(({ bots }) => ({
       async *run(_messages, _signal, context) {
@@ -746,9 +749,18 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     }), 3);
     const first = value.coordinator.sendCoordinated(
       command(value.detail, value.bots[0]!.id, "FOREVER_ROOT"),
-      { deadlineMs: 20 },
+      { deadlineMs: 5_000 },
     );
-    await waitForBatch(value.repository, first.batchId, ["partial"]);
+    for (let attempt = 0; attempt < 100 && value.repository.listHandoffs(first.batchId).length === 0; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(value.repository.listHandoffs(first.batchId)).toHaveLength(1);
+    expect(value.repository.listAgentTurns(first.batchId)[0]?.runtimeRunId).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(5_000);
+    for (let attempt = 0; attempt < 100 && value.repository.getRoomRun(first.batchId).state !== "partial"; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(value.repository.getRoomRun(first.batchId).state).toBe("partial");
 
     const firstTurns = value.repository.listAgentTurns(first.batchId);
     const firstRuntime = value.repository.getRuntimeRun(firstTurns[0]!.runtimeRunId!);
@@ -762,6 +774,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     expect(value.repository.getRoomRun(first.batchId)).toMatchObject({ state: "partial", windingDown: true });
     expect(value.repository.getActiveRuntimeRun(value.detail.session.id)).toBeNull();
 
+    vi.useRealTimers();
     const second = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id, "NEXT_ROOT"));
     await waitForBatch(value.repository, second.batchId, ["completed"]);
     expect(calls).toEqual([value.bots[0]!.id, value.bots[0]!.id]);
@@ -799,6 +812,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   });
 
   it("keeps timeout authority when pending iterator return throws synchronously", async () => {
+    vi.useFakeTimers();
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
     process.on("unhandledRejection", onUnhandled);
@@ -806,9 +820,22 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       const value = harness(() => synchronousThrowingReturnProvider("pending"), 2);
       const sent = value.coordinator.sendCoordinated(
         command(value.detail, value.bots[0]!.id),
-        { deadlineMs: 20 },
+        { deadlineMs: 5_000 },
       );
-      await waitForBatch(value.repository, sent.batchId, ["partial"]);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const runtimeId = value.repository.listAgentTurns(sent.batchId)[0]?.runtimeRunId;
+        if (runtimeId && value.repository.getRuntimeRun(runtimeId).state === "running") break;
+        await Promise.resolve();
+      }
+      const started = value.repository.listAgentTurns(sent.batchId)[0]!;
+      expect(started.runtimeRunId).not.toBeNull();
+      expect(value.repository.getRuntimeRun(started.runtimeRunId!).state).toBe("running");
+      await vi.advanceTimersByTimeAsync(5_000);
+      for (let attempt = 0; attempt < 100 && value.repository.getRoomRun(sent.batchId).state !== "partial"; attempt += 1) {
+        await Promise.resolve();
+      }
+      expect(value.repository.getRoomRun(sent.batchId).state).toBe("partial");
+      vi.useRealTimers();
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       const turn = value.repository.listAgentTurns(sent.batchId)[0]!;
@@ -825,6 +852,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   });
 
   it("preserves Coordinator-level deadline then cancel as partial timeout", async () => {
+    vi.useFakeTimers();
     const value = harness(() => ({
       async *run() {
         yield { type: "started", requestId: "deadline-first" } as ModelEvent;
@@ -834,15 +862,31 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     }), 2);
     const sent = value.coordinator.sendCoordinated(
       command(value.detail, value.bots[0]!.id),
-      { deadlineMs: 20 },
+      { deadlineMs: 5_000 },
     );
-    await vi.waitFor(() => expect(value.repository.getRoomRun(sent.batchId).windingDown).toBe(true));
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const runtimeId = value.repository.listAgentTurns(sent.batchId)[0]?.runtimeRunId;
+      if (runtimeId && value.repository.getRuntimeRun(runtimeId).state === "running") break;
+      await Promise.resolve();
+    }
+    const started = value.repository.listAgentTurns(sent.batchId)[0]!;
+    expect(started.runtimeRunId).not.toBeNull();
+    expect(value.repository.getRuntimeRun(started.runtimeRunId!).state).toBe("running");
+    await vi.advanceTimersByTimeAsync(5_000);
+    for (let attempt = 0; attempt < 100 && !value.repository.getRoomRun(sent.batchId).windingDown; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(value.repository.getRoomRun(sent.batchId).windingDown).toBe(true);
     value.coordinator.cancel(sent.batchId);
-    await waitForBatch(value.repository, sent.batchId, ["partial"]);
+    for (let attempt = 0; attempt < 100 && value.repository.getRoomRun(sent.batchId).state !== "partial"; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(value.repository.getRoomRun(sent.batchId).state).toBe("partial");
 
     const turn = value.repository.listAgentTurns(sent.batchId)[0]!;
     expect(value.repository.getRoomRun(sent.batchId)).toMatchObject({ state: "partial", windingDown: true });
     expect(turn).toMatchObject({ state: "failed", outcome: { kind: "timeout", errorCode: "MODEL_RUN_TIMEOUT" } });
+    vi.useRealTimers();
   });
 
   it("preserves Coordinator-level cancel then deadline as cancelled", async () => {

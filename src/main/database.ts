@@ -20,6 +20,7 @@ import type {
   RoomSendCommand,
   RoomHandoff,
   RoomRun,
+  RoomRoutingMode,
   RoomTurn,
   RoomTurnState,
   RuntimeRoute,
@@ -500,6 +501,52 @@ export const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 5,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE room_batches_v5 (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        trigger_message_id TEXT NOT NULL REFERENCES transcript_entries(id) ON DELETE RESTRICT,
+        target_digest TEXT NOT NULL,
+        routing_mode TEXT NOT NULL CHECK (routing_mode IN ('legacy', 'automatic', 'explicit', 'everyone')),
+        routing_reason TEXT CHECK (
+          (routing_mode = 'automatic' AND routing_reason IS NOT NULL AND length(routing_reason) BETWEEN 1 AND 240)
+          OR (routing_mode <> 'automatic' AND routing_reason IS NULL)
+        ),
+        state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'partial', 'cancelled', 'interrupted')),
+        membership_version INTEGER NOT NULL CHECK (membership_version > 0),
+        max_turns INTEGER NOT NULL CHECK (max_turns > 0),
+        max_hops INTEGER NOT NULL CHECK (max_hops >= 0),
+        max_targets_per_turn INTEGER NOT NULL CHECK (max_targets_per_turn > 0),
+        deadline_at TEXT NOT NULL,
+        is_winding_down INTEGER NOT NULL DEFAULT 0 CHECK (is_winding_down IN (0, 1)),
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (client_nonce),
+        UNIQUE (room_id, trigger_message_id)
+      );
+      INSERT INTO room_batches_v5(
+        id, room_id, session_id, client_nonce, trigger_message_id, target_digest,
+        routing_mode, routing_reason, state, membership_version, max_turns, max_hops,
+        max_targets_per_turn, deadline_at, is_winding_down, version, created_at, updated_at, finished_at
+      )
+      SELECT id, room_id, session_id, client_nonce, trigger_message_id, target_digest,
+             'legacy', NULL, state, membership_version, max_turns, max_hops,
+             max_targets_per_turn, deadline_at, is_winding_down, version, created_at, updated_at, finished_at
+      FROM room_batches;
+
+      DROP TABLE room_batches;
+      ALTER TABLE room_batches_v5 RENAME TO room_batches;
+      CREATE UNIQUE INDEX room_one_active_batch_per_session
+        ON room_batches(session_id) WHERE state IN ('queued', 'running');
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -609,6 +656,8 @@ type RoomBatchRow = {
   client_nonce: string;
   trigger_message_id: string;
   target_digest: string;
+  routing_mode: RoomRoutingMode;
+  routing_reason: string | null;
   state: RoomBatchState;
   membership_version: number;
   max_turns: number;
@@ -750,6 +799,8 @@ function toRoomBatch(row: RoomBatchRow): RoomBatch {
     clientNonce: row.client_nonce,
     triggerMessageId: row.trigger_message_id,
     targetDigest: row.target_digest,
+    routingMode: row.routing_mode,
+    routingReason: row.routing_reason,
     state: row.state,
     membershipVersion: row.membership_version,
     maxTurns: Number(row.max_turns),
@@ -866,8 +917,15 @@ export function digestMessage(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-export function digestRoomCommand(roomId: string, sessionId: string, text: string, targetBotIds: string[]): string {
-  return digestMessage(JSON.stringify({ roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() }));
+export function digestRoomCommand(
+  roomId: string,
+  sessionId: string,
+  text: string,
+  targetBotIds: string[],
+  routingMode: RoomRoutingMode = "legacy",
+): string {
+  const command = { roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() };
+  return digestMessage(JSON.stringify(routingMode === "legacy" ? command : { ...command, routingMode }));
 }
 
 export function digestHandoff(task: string, contextRefs: string[]): string {
@@ -1287,7 +1345,7 @@ export class AppRepository {
     return { disposition: "prepared", journal: this.getSendOrThrow(command.clientNonce) };
   }
 
-  prepareRoomMessage(command: RoomSendCommand): { disposition: "prepared" | "duplicate"; batch: RoomBatch } {
+  prepareRoomMessage(command: Omit<RoomSendCommand, "routingMode">): { disposition: "prepared" | "duplicate"; batch: RoomBatch } {
     const prepared = this.prepareRoomRun({
       ...command,
       membershipVersion: undefined,
@@ -1298,6 +1356,8 @@ export class AppRepository {
       windingDown: false,
       initialTurns: command.targetBotIds.map((agentId) => ({ agentId, nonce: randomUUID() })),
       comparePolicyOnDuplicate: false,
+      routingMode: "legacy",
+      routingReason: null,
     });
     return {
       disposition: prepared.disposition === "created" ? "prepared" : "duplicate",
@@ -1324,6 +1384,9 @@ export class AppRepository {
     turns: AgentTurn[];
   } {
     const canonicalTargetIds = input.initialTurns.map((turn) => turn.agentId).toSorted();
+    const routingMode = input.routingMode ?? "legacy";
+    const routingReason = input.routingReason?.trim() || null;
+    const commandTargetIds = routingMode === "automatic" ? [] : canonicalTargetIds;
     if (
       input.initialTurns.length === 0 ||
       input.initialTurns.length > 6 ||
@@ -1338,10 +1401,13 @@ export class AppRepository {
       !Number.isInteger(input.maxTargetsPerTurn) ||
       input.maxTargetsPerTurn < 1 ||
       Number.isNaN(Date.parse(input.deadlineAt))
+      || !["legacy", "automatic", "explicit", "everyone"].includes(routingMode)
+      || (routingMode === "automatic" && (!routingReason || routingReason.length > 240 || input.initialTurns.length !== 1))
+      || (routingMode !== "automatic" && routingReason !== null)
     ) {
       throw new MsBotError("INVALID_REQUEST");
     }
-    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, canonicalTargetIds);
+    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode);
     const targetDigest = digestMessage(JSON.stringify(canonicalTargetIds));
     const existingJournal = this.getSend(input.clientNonce);
     if (existingJournal) {
@@ -1358,6 +1424,8 @@ export class AppRepository {
         existing.sessionId !== input.sessionId ||
         existing.membershipVersion !== input.membershipVersion ||
         existing.targetDigest !== targetDigest ||
+        existing.routingMode !== routingMode ||
+        existing.routingReason !== routingReason ||
         existing.maxTurns !== input.maxTurns ||
         existing.maxHops !== input.maxHops ||
         existing.maxTargetsPerTurn !== input.maxTargetsPerTurn ||
@@ -1421,10 +1489,10 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO room_batches(
-             id, room_id, session_id, client_nonce, trigger_message_id, target_digest, state, membership_version,
+             id, room_id, session_id, client_nonce, trigger_message_id, target_digest, routing_mode, routing_reason, state, membership_version,
              max_turns, max_hops, max_targets_per_turn, deadline_at, is_winding_down,
              version, created_at, updated_at, finished_at
-           ) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)`,
         )
         .run(
           runId,
@@ -1433,6 +1501,8 @@ export class AppRepository {
           input.clientNonce,
           triggerMessageId,
           targetDigest,
+          routingMode,
+          routingReason,
           input.membershipVersion ?? room.membershipVersion,
           input.maxTurns,
           input.maxHops,

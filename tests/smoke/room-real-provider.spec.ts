@@ -14,6 +14,9 @@ async function createNamedBot(page: Page, name: string): Promise<void> {
   await page.getByLabel("名称").fill(name);
   await page.getByLabel("名称").blur();
   await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+  await page.getByLabel("描述").fill("只直接用一句话回答当前用户请求。禁止调用 handoff_to_agent，禁止向其他 Bot 转交任务。");
+  await page.getByLabel("描述").blur();
+  await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
 }
 
 async function selectMention(page: Page, query: string): Promise<void> {
@@ -23,7 +26,7 @@ async function selectMention(page: Page, query: string): Promise<void> {
   await input.press("Enter");
 }
 
-test("routes single, multiple, and default Room targets through the configured real Provider", async () => {
+test("routes explicit, multiple, and automatic Room targets through the configured real Provider", async () => {
   test.skip(
     !isolatedDatabase && !isolatedUserData,
     "requires an isolated database with the default safeStorage context, or isolated userData with a newly entered Key",
@@ -91,10 +94,11 @@ test("routes single, multiple, and default Room targets through the configured r
     await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveText([`@${first}`, `@${second}`]);
     await expect(page.getByTestId("room-batch-state")).toContainText("completed");
 
-    await page.getByLabel("消息").fill("真实模型默认全员验收。请分别用一句话确认收到。");
+    await page.getByLabel("消息").fill("真实模型自动选择验收。请由最合适的一位用一句话确认收到。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(5, { timeout: 90_000 });
-    await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveText([`@${first}`, `@${second}`]);
+    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(4, { timeout: 90_000 });
+    await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveCount(1);
+    await expect(page.locator("article.message-user").last()).toContainText("自动选择");
     await expect(page.getByTestId("room-batch-state")).toContainText("completed");
   } finally {
     await application.close();
@@ -106,18 +110,21 @@ test("routes single, multiple, and default Room targets through the configured r
     expect(database.prepare("SELECT COUNT(*) AS count FROM room_batches WHERE room_id = ? AND state = 'completed'").get(room.id)).toEqual({ count: 3 });
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM room_turns AS turn JOIN room_batches AS batch ON batch.id = turn.batch_id WHERE batch.room_id = ? AND turn.state = 'completed'",
-    ).get(room.id)).toEqual({ count: 5 });
+    ).get(room.id)).toEqual({ count: 4 });
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM runtime_runs AS run JOIN room_turns AS turn ON turn.runtime_run_id = run.id JOIN room_batches AS batch ON batch.id = turn.batch_id WHERE batch.room_id = ? AND run.state = 'completed'",
-    ).get(room.id)).toEqual({ count: 5 });
+    ).get(room.id)).toEqual({ count: 4 });
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM transcript_entries AS entry JOIN sessions AS session ON session.id = entry.session_id WHERE session.room_id = ? AND entry.role = 'user'",
     ).get(room.id)).toEqual({ count: 3 });
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM transcript_entries AS entry JOIN sessions AS session ON session.id = entry.session_id WHERE session.room_id = ? AND entry.role = 'assistant' AND entry.status = 'completed' AND entry.speaker_bot_id IS NOT NULL AND entry.source_turn_id IS NOT NULL",
-    ).get(room.id)).toEqual({ count: 5 });
+    ).get(room.id)).toEqual({ count: 4 });
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM room_turns AS turn JOIN room_batches AS batch ON batch.id = turn.batch_id WHERE batch.room_id = ? AND turn.state IN ('queued', 'running')",
+    ).get(room.id)).toEqual({ count: 0 });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM agent_handoffs AS handoff JOIN room_batches AS batch ON batch.id = handoff.run_id WHERE batch.room_id = ?",
     ).get(room.id)).toEqual({ count: 0 });
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   } finally {

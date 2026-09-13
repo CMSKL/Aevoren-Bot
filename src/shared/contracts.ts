@@ -194,6 +194,8 @@ export type AgentTurnOutcome = {
 export type AgentTurnOrigin = "initial" | "handoff" | "retry";
 export type HandoffVisibility = "room" | "direct";
 export type HandoffState = "queued" | "dispatching" | "accepted" | "failed" | "cancelled";
+export type RoomRoutingMode = "legacy" | "automatic" | "explicit" | "everyone";
+export type UserRoomRoutingMode = Exclude<RoomRoutingMode, "legacy">;
 
 export type RoomRun = {
   id: string;
@@ -202,6 +204,8 @@ export type RoomRun = {
   clientNonce: string;
   triggerMessageId: string;
   targetDigest: string;
+  routingMode: RoomRoutingMode;
+  routingReason: string | null;
   state: RoomRunState;
   membershipVersion: number;
   maxTurns: number;
@@ -288,6 +292,8 @@ export type CreateRoomRunInput = {
   maxTargetsPerTurn: number;
   deadlineAt: string;
   initialTurns: InitialAgentTurnInput[];
+  routingMode?: RoomRoutingMode;
+  routingReason?: string | null;
 };
 
 export type CreateHandoffInput = {
@@ -305,6 +311,7 @@ export type CreateHandoffInput = {
 export type RoomSendCommand = SendCommand & {
   roomId: string;
   targetBotIds: string[];
+  routingMode: UserRoomRoutingMode;
 };
 
 export type RoomSendResult = {

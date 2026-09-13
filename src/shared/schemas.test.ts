@@ -44,18 +44,22 @@ describe("Room schemas", () => {
     expect(roomCreateSchema.safeParse({ memberBotIds: [ids[0], ids[0]] }).success).toBe(false);
   });
 
-  it("accepts 1 to 6 unique target members and validates command identity", () => {
+  it("strictly separates automatic, explicit, and everyone routing", () => {
     const base = {
       roomId: crypto.randomUUID(),
       sessionId: crypto.randomUUID(),
       clientNonce: crypto.randomUUID(),
       text: "message",
     };
-    expect(roomSendCommandSchema.safeParse({ ...base, targetBotIds: ids.slice(0, 1) }).success).toBe(true);
-    expect(roomSendCommandSchema.safeParse({ ...base, targetBotIds: ids.slice(0, 6) }).success).toBe(true);
-    expect(roomSendCommandSchema.safeParse({ ...base, targetBotIds: [] }).success).toBe(false);
-    expect(roomSendCommandSchema.safeParse({ ...base, targetBotIds: ids }).success).toBe(false);
-    expect(roomSendCommandSchema.safeParse({ ...base, targetBotIds: [ids[0], ids[0]] }).success).toBe(false);
+    expect(roomSendCommandSchema.safeParse({ ...base, routingMode: "automatic", targetBotIds: [] }).success).toBe(true);
+    expect(roomSendCommandSchema.safeParse({ ...base, routingMode: "explicit", targetBotIds: ids.slice(0, 1) }).success).toBe(true);
+    expect(roomSendCommandSchema.safeParse({ ...base, routingMode: "everyone", targetBotIds: ids.slice(0, 6) }).success).toBe(true);
+    expect(roomSendCommandSchema.safeParse({ ...base, routingMode: "automatic", targetBotIds: ids.slice(0, 1) }).success).toBe(false);
+    expect(roomSendCommandSchema.safeParse({ ...base, routingMode: "explicit", targetBotIds: [] }).success).toBe(false);
+    expect(roomSendCommandSchema.safeParse({ ...base, routingMode: "legacy", targetBotIds: ids.slice(0, 1) }).success).toBe(false);
+    expect(roomSendCommandSchema.safeParse({ ...base, routingMode: "everyone", targetBotIds: ids }).success).toBe(false);
+    expect(roomSendCommandSchema.safeParse({ ...base, routingMode: "explicit", targetBotIds: [ids[0], ids[0]] }).success).toBe(false);
+    expect(roomSendCommandSchema.safeParse({ ...base, targetBotIds: ids.slice(0, 1) }).success).toBe(false);
   });
 
   it("does not expose coordinated-run policy controls to the Renderer", () => {
@@ -65,6 +69,7 @@ describe("Room schemas", () => {
       clientNonce: crypto.randomUUID(),
       text: "message",
       targetBotIds: ids.slice(0, 1),
+      routingMode: "explicit",
       maxTurns: 999,
       deadlineMs: Number.MAX_SAFE_INTEGER,
     });

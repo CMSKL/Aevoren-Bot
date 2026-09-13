@@ -28,7 +28,7 @@ describe("room mention helpers", () => {
   });
 
   it("supports everyone, multiple Bots, duplicate mentions, and roster ordering", () => {
-    expect(resolveRoomTargetIds([], ["a", "b", "c"])).toEqual(["a", "b", "c"]);
+    expect(resolveRoomTargetIds([], ["a", "b", "c"])).toEqual([]);
     expect(resolveRoomTargetIds([{ kind: "everyone", id: EVERYONE_MENTION_ID }], ["a", "b"])).toEqual(["a", "b"]);
 
     const first = addRoomMention([], { kind: "bot", id: "c", label: "C" });

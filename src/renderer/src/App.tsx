@@ -324,14 +324,21 @@ export function App(): React.JSX.Element {
     setRooms((current) => current.map((item) => item.id === detail.room.id ? detail.room : item));
   }
 
-  async function sendMessage(text: string, targetBotIds?: string[]): Promise<boolean> {
+  async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone"): Promise<boolean> {
     if (!session || submitting) return false;
     setSubmitting(true);
     setError(null);
     setCloseNotice(null);
     const clientNonce = crypto.randomUUID();
     const result = selectedRoom
-      ? await window.msBot.roomRuntime.send({ roomId: selectedRoom.room.id, sessionId: session.id, clientNonce, text, targetBotIds: targetBotIds ?? [] })
+      ? await window.msBot.roomRuntime.send({
+          roomId: selectedRoom.room.id,
+          sessionId: session.id,
+          clientNonce,
+          text,
+          targetBotIds: targetBotIds ?? [],
+          routingMode: routingMode ?? "automatic",
+        })
       : await window.msBot.messages.send({ sessionId: session.id, clientNonce, text });
     setSubmitting(false);
     if (!result.ok) {

@@ -135,6 +135,16 @@ function createPopulatedV3Database(filename: string): void {
   database.close();
 }
 
+function migrateFixtureThroughV4(filename: string): void {
+  createPopulatedV3Database(filename);
+  const database = new DatabaseSync(filename);
+  database.exec("PRAGMA foreign_keys = OFF;");
+  database.exec(MIGRATIONS[3].sql);
+  database.prepare("INSERT INTO schema_migrations VALUES(4, 't')").run();
+  database.exec("PRAGMA foreign_keys = ON;");
+  database.close();
+}
+
 afterEach(() => {
   while (repositories.length > 0) repositories.pop()?.close();
   while (temporaryDirectories.length > 0) {
@@ -159,6 +169,8 @@ describe("multi-agent RoomRun journal", () => {
       membershipVersion: 1,
       usedTurns: 1,
       windingDown: false,
+      routingMode: "legacy",
+      routingReason: null,
     });
     expect(first.getRoomTurn("turn")).toMatchObject({
       logicalTurnId: "turn",
@@ -185,7 +197,7 @@ describe("multi-agent RoomRun journal", () => {
     expect(reopened.getRoomRun("run").triggerMessageId).toBe("message");
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 },
     ]);
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     inspected.close();
@@ -209,6 +221,56 @@ describe("multi-agent RoomRun journal", () => {
     expect(inspected.prepare("SELECT state FROM room_batches WHERE id = 'run'").get()).toEqual({ state: "completed" });
     expect(inspected.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name LIKE '%_v4'").get()).toEqual({ count: 0 });
     inspected.close();
+  });
+
+  it("rolls back the v5 shadow migration and keeps legacy routing truthful", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v5-rollback-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    migrateFixtureThroughV4(filename);
+    const blocker = new DatabaseSync(filename);
+    blocker.exec("CREATE TABLE room_batches_v5(id TEXT PRIMARY KEY);");
+    blocker.close();
+
+    expect(() => new AppRepository(filename)).toThrow();
+    const inspected = new DatabaseSync(filename, { readOnly: true });
+    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+    ]);
+    expect(inspected.prepare("SELECT target_digest, state FROM room_batches WHERE id = 'run'").get()).toEqual({
+      target_digest: "targets",
+      state: "completed",
+    });
+    expect(inspected.prepare("PRAGMA table_info(room_batches)").all().some((column) => (
+      (column as { name: string }).name === "routing_mode"
+    ))).toBe(false);
+    inspected.close();
+  });
+
+  it("enforces routing mode and reason consistency in SQLite", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v5-routing-check-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const value = repository(filename);
+    const bots = createBots(value, 2);
+    const detail = value.createRoom({ memberBotIds: bots.map((bot) => bot.id) });
+    const automatic = value.createRoomRunWithInitialTurns({
+      ...prepareRunInput(value, detail, [bots[0]!.id]),
+      routingMode: "automatic",
+      routingReason: "确定性选择",
+    });
+    value.close();
+    repositories.pop();
+
+    const database = new DatabaseSync(filename);
+    expect(() => database.prepare("UPDATE room_batches SET routing_reason = NULL WHERE id = ?").run(automatic.run.id)).toThrow();
+    expect(() => database.prepare("UPDATE room_batches SET routing_mode = 'explicit' WHERE id = ?").run(automatic.run.id)).toThrow();
+    expect(() => database.prepare("UPDATE room_batches SET routing_reason = ? WHERE id = ?").run("x".repeat(241), automatic.run.id)).toThrow();
+    expect(database.prepare("SELECT routing_mode, routing_reason FROM room_batches WHERE id = ?").get(automatic.run.id)).toEqual({
+      routing_mode: "automatic",
+      routing_reason: "确定性选择",
+    });
+    database.close();
   });
 
   it("fails closed and rolls back v4 when legacy Turns share one Runtime", () => {

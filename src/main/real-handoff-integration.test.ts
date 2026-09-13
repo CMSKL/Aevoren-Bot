@@ -75,6 +75,7 @@ describe("real Provider handoff integration", () => {
       clientNonce: crypto.randomUUID(),
       text: "请先规划，再交给评审员。",
       targetBotIds: [botA.id],
+      routingMode: "explicit",
     });
     await vi.waitFor(() => expect(repository.getRoomRun(sent.batchId).state).toBe("completed"));
 
