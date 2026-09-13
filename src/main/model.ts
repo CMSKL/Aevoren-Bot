@@ -4,6 +4,13 @@ import { MsBotError } from "./errors";
 
 export type ChatMessage = PromptMessage;
 
+export type RoomPeer = {
+  id: string;
+  name: string;
+  label: string;
+  description: string;
+};
+
 export type ModelEvent =
   | { type: "started"; requestId: string }
   | { type: "activity" }
@@ -23,6 +30,7 @@ export type ModelRunContext = {
   executionKey: string;
   roomId?: string;
   sourceTurnId?: string;
+  roomRoster?: RoomPeer[];
   incomingHandoff?: {
     id: string;
     fromAgentId: string;
@@ -136,7 +144,11 @@ export class FakeModelProvider implements ModelProvider {
     private readonly ignoreAbort = process.env.MS_BOT_FAKE_IGNORE_ABORT === "1",
   ) {}
 
-  async *run(_messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
+  async *run(
+    _messages: ChatMessage[],
+    signal: AbortSignal,
+    context?: ModelRunContext,
+  ): AsyncIterable<ModelEvent> {
     if (signal.aborted) throw abortError();
     this.runCount += 1;
     if (this.failureMode === "first-run-before-start" && this.runCount === 1) {
@@ -147,12 +159,28 @@ export class FakeModelProvider implements ModelProvider {
       else await delay(this.startDelayMs, signal);
     }
     yield { type: "started", requestId: `fake-${randomUUID()}` };
-    for (const [index, text] of this.output.entries()) {
-      if (this.ignoreAbort) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
-      else await delay(this.delayMs, signal);
-      yield { type: "delta", text };
-      if (index === 0 && this.failureMode === "first-run-after-delta" && this.runCount === 1) {
-        throw new MsBotError("MODEL_STREAM_TRUNCATED");
+    const toolOnlyHandoff = process.env.MS_BOT_FAKE_HANDOFF_TOOL_ONLY === "1" && !context?.incomingHandoff;
+    if (!toolOnlyHandoff) {
+      for (const [index, text] of this.output.entries()) {
+        if (this.ignoreAbort) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+        else await delay(this.delayMs, signal);
+        yield { type: "delta", text };
+        if (index === 0 && this.failureMode === "first-run-after-delta" && this.runCount === 1) {
+          throw new MsBotError("MODEL_STREAM_TRUNCATED");
+        }
+      }
+    }
+    if (process.env.MS_BOT_FAKE_HANDOFF === "first-other" && !context?.incomingHandoff) {
+      const target = context?.roomRoster?.find((member) => member.id !== context.executorBotId);
+      if (target) {
+        yield {
+          type: "handoff",
+          toolCallId: `fake-handoff-${context?.executionKey ?? "unknown"}`,
+          toAgentId: target.id,
+          task: process.env.MS_BOT_FAKE_HANDOFF_TASK ?? "继续处理当前群聊任务。",
+          contextRefs: [],
+          visibility: "room",
+        };
       }
     }
     yield { type: "completed", finishReason: "stop" };
@@ -166,7 +194,98 @@ type DecodedSse = {
   terminal: boolean;
 };
 
-function decodeSseEvent(event: string): DecodedSse {
+type PendingToolCall = {
+  index: number;
+  id: string;
+  name: string;
+  arguments: string;
+};
+
+const HANDOFF_TOOL_NAME = "handoff_to_agent";
+const MAX_TOOL_ARGUMENTS_LENGTH = 100_000;
+const MAX_HANDOFF_CONTEXT_REFS = 64;
+const MAX_HANDOFF_CONTEXT_REF_LENGTH = 200;
+const MAX_HANDOFF_TOOL_CALLS = 2;
+
+function invalidHandoff(): never {
+  throw new MsBotError("MODEL_HANDOFF_INVALID");
+}
+
+function appendToolCallDelta(value: unknown, pending: Map<number, PendingToolCall>): void {
+  if (!Array.isArray(value)) invalidHandoff();
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") invalidHandoff();
+    const chunk = raw as {
+      index?: unknown;
+      id?: unknown;
+      type?: unknown;
+      function?: { name?: unknown; arguments?: unknown };
+    };
+    if (!Number.isInteger(chunk.index) || (chunk.index as number) < 0) invalidHandoff();
+    if (chunk.type !== undefined && chunk.type !== "function") invalidHandoff();
+    if (chunk.id !== undefined && typeof chunk.id !== "string") invalidHandoff();
+    if (chunk.function !== undefined && (!chunk.function || typeof chunk.function !== "object")) invalidHandoff();
+    if (chunk.function?.name !== undefined && typeof chunk.function.name !== "string") invalidHandoff();
+    if (chunk.function?.arguments !== undefined && typeof chunk.function.arguments !== "string") invalidHandoff();
+    const index = chunk.index as number;
+    const current = pending.get(index) ?? { index, id: "", name: "", arguments: "" };
+    if (chunk.id) {
+      current.id += chunk.id;
+    }
+    current.name += chunk.function?.name ?? "";
+    current.arguments += chunk.function?.arguments ?? "";
+    if (current.id.length > 500 || current.name.length > 200 || current.arguments.length > MAX_TOOL_ARGUMENTS_LENGTH) invalidHandoff();
+    pending.set(index, current);
+    if (pending.size > MAX_HANDOFF_TOOL_CALLS) invalidHandoff();
+  }
+}
+
+function finalizeToolCalls(
+  pending: Map<number, PendingToolCall>,
+  allowedTargetIds?: ReadonlySet<string>,
+): ModelEvent[] {
+  if (pending.size === 0) return [];
+  if (!allowedTargetIds) invalidHandoff();
+  return [...pending.values()].toSorted((left, right) => left.index - right.index).map((call) => {
+    if (!call.id.trim() || call.name !== HANDOFF_TOOL_NAME || !call.arguments) invalidHandoff();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(call.arguments);
+    } catch {
+      invalidHandoff();
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) invalidHandoff();
+    const values = parsed as Record<string, unknown>;
+    const keys = Object.keys(values).toSorted();
+    if (keys.join("\0") !== ["contextRefs", "task", "toAgentId", "visibility"].toSorted().join("\0")) invalidHandoff();
+    if (
+      typeof values.toAgentId !== "string" ||
+      !allowedTargetIds.has(values.toAgentId) ||
+      typeof values.task !== "string" ||
+      values.task.trim().length === 0 ||
+      values.task.length > 20_000 ||
+      values.visibility !== "room" ||
+      !Array.isArray(values.contextRefs) ||
+      values.contextRefs.length > MAX_HANDOFF_CONTEXT_REFS ||
+      values.contextRefs.some((reference) => typeof reference !== "string" || reference.trim().length === 0 || reference.length > MAX_HANDOFF_CONTEXT_REF_LENGTH) ||
+      new Set(values.contextRefs).size !== values.contextRefs.length
+    ) invalidHandoff();
+    return {
+      type: "handoff" as const,
+      toolCallId: call.id,
+      toAgentId: values.toAgentId,
+      task: values.task.trim(),
+      contextRefs: values.contextRefs,
+      visibility: "room" as const,
+    };
+  });
+}
+
+function decodeSseEvent(
+  event: string,
+  pendingToolCalls: Map<number, PendingToolCall>,
+  allowedTargetIds?: ReadonlySet<string>,
+): DecodedSse {
   const data = event
     .split(/\r?\n/)
     .filter((line) => line.startsWith("data:"))
@@ -174,7 +293,10 @@ function decodeSseEvent(event: string): DecodedSse {
     .join("\n");
   if (!data) return { events: [{ type: "activity" }], terminal: false };
   if (data === "[DONE]") {
-    return { events: [{ type: "completed", finishReason: "done" }], terminal: true };
+    return {
+      events: [...finalizeToolCalls(pendingToolCalls, allowedTargetIds), { type: "completed", finishReason: "done" }],
+      terminal: true,
+    };
   }
   let parsed: unknown;
   try {
@@ -182,13 +304,26 @@ function decodeSseEvent(event: string): DecodedSse {
   } catch {
     throw new MsBotError("MODEL_STREAM_INVALID");
   }
-  const choice = (parsed as {
-    choices?: Array<{ delta?: { content?: unknown }; finish_reason?: unknown }>;
-  }).choices?.[0];
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new MsBotError("MODEL_STREAM_INVALID");
+  const choices = (parsed as {
+    choices?: Array<{ index?: unknown; delta?: { content?: unknown; tool_calls?: unknown }; finish_reason?: unknown }>;
+  }).choices;
+  if (choices !== undefined && !Array.isArray(choices)) throw new MsBotError("MODEL_STREAM_INVALID");
+  if (Array.isArray(choices) && choices.some((candidate) => !candidate || typeof candidate !== "object" || Array.isArray(candidate))) {
+    throw new MsBotError("MODEL_STREAM_INVALID");
+  }
+  const choice = Array.isArray(choices)
+    ? choices.find((candidate) => candidate.index === 0)
+      ?? (choices.every((candidate) => candidate.index === undefined) ? choices[0] : undefined)
+    : undefined;
   const events: ModelEvent[] = [];
   const content = choice?.delta?.content;
   if (typeof content === "string" && content.length > 0) events.push({ type: "delta", text: content });
+  if (choice?.delta && Object.hasOwn(choice.delta, "tool_calls")) {
+    appendToolCallDelta(choice.delta.tool_calls, pendingToolCalls);
+  }
   if (typeof choice?.finish_reason === "string" && choice.finish_reason.length > 0) {
+    events.push(...finalizeToolCalls(pendingToolCalls, allowedTargetIds));
     events.push({ type: "completed", finishReason: choice.finish_reason });
     return { events, terminal: true };
   }
@@ -229,6 +364,7 @@ export async function* parseOpenAiStream(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal = new AbortController().signal,
   timeouts: Pick<ProviderTimeouts, "firstEventMs" | "idleMs" | "totalMs"> = DEFAULT_PROVIDER_TIMEOUTS,
+  allowedHandoffTargetIds?: ReadonlySet<string>,
 ): AsyncIterable<ModelEvent> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -236,6 +372,7 @@ export async function* parseOpenAiStream(
   let buffer = "";
   let sawEvent = false;
   let terminal = false;
+  const pendingToolCalls = new Map<number, PendingToolCall>();
   try {
     while (!terminal) {
       const remaining = timeouts.totalMs - (Date.now() - startedAt);
@@ -252,7 +389,7 @@ export async function* parseOpenAiStream(
       buffer = events.pop() ?? "";
       for (const rawEvent of events) {
         sawEvent = true;
-        const decoded = decodeSseEvent(rawEvent);
+        const decoded = decodeSseEvent(rawEvent, pendingToolCalls, allowedHandoffTargetIds);
         for (const modelEvent of decoded.events) yield modelEvent;
         if (decoded.terminal) {
           terminal = true;
@@ -263,7 +400,7 @@ export async function* parseOpenAiStream(
     }
     if (!terminal && buffer.trim()) {
       sawEvent = true;
-      const decoded = decodeSseEvent(buffer);
+      const decoded = decodeSseEvent(buffer, pendingToolCalls, allowedHandoffTargetIds);
       for (const modelEvent of decoded.events) yield modelEvent;
       terminal = decoded.terminal;
     }
@@ -286,7 +423,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     private readonly timeouts: ProviderTimeouts = DEFAULT_PROVIDER_TIMEOUTS,
   ) {}
 
-  async *run(messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
+  async *run(messages: ChatMessage[], signal: AbortSignal, context?: ModelRunContext): AsyncIterable<ModelEvent> {
     const controller = new AbortController();
     const relayAbort = (): void => controller.abort(signal.reason);
     signal.addEventListener("abort", relayAbort, { once: true });
@@ -295,6 +432,26 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       this.timeouts.connectMs,
     );
     let response: Response;
+    const roomRoster = context?.roomId && context.roomRoster?.length ? context.roomRoster : undefined;
+    const handoffTargets = roomRoster?.filter((member) => member.id !== context?.executorBotId);
+    const handoffTool = handoffTargets?.length ? {
+      type: "function",
+      function: {
+        name: HANDOFF_TOOL_NAME,
+        description: `Transfer a focused subtask to another agent in this room. Available agent IDs: ${handoffTargets.map((member) => member.id).join(", ")}.`,
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            toAgentId: { type: "string", enum: handoffTargets.map((member) => member.id) },
+            task: { type: "string", minLength: 1, maxLength: 20_000 },
+            contextRefs: { type: "array", maxItems: MAX_HANDOFF_CONTEXT_REFS, items: { type: "string", maxLength: MAX_HANDOFF_CONTEXT_REF_LENGTH }, uniqueItems: true },
+            visibility: { type: "string", enum: ["room"] },
+          },
+          required: ["toAgentId", "task", "contextRefs", "visibility"],
+        },
+      },
+    } : undefined;
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
@@ -302,7 +459,12 @@ export class OpenAiCompatibleProvider implements ModelProvider {
           "content-type": "application/json",
           authorization: `Bearer ${this.apiKey}`,
         },
-        body: JSON.stringify({ model: this.modelId, messages, stream: true }),
+        body: JSON.stringify({
+          model: this.modelId,
+          messages,
+          stream: true,
+          ...(handoffTool ? { tools: [handoffTool], tool_choice: "auto" } : {}),
+        }),
         signal: controller.signal,
       });
     } catch {
@@ -322,7 +484,12 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       );
     }
     yield { type: "started", requestId: response.headers.get("x-request-id") ?? randomUUID() };
-    yield* parseOpenAiStream(response.body, signal, this.timeouts);
+    yield* parseOpenAiStream(
+      response.body,
+      signal,
+      this.timeouts,
+      handoffTargets ? new Set(handoffTargets.map((member) => member.id)) : undefined,
+    );
   }
 
   async testConnection(signal: AbortSignal): Promise<void> {

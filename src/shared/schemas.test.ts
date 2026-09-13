@@ -57,4 +57,18 @@ describe("Room schemas", () => {
     expect(roomSendCommandSchema.safeParse({ ...base, targetBotIds: ids }).success).toBe(false);
     expect(roomSendCommandSchema.safeParse({ ...base, targetBotIds: [ids[0], ids[0]] }).success).toBe(false);
   });
+
+  it("does not expose coordinated-run policy controls to the Renderer", () => {
+    const parsed = roomSendCommandSchema.parse({
+      roomId: crypto.randomUUID(),
+      sessionId: crypto.randomUUID(),
+      clientNonce: crypto.randomUUID(),
+      text: "message",
+      targetBotIds: ids.slice(0, 1),
+      maxTurns: 999,
+      deadlineMs: Number.MAX_SAFE_INTEGER,
+    });
+    expect(parsed).not.toHaveProperty("maxTurns");
+    expect(parsed).not.toHaveProperty("deadlineMs");
+  });
 });

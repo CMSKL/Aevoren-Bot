@@ -50,6 +50,7 @@ export const ERROR_REGISTRY = {
   MODEL_STREAM_IDLE_TIMEOUT: { domain: "provider", retryable: true, safeMessage: "模型流式回复已停止响应。", allowedDetailKeys: [] },
   MODEL_RUN_TIMEOUT: { domain: "provider", retryable: true, safeMessage: "模型运行超过最长时间。", allowedDetailKeys: [] },
   MODEL_STREAM_INVALID: { domain: "provider", retryable: true, safeMessage: "模型返回了无法解析的流式数据。", allowedDetailKeys: [] },
+  MODEL_HANDOFF_INVALID: { domain: "provider", retryable: false, safeMessage: "模型返回了无效的任务转交。", allowedDetailKeys: [] },
   MODEL_STREAM_TRUNCATED: { domain: "provider", retryable: true, safeMessage: "模型回复在完成前中断。", allowedDetailKeys: [] },
   MODEL_TRANSPORT_ERROR: { domain: "provider", retryable: true, safeMessage: "模型连接意外中断。", allowedDetailKeys: [] },
   SECURE_STORAGE_UNAVAILABLE: { domain: "storage", retryable: false, safeMessage: "系统安全存储当前不可用，API Key 未保存。", allowedDetailKeys: [] },

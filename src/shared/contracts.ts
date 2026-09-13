@@ -91,7 +91,7 @@ export type RuntimeState =
   | "interrupted";
 
 export type RuntimeRoute = "fake" | "openai-compatible";
-export type PromptAuthority = "agent-profile" | "user" | "assistant";
+export type PromptAuthority = "agent-profile" | "room-context" | "user" | "assistant";
 
 export type PromptManifestBlock = {
   authority: PromptAuthority;
@@ -267,6 +267,11 @@ export type AgentHandoff = {
 
 export type RoomHandoff = AgentHandoff;
 
+export type RoomHandoffView = Pick<
+  RoomHandoff,
+  "id" | "runId" | "fromTurnId" | "toAgentId" | "targetTurnId" | "task" | "state" | "version" | "createdAt" | "updatedAt" | "finishedAt"
+>;
+
 export type InitialAgentTurnInput = {
   agentId: string;
   nonce: string;
@@ -316,6 +321,7 @@ export type RoomRuntimeSnapshot = {
   runs: RuntimeRun[];
   batches: RoomBatch[];
   turns: RoomTurn[];
+  handoffs: RoomHandoffView[];
   liveState: SessionLiveState;
 };
 
@@ -324,6 +330,7 @@ export type RoomRuntimeEvent = {
   sessionId: string;
   batch: RoomBatch;
   turns: RoomTurn[];
+  handoffs: RoomHandoffView[];
   error?: AppError;
 };
 

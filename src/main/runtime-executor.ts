@@ -17,6 +17,7 @@ import {
   type ModelEvent,
   type ModelProvider,
   type ModelRunContext,
+  type RoomPeer,
 } from "./model";
 import { buildPrompt } from "./prompt";
 import type { ModelSettingsService } from "./settings";
@@ -41,6 +42,7 @@ export type RuntimeExecutionInput = {
     id: string;
     membershipVersion: number;
     sourceTurnId: string;
+    roster?: RoomPeer[];
   };
   incomingHandoff?: ModelRunContext["incomingHandoff"];
   onRunCreated?(run: RuntimeRun): void;
@@ -118,6 +120,7 @@ export class RuntimeExecutor {
             roomId: input.room.id,
             roomMembershipVersion: input.room.membershipVersion,
             sourceTurnId: input.room.sourceTurnId,
+            ...(input.room.roster ? { roomRoster: input.room.roster } : {}),
             ...(input.incomingHandoff ? { handoff: input.incomingHandoff } : {}),
           }
         : undefined,
@@ -145,6 +148,7 @@ export class RuntimeExecutor {
         executorBotId: bot.id,
         executionKey: input.executionKey,
         ...(input.room ? { roomId: input.room.id, sourceTurnId: input.room.sourceTurnId } : {}),
+        ...(input.room?.roster ? { roomRoster: input.room.roster } : {}),
         ...(input.incomingHandoff ? { incomingHandoff: input.incomingHandoff } : {}),
       },
       onDispatchStart: input.onDispatchStart,
