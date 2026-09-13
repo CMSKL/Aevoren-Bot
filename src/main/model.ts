@@ -8,7 +8,30 @@ export type ModelEvent =
   | { type: "started"; requestId: string }
   | { type: "activity" }
   | { type: "delta"; text: string }
+  | {
+      type: "handoff";
+      toolCallId: string;
+      toAgentId: string;
+      task: string;
+      contextRefs: string[];
+      visibility: "room" | "direct";
+    }
   | { type: "completed"; finishReason: string };
+
+export type ModelRunContext = {
+  executorBotId: string;
+  executionKey: string;
+  roomId?: string;
+  sourceTurnId?: string;
+  incomingHandoff?: {
+    id: string;
+    fromAgentId: string;
+    task: string;
+    contextRefs: string[];
+    visibility: "room" | "direct";
+    createdAt: string;
+  };
+};
 
 export type ProviderTimeouts = {
   connectMs: number;
@@ -25,8 +48,54 @@ export const DEFAULT_PROVIDER_TIMEOUTS: ProviderTimeouts = {
 };
 
 export interface ModelProvider {
-  run(messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent>;
+  run(messages: ChatMessage[], signal: AbortSignal, context?: ModelRunContext): AsyncIterable<ModelEvent>;
   testConnection(signal: AbortSignal): Promise<void>;
+}
+
+export type ScriptedFakeInvocation = {
+  callIndex: number;
+  executionCallIndex: number;
+  messages: ChatMessage[];
+  context: ModelRunContext | undefined;
+};
+
+export type ScriptedFakeStep =
+  | ModelEvent
+  | { type: "delay"; milliseconds: number; ignoreAbort?: boolean }
+  | { type: "failure"; error: unknown };
+
+/** Test-only deterministic provider. Handoffs are emitted as events, never parsed from text. */
+export class ScriptedFakeModelProvider implements ModelProvider {
+  private callCount = 0;
+  private readonly executionCalls = new Map<string, number>();
+
+  constructor(
+    private readonly script: (invocation: ScriptedFakeInvocation) => readonly ScriptedFakeStep[],
+  ) {}
+
+  async *run(
+    messages: ChatMessage[],
+    signal: AbortSignal,
+    context?: ModelRunContext,
+  ): AsyncIterable<ModelEvent> {
+    const callIndex = this.callCount++;
+    const executionKey = context?.executionKey ?? "unknown";
+    const executionCallIndex = this.executionCalls.get(executionKey) ?? 0;
+    this.executionCalls.set(executionKey, executionCallIndex + 1);
+    const steps = this.script({ callIndex, executionCallIndex, messages, context });
+    for (const step of steps) {
+      if (signal.aborted && !("ignoreAbort" in step && step.ignoreAbort)) throw abortError();
+      if (step.type === "delay") {
+        if (step.ignoreAbort) await new Promise((resolve) => setTimeout(resolve, step.milliseconds));
+        else await delay(step.milliseconds, signal);
+        continue;
+      }
+      if (step.type === "failure") throw step.error;
+      yield step;
+    }
+  }
+
+  async testConnection(_signal: AbortSignal): Promise<void> {}
 }
 
 const FAKE_OUTPUT = [
@@ -36,8 +105,6 @@ const FAKE_OUTPUT = [
   "## 非目标\n本阶段不执行外部工具。\n\n## 功能需求\n1. 接收产品想法。\n2. 输出结构化分析。\n\n",
   "## 验收标准\n输出包含约定章节。\n\n## 风险\n输入信息可能不足。\n\n## 待确认事项\n请补充业务约束与成功指标。",
 ];
-
-let fakeRunCount = 0;
 
 function abortError(): DOMException {
   return new DOMException("Aborted", "AbortError");
@@ -59,6 +126,8 @@ function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
 }
 
 export class FakeModelProvider implements ModelProvider {
+  private runCount = 0;
+
   constructor(
     private readonly delayMs = Number(process.env.MS_BOT_FAKE_DELAY_MS ?? 20),
     private readonly output: readonly string[] = FAKE_OUTPUT,
@@ -69,8 +138,8 @@ export class FakeModelProvider implements ModelProvider {
 
   async *run(_messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
     if (signal.aborted) throw abortError();
-    fakeRunCount += 1;
-    if (this.failureMode === "first-run-before-start" && fakeRunCount === 1) {
+    this.runCount += 1;
+    if (this.failureMode === "first-run-before-start" && this.runCount === 1) {
       throw new MsBotError("MODEL_CONNECTION_FAILED");
     }
     if (this.startDelayMs > 0) {
@@ -82,7 +151,7 @@ export class FakeModelProvider implements ModelProvider {
       if (this.ignoreAbort) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
       else await delay(this.delayMs, signal);
       yield { type: "delta", text };
-      if (index === 0 && this.failureMode === "first-run-after-delta" && fakeRunCount === 1) {
+      if (index === 0 && this.failureMode === "first-run-after-delta" && this.runCount === 1) {
         throw new MsBotError("MODEL_STREAM_TRUNCATED");
       }
     }

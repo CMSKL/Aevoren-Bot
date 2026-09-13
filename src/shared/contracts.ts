@@ -115,6 +115,13 @@ export type PromptManifest = {
   roomMembershipVersion?: number;
   executorBotId?: string;
   sourceTurnId?: string;
+  handoff?: {
+    id: string;
+    fromAgentId: string;
+    taskDigest: string;
+    contextRefs: string[];
+    visibility: HandoffVisibility;
+  };
   blocks: PromptManifestBlock[];
   digest: string;
 };

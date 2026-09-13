@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   Bot,
+  HandoffVisibility,
   PromptAuthority,
   PromptManifest,
   PromptManifestBlock,
@@ -55,6 +56,14 @@ export function buildPrompt(
     roomId: string;
     roomMembershipVersion: number;
     sourceTurnId: string;
+    handoff?: {
+      id: string;
+      fromAgentId: string;
+      task: string;
+      contextRefs: string[];
+      visibility: HandoffVisibility;
+      createdAt: string;
+    };
   },
 ): BuiltPrompt {
   const promptCutoffSeq = context?.promptCutoffSeq ?? inputSeq;
@@ -68,6 +77,17 @@ export function buildPrompt(
         content: profileContent,
         digest: digest(profileContent),
         createdAt: bot.updatedAt,
+        sourceEntryId: null,
+      }]
+    : [];
+  const handoffBlocks: PromptBlock[] = context?.handoff
+    ? [{
+        authority: "user",
+        provenance: `handoff:${context.handoff.id}`,
+        scope: `room:${context.roomId}:turn:${context.sourceTurnId}`,
+        content: context.handoff.task,
+        digest: digest(context.handoff.task),
+        createdAt: context.handoff.createdAt,
         sourceEntryId: null,
       }]
     : [];
@@ -101,6 +121,7 @@ export function buildPrompt(
           ...(entry.speakerBotId ? { speakerBotId: entry.speakerBotId } : {}),
         };
       }),
+    ...handoffBlocks,
   ];
 
   const manifestBlocks = blocks.map(({ content: _content, ...metadata }) => metadata);
@@ -118,6 +139,17 @@ export function buildPrompt(
           promptCutoffSeq: context.promptCutoffSeq,
           executorBotId: bot.id,
           sourceTurnId: context.sourceTurnId,
+          ...(context.handoff
+            ? {
+                handoff: {
+                  id: context.handoff.id,
+                  fromAgentId: context.handoff.fromAgentId,
+                  taskDigest: digest(context.handoff.task),
+                  contextRefs: context.handoff.contextRefs,
+                  visibility: context.handoff.visibility,
+                },
+              }
+            : {}),
         }
       : {}),
     blocks: manifestBlocks,

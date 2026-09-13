@@ -1538,8 +1538,7 @@ export class AppRepository {
     const hop = source.hop + 1;
     this.assertRoomRunCanCreateTurn(run, source, hop);
     if (this.wouldCreateHandoffCycle(run.id, source.logicalTurnId, target.id, digest)) throw new MsBotError("HANDOFF_CYCLE");
-    const member = this.listRoomMembers(run.roomId).find((candidate) => candidate.botId === target.id);
-    const position = member?.position ?? this.nextRoomTurnPosition(run.id);
+    const position = this.nextRoomTurnPosition(run.id);
     const targetTurnId = randomUUID();
     const handoffId = randomUUID();
     const timestamp = now();
@@ -1684,6 +1683,34 @@ export class AppRepository {
       .all(runId) as HandoffRow[]).map(toRoomHandoff);
   }
 
+  getIncomingHandoff(targetTurnId: string): RoomHandoff | null {
+    // A Handoff records its original delivery attempt. A retry keeps that audit
+    // record terminal while resolving the same incoming task by logical Turn.
+    const row = this.database
+      .prepare(
+        `SELECT agent_handoffs.* FROM room_turns AS current
+         INNER JOIN room_turns AS original
+           ON original.batch_id = current.batch_id AND original.logical_turn_id = current.logical_turn_id
+         INNER JOIN agent_handoffs ON agent_handoffs.target_turn_id = original.id
+         WHERE current.id = ? LIMIT 1`,
+      )
+      .get(targetTurnId) as HandoffRow | undefined;
+    return row ? toRoomHandoff(row) : null;
+  }
+
+  isCoordinatedRoomRun(runId: string): boolean {
+    const run = this.getRoomRun(runId);
+    return run.maxTurns !== EXISTING_ROOM_RUN_MAX_TURNS
+      || run.maxHops !== EXISTING_ROOM_RUN_MAX_TURNS
+      || run.maxTargetsPerTurn !== EXISTING_ROOM_RUN_MAX_TURNS
+      || run.deadlineAt !== EXISTING_ROOM_RUN_DEADLINE;
+  }
+
+  cancelOpenHandoffs(runId: string): RoomHandoff[] {
+    const open = this.listHandoffs(runId).filter((handoff) => ["queued", "dispatching"].includes(handoff.state));
+    return open.map((handoff) => this.transitionHandoff(handoff.id, "cancelled"));
+  }
+
   private getHandoffBySemanticKey(
     runId: string,
     fromLogicalTurnId: string,
@@ -1790,6 +1817,21 @@ export class AppRepository {
     if (!this.listRoomMembers(run.roomId).some((member) => member.botId === turn.agentId)) {
       throw new MsBotError("ROOM_MEMBER_INVALID");
     }
+  }
+
+  assertRoomTurnDispatchable(turnId: string): RoomTurn {
+    const turn = this.getRoomTurn(turnId);
+    if (turn.state !== "queued") {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: turn.state });
+    }
+    const run = this.getRoomRun(turn.runId);
+    this.assertRoomRunHardStopAllowsWork(run);
+    if (run.state !== "running") {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: run.state });
+    }
+    if (this.getRoom(run.roomId).archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    this.assertRoomTurnMembershipAllowsRetry(run, turn);
+    return turn;
   }
 
   private assertRoomRunCanCreateTurn(run: RoomRun, parent: RoomTurn | null, hop: number): void {
@@ -2280,7 +2322,7 @@ export class AppRepository {
     clientNonce: string,
     route: RuntimeRoute,
     promptManifest: PromptManifest,
-    options: { executorBotId?: string; executionKey?: string; promptCutoffSeq?: number } = {},
+    options: { executorBotId?: string; executionKey?: string; inputSeq?: number; promptCutoffSeq?: number } = {},
   ): RuntimeRun {
     const journal = this.getSendOrThrow(clientNonce);
     const input = this.getUserMessage(clientNonce);
@@ -2311,7 +2353,7 @@ export class AppRepository {
           Number(attempt.current) + 1,
           route,
           input.generation,
-          input.seq,
+          options.inputSeq ?? input.seq,
           options.promptCutoffSeq ?? input.seq,
           JSON.stringify(promptManifest),
           timestamp,
@@ -2509,9 +2551,20 @@ export class AppRepository {
       .prepare("SELECT id FROM room_batches WHERE state IN ('queued', 'running')")
       .all() as Array<{ id: string }>).map((batch) => batch.id));
     for (const turn of turns) batchIds.add(turn.batch_id);
-    if (batchIds.size === 0) return 0;
+    const openHandoffs = this.database
+      .prepare("SELECT id FROM agent_handoffs WHERE state IN ('queued', 'dispatching')")
+      .all() as Array<{ id: string }>;
+    if (batchIds.size === 0 && openHandoffs.length === 0) return 0;
     const timestamp = now();
     this.transaction(() => {
+      if (openHandoffs.length > 0) {
+        this.database
+          .prepare(
+            `UPDATE agent_handoffs SET state = 'cancelled', version = version + 1,
+             updated_at = ?, finished_at = ? WHERE state IN ('queued', 'dispatching')`,
+          )
+          .run(timestamp, timestamp);
+      }
       const updateTurn = this.database.prepare(
         `UPDATE room_turns SET state = ?, version = version + 1,
          last_error_code = ?, updated_at = ?, finished_at = ? WHERE id = ?`,
