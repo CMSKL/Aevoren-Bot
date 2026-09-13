@@ -168,38 +168,126 @@ export type RoomDetail = {
   session: Session;
 };
 
-export type RoomBatchState = "queued" | "running" | "completed" | "partial" | "cancelled" | "interrupted";
-export type RoomTurnState = "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+export type RoomRunState = "queued" | "running" | "completed" | "partial" | "cancelled" | "interrupted";
+export type AgentTurnState = "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
 
-export type RoomBatch = {
+// `room_batches` is the persisted RoomRun journal. The legacy names remain aliases
+// because the current UI and coordinator still present one batch of member replies.
+export type RoomBatchState = RoomRunState;
+export type RoomTurnState = AgentTurnState;
+
+export type AgentTurnOutcomeKind = "sent" | "pass" | "skipped" | "timeout" | "cancelled" | "error";
+
+export type AgentTurnOutcome = {
+  kind: AgentTurnOutcomeKind;
+  summary?: string;
+  errorCode?: string;
+};
+
+export type AgentTurnOrigin = "initial" | "handoff" | "retry";
+export type HandoffVisibility = "room" | "direct";
+export type HandoffState = "queued" | "dispatching" | "accepted" | "failed" | "cancelled";
+
+export type RoomRun = {
   id: string;
   roomId: string;
   sessionId: string;
   clientNonce: string;
+  triggerMessageId: string;
   targetDigest: string;
-  state: RoomBatchState;
+  state: RoomRunState;
   membershipVersion: number;
+  maxTurns: number;
+  usedTurns: number;
+  maxHops: number;
+  maxTargetsPerTurn: number;
+  deadlineAt: string;
+  windingDown: boolean;
   version: number;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
 };
 
-export type RoomTurn = {
+export type RoomBatch = RoomRun;
+
+export type AgentTurn = {
   id: string;
+  runId: string;
   batchId: string;
+  agentId: string;
   memberBotId: string;
   memberNameSnapshot: string;
+  logicalTurnId: string;
+  parentTurnId: string | null;
+  nonce: string;
+  hop: number;
+  origin: AgentTurnOrigin;
+  inputGeneration: number;
+  inputSeq: number;
   position: number;
   attemptNo: number;
   version: number;
-  state: RoomTurnState;
+  state: AgentTurnState;
+  outcome: AgentTurnOutcome | null;
   runtimeRunId: string | null;
   promptCutoffSeq: number | null;
   lastErrorCode: string | null;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
+};
+
+export type RoomTurn = AgentTurn;
+
+export type AgentHandoff = {
+  id: string;
+  runId: string;
+  fromTurnId: string;
+  fromLogicalTurnId: string;
+  toAgentId: string;
+  targetTurnId: string;
+  task: string;
+  contextRefs: string[];
+  digest: string;
+  visibility: HandoffVisibility;
+  state: HandoffState;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+};
+
+export type RoomHandoff = AgentHandoff;
+
+export type InitialAgentTurnInput = {
+  agentId: string;
+  nonce: string;
+};
+
+export type CreateRoomRunInput = {
+  roomId: string;
+  sessionId: string;
+  clientNonce: string;
+  text: string;
+  membershipVersion: number;
+  maxTurns: number;
+  maxHops: number;
+  maxTargetsPerTurn: number;
+  deadlineAt: string;
+  initialTurns: InitialAgentTurnInput[];
+};
+
+export type CreateHandoffInput = {
+  runId: string;
+  fromTurnId: string;
+  toAgentId: string;
+  task: string;
+  contextRefs: string[];
+  visibility: HandoffVisibility;
+  targetTurnNonce: string;
+  inputGeneration: number;
+  inputSeq: number;
 };
 
 export type RoomSendCommand = SendCommand & {

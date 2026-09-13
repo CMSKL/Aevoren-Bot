@@ -94,7 +94,7 @@ function seedCompletedRuntimeBeforeTurnSettlement(userDataDir: string): { batchI
     };
     const run = repository.createRuntimeRun(clientNonce, "fake", manifest, {
       executorBotId: turn.memberBotId,
-      executionKey: `${prepared.batch.id}:${turn.memberBotId}`,
+      executionKey: `${prepared.batch.id}:${turn.logicalTurnId}`,
       promptCutoffSeq: 1,
     });
     repository.attachRoomTurnRuntime(turn.id, run.id);
