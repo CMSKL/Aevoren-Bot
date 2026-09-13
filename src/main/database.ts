@@ -1,8 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type {
+  AgentTurn,
+  AgentTurnOutcome,
+  AgentTurnOrigin,
   Bot,
   BotPatch,
+  CreateHandoffInput,
+  CreateRoomRunInput,
+  HandoffState,
+  HandoffVisibility,
   PromptManifest,
   Room,
   RoomBatch,
@@ -11,6 +18,10 @@ import type {
   RoomMember,
   RoomPatch,
   RoomSendCommand,
+  RoomHandoff,
+  RoomHandoffRejectionView,
+  RoomRun,
+  RoomRoutingMode,
   RoomTurn,
   RoomTurnState,
   RuntimeRoute,
@@ -64,6 +75,29 @@ const ROOM_TURN_TRANSITIONS: Record<RoomTurnState, readonly RoomTurnState[]> = {
   cancelled: [],
   interrupted: [],
 };
+
+const HANDOFF_TRANSITIONS: Record<HandoffState, readonly HandoffState[]> = {
+  queued: ["dispatching", "failed", "cancelled"],
+  dispatching: ["accepted", "failed", "cancelled"],
+  accepted: [],
+  failed: [],
+  cancelled: [],
+};
+
+const OUTCOMES_BY_TERMINAL_TURN_STATE: Partial<Record<RoomTurnState, readonly AgentTurnOutcome["kind"][]>> = {
+  completed: ["sent", "pass", "skipped"],
+  failed: ["timeout", "error"],
+  cancelled: ["cancelled"],
+  interrupted: ["timeout", "error"],
+};
+
+// Existing deterministic Room batches had no execution budget or deadline. These
+// sentinels preserve that behavior while v4 records an explicit immutable policy.
+const EXISTING_ROOM_RUN_MAX_TURNS = 2_147_483_647;
+const EXISTING_ROOM_RUN_DEADLINE = "9999-12-31T23:59:59.999Z";
+const MAX_HANDOFF_TASK_LENGTH = 20_000;
+const MAX_HANDOFF_CONTEXT_REFS = 64;
+const MAX_HANDOFF_CONTEXT_REF_LENGTH = 200;
 
 export const MIGRATIONS = [
   {
@@ -340,6 +374,199 @@ export const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 4,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE room_batches_v4 (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        trigger_message_id TEXT NOT NULL REFERENCES transcript_entries(id) ON DELETE RESTRICT,
+        target_digest TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'partial', 'cancelled', 'interrupted')),
+        membership_version INTEGER NOT NULL CHECK (membership_version > 0),
+        max_turns INTEGER NOT NULL CHECK (max_turns > 0),
+        max_hops INTEGER NOT NULL CHECK (max_hops >= 0),
+        max_targets_per_turn INTEGER NOT NULL CHECK (max_targets_per_turn > 0),
+        deadline_at TEXT NOT NULL,
+        is_winding_down INTEGER NOT NULL DEFAULT 0 CHECK (is_winding_down IN (0, 1)),
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (client_nonce),
+        UNIQUE (room_id, trigger_message_id)
+      );
+      INSERT INTO room_batches_v4(
+        id, room_id, session_id, client_nonce, trigger_message_id, target_digest, state,
+        membership_version, max_turns, max_hops, max_targets_per_turn, deadline_at, is_winding_down,
+        version, created_at, updated_at, finished_at
+      )
+      SELECT room_batches.id, room_batches.room_id, room_batches.session_id, room_batches.client_nonce,
+             transcript_entries.id, room_batches.target_digest, room_batches.state,
+             room_batches.membership_version, ${EXISTING_ROOM_RUN_MAX_TURNS},
+             ${EXISTING_ROOM_RUN_MAX_TURNS}, ${EXISTING_ROOM_RUN_MAX_TURNS},
+             '${EXISTING_ROOM_RUN_DEADLINE}', 0, room_batches.version,
+             room_batches.created_at, room_batches.updated_at, room_batches.finished_at
+      FROM room_batches
+      INNER JOIN transcript_entries
+        ON transcript_entries.client_nonce = room_batches.client_nonce AND transcript_entries.role = 'user';
+
+      CREATE TABLE room_turns_v4 (
+        id TEXT PRIMARY KEY,
+        batch_id TEXT NOT NULL REFERENCES room_batches_v4(id) ON DELETE CASCADE,
+        member_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE RESTRICT,
+        member_name_snapshot TEXT NOT NULL,
+        logical_turn_id TEXT NOT NULL,
+        parent_turn_id TEXT,
+        nonce TEXT NOT NULL,
+        hop INTEGER NOT NULL CHECK (hop >= 0),
+        origin TEXT NOT NULL CHECK (origin IN ('initial', 'handoff', 'retry')),
+        input_generation INTEGER NOT NULL CHECK (input_generation > 0),
+        input_seq INTEGER NOT NULL CHECK (input_seq > 0),
+        position INTEGER NOT NULL CHECK (position >= 0),
+        attempt_no INTEGER NOT NULL CHECK (attempt_no > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted')),
+        outcome_json TEXT CHECK (outcome_json IS NULL OR json_valid(outcome_json)),
+        runtime_run_id TEXT REFERENCES runtime_runs(id) ON DELETE SET NULL,
+        prompt_cutoff_seq INTEGER,
+        last_error_code TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (batch_id, member_bot_id, nonce),
+        UNIQUE (batch_id, logical_turn_id, attempt_no),
+        UNIQUE (batch_id, id),
+        UNIQUE (batch_id, id, logical_turn_id),
+        FOREIGN KEY (batch_id, parent_turn_id) REFERENCES room_turns_v4(batch_id, id) ON DELETE RESTRICT
+      );
+      INSERT INTO room_turns_v4(
+        id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+        hop, origin, input_generation, input_seq, position, attempt_no, version, state, outcome_json,
+        runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at
+      )
+      SELECT room_turns.id, room_turns.batch_id, room_turns.member_bot_id, room_turns.member_name_snapshot,
+             (SELECT first_turn.id FROM room_turns AS first_turn
+              WHERE first_turn.batch_id = room_turns.batch_id
+                AND first_turn.member_bot_id = room_turns.member_bot_id
+              ORDER BY first_turn.attempt_no ASC LIMIT 1),
+             NULL, room_turns.id, 0,
+             CASE WHEN room_turns.attempt_no = 1 THEN 'initial' ELSE 'retry' END,
+             transcript_entries.generation, transcript_entries.seq,
+             room_turns.position, room_turns.attempt_no, room_turns.version, room_turns.state, NULL,
+             room_turns.runtime_run_id, room_turns.prompt_cutoff_seq, room_turns.last_error_code,
+             room_turns.created_at, room_turns.updated_at, room_turns.finished_at
+      FROM room_turns
+      INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+      INNER JOIN transcript_entries
+        ON transcript_entries.client_nonce = room_batches.client_nonce AND transcript_entries.role = 'user';
+
+      DROP TABLE room_turns;
+      DROP TABLE room_batches;
+      ALTER TABLE room_batches_v4 RENAME TO room_batches;
+      ALTER TABLE room_turns_v4 RENAME TO room_turns;
+
+      UPDATE runtime_runs
+      SET execution_key = (
+        SELECT room_turns.batch_id || ':' || room_turns.logical_turn_id
+        FROM room_turns WHERE room_turns.runtime_run_id = runtime_runs.id
+      )
+      WHERE EXISTS (SELECT 1 FROM room_turns WHERE room_turns.runtime_run_id = runtime_runs.id);
+
+      CREATE UNIQUE INDEX room_one_active_batch_per_session
+        ON room_batches(session_id) WHERE state IN ('queued', 'running');
+      CREATE UNIQUE INDEX room_turn_one_runtime
+        ON room_turns(runtime_run_id) WHERE runtime_run_id IS NOT NULL;
+
+      CREATE TABLE agent_handoffs (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES room_batches(id) ON DELETE CASCADE,
+        from_turn_id TEXT NOT NULL,
+        from_logical_turn_id TEXT NOT NULL,
+        to_agent_id TEXT NOT NULL REFERENCES bots(id) ON DELETE RESTRICT,
+        target_turn_id TEXT NOT NULL,
+        task TEXT NOT NULL,
+        context_refs_json TEXT NOT NULL CHECK (json_valid(context_refs_json) AND json_type(context_refs_json) = 'array'),
+        digest TEXT NOT NULL,
+        visibility TEXT NOT NULL CHECK (visibility IN ('room', 'direct')),
+        state TEXT NOT NULL CHECK (state IN ('queued', 'dispatching', 'accepted', 'failed', 'cancelled')),
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (run_id, from_logical_turn_id, to_agent_id),
+        UNIQUE (run_id, target_turn_id),
+        FOREIGN KEY (run_id, from_turn_id, from_logical_turn_id)
+          REFERENCES room_turns(batch_id, id, logical_turn_id) ON DELETE CASCADE,
+        FOREIGN KEY (run_id, target_turn_id) REFERENCES room_turns(batch_id, id) ON DELETE CASCADE
+      );
+    `,
+  },
+  {
+    version: 5,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE room_batches_v5 (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        trigger_message_id TEXT NOT NULL REFERENCES transcript_entries(id) ON DELETE RESTRICT,
+        target_digest TEXT NOT NULL,
+        routing_mode TEXT NOT NULL CHECK (routing_mode IN ('legacy', 'automatic', 'explicit', 'everyone')),
+        routing_reason TEXT CHECK (
+          (routing_mode = 'automatic' AND routing_reason IS NOT NULL AND length(routing_reason) BETWEEN 1 AND 240)
+          OR (routing_mode <> 'automatic' AND routing_reason IS NULL)
+        ),
+        state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'partial', 'cancelled', 'interrupted')),
+        membership_version INTEGER NOT NULL CHECK (membership_version > 0),
+        max_turns INTEGER NOT NULL CHECK (max_turns > 0),
+        max_hops INTEGER NOT NULL CHECK (max_hops >= 0),
+        max_targets_per_turn INTEGER NOT NULL CHECK (max_targets_per_turn > 0),
+        deadline_at TEXT NOT NULL,
+        is_winding_down INTEGER NOT NULL DEFAULT 0 CHECK (is_winding_down IN (0, 1)),
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (client_nonce),
+        UNIQUE (room_id, trigger_message_id)
+      );
+      INSERT INTO room_batches_v5(
+        id, room_id, session_id, client_nonce, trigger_message_id, target_digest,
+        routing_mode, routing_reason, state, membership_version, max_turns, max_hops,
+        max_targets_per_turn, deadline_at, is_winding_down, version, created_at, updated_at, finished_at
+      )
+      SELECT id, room_id, session_id, client_nonce, trigger_message_id, target_digest,
+             'legacy', NULL, state, membership_version, max_turns, max_hops,
+             max_targets_per_turn, deadline_at, is_winding_down, version, created_at, updated_at, finished_at
+      FROM room_batches;
+
+      DROP TABLE room_batches;
+      ALTER TABLE room_batches_v5 RENAME TO room_batches;
+      CREATE UNIQUE INDEX room_one_active_batch_per_session
+        ON room_batches(session_id) WHERE state IN ('queued', 'running');
+    `,
+  },
+  {
+    version: 6,
+    sql: `
+      CREATE TABLE handoff_rejections (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES room_batches(id) ON DELETE CASCADE,
+        from_turn_id TEXT NOT NULL,
+        attempted_to_agent_id TEXT NOT NULL,
+        tool_call_key TEXT NOT NULL CHECK (length(tool_call_key) = 64),
+        error_code TEXT NOT NULL CHECK (length(error_code) BETWEEN 1 AND 100),
+        created_at TEXT NOT NULL,
+        UNIQUE (run_id, from_turn_id, tool_call_key),
+        FOREIGN KEY (run_id, from_turn_id) REFERENCES room_turns(batch_id, id) ON DELETE CASCADE
+      );
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -447,9 +674,18 @@ type RoomBatchRow = {
   room_id: string;
   session_id: string;
   client_nonce: string;
+  trigger_message_id: string;
   target_digest: string;
+  routing_mode: RoomRoutingMode;
+  routing_reason: string | null;
   state: RoomBatchState;
   membership_version: number;
+  max_turns: number;
+  used_turns: number;
+  max_hops: number;
+  max_targets_per_turn: number;
+  deadline_at: string;
+  is_winding_down: number;
   version: number;
   created_at: string;
   updated_at: string;
@@ -461,10 +697,18 @@ type RoomTurnRow = {
   batch_id: string;
   member_bot_id: string;
   member_name_snapshot: string;
+  logical_turn_id: string;
+  parent_turn_id: string | null;
+  nonce: string;
+  hop: number;
+  origin: AgentTurnOrigin;
+  input_generation: number;
+  input_seq: number;
   position: number;
   attempt_no: number;
   version: number;
   state: RoomTurnState;
+  outcome_json: string | null;
   runtime_run_id: string | null;
   prompt_cutoff_seq: number | null;
   last_error_code: string | null;
@@ -472,6 +716,36 @@ type RoomTurnRow = {
   updated_at: string;
   finished_at: string | null;
 };
+
+type HandoffRow = {
+  id: string;
+  run_id: string;
+  from_turn_id: string;
+  from_logical_turn_id: string;
+  to_agent_id: string;
+  target_turn_id: string;
+  task: string;
+  context_refs_json: string;
+  digest: string;
+  visibility: HandoffVisibility;
+  state: HandoffState;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+type HandoffRejectionRow = {
+  id: string;
+  run_id: string;
+  from_turn_id: string;
+  attempted_to_agent_id: string;
+  tool_call_key: string;
+  error_code: string;
+  created_at: string;
+};
+
+type HandoffRejection = RoomHandoffRejectionView & { toolCallKey: string };
 
 function now(): string {
   return new Date().toISOString();
@@ -555,9 +829,18 @@ function toRoomBatch(row: RoomBatchRow): RoomBatch {
     roomId: row.room_id,
     sessionId: row.session_id,
     clientNonce: row.client_nonce,
+    triggerMessageId: row.trigger_message_id,
     targetDigest: row.target_digest,
+    routingMode: row.routing_mode,
+    routingReason: row.routing_reason,
     state: row.state,
     membershipVersion: row.membership_version,
+    maxTurns: Number(row.max_turns),
+    usedTurns: Number(row.used_turns),
+    maxHops: Number(row.max_hops),
+    maxTargetsPerTurn: Number(row.max_targets_per_turn),
+    deadlineAt: row.deadline_at,
+    windingDown: row.is_winding_down === 1,
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -566,21 +849,80 @@ function toRoomBatch(row: RoomBatchRow): RoomBatch {
 }
 
 function toRoomTurn(row: RoomTurnRow): RoomTurn {
+  let outcome: AgentTurnOutcome | null = null;
+  if (row.outcome_json) {
+    try {
+      outcome = JSON.parse(row.outcome_json) as AgentTurnOutcome;
+    } catch {
+      throw new MsBotError("INTERNAL_ERROR");
+    }
+  }
   return {
     id: row.id,
+    runId: row.batch_id,
     batchId: row.batch_id,
+    agentId: row.member_bot_id,
     memberBotId: row.member_bot_id,
     memberNameSnapshot: row.member_name_snapshot,
+    logicalTurnId: row.logical_turn_id,
+    parentTurnId: row.parent_turn_id,
+    nonce: row.nonce,
+    hop: Number(row.hop),
+    origin: row.origin,
+    inputGeneration: Number(row.input_generation),
+    inputSeq: Number(row.input_seq),
     position: row.position,
     attemptNo: row.attempt_no,
     version: row.version,
     state: row.state,
+    outcome,
     runtimeRunId: row.runtime_run_id,
     promptCutoffSeq: row.prompt_cutoff_seq,
     lastErrorCode: row.last_error_code,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     finishedAt: row.finished_at,
+  };
+}
+
+function toRoomHandoff(row: HandoffRow): RoomHandoff {
+  let contextRefs: unknown;
+  try {
+    contextRefs = JSON.parse(row.context_refs_json);
+  } catch {
+    throw new MsBotError("INTERNAL_ERROR");
+  }
+  if (!Array.isArray(contextRefs) || contextRefs.some((reference) => typeof reference !== "string")) {
+    throw new MsBotError("INTERNAL_ERROR");
+  }
+  return {
+    id: row.id,
+    runId: row.run_id,
+    fromTurnId: row.from_turn_id,
+    fromLogicalTurnId: row.from_logical_turn_id,
+    toAgentId: row.to_agent_id,
+    targetTurnId: row.target_turn_id,
+    task: row.task,
+    contextRefs: contextRefs as string[],
+    digest: row.digest,
+    visibility: row.visibility,
+    state: row.state,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at,
+  };
+}
+
+function toHandoffRejection(row: HandoffRejectionRow): HandoffRejection {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    fromTurnId: row.from_turn_id,
+    attemptedToAgentId: row.attempted_to_agent_id,
+    toolCallKey: row.tool_call_key,
+    errorCode: row.error_code,
+    createdAt: row.created_at,
   };
 }
 
@@ -619,13 +961,44 @@ export function digestMessage(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-export function digestRoomCommand(roomId: string, sessionId: string, text: string, targetBotIds: string[]): string {
-  return digestMessage(JSON.stringify({ roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() }));
+export function digestRoomCommand(
+  roomId: string,
+  sessionId: string,
+  text: string,
+  targetBotIds: string[],
+  routingMode: RoomRoutingMode = "legacy",
+): string {
+  const command = { roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() };
+  return digestMessage(JSON.stringify(routingMode === "legacy" ? command : { ...command, routingMode }));
+}
+
+export function digestHandoff(task: string, contextRefs: string[]): string {
+  return digestMessage(JSON.stringify({ task, contextRefs: contextRefs.toSorted() }));
+}
+
+function handoffToolCallKey(toolCallId: unknown): string {
+  const normalized = typeof toolCallId === "string" && toolCallId.trim().length > 0
+    ? toolCallId.trim()
+    : "<invalid-tool-call>";
+  return createHash("sha256").update(normalized).digest("hex");
+}
+
+function safeAttemptedAgentId(value: unknown): string {
+  if (typeof value !== "string") return "invalid-target";
+  const normalized = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)
+    ? normalized
+    : "invalid-target";
 }
 
 export function isRuntimeTerminal(state: RuntimeState): boolean {
   return TERMINAL_RUNTIME_STATES.includes(state);
 }
+
+const ROOM_RUN_SELECT = `SELECT room_batches.*,
+  (SELECT COUNT(DISTINCT room_turns.logical_turn_id) FROM room_turns
+   WHERE room_turns.batch_id = room_batches.id) AS used_turns
+  FROM room_batches`;
 
 export class AppRepository {
   private readonly database: DatabaseSync;
@@ -1031,37 +1404,118 @@ export class AppRepository {
     return { disposition: "prepared", journal: this.getSendOrThrow(command.clientNonce) };
   }
 
-  prepareRoomMessage(command: RoomSendCommand): { disposition: "prepared" | "duplicate"; batch: RoomBatch } {
-    const canonicalTargetIds = command.targetBotIds.toSorted();
-    const bodyDigest = digestRoomCommand(command.roomId, command.sessionId, command.text, canonicalTargetIds);
-    const existing = this.getSend(command.clientNonce);
-    if (existing) {
-      if (existing.bodyDigest !== bodyDigest) throw new MsBotError("MESSAGE_NONCE_CONFLICT");
-      const batch = this.getRoomBatchByNonce(command.clientNonce);
-      if (!batch) throw new MsBotError("ROOM_BATCH_NOT_FOUND");
-      return { disposition: "duplicate", batch };
-    }
-    const room = this.getRoom(command.roomId);
-    if (room.archivedAt) throw new MsBotError("ROOM_ARCHIVED");
-    const session = this.getSession(command.sessionId);
-    if (session.roomId !== room.id) throw new MsBotError("SESSION_NOT_FOUND");
+  prepareRoomMessage(command: Omit<RoomSendCommand, "routingMode">): { disposition: "prepared" | "duplicate"; batch: RoomBatch } {
+    const prepared = this.prepareRoomRun({
+      ...command,
+      membershipVersion: undefined,
+      maxTurns: EXISTING_ROOM_RUN_MAX_TURNS,
+      maxHops: EXISTING_ROOM_RUN_MAX_TURNS,
+      maxTargetsPerTurn: EXISTING_ROOM_RUN_MAX_TURNS,
+      deadlineAt: EXISTING_ROOM_RUN_DEADLINE,
+      windingDown: false,
+      initialTurns: command.targetBotIds.map((agentId) => ({ agentId, nonce: randomUUID() })),
+      comparePolicyOnDuplicate: false,
+      routingMode: "legacy",
+      routingReason: null,
+    });
+    return {
+      disposition: prepared.disposition === "created" ? "prepared" : "duplicate",
+      batch: prepared.run,
+    };
+  }
+
+  /** Atomically creates the persisted RoomRun root and all of its initial AgentTurns. */
+  createRoomRunWithInitialTurns(input: CreateRoomRunInput): {
+    disposition: "created" | "duplicate";
+    run: RoomRun;
+    turns: AgentTurn[];
+  } {
+    return this.prepareRoomRun({ ...input, windingDown: false, comparePolicyOnDuplicate: true });
+  }
+
+  private prepareRoomRun(input: Omit<CreateRoomRunInput, "membershipVersion"> & {
+    membershipVersion?: number;
+    windingDown: boolean;
+    comparePolicyOnDuplicate: boolean;
+  }): {
+    disposition: "created" | "duplicate";
+    run: RoomRun;
+    turns: AgentTurn[];
+  } {
+    const canonicalTargetIds = input.initialTurns.map((turn) => turn.agentId).toSorted();
+    const routingMode = input.routingMode ?? "legacy";
+    const routingReason = input.routingReason?.trim() || null;
+    const commandTargetIds = routingMode === "automatic" ? [] : canonicalTargetIds;
     if (
-      command.targetBotIds.length < 1 ||
-      command.targetBotIds.length > 6 ||
-      new Set(command.targetBotIds).size !== command.targetBotIds.length
+      input.initialTurns.length === 0 ||
+      input.initialTurns.length > 6 ||
+      input.clientNonce.trim().length === 0 ||
+      input.text.trim().length === 0 ||
+      new Set(input.initialTurns.map((turn) => turn.agentId)).size !== input.initialTurns.length ||
+      input.initialTurns.some((turn) => turn.nonce.trim().length === 0) ||
+      !Number.isInteger(input.maxTurns) ||
+      input.maxTurns < input.initialTurns.length ||
+      !Number.isInteger(input.maxHops) ||
+      input.maxHops < 0 ||
+      !Number.isInteger(input.maxTargetsPerTurn) ||
+      input.maxTargetsPerTurn < 1 ||
+      Number.isNaN(Date.parse(input.deadlineAt))
+      || !["legacy", "automatic", "explicit", "everyone"].includes(routingMode)
+      || (routingMode === "automatic" && (!routingReason || routingReason.length > 240 || input.initialTurns.length !== 1))
+      || (routingMode !== "automatic" && routingReason !== null)
     ) {
-      throw new MsBotError("ROOM_MEMBER_INVALID");
+      throw new MsBotError("INVALID_REQUEST");
+    }
+    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode);
+    const targetDigest = digestMessage(JSON.stringify(canonicalTargetIds));
+    const existingJournal = this.getSend(input.clientNonce);
+    if (existingJournal) {
+      if (existingJournal.bodyDigest !== bodyDigest) throw new MsBotError("MESSAGE_NONCE_CONFLICT");
+      const existing = this.getRoomBatchByNonce(input.clientNonce);
+      if (!existing) throw new MsBotError("ROOM_BATCH_NOT_FOUND");
+      const turns = this.listRoomTurns(existing.id).filter((turn) => turn.origin === "initial");
+      const expectedTurns = input.initialTurns
+        .map((turn) => `${turn.agentId}:${turn.nonce}`)
+        .toSorted();
+      const actualTurns = turns.map((turn) => `${turn.agentId}:${turn.nonce}`).toSorted();
+      if (input.comparePolicyOnDuplicate && (
+        existing.roomId !== input.roomId ||
+        existing.sessionId !== input.sessionId ||
+        existing.membershipVersion !== input.membershipVersion ||
+        existing.targetDigest !== targetDigest ||
+        existing.routingMode !== routingMode ||
+        existing.routingReason !== routingReason ||
+        existing.maxTurns !== input.maxTurns ||
+        existing.maxHops !== input.maxHops ||
+        existing.maxTargetsPerTurn !== input.maxTargetsPerTurn ||
+        existing.deadlineAt !== input.deadlineAt ||
+        JSON.stringify(actualTurns) !== JSON.stringify(expectedTurns)
+      )) {
+        throw new MsBotError("ROOM_RUN_CONFLICT");
+      }
+      return { disposition: "duplicate", run: existing, turns };
+    }
+    if (Date.parse(input.deadlineAt) <= Date.now()) {
+      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "deadline" });
+    }
+    const room = this.getRoom(input.roomId);
+    if (room.archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    const session = this.getSession(input.sessionId);
+    if (session.roomId !== room.id) throw new MsBotError("SESSION_NOT_FOUND");
+    if (input.membershipVersion !== undefined && room.membershipVersion !== input.membershipVersion) {
+      throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
     }
     const members = this.listRoomMembers(room.id);
     const memberById = new Map(members.map((member) => [member.botId, member]));
-    if (command.targetBotIds.some((botId) => !memberById.has(botId))) throw new MsBotError("ROOM_MEMBER_INVALID");
-    const orderedTargets = members.filter((member) => command.targetBotIds.includes(member.botId));
-    if (this.getActiveRoomBatch(command.sessionId) || this.getActiveRuntimeRun(command.sessionId)) {
-      throw new MsBotError("ROOM_BATCH_BUSY");
+    if (input.initialTurns.some((turn) => !memberById.has(turn.agentId))) {
+      throw new MsBotError("ROOM_MEMBER_INVALID");
     }
+    if (this.getActiveRoomBatch(session.id)) throw new MsBotError("ROOM_BATCH_BUSY");
+    if (this.getActiveRuntimeRun(session.id)) throw new MsBotError("ROOM_BATCH_BUSY");
 
+    const runId = randomUUID();
+    const triggerMessageId = randomUUID();
     const timestamp = now();
-    const batchId = randomUUID();
     this.transaction(() => {
       const sequence = this.nextSequence(session.id, session.generation);
       const updatedSeq = this.nextTranscriptUpdateSeq(session.id);
@@ -1072,7 +1526,7 @@ export class AppRepository {
              provider_request_id, last_error_code, created_at, updated_at
            ) VALUES (?, ?, ?, 'acked', 0, NULL, NULL, ?, ?)`,
         )
-        .run(command.clientNonce, session.id, bodyDigest, timestamp, timestamp);
+        .run(input.clientNonce, session.id, bodyDigest, timestamp, timestamp);
       this.database
         .prepare(
           `INSERT INTO transcript_entries(
@@ -1080,24 +1534,205 @@ export class AppRepository {
              speaker_bot_id, speaker_name_snapshot, source_turn_id, created_at, updated_at
            ) VALUES (?, ?, ?, ?, ?, 'user', ?, 'completed', ?, NULL, NULL, NULL, ?, ?)`,
         )
-        .run(randomUUID(), session.id, session.generation, sequence, command.clientNonce, command.text, updatedSeq, timestamp, timestamp);
+        .run(
+          triggerMessageId,
+          session.id,
+          session.generation,
+          sequence,
+          input.clientNonce,
+          input.text,
+          updatedSeq,
+          timestamp,
+          timestamp,
+        );
       this.database
         .prepare(
           `INSERT INTO room_batches(
-             id, room_id, session_id, client_nonce, target_digest, state, membership_version,
+             id, room_id, session_id, client_nonce, trigger_message_id, target_digest, routing_mode, routing_reason, state, membership_version,
+             max_turns, max_hops, max_targets_per_turn, deadline_at, is_winding_down,
              version, created_at, updated_at, finished_at
-           ) VALUES (?, ?, ?, ?, ?, 'queued', ?, 1, ?, ?, NULL)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)`,
         )
-        .run(batchId, room.id, session.id, command.clientNonce, digestMessage(JSON.stringify(canonicalTargetIds)), room.membershipVersion, timestamp, timestamp);
+        .run(
+          runId,
+          room.id,
+          session.id,
+          input.clientNonce,
+          triggerMessageId,
+          targetDigest,
+          routingMode,
+          routingReason,
+          input.membershipVersion ?? room.membershipVersion,
+          input.maxTurns,
+          input.maxHops,
+          input.maxTargetsPerTurn,
+          input.deadlineAt,
+          input.windingDown ? 1 : 0,
+          timestamp,
+          timestamp,
+        );
       const insertTurn = this.database.prepare(
         `INSERT INTO room_turns(
-           id, batch_id, member_bot_id, member_name_snapshot, position, attempt_no, version, state,
+           id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+           hop, origin, input_generation, input_seq, position, attempt_no, version, state, outcome_json,
            runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at
-         ) VALUES (?, ?, ?, ?, ?, 1, 1, 'queued', NULL, NULL, NULL, ?, ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, NULL, ?, 0, 'initial', ?, ?, ?, 1, 1, 'queued', NULL, NULL, NULL, NULL, ?, ?, NULL)`,
       );
-      orderedTargets.forEach((member) => insertTurn.run(randomUUID(), batchId, member.botId, member.bot.name, member.position, timestamp, timestamp));
+      for (const turn of input.initialTurns) {
+        const turnId = randomUUID();
+        const member = memberById.get(turn.agentId)!;
+        insertTurn.run(
+          turnId,
+          runId,
+          member.botId,
+          member.bot.name,
+          turnId,
+          turn.nonce,
+          session.generation,
+          sequence,
+          member.position,
+          timestamp,
+          timestamp,
+        );
+      }
     });
-    return { disposition: "prepared", batch: this.getRoomBatch(batchId) };
+    return { disposition: "created", run: this.getRoomRun(runId), turns: this.listAgentTurns(runId) };
+  }
+
+  createHandoff(input: CreateHandoffInput): {
+    disposition: "created" | "duplicate";
+    handoff: RoomHandoff;
+    targetTurn: AgentTurn;
+  } {
+    if (
+      typeof input.task !== "string" ||
+      !Array.isArray(input.contextRefs) ||
+      input.contextRefs.some((reference) => typeof reference !== "string")
+    ) {
+      throw new MsBotError("INVALID_REQUEST");
+    }
+    const task = input.task.trim();
+    const contextRefs = input.contextRefs.map((reference) => reference.trim()).toSorted();
+    if (
+      task.length === 0 ||
+      task.length > MAX_HANDOFF_TASK_LENGTH ||
+      !["room", "direct"].includes(input.visibility) ||
+      contextRefs.length > MAX_HANDOFF_CONTEXT_REFS ||
+      contextRefs.some((reference) => (
+        reference.length === 0 || reference.length > MAX_HANDOFF_CONTEXT_REF_LENGTH
+      )) ||
+      new Set(contextRefs).size !== contextRefs.length
+    ) {
+      throw new MsBotError("INVALID_REQUEST");
+    }
+    const run = this.getRoomRun(input.runId);
+    const source = this.getRoomTurn(input.fromTurnId);
+    if (source.runId !== run.id) throw new MsBotError("AGENT_TURN_CONFLICT");
+    const target = this.getBot(input.toAgentId);
+    const digest = digestHandoff(task, contextRefs);
+    const existing = this.getHandoffBySemanticKey(run.id, source.logicalTurnId, target.id, digest, input.visibility);
+    if (existing) {
+      return { disposition: "duplicate", handoff: existing, targetTurn: this.getRoomTurn(existing.targetTurnId) };
+    }
+    if (
+      input.targetTurnNonce.trim().length === 0 ||
+      !Number.isInteger(input.inputGeneration) ||
+      input.inputGeneration < 1 ||
+      !Number.isInteger(input.inputSeq) ||
+      input.inputSeq < 1
+    ) {
+      throw new MsBotError("INVALID_REQUEST");
+    }
+    const session = this.getSession(run.sessionId);
+    const cursor = this.database
+      .prepare(
+        `SELECT status FROM transcript_entries
+         WHERE session_id = ? AND generation = ? AND seq = ?`,
+      )
+      .get(run.sessionId, input.inputGeneration, input.inputSeq) as { status: TranscriptStatus } | undefined;
+    if (
+      input.inputGeneration !== session.generation ||
+      input.inputSeq < source.inputSeq ||
+      !cursor ||
+      cursor.status !== "completed"
+    ) {
+      throw new MsBotError("HANDOFF_CONTEXT_INVALID");
+    }
+    this.assertHandoffContextRefs(run, contextRefs, input.inputGeneration, input.inputSeq);
+    if (run.state !== "running" || source.state !== "running") {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: source.state });
+    }
+    if (source.agentId === target.id) throw new MsBotError("HANDOFF_CYCLE");
+    if (this.getHandoffByTarget(run.id, source.logicalTurnId, target.id)) throw new MsBotError("HANDOFF_TARGET_CONFLICT");
+    if (input.visibility === "room") {
+      const room = this.getRoom(run.roomId);
+      if (room.membershipVersion !== run.membershipVersion) {
+        throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+      }
+      if (!this.listRoomMembers(run.roomId).some((member) => member.botId === target.id)) {
+        throw new MsBotError("ROOM_MEMBER_INVALID");
+      }
+    }
+    const existingTurn = this.getAgentTurnByNonce(run.id, target.id, input.targetTurnNonce);
+    if (existingTurn) throw new MsBotError("AGENT_TURN_CONFLICT");
+    const hop = source.hop + 1;
+    this.assertRoomRunCanCreateTurn(run, source, hop);
+    if (this.wouldCreateHandoffCycle(run.id, source.logicalTurnId, target.id, digest)) throw new MsBotError("HANDOFF_CYCLE");
+    const position = this.nextRoomTurnPosition(run.id);
+    const targetTurnId = randomUUID();
+    const handoffId = randomUUID();
+    const timestamp = now();
+    this.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO room_turns(
+             id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+             hop, origin, input_generation, input_seq, position, attempt_no, version, state, outcome_json,
+             runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'handoff', ?, ?, ?, 1, 1, 'queued', NULL, NULL, NULL, NULL, ?, ?, NULL)`,
+        )
+        .run(
+          targetTurnId,
+          run.id,
+          target.id,
+          target.name,
+          targetTurnId,
+          source.id,
+          input.targetTurnNonce,
+          hop,
+          input.inputGeneration,
+          input.inputSeq,
+          position,
+          timestamp,
+          timestamp,
+        );
+      this.database
+        .prepare(
+          `INSERT INTO agent_handoffs(
+             id, run_id, from_turn_id, from_logical_turn_id, to_agent_id, target_turn_id, task, context_refs_json,
+             digest, visibility, state, version, created_at, updated_at, finished_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 1, ?, ?, NULL)`,
+        )
+        .run(
+          handoffId,
+          run.id,
+          source.id,
+          source.logicalTurnId,
+          target.id,
+          targetTurnId,
+          task,
+          JSON.stringify(contextRefs),
+          digest,
+          input.visibility,
+          timestamp,
+          timestamp,
+        );
+    });
+    return {
+      disposition: "created",
+      handoff: this.getHandoff(handoffId),
+      targetTurn: this.getRoomTurn(targetTurnId),
+    };
   }
 
   getSend(clientNonce: string): SendJournalEntry | null {
@@ -1112,19 +1747,21 @@ export class AppRepository {
   }
 
   getRoomBatch(id: string): RoomBatch {
-    const row = this.database.prepare("SELECT * FROM room_batches WHERE id = ?").get(id) as RoomBatchRow | undefined;
+    const row = this.database.prepare(`${ROOM_RUN_SELECT} WHERE room_batches.id = ?`).get(id) as RoomBatchRow | undefined;
     if (!row) throw new MsBotError("ROOM_BATCH_NOT_FOUND");
     return toRoomBatch(row);
   }
 
   getRoomBatchByNonce(clientNonce: string): RoomBatch | null {
-    const row = this.database.prepare("SELECT * FROM room_batches WHERE client_nonce = ?").get(clientNonce) as RoomBatchRow | undefined;
+    const row = this.database
+      .prepare(`${ROOM_RUN_SELECT} WHERE room_batches.client_nonce = ?`)
+      .get(clientNonce) as RoomBatchRow | undefined;
     return row ? toRoomBatch(row) : null;
   }
 
   getActiveRoomBatch(sessionId: string): RoomBatch | null {
     const row = this.database
-      .prepare("SELECT * FROM room_batches WHERE session_id = ? AND state IN ('queued', 'running') LIMIT 1")
+      .prepare(`${ROOM_RUN_SELECT} WHERE room_batches.session_id = ? AND room_batches.state IN ('queued', 'running') LIMIT 1`)
       .get(sessionId) as RoomBatchRow | undefined;
     return row ? toRoomBatch(row) : null;
   }
@@ -1132,8 +1769,21 @@ export class AppRepository {
   listRoomBatches(roomId: string): RoomBatch[] {
     this.getRoom(roomId);
     return (this.database
-      .prepare("SELECT * FROM room_batches WHERE room_id = ? ORDER BY created_at ASC")
+      .prepare(`${ROOM_RUN_SELECT} WHERE room_batches.room_id = ? ORDER BY room_batches.created_at ASC`)
       .all(roomId) as RoomBatchRow[]).map(toRoomBatch);
+  }
+
+  getRoomRun(id: string): RoomRun {
+    return this.getRoomBatch(id);
+  }
+
+  getRoomRunByTrigger(roomId: string, triggerMessageId: string): RoomRun | null {
+    const row = this.database
+      .prepare(
+        `${ROOM_RUN_SELECT} WHERE room_batches.room_id = ? AND room_batches.trigger_message_id = ?`,
+      )
+      .get(roomId, triggerMessageId) as RoomBatchRow | undefined;
+    return row ? toRoomBatch(row) : null;
   }
 
   getRoomTurn(id: string): RoomTurn {
@@ -1149,57 +1799,442 @@ export class AppRepository {
       .all(batchId) as RoomTurnRow[]).map(toRoomTurn);
   }
 
-  transitionRoomBatch(id: string, state: RoomBatchState): RoomBatch {
+  listAgentTurns(runId: string): AgentTurn[] {
+    return this.listRoomTurns(runId);
+  }
+
+  getAgentTurnByNonce(runId: string, agentId: string, nonce: string): AgentTurn | null {
+    const row = this.database
+      .prepare("SELECT * FROM room_turns WHERE batch_id = ? AND member_bot_id = ? AND nonce = ?")
+      .get(runId, agentId, nonce) as RoomTurnRow | undefined;
+    return row ? toRoomTurn(row) : null;
+  }
+
+  getHandoff(id: string): RoomHandoff {
+    const row = this.database.prepare("SELECT * FROM agent_handoffs WHERE id = ?").get(id) as HandoffRow | undefined;
+    if (!row) throw new MsBotError("HANDOFF_NOT_FOUND");
+    return toRoomHandoff(row);
+  }
+
+  listHandoffs(runId: string): RoomHandoff[] {
+    this.getRoomRun(runId);
+    return (this.database
+      .prepare("SELECT * FROM agent_handoffs WHERE run_id = ? ORDER BY created_at ASC, rowid ASC")
+      .all(runId) as HandoffRow[]).map(toRoomHandoff);
+  }
+
+  recordHandoffRejection(input: {
+    runId: string;
+    fromTurnId: string;
+    attemptedToAgentId: unknown;
+    toolCallId: unknown;
+    errorCode: string;
+  }): { disposition: "created" | "duplicate"; rejection: HandoffRejection } {
+    if (!/^[A-Z][A-Z0-9_]{0,99}$/.test(input.errorCode)) throw new MsBotError("INVALID_REQUEST");
+    const run = this.getRoomRun(input.runId);
+    const source = this.getRoomTurn(input.fromTurnId);
+    if (source.runId !== run.id) throw new MsBotError("AGENT_TURN_CONFLICT");
+    const attemptedToAgentId = safeAttemptedAgentId(input.attemptedToAgentId);
+    const toolCallKey = handoffToolCallKey(input.toolCallId);
+    const existing = this.database
+      .prepare(
+        `SELECT * FROM handoff_rejections
+         WHERE run_id = ? AND from_turn_id = ? AND tool_call_key = ?`,
+      )
+      .get(run.id, source.id, toolCallKey) as HandoffRejectionRow | undefined;
+    if (existing) return { disposition: "duplicate", rejection: toHandoffRejection(existing) };
+
+    const id = randomUUID();
+    this.database
+      .prepare(
+        `INSERT INTO handoff_rejections(
+           id, run_id, from_turn_id, attempted_to_agent_id, tool_call_key, error_code, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, run.id, source.id, attemptedToAgentId, toolCallKey, input.errorCode, now());
+    return { disposition: "created", rejection: this.getHandoffRejection(id) };
+  }
+
+  getHandoffRejection(id: string): HandoffRejection {
+    const row = this.database.prepare("SELECT * FROM handoff_rejections WHERE id = ?").get(id) as HandoffRejectionRow | undefined;
+    if (!row) throw new MsBotError("HANDOFF_NOT_FOUND");
+    return toHandoffRejection(row);
+  }
+
+  listHandoffRejections(runId: string): HandoffRejection[] {
+    this.getRoomRun(runId);
+    return (this.database
+      .prepare("SELECT * FROM handoff_rejections WHERE run_id = ? ORDER BY created_at ASC, rowid ASC")
+      .all(runId) as HandoffRejectionRow[]).map(toHandoffRejection);
+  }
+
+  getIncomingHandoff(targetTurnId: string): RoomHandoff | null {
+    // A Handoff records its original delivery attempt. A retry keeps that audit
+    // record terminal while resolving the same incoming task by logical Turn.
+    const row = this.database
+      .prepare(
+        `SELECT agent_handoffs.* FROM room_turns AS current
+         INNER JOIN room_turns AS original
+           ON original.batch_id = current.batch_id AND original.logical_turn_id = current.logical_turn_id
+         INNER JOIN agent_handoffs ON agent_handoffs.target_turn_id = original.id
+         WHERE current.id = ? LIMIT 1`,
+      )
+      .get(targetTurnId) as HandoffRow | undefined;
+    return row ? toRoomHandoff(row) : null;
+  }
+
+  isCoordinatedRoomRun(runId: string): boolean {
+    const run = this.getRoomRun(runId);
+    return run.maxTurns !== EXISTING_ROOM_RUN_MAX_TURNS
+      || run.maxHops !== EXISTING_ROOM_RUN_MAX_TURNS
+      || run.maxTargetsPerTurn !== EXISTING_ROOM_RUN_MAX_TURNS
+      || run.deadlineAt !== EXISTING_ROOM_RUN_DEADLINE;
+  }
+
+  cancelOpenHandoffs(runId: string): RoomHandoff[] {
+    const open = this.listHandoffs(runId).filter((handoff) => ["queued", "dispatching"].includes(handoff.state));
+    return open.map((handoff) => this.transitionHandoff(handoff.id, "cancelled"));
+  }
+
+  private getHandoffBySemanticKey(
+    runId: string,
+    fromLogicalTurnId: string,
+    toAgentId: string,
+    digest: string,
+    visibility: HandoffVisibility,
+  ): RoomHandoff | null {
+    const row = this.database
+      .prepare(
+        `SELECT * FROM agent_handoffs
+         WHERE run_id = ? AND from_logical_turn_id = ? AND to_agent_id = ? AND digest = ? AND visibility = ?`,
+      )
+      .get(runId, fromLogicalTurnId, toAgentId, digest, visibility) as HandoffRow | undefined;
+    return row ? toRoomHandoff(row) : null;
+  }
+
+  private getHandoffByTarget(runId: string, fromLogicalTurnId: string, toAgentId: string): RoomHandoff | null {
+    const row = this.database
+      .prepare(
+        `SELECT * FROM agent_handoffs
+         WHERE run_id = ? AND from_logical_turn_id = ? AND to_agent_id = ?`,
+      )
+      .get(runId, fromLogicalTurnId, toAgentId) as HandoffRow | undefined;
+    return row ? toRoomHandoff(row) : null;
+  }
+
+  private assertHandoffContextRefs(
+    run: RoomRun,
+    contextRefs: string[],
+    inputGeneration: number,
+    inputSeq: number,
+  ): void {
+    const getContext = this.database.prepare(
+      `SELECT session_id, generation, seq, status FROM transcript_entries WHERE id = ?`,
+    );
+    for (const reference of contextRefs) {
+      const entry = getContext.get(reference) as Pick<TranscriptRow, "session_id" | "generation" | "seq" | "status"> | undefined;
+      if (
+        !entry ||
+        entry.session_id !== run.sessionId ||
+        Number(entry.generation) !== inputGeneration ||
+        Number(entry.seq) > inputSeq ||
+        entry.status !== "completed"
+      ) {
+        throw new MsBotError("HANDOFF_CONTEXT_INVALID");
+      }
+    }
+  }
+
+  private wouldCreateHandoffCycle(runId: string, sourceLogicalTurnId: string, targetAgentId: string, digest: string): boolean {
+    // Only an identical task digest continues the same graph. A different digest is
+    // a distinct task and may intentionally return to an earlier Agent.
+    const row = this.database
+      .prepare(
+        `WITH RECURSIVE same_task_ancestors(id, logical_turn_id, parent_turn_id, member_bot_id) AS (
+           SELECT id, logical_turn_id, parent_turn_id, member_bot_id
+           FROM room_turns WHERE batch_id = ? AND logical_turn_id = ?
+           UNION
+           SELECT parent.id, parent.logical_turn_id, parent.parent_turn_id, parent.member_bot_id
+           FROM same_task_ancestors AS child
+           INNER JOIN room_turns AS delivered
+             ON delivered.batch_id = ? AND delivered.logical_turn_id = child.logical_turn_id
+           INNER JOIN agent_handoffs AS handoff
+             ON handoff.run_id = ? AND handoff.target_turn_id = delivered.id AND handoff.digest = ?
+           INNER JOIN room_turns AS parent
+             ON parent.batch_id = handoff.run_id AND parent.id = handoff.from_turn_id
+         )
+         SELECT 1 AS found FROM same_task_ancestors WHERE member_bot_id = ? LIMIT 1`,
+      )
+      .get(runId, sourceLogicalTurnId, runId, runId, digest, targetAgentId) as { found: number } | undefined;
+    return Boolean(row);
+  }
+
+  private nextRoomTurnPosition(runId: string): number {
+    const row = this.database
+      .prepare("SELECT COALESCE(MAX(position), -1) + 1 AS value FROM room_turns WHERE batch_id = ?")
+      .get(runId) as { value: number };
+    return Number(row.value);
+  }
+
+  private assertRoomRunHardStopAllowsWork(run: RoomRun): void {
+    if (run.windingDown) {
+      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "winding-down" });
+    }
+    if (Date.parse(run.deadlineAt) <= Date.now()) {
+      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "deadline" });
+    }
+  }
+
+  private assertRoomTurnMembershipAllowsRetry(run: RoomRun, turn: RoomTurn): void {
+    this.getBot(turn.agentId);
+    const incoming = this.database
+      .prepare(
+        `SELECT agent_handoffs.visibility FROM agent_handoffs
+         INNER JOIN room_turns AS target ON target.id = agent_handoffs.target_turn_id
+         WHERE agent_handoffs.run_id = ? AND target.logical_turn_id = ? LIMIT 1`,
+      )
+      .get(run.id, turn.logicalTurnId) as { visibility: HandoffVisibility } | undefined;
+    if (incoming?.visibility === "direct") return;
+    const room = this.getRoom(run.roomId);
+    if (room.membershipVersion !== run.membershipVersion) {
+      throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+    }
+    if (!this.listRoomMembers(run.roomId).some((member) => member.botId === turn.agentId)) {
+      throw new MsBotError("ROOM_MEMBER_INVALID");
+    }
+  }
+
+  assertRoomTurnDispatchable(turnId: string): RoomTurn {
+    const turn = this.getRoomTurn(turnId);
+    if (turn.state !== "queued") {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: turn.state });
+    }
+    const run = this.getRoomRun(turn.runId);
+    this.assertRoomRunHardStopAllowsWork(run);
+    if (run.state !== "running") {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: run.state });
+    }
+    if (this.getRoom(run.roomId).archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    this.assertRoomTurnMembershipAllowsRetry(run, turn);
+    return turn;
+  }
+
+  private assertRoomRunCanCreateTurn(run: RoomRun, parent: RoomTurn | null, hop: number): void {
+    if (!["queued", "running"].includes(run.state)) {
+      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "run-state" });
+    }
+    this.assertRoomRunHardStopAllowsWork(run);
+    if (hop > run.maxHops) {
+      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-hops" });
+    }
+    const count = this.database
+      .prepare("SELECT COUNT(DISTINCT logical_turn_id) AS value FROM room_turns WHERE batch_id = ?")
+      .get(run.id) as { value: number };
+    if (Number(count.value) >= run.maxTurns) {
+      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-turns" });
+    }
+    if (parent) {
+      const targets = this.database
+        .prepare(
+          `SELECT COUNT(DISTINCT to_agent_id) AS value FROM agent_handoffs
+           WHERE run_id = ? AND from_logical_turn_id = ?`,
+        )
+        .get(run.id, parent.logicalTurnId) as { value: number };
+      if (Number(targets.value) >= run.maxTargetsPerTurn) {
+        throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-targets-per-turn" });
+      }
+    }
+  }
+
+  transitionRoomBatch(id: string, state: RoomBatchState, expectedVersion?: number): RoomBatch {
     const current = this.getRoomBatch(id);
+    if (expectedVersion !== undefined && expectedVersion !== current.version) {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
     if (!ROOM_BATCH_TRANSITIONS[current.state].includes(state)) {
       throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     const timestamp = now();
     const terminal = !["queued", "running"].includes(state);
-    this.database
+    const result = this.database
       .prepare(
         `UPDATE room_batches SET state = ?, version = version + 1, updated_at = ?,
-         finished_at = CASE WHEN ? THEN ? ELSE NULL END WHERE id = ?`,
+         finished_at = CASE WHEN ? THEN ? ELSE NULL END
+         WHERE id = ? AND version = ? AND state = ?`,
       )
-      .run(state, timestamp, terminal ? 1 : 0, timestamp, id);
+      .run(state, timestamp, terminal ? 1 : 0, timestamp, id, current.version, current.state);
+    if (Number(result.changes) === 0) {
+      const latest = this.getRoomBatch(id);
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
     return this.getRoomBatch(id);
+  }
+
+  transitionRoomRun(id: string, state: RoomBatchState, expectedVersion?: number): RoomRun {
+    return this.transitionRoomBatch(id, state, expectedVersion);
+  }
+
+  markRoomRunWindingDown(id: string, expectedVersion?: number): RoomRun {
+    const current = this.getRoomRun(id);
+    if (current.windingDown) return current;
+    if (expectedVersion !== undefined && expectedVersion !== current.version) {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
+    if (!["queued", "running"].includes(current.state)) {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
+    const result = this.database
+      .prepare(
+        `UPDATE room_batches SET is_winding_down = 1, version = version + 1, updated_at = ?
+         WHERE id = ? AND version = ? AND state = ? AND is_winding_down = 0`,
+      )
+      .run(now(), id, current.version, current.state);
+    if (Number(result.changes) === 0) {
+      const latest = this.getRoomRun(id);
+      if (latest.windingDown) return latest;
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
+    return this.getRoomRun(id);
   }
 
   transitionRoomTurn(
     id: string,
     state: RoomTurnState,
-    options: { runtimeRunId?: string; promptCutoffSeq?: number; errorCode?: string | null } = {},
+    options: {
+      runtimeRunId?: string;
+      promptCutoffSeq?: number;
+      errorCode?: string | null;
+      outcome?: AgentTurnOutcome;
+      expectedVersion?: number;
+    } = {},
   ): RoomTurn {
     const current = this.getRoomTurn(id);
+    if (options.expectedVersion !== undefined && options.expectedVersion !== current.version) {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
     if (!ROOM_TURN_TRANSITIONS[current.state].includes(state)) {
       throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
+    if (options.outcome && !OUTCOMES_BY_TERMINAL_TURN_STATE[state]?.includes(options.outcome.kind)) {
+      throw new MsBotError("INVALID_REQUEST");
+    }
     const timestamp = now();
     const terminal = !["queued", "running"].includes(state);
-    this.database
+    const result = this.database
       .prepare(
         `UPDATE room_turns SET state = ?, runtime_run_id = COALESCE(?, runtime_run_id), version = version + 1,
          prompt_cutoff_seq = COALESCE(?, prompt_cutoff_seq), last_error_code = ?,
+         outcome_json = COALESCE(?, outcome_json),
          updated_at = ?, finished_at = CASE WHEN ? THEN ? ELSE NULL END
-         WHERE id = ?`,
+         WHERE id = ? AND version = ? AND state = ?`,
       )
       .run(
         state,
         options.runtimeRunId ?? null,
         options.promptCutoffSeq ?? null,
         options.errorCode ?? null,
+        options.outcome ? JSON.stringify(options.outcome) : null,
         timestamp,
         terminal ? 1 : 0,
         timestamp,
         id,
+        current.version,
+        current.state,
       );
+    if (Number(result.changes) === 0) {
+      const latest = this.getRoomTurn(id);
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
     return this.getRoomTurn(id);
   }
 
+  transitionAgentTurn(
+    id: string,
+    state: RoomTurnState,
+    options: {
+      runtimeRunId?: string;
+      promptCutoffSeq?: number;
+      errorCode?: string | null;
+      outcome?: AgentTurnOutcome;
+      expectedVersion?: number;
+    } = {},
+  ): AgentTurn {
+    return this.transitionRoomTurn(id, state, options);
+  }
+
+  transitionHandoff(id: string, state: HandoffState, expectedVersion?: number): RoomHandoff {
+    const current = this.getHandoff(id);
+    if (expectedVersion !== undefined && expectedVersion !== current.version) {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
+    if (!HANDOFF_TRANSITIONS[current.state].includes(state)) {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
+    const timestamp = now();
+    const terminal = ["accepted", "failed", "cancelled"].includes(state);
+    const result = this.database
+      .prepare(
+        `UPDATE agent_handoffs SET state = ?, version = version + 1, updated_at = ?,
+         finished_at = CASE WHEN ? THEN ? ELSE NULL END
+         WHERE id = ? AND version = ? AND state = ?`,
+      )
+      .run(state, timestamp, terminal ? 1 : 0, timestamp, id, current.version, current.state);
+    if (Number(result.changes) === 0) {
+      const latest = this.getHandoff(id);
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
+    return this.getHandoff(id);
+  }
+
   attachRoomTurnRuntime(id: string, runtimeRunId: string): RoomTurn {
-    this.database
-      .prepare("UPDATE room_turns SET runtime_run_id = ?, version = version + 1, updated_at = ? WHERE id = ?")
-      .run(runtimeRunId, now(), id);
+    const turn = this.getRoomTurn(id);
+    if (turn.runtimeRunId === runtimeRunId) return turn;
+    const batch = this.getRoomBatch(turn.batchId);
+    const runtime = this.getRuntimeRun(runtimeRunId);
+    const attached = this.database
+      .prepare("SELECT id FROM room_turns WHERE runtime_run_id = ? AND id <> ?")
+      .get(runtimeRunId, id) as { id: string } | undefined;
+    if (
+      turn.state !== "running" ||
+      turn.runtimeRunId !== null ||
+      runtime.state !== "created" ||
+      runtime.sessionId !== batch.sessionId ||
+      runtime.clientNonce !== batch.clientNonce ||
+      runtime.executorBotId !== turn.memberBotId ||
+      runtime.executionKey !== `${batch.id}:${turn.logicalTurnId}` ||
+      runtime.inputGeneration !== turn.inputGeneration ||
+      runtime.inputSeq !== turn.inputSeq ||
+      runtime.promptCutoffSeq !== turn.promptCutoffSeq ||
+      runtime.promptManifest.sessionId !== batch.sessionId ||
+      runtime.promptManifest.roomId !== batch.roomId ||
+      runtime.promptManifest.roomMembershipVersion !== batch.membershipVersion ||
+      runtime.promptManifest.botId !== turn.memberBotId ||
+      runtime.promptManifest.executorBotId !== turn.memberBotId ||
+      runtime.promptManifest.generation !== turn.inputGeneration ||
+      runtime.promptManifest.inputSeq !== turn.inputSeq ||
+      runtime.promptManifest.promptCutoffSeq !== turn.promptCutoffSeq ||
+      runtime.promptManifest.sourceTurnId !== turn.id ||
+      attached
+    ) {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
+    }
+    let changes: number;
+    try {
+      const result = this.database
+        .prepare(
+          `UPDATE room_turns SET runtime_run_id = ?, version = version + 1, updated_at = ?
+           WHERE id = ? AND version = ? AND state = 'running' AND runtime_run_id IS NULL`,
+        )
+        .run(runtimeRunId, now(), id, turn.version);
+      changes = Number(result.changes);
+    } catch {
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
+    }
+    if (changes === 0) {
+      const latest = this.getRoomTurn(id);
+      if (latest.runtimeRunId === runtimeRunId) return latest;
+      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
     return this.getRoomTurn(id);
   }
 
@@ -1209,6 +2244,8 @@ export class AppRepository {
       throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "state" });
     }
     const batch = this.getRoomBatch(previous.batchId);
+    this.assertRoomRunHardStopAllowsWork(batch);
+    this.assertRoomTurnMembershipAllowsRetry(batch, previous);
     if (this.getRoom(batch.roomId).archivedAt) throw new MsBotError("ROOM_ARCHIVED");
     if (!["partial", "cancelled", "interrupted"].includes(batch.state)) {
       throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "batch-state" });
@@ -1223,8 +2260,8 @@ export class AppRepository {
       throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "active-batch" });
     }
     const attempt = this.database
-      .prepare("SELECT COALESCE(MAX(attempt_no), 0) AS value FROM room_turns WHERE batch_id = ? AND member_bot_id = ?")
-      .get(previous.batchId, previous.memberBotId) as { value: number };
+      .prepare("SELECT COALESCE(MAX(attempt_no), 0) AS value FROM room_turns WHERE batch_id = ? AND logical_turn_id = ?")
+      .get(previous.batchId, previous.logicalTurnId) as { value: number };
     if (Number(attempt.value) !== previous.attemptNo) {
       throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest" });
     }
@@ -1234,15 +2271,22 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO room_turns(
-             id, batch_id, member_bot_id, member_name_snapshot, position, attempt_no, version, state,
+             id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+             hop, origin, input_generation, input_seq, position, attempt_no, version, state, outcome_json,
              runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at
-           ) VALUES (?, ?, ?, ?, ?, ?, 1, 'queued', NULL, ?, NULL, ?, ?, NULL)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'retry', ?, ?, ?, ?, 1, 'queued', NULL, NULL, ?, NULL, ?, ?, NULL)`,
         )
         .run(
           id,
           previous.batchId,
           previous.memberBotId,
           previous.memberNameSnapshot,
+          previous.logicalTurnId,
+          previous.parentTurnId,
+          randomUUID(),
+          previous.hop,
+          previous.inputGeneration,
+          previous.inputSeq,
           previous.position,
           Number(attempt.value) + 1,
           previous.promptCutoffSeq,
@@ -1256,6 +2300,7 @@ export class AppRepository {
 
   continueInterruptedRoomBatch(batchId: string): RoomTurn[] {
     const batch = this.getRoomBatch(batchId);
+    this.assertRoomRunHardStopAllowsWork(batch);
     if (this.getRoom(batch.roomId).archivedAt) throw new MsBotError("ROOM_ARCHIVED");
     if (!["interrupted", "partial"].includes(batch.state)) {
       throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "batch-state" });
@@ -1272,8 +2317,8 @@ export class AppRepository {
     const allTurns = this.listRoomTurns(batchId);
     const latest = new Map<string, RoomTurn>();
     for (const turn of allTurns) {
-      const previous = latest.get(turn.memberBotId);
-      if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.memberBotId, turn);
+      const previous = latest.get(turn.logicalTurnId);
+      if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.logicalTurnId, turn);
     }
     const remaining = [...latest.values()].filter(
       (turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null,
@@ -1281,14 +2326,16 @@ export class AppRepository {
     if (remaining.length === 0) {
       throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "no-remaining" });
     }
+    for (const turn of remaining) this.assertRoomTurnMembershipAllowsRetry(batch, turn);
     const timestamp = now();
     const created: string[] = [];
     this.transaction(() => {
       const insert = this.database.prepare(
         `INSERT INTO room_turns(
-           id, batch_id, member_bot_id, member_name_snapshot, position, attempt_no, version, state,
+           id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+           hop, origin, input_generation, input_seq, position, attempt_no, version, state, outcome_json,
            runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, 1, 'queued', NULL, NULL, NULL, ?, ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'retry', ?, ?, ?, ?, 1, 'queued', NULL, NULL, NULL, NULL, ?, ?, NULL)`,
       );
       for (const turn of remaining) {
         const id = randomUUID();
@@ -1298,6 +2345,12 @@ export class AppRepository {
           batchId,
           turn.memberBotId,
           turn.memberNameSnapshot,
+          turn.logicalTurnId,
+          turn.parentTurnId,
+          randomUUID(),
+          turn.hop,
+          turn.inputGeneration,
+          turn.inputSeq,
           turn.position,
           turn.attemptNo + 1,
           timestamp,
@@ -1313,8 +2366,8 @@ export class AppRepository {
     const turns = this.listRoomTurns(batchId);
     const latest = new Map<string, RoomTurn>();
     for (const turn of turns) {
-      const previous = latest.get(turn.memberBotId);
-      if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.memberBotId, turn);
+      const previous = latest.get(turn.logicalTurnId);
+      if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.logicalTurnId, turn);
     }
     const states = [...latest.values()].map((turn) => turn.state);
     if (states.some((state) => state === "queued" || state === "running")) return this.getRoomBatch(batchId);
@@ -1454,7 +2507,7 @@ export class AppRepository {
     clientNonce: string,
     route: RuntimeRoute,
     promptManifest: PromptManifest,
-    options: { executorBotId?: string; executionKey?: string; promptCutoffSeq?: number } = {},
+    options: { executorBotId?: string; executionKey?: string; inputSeq?: number; promptCutoffSeq?: number } = {},
   ): RuntimeRun {
     const journal = this.getSendOrThrow(clientNonce);
     const input = this.getUserMessage(clientNonce);
@@ -1485,7 +2538,7 @@ export class AppRepository {
           Number(attempt.current) + 1,
           route,
           input.generation,
-          input.seq,
+          options.inputSeq ?? input.seq,
           options.promptCutoffSeq ?? input.seq,
           JSON.stringify(promptManifest),
           timestamp,
@@ -1683,9 +2736,20 @@ export class AppRepository {
       .prepare("SELECT id FROM room_batches WHERE state IN ('queued', 'running')")
       .all() as Array<{ id: string }>).map((batch) => batch.id));
     for (const turn of turns) batchIds.add(turn.batch_id);
-    if (batchIds.size === 0) return 0;
+    const openHandoffs = this.database
+      .prepare("SELECT id FROM agent_handoffs WHERE state IN ('queued', 'dispatching')")
+      .all() as Array<{ id: string }>;
+    if (batchIds.size === 0 && openHandoffs.length === 0) return 0;
     const timestamp = now();
     this.transaction(() => {
+      if (openHandoffs.length > 0) {
+        this.database
+          .prepare(
+            `UPDATE agent_handoffs SET state = 'cancelled', version = version + 1,
+             updated_at = ?, finished_at = ? WHERE state IN ('queued', 'dispatching')`,
+          )
+          .run(timestamp, timestamp);
+      }
       const updateTurn = this.database.prepare(
         `UPDATE room_turns SET state = ?, version = version + 1,
          last_error_code = ?, updated_at = ?, finished_at = ? WHERE id = ?`,
@@ -1725,8 +2789,8 @@ export class AppRepository {
         if (!["queued", "running"].includes(batch.state)) continue;
         const latest = new Map<string, RoomTurn>();
         for (const turn of this.listRoomTurns(batchId)) {
-          const previous = latest.get(turn.memberBotId);
-          if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.memberBotId, turn);
+          const previous = latest.get(turn.logicalTurnId);
+          if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.logicalTurnId, turn);
         }
         const states = [...latest.values()].map((turn) => turn.state);
         const batchState: RoomBatchState = states.every((state) => state === "completed")

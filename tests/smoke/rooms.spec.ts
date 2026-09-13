@@ -39,6 +39,14 @@ async function createRoom(page: Page, names: string[]): Promise<void> {
   await expect(page.getByRole("heading", { name: names.join("、") })).toBeVisible();
 }
 
+async function mentionEveryone(page: Page): Promise<void> {
+  const input = page.getByLabel("消息");
+  await input.fill("");
+  await input.fill("@all");
+  await expect(page.getByRole("listbox", { name: "提及 Bot" })).toBeVisible();
+  await input.press("Enter");
+}
+
 async function forceKill(application: ElectronApplication): Promise<void> {
   const process = application.process();
   if (process.exitCode !== null) return;
@@ -94,7 +102,7 @@ function seedCompletedRuntimeBeforeTurnSettlement(userDataDir: string): { batchI
     };
     const run = repository.createRuntimeRun(clientNonce, "fake", manifest, {
       executorBotId: turn.memberBotId,
-      executionKey: `${prepared.batch.id}:${turn.memberBotId}`,
+      executionKey: `${prepared.batch.id}:${turn.logicalTurnId}`,
       promptCutoffSeq: 1,
     });
     repository.attachRoomTurnRuntime(turn.id, run.id);
@@ -131,14 +139,14 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await createRoom(page, ["研究员", "评审员", "执行员"]);
 
     await expect(page.getByRole("heading", { name: "研究员、评审员、执行员" })).toBeVisible();
-    await expect(page.getByText("将调用 3 个 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
     await page.getByLabel("消息").fill("请依次给出分析。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(3);
-    await expect(page.locator(".speaker-link")).toHaveText(["研究员", "评审员", "执行员"]);
+    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
+    await expect(page.locator(".speaker-link")).toHaveText(["研究员"]);
     await expect(page.locator("article.message-assistant.message-group-continuation")).toHaveCount(0);
-    await expect(page.locator("article.message-assistant .message-avatar:not(.message-avatar-placeholder)")).toHaveCount(3);
-    await expect(page.locator(".room-turn-state")).toHaveCount(3);
+    await expect(page.locator("article.message-assistant .message-avatar:not(.message-avatar-placeholder)")).toHaveCount(1);
+    await expect(page.locator(".room-turn-state")).toHaveCount(1);
     await expect(page.getByTestId("room-batch-state")).toContainText("completed");
 
     const secondSpeaker = page.getByRole("button", { name: "评审员", exact: true }).last();
@@ -156,14 +164,12 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await page.getByLabel("选择要添加的 Bot").selectOption({ label: "观察员" });
     await page.getByRole("button", { name: "添加", exact: true }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(3);
-    await page.locator(".target-chip").filter({ hasText: "观察员" }).click();
-    await expect(page.getByText("将调用 2 个 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
     await page.locator(".bot-row").filter({ hasText: "观察员" }).click();
     await expect(page.getByRole("heading", { name: "观察员" })).toBeVisible();
     await page.locator(".bot-row").filter({ hasText: "产品协作室" }).click();
     await expect(page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
-    await expect(page.getByText("将调用 2 个 Bot", { exact: true })).toBeVisible();
-    await expect(page.locator(".target-chip").filter({ hasText: "观察员" })).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
     await page.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
 
     await page.screenshot({ path: "/tmp/ms-bot-room-desktop-light.png", fullPage: true });
@@ -192,8 +198,14 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     expect(database.prepare("SELECT description FROM rooms").get()).toEqual({ description: "关闭应用时也必须 flush 的 Room 描述" });
     expect(database.prepare("SELECT COUNT(*) AS count FROM room_members").get()).toEqual({ count: 3 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM room_batches WHERE state='completed'").get()).toEqual({ count: 1 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM room_turns WHERE state='completed'").get()).toEqual({ count: 3 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM transcript_entries WHERE role='assistant' AND speaker_bot_id IS NOT NULL AND source_turn_id IS NOT NULL").get()).toEqual({ count: 3 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM room_turns WHERE state='completed'").get()).toEqual({ count: 1 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM transcript_entries WHERE role='assistant' AND speaker_bot_id IS NOT NULL AND source_turn_id IS NOT NULL").get()).toEqual({ count: 1 });
+    const routing = database.prepare("SELECT routing_mode, routing_reason FROM room_batches").get() as {
+      routing_mode: string;
+      routing_reason: string | null;
+    };
+    expect(routing.routing_mode).toBe("automatic");
+    expect(routing.routing_reason).toBeTruthy();
     expect(database.prepare(
       `SELECT COUNT(*) AS count FROM transcript_entries AS entry
        LEFT JOIN room_turns AS turn ON turn.id = entry.source_turn_id
@@ -205,11 +217,29 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
 
+    const longRoutingReason = "自动选择理由".repeat(40).slice(0, 240);
+    const routingWriter = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"));
+    routingWriter.prepare("UPDATE room_batches SET routing_reason = ?").run(longRoutingReason);
+    routingWriter.close();
+
     const restarted = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
     application = restarted.application;
     await restarted.page.locator(".bot-list .bot-row").first().click();
     await expect(restarted.page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
-    await expect(restarted.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(3);
+    await expect(restarted.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
+    const restoredUserMessage = restarted.page.locator("article.message-user").last();
+    await expect(restoredUserMessage).toContainText("自动选择");
+    await expect(restoredUserMessage).toContainText(longRoutingReason);
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
+    await expect.poll(() => restarted.page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(390);
+    expect(await restoredUserMessage.locator(".message-route-reason").evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.left >= 0
+        && rect.right <= window.innerWidth
+        && element.scrollWidth <= element.clientWidth
+        && getComputedStyle(element).overflowWrap === "anywhere";
+    })).toBe(true);
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1280, 800));
     await expect(restarted.page.locator(".room-member-row")).toHaveCount(3);
     await restarted.page.getByRole("button", { name: "归档群聊" }).click();
     await expect(restarted.page.getByRole("button", { name: "产品协作室" })).toHaveCount(0);
@@ -232,7 +262,50 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await restored.page.locator(".bot-row").filter({ hasText: "研究员" }).click();
     await expect(restored.page.getByLabel("描述")).toHaveValue("恢复归档 Room 前必须先保存的 Bot 描述");
   } finally {
-    if (application) application.process().kill("SIGKILL");
+    if (application) await forceKill(application);
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
+
+test("renders historical Room speaker envelopes as clean Grok-style speaker messages", async () => {
+  test.setTimeout(30_000);
+  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-speaker-display-"));
+  let application: ElectronApplication | undefined;
+  try {
+    const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+    const created = repository.createBot();
+    const speaker = repository.updateBot(created.bot.id, created.bot.version, { name: "运营师" });
+    const observer = repository.createBot().bot;
+    const room = repository.createRoom({ name: "发言者展示群聊", memberBotIds: [speaker.id, observer.id] });
+    const marker = `[room-speaker id="${speaker.id}" name="运营师"]`;
+    const assistant = repository.createAssistantEntry(room.session.id, {
+      speakerBotId: speaker.id,
+      speakerNameSnapshot: speaker.name,
+    });
+    repository.updateTranscriptEntry(assistant.id, `开场说明。\n\n${marker} 我现在在整理执行表。`, "completed");
+    repository.close();
+
+    const launched = await launch(userDataDir);
+    application = launched.application;
+    await launched.page.emulateMedia({ colorScheme: "dark" });
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1040, 707));
+    await expect.poll(() => launched.page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(1040);
+    await launched.page.locator(".bot-row").filter({ hasText: room.room.name }).click();
+    await expect(launched.page.getByRole("heading", { name: room.room.name })).toBeVisible();
+    await expect(launched.page.locator(".speaker-link").filter({ hasText: "运营师" })).toBeVisible();
+    await expect(launched.page.getByText("开场说明。", { exact: true })).toBeVisible();
+    await expect(launched.page.getByText("我现在在整理执行表。", { exact: true })).toBeVisible();
+    await expect(launched.page.getByText(marker, { exact: false })).toHaveCount(0);
+    await expect(launched.page.locator(".assistant-markdown")).not.toContainText("room-speaker");
+    await launched.page.screenshot({ path: "/tmp/ms-bot-room-speaker-sanitized.png", fullPage: true });
+
+    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    expect(database.prepare("SELECT body FROM transcript_entries WHERE id = ?").get(assistant.id)).toEqual({
+      body: `开场说明。\n\n${marker} 我现在在整理执行表。`,
+    });
+    database.close();
+  } finally {
+    if (application) await forceKill(application);
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
@@ -280,8 +353,10 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     expect(memberLabels).toHaveLength(2);
     expect(new Set(memberLabels).size).toBe(2);
     expect(memberLabels.every((value) => value.includes("#"))).toBe(true);
-    const targetLabels = await launched.page.locator(".target-chip").allTextContents();
+    await launched.page.getByLabel("消息").fill("@重复");
+    const targetLabels = await launched.page.locator(".mention-option-copy strong").allTextContents();
     expect(targetLabels).toEqual(memberLabels);
+    await launched.page.getByLabel("消息").press("Escape");
 
     await launched.page.getByRole("button", { name: "新建聊天" }).click();
     await launched.page.locator(".recipient-option").filter({ hasText: "创建群聊" }).click();
@@ -292,6 +367,7 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     expect(optionLabels.every((value) => value?.includes("#"))).toBe(true);
     await launched.page.getByRole("button", { name: "关闭新聊天" }).click();
 
+    await mentionEveryone(launched.page);
     await launched.page.getByLabel("消息").fill("验证同名 Bot 的 speaker 归因");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
@@ -312,7 +388,7 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     await launched.page.screenshot({ path: "/tmp/msbot-room-duplicate-identities.png", fullPage: true });
     expect(consoleErrors).toEqual([]);
   } finally {
-    if (application) application.process().kill("SIGKILL");
+    if (application) await forceKill(application);
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
@@ -330,6 +406,7 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     application = launched.application;
     for (const name of ["甲", "乙", "丙"]) await createNamedBot(launched.page, name);
     await createRoom(launched.page, ["甲", "乙", "丙"]);
+    await mentionEveryone(launched.page);
     await launched.page.getByLabel("消息").fill("重载测试");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(launched.page.getByText("正在连接模型", { exact: true })).toBeVisible();
@@ -359,6 +436,7 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     }
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(3, { timeout: 30_000 });
 
+    await mentionEveryone(launched.page);
     await launched.page.getByLabel("消息").fill("崩溃恢复测试");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(launched.page.getByText("正在生成回复", { exact: true })).toBeVisible();
@@ -382,7 +460,7 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     await expect(launched.page.getByTestId("room-batch-state")).toContainText("interrupted");
     await expect(launched.page.getByRole("button", { name: "继续未开始成员" })).toBeVisible();
   } finally {
-    if (application) application.process().kill("SIGKILL");
+    if (application) await forceKill(application);
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
@@ -418,7 +496,7 @@ test("reconciles a completed Room Runtime and exposes Continue for only the unst
     expect(database.prepare("SELECT COUNT(*) AS count FROM transcript_entries WHERE role='assistant'").get()).toEqual({ count: 2 });
     database.close();
   } finally {
-    if (application) application.process().kill("SIGKILL");
+    if (application) await forceKill(application);
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
@@ -433,6 +511,7 @@ test("offers a Turn retry when a Room member fails before Provider acceptance", 
     await createNamedBot(launched.page, "前置失败成员");
     await createNamedBot(launched.page, "正常成员");
     await createRoom(launched.page, ["前置失败成员", "正常成员"]);
+    await mentionEveryone(launched.page);
     await launched.page.getByLabel("消息").fill("失败后重试");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(launched.page.getByTestId("room-batch-state")).toContainText("partial");
@@ -449,7 +528,7 @@ test("offers a Turn retry when a Room member fails before Provider acceptance", 
     expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 3 });
     database.close();
   } finally {
-    if (application) application.process().kill("SIGKILL");
+    if (application) await forceKill(application);
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
@@ -486,7 +565,7 @@ test("settles Cancel then SIGKILL without leaving a running Turn or auto-resumin
     expect(database.prepare("SELECT DISTINCT status FROM transcript_entries WHERE role='assistant'").all()).toEqual([{ status: "cancelled" }]);
     database.close();
   } finally {
-    if (application) application.process().kill("SIGKILL");
+    if (application) await forceKill(application);
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
@@ -525,7 +604,7 @@ test("preserves Room user-cancel intent through a normal close when the Provider
     expect(database.prepare("SELECT DISTINCT state FROM runtime_runs").all()).toEqual([{ state: "cancelled" }]);
     database.close();
   } finally {
-    if (application) application.process().kill("SIGKILL");
+    if (application) await forceKill(application);
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });

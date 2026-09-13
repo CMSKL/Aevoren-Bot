@@ -5,6 +5,8 @@ import type {
   Room,
   RoomBatch,
   RoomDetail,
+  RoomHandoffRejectionView,
+  RoomHandoffView,
   RoomRuntimeEvent,
   RoomTurn,
   RuntimeEvent,
@@ -21,27 +23,7 @@ import { ProfileInspector, type ProfileInspectorHandle } from "./components/Prof
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
 import { Sidebar } from "./components/Sidebar";
 import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
-
-function mergeRoomEvents(
-  batches: RoomBatch[],
-  turns: RoomTurn[],
-  events: RoomRuntimeEvent[],
-): { batches: RoomBatch[]; turns: RoomTurn[] } {
-  const batchMap = new Map(batches.map((batch) => [batch.id, batch]));
-  const turnMap = new Map(turns.map((turn) => [turn.id, turn]));
-  for (const event of events) {
-    const existingBatch = batchMap.get(event.batch.id);
-    if (!existingBatch || existingBatch.version < event.batch.version) batchMap.set(event.batch.id, event.batch);
-    for (const turn of event.turns) {
-      const existingTurn = turnMap.get(turn.id);
-      if (!existingTurn || existingTurn.version < turn.version) turnMap.set(turn.id, turn);
-    }
-  }
-  return {
-    batches: [...batchMap.values()].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-    turns: [...turnMap.values()].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.position - right.position),
-  };
-}
+import { mergeRoomRuntimeEvents } from "./room-runtime-state";
 
 export function App(): React.JSX.Element {
   const [bots, setBots] = useState<Bot[]>([]);
@@ -53,7 +35,8 @@ export function App(): React.JSX.Element {
   const [runs, setRuns] = useState<RuntimeRun[]>([]);
   const [roomBatches, setRoomBatches] = useState<RoomBatch[]>([]);
   const [roomTurns, setRoomTurns] = useState<RoomTurn[]>([]);
-  const [roomTargetSelections, setRoomTargetSelections] = useState<Record<string, string[]>>({});
+  const [roomHandoffs, setRoomHandoffs] = useState<RoomHandoffView[]>([]);
+  const [roomHandoffRejections, setRoomHandoffRejections] = useState<RoomHandoffRejectionView[]>([]);
   const [liveState, setLiveState] = useState<SessionLiveState | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -112,8 +95,10 @@ export function App(): React.JSX.Element {
         return;
       }
       if (event.roomId !== selectedRoomIdRef.current) return;
-      setRoomBatches((current) => mergeRoomEvents(current, [], [event]).batches);
-      setRoomTurns((current) => mergeRoomEvents([], current, [event]).turns);
+      setRoomBatches((current) => mergeRoomRuntimeEvents(current, [], [], [], [event]).batches);
+      setRoomTurns((current) => mergeRoomRuntimeEvents([], current, [], [], [event]).turns);
+      setRoomHandoffs((current) => mergeRoomRuntimeEvents([], [], current, [], [event]).handoffs);
+      setRoomHandoffRejections((current) => mergeRoomRuntimeEvents([], [], [], current, [event]).rejections);
       if (event.error) setError(event.error);
     });
     const unsubscribeClose = window.msBot.app.subscribeBeforeClose(() => {
@@ -176,6 +161,8 @@ export function App(): React.JSX.Element {
     setRuns(buffered.runs);
     setRoomBatches([]);
     setRoomTurns([]);
+    setRoomHandoffs([]);
+    setRoomHandoffRejections([]);
     runtimeVersionsRef.current = new Map(buffered.runs.map((run) => [run.id, run.version]));
     setLiveState(buffered.lastRuntimeEvent?.liveState ?? snapshotResult.data.liveState);
     setNewBotOpen(false);
@@ -216,7 +203,13 @@ export function App(): React.JSX.Element {
       bufferedTranscriptRef.current,
       bufferedRuntimeRef.current,
     );
-    const roomState = mergeRoomEvents(snapshotResult.data.batches, snapshotResult.data.turns, bufferedRoomRef.current);
+    const roomState = mergeRoomRuntimeEvents(
+      snapshotResult.data.batches,
+      snapshotResult.data.turns,
+      snapshotResult.data.handoffs,
+      snapshotResult.data.rejections ?? [],
+      bufferedRoomRef.current,
+    );
     sessionIdRef.current = nextSession.id;
     selectedRoomIdRef.current = room.id;
     sessionStorage.setItem("ms-bot:selected", `room:${room.id}`);
@@ -228,6 +221,8 @@ export function App(): React.JSX.Element {
     setRuns(buffered.runs);
     setRoomBatches(roomState.batches);
     setRoomTurns(roomState.turns);
+    setRoomHandoffs(roomState.handoffs);
+    setRoomHandoffRejections(roomState.rejections);
     runtimeVersionsRef.current = new Map(buffered.runs.map((run) => [run.id, run.version]));
     setLiveState(buffered.lastRuntimeEvent?.liveState ?? snapshotResult.data.liveState);
     setNewBotOpen(false);
@@ -335,14 +330,21 @@ export function App(): React.JSX.Element {
     setRooms((current) => current.map((item) => item.id === detail.room.id ? detail.room : item));
   }
 
-  async function sendMessage(text: string, targetBotIds?: string[]): Promise<boolean> {
+  async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone"): Promise<boolean> {
     if (!session || submitting) return false;
     setSubmitting(true);
     setError(null);
     setCloseNotice(null);
     const clientNonce = crypto.randomUUID();
     const result = selectedRoom
-      ? await window.msBot.roomRuntime.send({ roomId: selectedRoom.room.id, sessionId: session.id, clientNonce, text, targetBotIds: targetBotIds ?? [] })
+      ? await window.msBot.roomRuntime.send({
+          roomId: selectedRoom.room.id,
+          sessionId: session.id,
+          clientNonce,
+          text,
+          targetBotIds: targetBotIds ?? [],
+          routingMode: routingMode ?? "automatic",
+        })
       : await window.msBot.messages.send({ sessionId: session.id, clientNonce, text });
     setSubmitting(false);
     if (!result.ok) {
@@ -363,14 +365,12 @@ export function App(): React.JSX.Element {
       setRuns([]);
       setRoomBatches([]);
       setRoomTurns([]);
+      setRoomHandoffs([]);
+      setRoomHandoffRejections([]);
     }
   }
 
   const activeRoomBatch = roomBatches.some((batch) => batch.state === "queued" || batch.state === "running");
-  const selectedRoomTargetIds = selectedRoom
-    ? (roomTargetSelections[selectedRoom.room.id] ?? selectedRoom.members.map((member) => member.botId))
-        .filter((botId) => selectedRoom.members.some((member) => member.botId === botId))
-    : [];
 
   return (
     <div className="app-shell">
@@ -410,7 +410,8 @@ export function App(): React.JSX.Element {
         room={selectedRoom}
         roomBatches={roomBatches}
         roomTurns={roomTurns}
-        roomTargetBotIds={selectedRoomTargetIds}
+        roomHandoffs={roomHandoffs}
+        roomHandoffRejections={roomHandoffRejections}
         entries={entries}
         runs={runs}
         liveState={liveState}
@@ -443,10 +444,6 @@ export function App(): React.JSX.Element {
         onOpenSpeaker={(botId) => {
           const bot = bots.find((item) => item.id === botId);
           if (bot) void openBot(bot);
-        }}
-        onRoomTargetBotIdsChange={(botIds) => {
-          if (!selectedRoom) return;
-          setRoomTargetSelections((current) => ({ ...current, [selectedRoom.room.id]: botIds }));
         }}
       />
       {selectedRoom ? (

@@ -111,6 +111,9 @@ describe("P0-B repository and migration", () => {
       { version: 1 },
       { version: 2 },
       { version: 3 },
+      { version: 4 },
+      { version: 5 },
+      { version: 6 },
     ]);
     expect(inspected.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 0 });
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -163,7 +166,7 @@ describe("P0-B repository and migration", () => {
     expect(logicalV2Hash(inspected)).toBe(beforeHash);
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 },
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 },
     ]);
     inspected.close();
   });
