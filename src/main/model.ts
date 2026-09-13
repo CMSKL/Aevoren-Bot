@@ -144,6 +144,15 @@ export function selectDeterministicRoomOwner(text: string, roster: readonly Room
   };
 }
 
+function isOfficialDeepSeekApi(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "https:" && url.hostname.toLowerCase() === "api.deepseek.com" && url.port === "";
+  } catch {
+    return false;
+  }
+}
+
 const FAKE_OUTPUT = [
   "## 背景\n将模糊产品想法转化为可执行需求。\n\n",
   "## 目标用户\n产品经理与创业团队。\n\n## 问题\n需求信息容易缺失或混杂。\n\n",
@@ -510,6 +519,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
           messages,
           stream: true,
           ...(handoffTool ? { tools: [handoffTool], tool_choice: "auto" } : {}),
+          ...(handoffTool && isOfficialDeepSeekApi(this.baseUrl) ? { thinking: { type: "disabled" } } : {}),
         }),
         signal: controller.signal,
       });
@@ -602,6 +612,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
             },
           }],
           tool_choice: "auto",
+          ...(isOfficialDeepSeekApi(this.baseUrl) ? { thinking: { type: "disabled" } } : {}),
         }),
         signal,
       });

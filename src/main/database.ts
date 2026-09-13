@@ -19,6 +19,7 @@ import type {
   RoomPatch,
   RoomSendCommand,
   RoomHandoff,
+  RoomHandoffRejectionView,
   RoomRun,
   RoomRoutingMode,
   RoomTurn,
@@ -94,6 +95,9 @@ const OUTCOMES_BY_TERMINAL_TURN_STATE: Partial<Record<RoomTurnState, readonly Ag
 // sentinels preserve that behavior while v4 records an explicit immutable policy.
 const EXISTING_ROOM_RUN_MAX_TURNS = 2_147_483_647;
 const EXISTING_ROOM_RUN_DEADLINE = "9999-12-31T23:59:59.999Z";
+const MAX_HANDOFF_TASK_LENGTH = 20_000;
+const MAX_HANDOFF_CONTEXT_REFS = 64;
+const MAX_HANDOFF_CONTEXT_REF_LENGTH = 200;
 
 export const MIGRATIONS = [
   {
@@ -547,6 +551,22 @@ export const MIGRATIONS = [
         ON room_batches(session_id) WHERE state IN ('queued', 'running');
     `,
   },
+  {
+    version: 6,
+    sql: `
+      CREATE TABLE handoff_rejections (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES room_batches(id) ON DELETE CASCADE,
+        from_turn_id TEXT NOT NULL,
+        attempted_to_agent_id TEXT NOT NULL,
+        tool_call_key TEXT NOT NULL CHECK (length(tool_call_key) = 64),
+        error_code TEXT NOT NULL CHECK (length(error_code) BETWEEN 1 AND 100),
+        created_at TEXT NOT NULL,
+        UNIQUE (run_id, from_turn_id, tool_call_key),
+        FOREIGN KEY (run_id, from_turn_id) REFERENCES room_turns(batch_id, id) ON DELETE CASCADE
+      );
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -715,6 +735,18 @@ type HandoffRow = {
   finished_at: string | null;
 };
 
+type HandoffRejectionRow = {
+  id: string;
+  run_id: string;
+  from_turn_id: string;
+  attempted_to_agent_id: string;
+  tool_call_key: string;
+  error_code: string;
+  created_at: string;
+};
+
+type HandoffRejection = RoomHandoffRejectionView & { toolCallKey: string };
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -882,6 +914,18 @@ function toRoomHandoff(row: HandoffRow): RoomHandoff {
   };
 }
 
+function toHandoffRejection(row: HandoffRejectionRow): HandoffRejection {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    fromTurnId: row.from_turn_id,
+    attemptedToAgentId: row.attempted_to_agent_id,
+    toolCallKey: row.tool_call_key,
+    errorCode: row.error_code,
+    createdAt: row.created_at,
+  };
+}
+
 function toRuntime(row: RuntimeRow): RuntimeRun {
   let promptManifest: PromptManifest;
   try {
@@ -930,6 +974,21 @@ export function digestRoomCommand(
 
 export function digestHandoff(task: string, contextRefs: string[]): string {
   return digestMessage(JSON.stringify({ task, contextRefs: contextRefs.toSorted() }));
+}
+
+function handoffToolCallKey(toolCallId: unknown): string {
+  const normalized = typeof toolCallId === "string" && toolCallId.trim().length > 0
+    ? toolCallId.trim()
+    : "<invalid-tool-call>";
+  return createHash("sha256").update(normalized).digest("hex");
+}
+
+function safeAttemptedAgentId(value: unknown): string {
+  if (typeof value !== "string") return "invalid-target";
+  const normalized = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)
+    ? normalized
+    : "invalid-target";
 }
 
 export function isRuntimeTerminal(state: RuntimeState): boolean {
@@ -1545,12 +1604,23 @@ export class AppRepository {
     handoff: RoomHandoff;
     targetTurn: AgentTurn;
   } {
+    if (
+      typeof input.task !== "string" ||
+      !Array.isArray(input.contextRefs) ||
+      input.contextRefs.some((reference) => typeof reference !== "string")
+    ) {
+      throw new MsBotError("INVALID_REQUEST");
+    }
     const task = input.task.trim();
     const contextRefs = input.contextRefs.map((reference) => reference.trim()).toSorted();
     if (
       task.length === 0 ||
+      task.length > MAX_HANDOFF_TASK_LENGTH ||
       !["room", "direct"].includes(input.visibility) ||
-      contextRefs.some((reference) => reference.trim().length === 0) ||
+      contextRefs.length > MAX_HANDOFF_CONTEXT_REFS ||
+      contextRefs.some((reference) => (
+        reference.length === 0 || reference.length > MAX_HANDOFF_CONTEXT_REF_LENGTH
+      )) ||
       new Set(contextRefs).size !== contextRefs.length
     ) {
       throw new MsBotError("INVALID_REQUEST");
@@ -1751,6 +1821,51 @@ export class AppRepository {
     return (this.database
       .prepare("SELECT * FROM agent_handoffs WHERE run_id = ? ORDER BY created_at ASC, rowid ASC")
       .all(runId) as HandoffRow[]).map(toRoomHandoff);
+  }
+
+  recordHandoffRejection(input: {
+    runId: string;
+    fromTurnId: string;
+    attemptedToAgentId: unknown;
+    toolCallId: unknown;
+    errorCode: string;
+  }): { disposition: "created" | "duplicate"; rejection: HandoffRejection } {
+    if (!/^[A-Z][A-Z0-9_]{0,99}$/.test(input.errorCode)) throw new MsBotError("INVALID_REQUEST");
+    const run = this.getRoomRun(input.runId);
+    const source = this.getRoomTurn(input.fromTurnId);
+    if (source.runId !== run.id) throw new MsBotError("AGENT_TURN_CONFLICT");
+    const attemptedToAgentId = safeAttemptedAgentId(input.attemptedToAgentId);
+    const toolCallKey = handoffToolCallKey(input.toolCallId);
+    const existing = this.database
+      .prepare(
+        `SELECT * FROM handoff_rejections
+         WHERE run_id = ? AND from_turn_id = ? AND tool_call_key = ?`,
+      )
+      .get(run.id, source.id, toolCallKey) as HandoffRejectionRow | undefined;
+    if (existing) return { disposition: "duplicate", rejection: toHandoffRejection(existing) };
+
+    const id = randomUUID();
+    this.database
+      .prepare(
+        `INSERT INTO handoff_rejections(
+           id, run_id, from_turn_id, attempted_to_agent_id, tool_call_key, error_code, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, run.id, source.id, attemptedToAgentId, toolCallKey, input.errorCode, now());
+    return { disposition: "created", rejection: this.getHandoffRejection(id) };
+  }
+
+  getHandoffRejection(id: string): HandoffRejection {
+    const row = this.database.prepare("SELECT * FROM handoff_rejections WHERE id = ?").get(id) as HandoffRejectionRow | undefined;
+    if (!row) throw new MsBotError("HANDOFF_NOT_FOUND");
+    return toHandoffRejection(row);
+  }
+
+  listHandoffRejections(runId: string): HandoffRejection[] {
+    this.getRoomRun(runId);
+    return (this.database
+      .prepare("SELECT * FROM handoff_rejections WHERE run_id = ? ORDER BY created_at ASC, rowid ASC")
+      .all(runId) as HandoffRejectionRow[]).map(toHandoffRejection);
   }
 
   getIncomingHandoff(targetTurnId: string): RoomHandoff | null {

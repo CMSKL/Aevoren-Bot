@@ -969,6 +969,14 @@ textarea:focus-visible {
   gap: 3px;
 }
 
+.message-handoff-rejections {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 5px;
+  gap: 3px;
+}
+
 .room-handoff-row {
   display: grid;
   min-width: 0;
@@ -1008,6 +1016,9 @@ textarea:focus-visible {
 }
 
 .room-handoff-status {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
   white-space: nowrap;
 }
 
@@ -1021,6 +1032,38 @@ textarea:focus-visible {
 
 .handoff-cancelled {
   border-left-color: var(--warning);
+}
+
+.handoff-tone-success {
+  border-left-color: var(--success);
+}
+
+.handoff-tone-danger {
+  border-left-color: var(--danger);
+}
+
+.handoff-tone-warning {
+  border-left-color: var(--warning);
+}
+
+.room-handoff-rejection-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, auto) minmax(100px, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 4px 7px;
+  border-left: 2px solid var(--danger);
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.room-handoff-rejection-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .room-batch-state.batch-completed {
@@ -1867,6 +1910,16 @@ textarea:focus-visible {
   .room-handoff-task {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+
+  .room-handoff-status {
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .room-handoff-rejection-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .mention-menu {

@@ -240,7 +240,58 @@ describe("parseOpenAiStream", () => {
     });
     expect(request.tools?.[0]?.function.description).toContain(targetId);
     expect(request.tools?.[0]?.function.description).not.toContain("评审员");
+    expect(request).not.toHaveProperty("thinking");
     expect(JSON.stringify(request)).not.toContain("SECRET_AGENT_INSTRUCTIONS");
+  });
+
+  it("disables DeepSeek thinking only for coordinated requests with tools", async () => {
+    const executorBotId = crypto.randomUUID();
+    const targetId = crypto.randomUUID();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      streamFrom(['data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n']),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://api.deepseek.com/v1", "deepseek-model", "test-key");
+
+    await collect(provider.run(
+      [{ role: "user", content: "hello" }],
+      new AbortController().signal,
+      {
+        executorBotId,
+        executionKey: "room-run",
+        roomId: crypto.randomUUID(),
+        sourceTurnId: crypto.randomUUID(),
+        roomRoster: [
+          { id: executorBotId, name: "策划师", label: "策划", description: "负责规划" },
+          { id: targetId, name: "评审员", label: "评审", description: "负责复核" },
+        ],
+      },
+    ));
+
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(request).toMatchObject({
+      tools: expect.any(Array),
+      thinking: { type: "disabled" },
+    });
+  });
+
+  it("does not add DeepSeek thinking extensions to requests without tools", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      streamFrom(['data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n']),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://api.deepseek.com/v1", "deepseek-model", "test-key");
+
+    await collect(provider.run([{ role: "user", content: "hello" }], new AbortController().signal));
+
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(request).toEqual({
+      model: "deepseek-model",
+      messages: [{ role: "user", content: "hello" }],
+      stream: true,
+    });
   });
 
   it("does not add tools to a legacy Room context without a coordinated roster", async () => {
@@ -324,6 +375,25 @@ describe("Room owner selector", () => {
     });
     expect(JSON.stringify(request)).not.toContain("SECRET_API_KEY");
     expect(JSON.stringify(request)).not.toContain("instructions");
+  });
+
+  it("disables DeepSeek thinking for the structured selector tool", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [{
+        type: "function",
+        function: {
+          name: "select_room_owner",
+          arguments: JSON.stringify({ ownerAgentId: roster[0]!.id, reason: "职责匹配。" }),
+        },
+      }] } }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://api.deepseek.com/v1", "deepseek-model", "test-key");
+
+    await provider.selectRoomOwner("检查风险", roster, new AbortController().signal);
+
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(request).toMatchObject({ thinking: { type: "disabled" } });
   });
 
   it("reports a refused selector request with only the safe HTTP status", async () => {

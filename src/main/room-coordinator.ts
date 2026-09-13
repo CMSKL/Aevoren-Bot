@@ -1,6 +1,7 @@
 import type {
   AppError,
   RoomBatch,
+  RoomHandoffRejectionView,
   RoomHandoffView,
   RoomRuntimeEvent,
   RoomRuntimeSnapshot,
@@ -66,6 +67,17 @@ function publicHandoffs(repository: AppRepository, runId: string): RoomHandoffVi
     }));
 }
 
+function publicHandoffRejections(repository: AppRepository, runId: string): RoomHandoffRejectionView[] {
+  return repository.listHandoffRejections(runId).map(({
+    id,
+    runId: rejectionRunId,
+    fromTurnId,
+    attemptedToAgentId,
+    errorCode,
+    createdAt,
+  }) => ({ id, runId: rejectionRunId, fromTurnId, attemptedToAgentId, errorCode, createdAt }));
+}
+
 export class RoomCoordinator {
   private readonly inFlight = new Map<string, Promise<void>>();
   private readonly routingInFlight = new Map<string, { digest: string; promise: Promise<RoomSendResult> }>();
@@ -90,6 +102,7 @@ export class RoomCoordinator {
       batches,
       turns: this.repository.listRoomTurnsForRoom(roomId),
       handoffs: batches.flatMap((batch) => publicHandoffs(this.repository, batch.id)),
+      rejections: batches.flatMap((batch) => publicHandoffRejections(this.repository, batch.id)),
       liveState: this.executor.getLiveState(detail.session.id),
     };
   }
@@ -414,6 +427,7 @@ export class RoomCoordinator {
       batch,
       turns: this.repository.listRoomTurns(batch.id),
       handoffs: publicHandoffs(this.repository, batch.id),
+      rejections: publicHandoffRejections(this.repository, batch.id),
       ...(error ? { error } : {}),
     });
   }
@@ -583,6 +597,13 @@ export class RoomCoordinator {
       this.emit(this.repository.getRoomRun(runId));
     } catch (error) {
       if (error instanceof MsBotError && EXPECTED_HANDOFF_REJECTIONS.has(error.code)) {
+        this.repository.recordHandoffRejection({
+          runId,
+          fromTurnId,
+          attemptedToAgentId: event.toAgentId,
+          toolCallId: event.toolCallId,
+          errorCode: error.code,
+        });
         this.emit(this.repository.getRoomRun(runId), error.toAppError());
         return;
       }

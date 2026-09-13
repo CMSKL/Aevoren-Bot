@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -145,6 +145,28 @@ function migrateFixtureThroughV4(filename: string): void {
   database.close();
 }
 
+function migrateFixtureThroughV5(filename: string): void {
+  migrateFixtureThroughV4(filename);
+  const database = new DatabaseSync(filename);
+  database.exec("PRAGMA foreign_keys = OFF;");
+  database.exec(MIGRATIONS[4].sql);
+  database.prepare("INSERT INTO schema_migrations VALUES(5, 't')").run();
+  database.exec("PRAGMA foreign_keys = ON;");
+  database.close();
+}
+
+function logicalV5Hash(database: DatabaseSync): string {
+  const tables = [
+    "bots", "sessions", "transcript_entries", "send_journal", "app_settings", "runtime_runs",
+    "rooms", "room_members", "room_batches", "room_turns", "agent_handoffs",
+  ];
+  const snapshot = Object.fromEntries(tables.map((table) => [
+    table,
+    database.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+  ]));
+  return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
+}
+
 afterEach(() => {
   while (repositories.length > 0) repositories.pop()?.close();
   while (temporaryDirectories.length > 0) {
@@ -154,6 +176,58 @@ afterEach(() => {
 });
 
 describe("multi-agent RoomRun journal", () => {
+  it("migrates a populated v5 database to v6 without changing existing logical data", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v6-rejection-migration-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    migrateFixtureThroughV5(filename);
+    const before = new DatabaseSync(filename, { readOnly: true });
+    const beforeHash = logicalV5Hash(before);
+    before.close();
+
+    const first = repository(filename);
+    first.close();
+    repositories.pop();
+    const reopened = repository(filename);
+    expect(reopened.listHandoffRejections("run")).toEqual([]);
+
+    const inspected = new DatabaseSync(filename, { readOnly: true });
+    expect(logicalV5Hash(inspected)).toBe(beforeHash);
+    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 },
+    ]);
+    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(inspected.prepare("PRAGMA table_info(handoff_rejections)").all().map((column) => (
+      column as { name: string }
+    ).name)).toEqual([
+      "id", "run_id", "from_turn_id", "attempted_to_agent_id", "tool_call_key", "error_code", "created_at",
+    ]);
+    inspected.close();
+  });
+
+  it("rolls back v6 atomically when the rejection audit table already exists", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v6-rejection-rollback-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    migrateFixtureThroughV5(filename);
+    const blocker = new DatabaseSync(filename);
+    const beforeHash = logicalV5Hash(blocker);
+    blocker.exec("CREATE TABLE handoff_rejections(id TEXT PRIMARY KEY);");
+    blocker.close();
+
+    expect(() => new AppRepository(filename)).toThrow();
+    const inspected = new DatabaseSync(filename, { readOnly: true });
+    expect(logicalV5Hash(inspected)).toBe(beforeHash);
+    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 },
+    ]);
+    expect(inspected.prepare("PRAGMA table_info(handoff_rejections)").all().map((column) => (
+      column as { name: string }
+    ).name)).toEqual(["id"]);
+    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    inspected.close();
+  });
+
   it("migrates populated v3 data once and preserves it across repeated opens", () => {
     const directory = mkdtempSync(join(tmpdir(), "ms-bot-v4-migration-"));
     temporaryDirectories.push(directory);
@@ -197,7 +271,7 @@ describe("multi-agent RoomRun journal", () => {
     expect(reopened.getRoomRun("run").triggerMessageId).toBe("message");
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 },
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 },
     ]);
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     inspected.close();
@@ -404,6 +478,187 @@ describe("multi-agent RoomRun journal", () => {
     expect(() => value.createHandoff({ ...input, task: "Other", toAgentId: fixture.bots[2]!.id })).toThrowError(
       expect.objectContaining({ code: "ROOM_MEMBER_INVALID" }),
     );
+  });
+
+  it("journals a Handoff rejection idempotently without storing provider task or raw tool-call content", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ms-bot-handoff-rejection-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const value = repository(filename);
+    const fixture = createRunFixture(value);
+    const input = {
+      runId: fixture.run.id,
+      fromTurnId: fixture.turns[0]!.id,
+      attemptedToAgentId: fixture.bots[1]!.id,
+      toolCallId: "RAW_TOOL_CALL_SECRET",
+      errorCode: "HANDOFF_CYCLE",
+    };
+    const first = value.recordHandoffRejection(input);
+    const duplicate = value.recordHandoffRejection(input);
+
+    expect(first).toMatchObject({
+      disposition: "created",
+      rejection: {
+        runId: fixture.run.id,
+        fromTurnId: fixture.turns[0]!.id,
+        attemptedToAgentId: fixture.bots[1]!.id,
+        errorCode: "HANDOFF_CYCLE",
+        toolCallKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
+    expect(duplicate).toMatchObject({ disposition: "duplicate", rejection: { id: first.rejection.id } });
+    expect(value.listHandoffRejections(fixture.run.id)).toHaveLength(1);
+    expect(JSON.stringify(value.listHandoffRejections(fixture.run.id))).not.toContain("RAW_TOOL_CALL_SECRET");
+
+    value.close();
+    repositories.pop();
+    const reopened = repository(filename);
+    expect(reopened.listHandoffRejections(fixture.run.id)).toEqual([first.rejection]);
+    const database = new DatabaseSync(filename, { readOnly: true });
+    expect(JSON.stringify(database.prepare("SELECT * FROM handoff_rejections").all())).not.toContain("RAW_TOOL_CALL_SECRET");
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
+  it("enforces normalized Handoff task and context reference limits before writing", () => {
+    const createCase = (fileBacked = false) => {
+      let filename = ":memory:";
+      if (fileBacked) {
+        const directory = mkdtempSync(join(tmpdir(), "ms-bot-handoff-input-limits-"));
+        temporaryDirectories.push(directory);
+        filename = join(directory, "app.sqlite");
+      }
+      const value = repository(filename);
+      const fixture = createRunFixture(value);
+      startSourceTurn(value, fixture.run.id, fixture.turns[0]!.id);
+      return { filename, value, fixture };
+    };
+    const counts = (value: AppRepository, runId: string) => ({
+      handoffs: value.listHandoffs(runId).length,
+      turns: value.listAgentTurns(runId).length,
+    });
+    const expectInvalidWithoutWrites = (
+      value: AppRepository,
+      input: CreateHandoffInput,
+    ) => {
+      const before = counts(value, input.runId);
+      expect(() => value.createHandoff(input)).toThrowError(expect.objectContaining({ code: "INVALID_REQUEST" }));
+      expect(counts(value, input.runId)).toEqual(before);
+    };
+    const createCompletedContextEntries = (value: AppRepository, sessionId: string, count: number) => (
+      Array.from({ length: count }, (_, index) => {
+        const entry = value.createAssistantEntry(sessionId);
+        return value.updateTranscriptEntry(entry.id, `context ${index + 1}`, "completed");
+      })
+    );
+
+    const maxTaskCase = createCase();
+    const maxTask = "t".repeat(20_000);
+    const maxTaskInput = {
+      ...handoffInput(
+        maxTaskCase.fixture.run.id,
+        maxTaskCase.fixture.turns[0]!.id,
+        maxTaskCase.fixture.bots[1]!.id,
+        maxTaskCase.fixture.run.triggerMessageId,
+      ),
+      task: ` ${maxTask} `,
+    };
+    expect(maxTaskCase.value.createHandoff(maxTaskInput)).toMatchObject({
+      disposition: "created",
+      handoff: { task: maxTask },
+    });
+
+    const oversizedTaskCase = createCase();
+    expectInvalidWithoutWrites(oversizedTaskCase.value, {
+      ...handoffInput(
+        oversizedTaskCase.fixture.run.id,
+        oversizedTaskCase.fixture.turns[0]!.id,
+        oversizedTaskCase.fixture.bots[1]!.id,
+        oversizedTaskCase.fixture.run.triggerMessageId,
+      ),
+      task: ` ${"t".repeat(20_001)} `,
+    });
+
+    const maxRefsCase = createCase();
+    const maxRefs = [
+      maxRefsCase.fixture.run.triggerMessageId,
+      ...createCompletedContextEntries(maxRefsCase.value, maxRefsCase.fixture.detail.session.id, 63).map((entry) => entry.id),
+    ];
+    expect(maxRefsCase.value.createHandoff({
+      ...handoffInput(
+        maxRefsCase.fixture.run.id,
+        maxRefsCase.fixture.turns[0]!.id,
+        maxRefsCase.fixture.bots[1]!.id,
+        maxRefsCase.fixture.run.triggerMessageId,
+      ),
+      contextRefs: maxRefs,
+      inputSeq: 64,
+    })).toMatchObject({ disposition: "created", handoff: { contextRefs: maxRefs.toSorted() } });
+
+    const oversizedRefsCase = createCase();
+    const oversizedRefs = [
+      oversizedRefsCase.fixture.run.triggerMessageId,
+      ...createCompletedContextEntries(oversizedRefsCase.value, oversizedRefsCase.fixture.detail.session.id, 64).map((entry) => entry.id),
+    ];
+    expectInvalidWithoutWrites(oversizedRefsCase.value, {
+      ...handoffInput(
+        oversizedRefsCase.fixture.run.id,
+        oversizedRefsCase.fixture.turns[0]!.id,
+        oversizedRefsCase.fixture.bots[1]!.id,
+        oversizedRefsCase.fixture.run.triggerMessageId,
+      ),
+      contextRefs: oversizedRefs,
+      inputSeq: 65,
+    });
+
+    for (const length of [200, 201]) {
+      const longRefCase = createCase(true);
+      const created = longRefCase.value.createAssistantEntry(longRefCase.fixture.detail.session.id);
+      longRefCase.value.updateTranscriptEntry(created.id, "long reference", "completed");
+      const longRef = "r".repeat(length);
+      const injector = new DatabaseSync(longRefCase.filename);
+      injector.prepare("UPDATE transcript_entries SET id = ? WHERE id = ?").run(longRef, created.id);
+      injector.close();
+      const input = {
+        ...handoffInput(
+          longRefCase.fixture.run.id,
+          longRefCase.fixture.turns[0]!.id,
+          longRefCase.fixture.bots[1]!.id,
+          longRefCase.fixture.run.triggerMessageId,
+        ),
+        contextRefs: [` ${longRef} `],
+        inputSeq: 2,
+      };
+      if (length === 200) {
+        expect(longRefCase.value.createHandoff(input)).toMatchObject({
+          disposition: "created",
+          handoff: { contextRefs: [longRef] },
+        });
+      } else {
+        expectInvalidWithoutWrites(longRefCase.value, input);
+      }
+    }
+
+    const duplicateAfterTrimCase = createCase();
+    const duplicateRef = duplicateAfterTrimCase.fixture.run.triggerMessageId;
+    expectInvalidWithoutWrites(duplicateAfterTrimCase.value, {
+      ...handoffInput(
+        duplicateAfterTrimCase.fixture.run.id,
+        duplicateAfterTrimCase.fixture.turns[0]!.id,
+        duplicateAfterTrimCase.fixture.bots[1]!.id,
+        duplicateRef,
+      ),
+      contextRefs: [duplicateRef, ` ${duplicateRef} `],
+    });
+    expectInvalidWithoutWrites(duplicateAfterTrimCase.value, {
+      ...handoffInput(
+        duplicateAfterTrimCase.fixture.run.id,
+        duplicateAfterTrimCase.fixture.turns[0]!.id,
+        duplicateAfterTrimCase.fixture.bots[1]!.id,
+        duplicateRef,
+      ),
+      contextRefs: [1] as unknown as string[],
+    });
   });
 
   it("deduplicates and conflicts by logical source when the source Turn is retried", () => {

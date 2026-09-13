@@ -276,6 +276,15 @@ export type RoomHandoffView = Pick<
   "id" | "runId" | "fromTurnId" | "toAgentId" | "targetTurnId" | "task" | "state" | "version" | "createdAt" | "updatedAt" | "finishedAt"
 >;
 
+export type RoomHandoffRejectionView = {
+  id: string;
+  runId: string;
+  fromTurnId: string;
+  attemptedToAgentId: string;
+  errorCode: string;
+  createdAt: string;
+};
+
 export type InitialAgentTurnInput = {
   agentId: string;
   nonce: string;
@@ -329,6 +338,7 @@ export type RoomRuntimeSnapshot = {
   batches: RoomBatch[];
   turns: RoomTurn[];
   handoffs: RoomHandoffView[];
+  rejections: RoomHandoffRejectionView[];
   liveState: SessionLiveState;
 };
 
@@ -338,6 +348,7 @@ export type RoomRuntimeEvent = {
   batch: RoomBatch;
   turns: RoomTurn[];
   handoffs: RoomHandoffView[];
+  rejections: RoomHandoffRejectionView[];
   error?: AppError;
 };
 

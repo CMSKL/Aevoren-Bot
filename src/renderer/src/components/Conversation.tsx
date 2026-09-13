@@ -4,6 +4,7 @@ import type {
   Bot,
   RoomBatch,
   RoomDetail,
+  RoomHandoffRejectionView,
   RoomHandoffView,
   RoomTurn,
   RuntimeRun,
@@ -14,7 +15,7 @@ import type {
 } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
-import { initialRoomRouteAgentIds, latestRoomTurnsByLogicalTurn } from "../room-runtime-state";
+import { initialRoomRouteAgentIds, latestRoomTurnsByLogicalTurn, roomHandoffProgress } from "../room-runtime-state";
 import {
   EVERYONE_MENTION_ID,
   addRoomMention,
@@ -39,12 +40,18 @@ const liveLabels: Record<Exclude<SessionLiveStateName, "idle">, string> = {
   stale: "连接可能已停滞，仍可停止本次运行",
 };
 
-const handoffLabels: Record<RoomHandoffView["state"], string> = {
-  queued: "等待接收",
-  dispatching: "正在转交",
-  accepted: "已接收",
-  failed: "转交失败",
-  cancelled: "已取消",
+const handoffRejectionMessages: Record<string, string> = {
+  INVALID_REQUEST: "任务转交格式不受支持，未执行。",
+  BOT_NOT_FOUND: "目标 Bot 不存在，未执行任务转交。",
+  ROOM_ARCHIVED: "群聊已归档，未执行任务转交。",
+  ROOM_MEMBERSHIP_CONFLICT: "群聊成员已变化，未执行任务转交。",
+  ROOM_MEMBER_INVALID: "目标 Bot 不在当前群聊中，未执行任务转交。",
+  ROOM_RUN_LIMIT_EXCEEDED: "已达到本轮协作限制，未继续转交。",
+  AGENT_TURN_CONFLICT: "成员运行状态冲突，未执行任务转交。",
+  HANDOFF_TARGET_CONFLICT: "已存在发往该 Bot 的任务，未重复转交。",
+  HANDOFF_CYCLE: "已阻止重复任务形成 Agent 调用循环。",
+  HANDOFF_CONTEXT_INVALID: "转交引用了非当前群聊上下文，未执行。",
+  RUNTIME_STATE_INVALID: "当前运行状态不允许继续转交。",
 };
 
 function summarizeHandoffTask(task: string): string {
@@ -52,7 +59,17 @@ function summarizeHandoffTask(task: string): string {
   return compact.length > 120 ? `${compact.slice(0, 119)}…` : compact;
 }
 
-type HandoffDisplay = RoomHandoffView & { fromName: string; toName: string };
+type HandoffDisplay = RoomHandoffView & {
+  fromName: string;
+  toName: string;
+  progress: ReturnType<typeof roomHandoffProgress>;
+};
+
+type HandoffRejectionDisplay = RoomHandoffRejectionView & {
+  fromName: string;
+  toName: string;
+  message: string;
+};
 
 type TranscriptItemProps = {
   entry: TranscriptEntry;
@@ -66,6 +83,7 @@ type TranscriptItemProps = {
   routeMode: UserRoomRoutingMode | "legacy" | null;
   routeReason: string | null;
   handoffs: HandoffDisplay[];
+  handoffRejections: HandoffRejectionDisplay[];
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onRetryRoomTurn(turnId: string): void;
@@ -84,6 +102,7 @@ const TranscriptItem = memo(function TranscriptItem({
   routeMode,
   routeReason,
   handoffs,
+  handoffRejections,
   onRetryMessage,
   onRetryRun,
   onRetryRoomTurn,
@@ -135,10 +154,23 @@ const TranscriptItem = memo(function TranscriptItem({
           {handoffs.length > 0 ? (
             <div className="message-handoffs" aria-label="Agent 任务转交" data-testid="room-handoff-list">
               {handoffs.map((handoff) => (
-                <div className={`room-handoff-row handoff-${handoff.state}`} key={handoff.id}>
+                <div className={`room-handoff-row handoff-${handoff.state} handoff-tone-${handoff.progress.tone}`} key={handoff.id}>
                   <span className="room-handoff-route">{handoff.fromName}<span aria-hidden="true">→</span>{handoff.toName}</span>
                   <span className="room-handoff-task" title={handoff.task}>{summarizeHandoffTask(handoff.task)}</span>
-                  <span className="room-handoff-status">{handoffLabels[handoff.state]}</span>
+                  <span className="room-handoff-status">
+                    <span>投递：{handoff.progress.deliveryLabel}</span>
+                    {handoff.progress.executionLabel ? <span>执行：{handoff.progress.executionLabel}</span> : null}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {handoffRejections.length > 0 ? (
+            <div className="message-handoff-rejections" aria-label="未执行的 Agent 任务转交" data-testid="room-handoff-rejection-list">
+              {handoffRejections.map((rejection) => (
+                <div className="room-handoff-rejection-row" key={rejection.id}>
+                  <span className="room-handoff-route">{rejection.fromName}<span aria-hidden="true">→</span>{rejection.toName}</span>
+                  <span className="room-handoff-rejection-message">{rejection.message}</span>
                 </div>
               ))}
             </div>
@@ -194,6 +226,7 @@ type ConversationProps = {
   roomBatches: RoomBatch[];
   roomTurns: RoomTurn[];
   roomHandoffs: RoomHandoffView[];
+  roomHandoffRejections: RoomHandoffRejectionView[];
   entries: TranscriptEntry[];
   runs: RuntimeRun[];
   liveState: SessionLiveState | null;
@@ -220,6 +253,7 @@ export function Conversation({
   roomBatches,
   roomTurns,
   roomHandoffs,
+  roomHandoffRejections,
   entries,
   runs,
   liveState,
@@ -296,6 +330,9 @@ export function Conversation({
     for (const handoff of roomHandoffs.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))) {
       const sourceTurn = roomTurnState.byId.get(handoff.fromTurnId);
       const targetTurn = roomTurnState.byId.get(handoff.targetTurnId);
+      const latestTargetTurn = targetTurn
+        ? roomTurnState.latestByLogicalTurn.get(`${targetTurn.batchId}:${targetTurn.logicalTurnId}`) ?? targetTurn
+        : undefined;
       const assistantEntryId = sourceTurn?.runtimeRunId ? runsById.get(sourceTurn.runtimeRunId)?.assistantEntryId : null;
       if (!sourceTurn || !assistantEntryId) continue;
       const display: HandoffDisplay = {
@@ -304,11 +341,31 @@ export function Conversation({
         toName: targetTurn
           ? snapshotIdentities.get(targetTurn.memberBotId) ?? targetTurn.memberNameSnapshot
           : snapshotIdentities.get(handoff.toAgentId) ?? "未知 Bot",
+        progress: roomHandoffProgress(handoff, latestTargetTurn),
       };
       result.set(assistantEntryId, [...(result.get(assistantEntryId) ?? []), display]);
     }
     return result;
   }, [roomHandoffs, roomTurnState, runs, snapshotIdentities]);
+  const handoffRejectionsByAssistantEntry = useMemo(() => {
+    const runsById = new Map(runs.map((run) => [run.id, run]));
+    const result = new Map<string, HandoffRejectionDisplay[]>();
+    for (const rejection of roomHandoffRejections) {
+      const sourceTurn = roomTurnState.byId.get(rejection.fromTurnId);
+      const assistantEntryId = sourceTurn?.runtimeRunId ? runsById.get(sourceTurn.runtimeRunId)?.assistantEntryId : null;
+      if (!sourceTurn || !assistantEntryId) continue;
+      const display: HandoffRejectionDisplay = {
+        ...rejection,
+        fromName: snapshotIdentities.get(sourceTurn.memberBotId) ?? sourceTurn.memberNameSnapshot,
+        toName: roomMemberIdentities.get(rejection.attemptedToAgentId)?.inline
+          ?? snapshotIdentities.get(rejection.attemptedToAgentId)
+          ?? "未知 Bot",
+        message: handoffRejectionMessages[rejection.errorCode] ?? "任务转交未被接受。",
+      };
+      result.set(assistantEntryId, [...(result.get(assistantEntryId) ?? []), display]);
+    }
+    return result;
+  }, [roomHandoffRejections, roomMemberIdentities, roomTurnState, runs, snapshotIdentities]);
   const mentionItems = useMemo(() => room ? [
     {
       id: EVERYONE_MENTION_ID,
@@ -488,6 +545,7 @@ export function Conversation({
                 ? roomRoutesByNonce.get(entry.clientNonce)?.reason ?? null
                 : null}
               handoffs={handoffsByAssistantEntry.get(entry.id) ?? []}
+              handoffRejections={handoffRejectionsByAssistantEntry.get(entry.id) ?? []}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
               onRetryRoomTurn={onRetryRoomTurn}

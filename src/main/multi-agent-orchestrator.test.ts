@@ -431,6 +431,9 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     expect(calls).toEqual([value.bots[0]!.id]);
     expect(value.repository.listHandoffs(sent.batchId)).toHaveLength(0);
     expect(value.repository.listAgentTurns(sent.batchId)).toHaveLength(1);
+    expect(value.repository.listHandoffRejections(sent.batchId)).toMatchObject([
+      { errorCode: "HANDOFF_CONTEXT_INVALID", attemptedToAgentId: value.bots[1]!.id },
+    ]);
     expect(errorCodes(value.roomEvents)).toContain("HANDOFF_CONTEXT_INVALID");
   });
 
@@ -448,6 +451,9 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
 
     expect(calls).toEqual([value.bots[0]!.id, value.bots[1]!.id]);
     expect(value.repository.listAgentTurns(sent.batchId)).toHaveLength(2);
+    expect(value.repository.listHandoffRejections(sent.batchId)).toMatchObject([
+      { errorCode: "HANDOFF_CYCLE", attemptedToAgentId: value.bots[0]!.id },
+    ]);
     expect(errorCodes(value.roomEvents)).toContain("HANDOFF_CYCLE");
   });
 
@@ -487,6 +493,8 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
 
     expect(calls).toEqual([value.bots[0]!.id]);
     expect(value.repository.listAgentTurns(sent.batchId)).toHaveLength(1);
+    expect(value.repository.listHandoffRejections(sent.batchId)).toHaveLength(1);
+    expect(value.repository.listHandoffRejections(sent.batchId)[0]).toMatchObject({ errorCode: code });
     expect(errorCodes(value.roomEvents)).toContain(code);
     expect(errors(value.roomEvents)).toContainEqual(expect.objectContaining({
       code,
@@ -515,6 +523,9 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
 
     expect(calls).toEqual([value.bots[0]!.id, value.bots[1]!.id]);
     expect(value.repository.listAgentTurns(sent.batchId)).toHaveLength(2);
+    expect(value.repository.listHandoffRejections(sent.batchId)).toMatchObject([
+      { errorCode: "ROOM_RUN_LIMIT_EXCEEDED", attemptedToAgentId: value.bots[2]!.id },
+    ]);
     expect(errorCodes(value.roomEvents)).toContain("ROOM_RUN_LIMIT_EXCEEDED");
     expect(errors(value.roomEvents)).toContainEqual(expect.objectContaining({
       code: "ROOM_RUN_LIMIT_EXCEEDED",
@@ -522,13 +533,16 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     }));
   });
 
-  it("marks a dispatching Handoff failed when the target Provider fails before started", async () => {
+  it("keeps a failed delivery attempt while a retry completes the same logical target Turn", async () => {
     const calls: string[] = [];
-    const value = harness(({ bots }) => new ScriptedFakeModelProvider(({ context }) => {
+    const value = harness(({ bots }) => new ScriptedFakeModelProvider(({ callIndex, context }) => {
       calls.push(context!.executorBotId);
-      return context!.executorBotId === bots[0]!.id
-        ? [{ type: "started", requestId: "a" }, handoff(bots[1]!.id, "B_FAILS"), { type: "completed", finishReason: "stop" }]
-        : [{ type: "failure", error: new Error("before-start") }];
+      if (context!.executorBotId === bots[0]!.id) {
+        return [{ type: "started", requestId: "a" }, handoff(bots[1]!.id, "B_FAILS"), { type: "completed", finishReason: "stop" }];
+      }
+      return callIndex === 1
+        ? [{ type: "failure", error: new Error("before-start") }]
+        : completedSteps("B_RECOVERED");
     }), 2);
     const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
     await waitForBatch(value.repository, sent.batchId, ["partial"]);
@@ -536,6 +550,17 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     expect(calls).toEqual([value.bots[0]!.id, value.bots[1]!.id]);
     expect(value.repository.listHandoffs(sent.batchId)).toMatchObject([{ state: "failed" }]);
     expect(value.repository.listAgentTurns(sent.batchId).map((turn) => turn.state)).toEqual(["completed", "failed"]);
+
+    const failedTarget = value.repository.listAgentTurns(sent.batchId)[1]!;
+    const retry = value.coordinator.retryTurn(failedTarget.id);
+    await waitForBatch(value.repository, sent.batchId, ["completed"]);
+    expect(calls).toEqual([value.bots[0]!.id, value.bots[1]!.id, value.bots[1]!.id]);
+    expect(value.repository.listHandoffs(sent.batchId)).toMatchObject([{ state: "failed", targetTurnId: failedTarget.id }]);
+    expect(value.repository.listAgentTurns(sent.batchId)).toMatchObject([
+      { id: value.repository.listAgentTurns(sent.batchId)[0]!.id, state: "completed" },
+      { id: failedTarget.id, logicalTurnId: failedTarget.logicalTurnId, state: "failed", attemptNo: 1 },
+      { id: retry.id, logicalTurnId: failedTarget.logicalTurnId, state: "completed", attemptNo: 2 },
+    ]);
   });
 
   it.each([
@@ -558,7 +583,27 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     expect(calls).toEqual([value.bots[0]!.id]);
     expect(value.repository.listAgentTurns(sent.batchId)).toHaveLength(1);
     expect(value.repository.listHandoffs(sent.batchId)).toHaveLength(0);
+    expect(value.repository.listHandoffRejections(sent.batchId)).toMatchObject([{
+      errorCode: expectedCode,
+      attemptedToAgentId: expect.any(String),
+      toolCallKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+    }]);
+    expect(JSON.stringify(value.repository.listHandoffRejections(sent.batchId))).not.toMatch(/"task"|SELF|DIRECT|tool:/);
+    const publicRejection = value.coordinator.getSnapshot(value.detail.room.id).rejections[0]!;
+    expect(publicRejection).not.toHaveProperty("toolCallKey");
     expect(errorCodes(value.roomEvents)).toContain(expectedCode);
+  });
+
+  it("journals a repeated rejected tool call exactly once", async () => {
+    const value = harness(({ bots }) => new ScriptedFakeModelProvider(() => {
+      const rejected = handoff(bots[0]!.id, "REJECTED_SECRET", { toolCallId: "same-rejected-tool" });
+      return [{ type: "started", requestId: "a" }, rejected, rejected, { type: "completed", finishReason: "stop" }];
+    }), 2);
+    const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
+    await waitForBatch(value.repository, sent.batchId, ["completed"]);
+
+    expect(value.repository.listHandoffRejections(sent.batchId)).toHaveLength(1);
+    expect(JSON.stringify(value.repository.listHandoffRejections(sent.batchId))).not.toMatch(/same-rejected-tool|REJECTED_SECRET/);
   });
 
   it("revalidates membership before dispatch and never falls back to the remaining Room members", async () => {
