@@ -10,6 +10,7 @@ import type {
   SessionLiveState,
   SessionLiveStateName,
   TranscriptEntry,
+  UserRoomRoutingMode,
 } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
@@ -62,6 +63,8 @@ type TranscriptItemProps = {
   groupedWithNext: boolean;
   speakerDisplayName: string | null;
   routeDisplayNames: string[];
+  routeMode: UserRoomRoutingMode | "legacy" | null;
+  routeReason: string | null;
   handoffs: HandoffDisplay[];
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
@@ -78,6 +81,8 @@ const TranscriptItem = memo(function TranscriptItem({
   groupedWithNext,
   speakerDisplayName,
   routeDisplayNames,
+  routeMode,
+  routeReason,
   handoffs,
   onRetryMessage,
   onRetryRun,
@@ -116,10 +121,11 @@ const TranscriptItem = memo(function TranscriptItem({
             </header>
           ) : null}
           {hasVisibleBody ? <div className={`message-bubble${longAssistant ? " message-bubble-long" : ""}`}>
-            {entry.role === "user" && routeDisplayNames.length > 0 ? (
+            {entry.role === "user" && (routeDisplayNames.length > 0 || routeMode === "automatic") ? (
               <div className="message-route" aria-label={`响应 Bot：${routeDisplayNames.join("、")}`}>
-                <span>响应</span>
+                <span>{routeMode === "automatic" ? "自动选择" : "响应"}</span>
                 {routeDisplayNames.map((name, index) => <span className="message-route-chip" key={`${index}:${name}`}>@{name}</span>)}
+                {routeMode === "automatic" && routeReason ? <span className="message-route-reason">{routeReason}</span> : null}
               </div>
             ) : null}
             {entry.role === "assistant"
@@ -198,7 +204,7 @@ type ConversationProps = {
   onOpenBots(): void;
   onOpenProfile(): void;
   onOpenSettings(): void;
-  onSend(text: string, targetBotIds?: string[]): Promise<boolean>;
+  onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode): Promise<boolean>;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onCancelRun(runId: string): void;
@@ -323,12 +329,12 @@ export function Conversation({
     [mentionItems, mentionQuery],
   );
   const roomRoutesByNonce = useMemo(() => {
-    const result = new Map<string, string[]>();
+    const result = new Map<string, { names: string[]; mode: RoomBatch["routingMode"]; reason: string | null }>();
     for (const batch of roomBatches) {
       const names = initialRoomRouteAgentIds(roomTurns, batch.id).map((agentId) => (
         roomMemberIdentities.get(agentId)?.inline ?? snapshotIdentities.get(agentId) ?? "未知 Bot"
       ));
-      result.set(batch.clientNonce, names);
+      result.set(batch.clientNonce, { names, mode: batch.routingMode, reason: batch.routingReason });
     }
     return result;
   }, [roomBatches, roomMemberIdentities, roomTurns, snapshotIdentities]);
@@ -348,9 +354,16 @@ export function Conversation({
 
   async function submit(): Promise<void> {
     const text = draft.trim();
-    if (!text || (!bot && !room) || busy || hasInvalidRoomMentions || Boolean(room && targetBotIds.length === 0)) return;
+    if (!text || (!bot && !room) || busy || hasInvalidRoomMentions) return;
     followTranscriptTailRef.current = true;
-    const accepted = await onSend(text, room ? targetBotIds : undefined);
+    const routingMode: UserRoomRoutingMode | undefined = !room
+      ? undefined
+      : effectiveRoomMentions.length === 0
+        ? "automatic"
+        : effectiveRoomMentions.some((mention) => mention.kind === "everyone")
+          ? "everyone"
+          : "explicit";
+    const accepted = await onSend(text, room ? targetBotIds : undefined, routingMode);
     if (accepted) {
       setDraft("");
       setRoomMentions([]);
@@ -401,7 +414,7 @@ export function Conversation({
         </button>
         <div className="conversation-title">
           <h1>{subjectName}</h1>
-          <p>{room?.room.description || bot?.description || (room ? `${room.members.length} 个 Bot 按成员顺序协作。` : bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
+          <p>{room?.room.description || bot?.description || (room ? `${room.members.length} 个 Bot 协作，未点名时自动选择。` : bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
         </div>
         <div className="conversation-actions">
           <button className="secondary-button model-settings-button" type="button" aria-label="模型设置" title="模型设置" onClick={onOpenSettings}>
@@ -433,7 +446,7 @@ export function Conversation({
         {!loading && (bot || room) && entries.length === 0 ? (
           <div className="center-state">
             <strong>开始对话</strong>
-            <span>{room ? "输入 @ 指定 Bot；未指定时由全部成员按顺序响应。" : "告诉这个 Bot 你希望它完成什么。"}</span>
+            <span>{room ? "输入 @ 指定 Bot；未指定时自动选择最合适的 Bot。" : "告诉这个 Bot 你希望它完成什么。"}</span>
           </div>
         ) : null}
         {entries.map((entry, index) => {
@@ -466,8 +479,14 @@ export function Conversation({
                 ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? snapshotIdentities.get(entry.speakerBotId) ?? null
                 : null}
               routeDisplayNames={entry.role === "user" && entry.clientNonce
-                ? roomRoutesByNonce.get(entry.clientNonce) ?? []
+                ? roomRoutesByNonce.get(entry.clientNonce)?.names ?? []
                 : []}
+              routeMode={entry.role === "user" && entry.clientNonce
+                ? roomRoutesByNonce.get(entry.clientNonce)?.mode ?? null
+                : null}
+              routeReason={entry.role === "user" && entry.clientNonce
+                ? roomRoutesByNonce.get(entry.clientNonce)?.reason ?? null
+                : null}
               handoffs={handoffsByAssistantEntry.get(entry.id) ?? []}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
@@ -505,7 +524,7 @@ export function Conversation({
           {hasInvalidRoomMentions
             ? `${invalidRoomMentions.map((mention) => mention.kind === "bot" ? `@${mention.label}` : "").join("、")} 已不在群聊，请移除后重新选择`
             : effectiveRoomMentions.length === 0
-            ? `未 @ 时，全部 ${room.members.length} 个成员按顺序响应`
+            ? "未 @ 时，自动选择最合适的 Bot"
             : effectiveRoomMentions.some((mention) => mention.kind === "everyone")
               ? `已 @所有人，将调用 ${room.members.length} 个 Bot`
               : `将调用 ${targetBotIds.length} 个被 @ 的 Bot`}
@@ -629,7 +648,7 @@ export function Conversation({
               className="send-button"
               type="button"
               onClick={() => void submit()}
-              disabled={(!bot && !room) || !draft.trim() || busy || hasInvalidRoomMentions || Boolean(room && targetBotIds.length === 0)}
+              disabled={(!bot && !room) || !draft.trim() || busy || hasInvalidRoomMentions}
               aria-label="发送"
             >
               <SendIcon />

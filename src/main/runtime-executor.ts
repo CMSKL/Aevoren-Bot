@@ -18,6 +18,7 @@ import {
   type ModelProvider,
   type ModelRunContext,
   type RoomPeer,
+  type RoomOwnerSelection,
 } from "./model";
 import { buildPrompt } from "./prompt";
 import type { ModelSettingsService } from "./settings";
@@ -219,6 +220,16 @@ export class RuntimeExecutor {
       lastActivityAt: run.lastActivityAt,
       staleAfterMs: STALE_AFTER_MS,
     };
+  }
+
+  async selectRoomOwner(text: string, roster: readonly RoomPeer[], signal: AbortSignal): Promise<RoomOwnerSelection> {
+    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    const provider = this.createProvider();
+    const selector = provider.selectRoomOwner;
+    if (!selector) throw new MsBotError("MODEL_ROUTER_UNSUPPORTED");
+    const result = await selector.call(provider, text, roster, signal);
+    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    return result;
   }
 
   async shutdown(): Promise<void> {

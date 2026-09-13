@@ -100,7 +100,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.runtimeCancel, (_event, runId: unknown) => sendWorker.cancelRun(runIdSchema.parse(runId)));
   handle(IPC.runtimeRetry, (_event, runId: unknown) => sendWorker.retryRun(runIdSchema.parse(runId)));
   handle(IPC.roomRuntimeSnapshot, (_event, roomId: unknown) => roomCoordinator.getSnapshot(roomIdSchema.parse(roomId)));
-  handle(IPC.roomRuntimeSend, (_event, command: unknown) => roomCoordinator.sendCoordinated(roomSendCommandSchema.parse(command)));
+  handle(IPC.roomRuntimeSend, (_event, command: unknown) => roomCoordinator.routeAndSend(roomSendCommandSchema.parse(command)));
   handle(IPC.roomRuntimeCancel, (_event, batchId: unknown) => roomCoordinator.cancel(batchIdSchema.parse(batchId)));
   handle(IPC.roomRuntimeContinue, (_event, batchId: unknown) => roomCoordinator.continue(batchIdSchema.parse(batchId)));
   handle(IPC.roomRuntimeRetryTurn, (_event, turnId: unknown) => roomCoordinator.retryTurn(turnIdSchema.parse(turnId)));

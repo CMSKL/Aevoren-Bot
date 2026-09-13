@@ -541,6 +541,13 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.message-route-reason {
+  min-width: 0;
+  flex-basis: 100%;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .message-user .message-bubble {
   color: var(--bubble-user-text);
   background: var(--bubble-user);

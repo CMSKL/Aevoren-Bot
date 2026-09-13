@@ -44,7 +44,8 @@ export function addRoomMention(current: readonly RoomMention[], mention: RoomMen
 }
 
 export function resolveRoomTargetIds(mentions: readonly RoomMention[], memberBotIds: readonly string[]): string[] {
-  if (mentions.length === 0 || mentions.some((mention) => mention.kind === "everyone")) return [...memberBotIds];
+  if (mentions.length === 0) return [];
+  if (mentions.some((mention) => mention.kind === "everyone")) return [...memberBotIds];
   const mentioned = new Set(mentions.map((mention) => mention.id));
   return memberBotIds.filter((botId) => mentioned.has(botId));
 }

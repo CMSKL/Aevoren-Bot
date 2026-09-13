@@ -3,6 +3,7 @@ import {
   DEFAULT_PROVIDER_TIMEOUTS,
   OpenAiCompatibleProvider,
   parseOpenAiStream,
+  selectDeterministicRoomOwner,
   type ModelEvent,
 } from "./model";
 
@@ -282,6 +283,78 @@ describe("parseOpenAiStream", () => {
     });
     await expect(collect(provider.run([], new AbortController().signal))).rejects.toMatchObject({
       code: "MODEL_CONNECTION_TIMEOUT",
+    });
+  });
+});
+
+describe("Room owner selector", () => {
+  const roster = [
+    { id: crypto.randomUUID(), name: "策划师", label: "规划", description: "负责产品方案" },
+    { id: crypto.randomUUID(), name: "评审员", label: "风险审查", description: "负责质量复核" },
+  ];
+
+  it("selects deterministically by public profile fields and otherwise uses roster order", () => {
+    expect(selectDeterministicRoomOwner("请做风险审查", roster)).toMatchObject({ ownerAgentId: roster[1]!.id });
+    expect(selectDeterministicRoomOwner("一个没有角色提示的问题", roster)).toEqual({
+      ownerAgentId: roster[0]!.id,
+      reason: "未发现明确匹配，按群聊成员顺序选择。",
+    });
+  });
+
+  it("uses one structured selector tool without private instructions or credentials", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [{
+        type: "function",
+        function: {
+          name: "select_room_owner",
+          arguments: JSON.stringify({ ownerAgentId: roster[1]!.id, reason: "与风险审查职责匹配。" }),
+        },
+      }] } }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "test-model", "SECRET_API_KEY");
+    await expect(provider.selectRoomOwner("检查风险", roster, new AbortController().signal)).resolves.toEqual({
+      ownerAgentId: roster[1]!.id,
+      reason: "与风险审查职责匹配。",
+    });
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(request).toMatchObject({
+      stream: false,
+      tool_choice: "auto",
+    });
+    expect(JSON.stringify(request)).not.toContain("SECRET_API_KEY");
+    expect(JSON.stringify(request)).not.toContain("instructions");
+  });
+
+  it("reports a refused selector request with only the safe HTTP status", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("provider-private-body", { status: 422 })));
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "model", "key");
+    await expect(provider.selectRoomOwner("message", roster, new AbortController().signal)).rejects.toMatchObject({
+      code: "MODEL_ROUTER_FAILED",
+      retryable: false,
+      details: { status: 422 },
+      message: "无法选择群聊响应 Bot，请重试。",
+    });
+  });
+
+  it.each([
+    ["missing tool", { choices: [{ message: {} }] }],
+    ["null choice", { choices: [null] }],
+    ["array choice", { choices: [[]] }],
+    ["string message", { choices: [{ message: "bad" }] }],
+    ["null call", { choices: [{ message: { tool_calls: [null] } }] }],
+    ["string function", { choices: [{ message: { tool_calls: [{ type: "function", function: "bad" }] } }] }],
+    ["array function", { choices: [{ message: { tool_calls: [{ type: "function", function: [] }] } }] }],
+    ["multiple choices", { choices: [{ message: {} }, { message: {} }] }],
+    ["multiple tools", { choices: [{ message: { tool_calls: [{}, {}] } }] }],
+    ["unknown function", { choices: [{ message: { tool_calls: [{ type: "function", function: { name: "other", arguments: "{}" } }] } }] }],
+    ["extra argument", { choices: [{ message: { tool_calls: [{ type: "function", function: { name: "select_room_owner", arguments: JSON.stringify({ ownerAgentId: roster[0]!.id, reason: "ok", extra: true }) } }] } }] }],
+    ["nonmember", { choices: [{ message: { tool_calls: [{ type: "function", function: { name: "select_room_owner", arguments: JSON.stringify({ ownerAgentId: crypto.randomUUID(), reason: "ok" }) } }] } }] }],
+  ])("fails closed for an invalid selector result: %s", async (_name, payload) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 })));
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "model", "key");
+    await expect(provider.selectRoomOwner("message", roster, new AbortController().signal)).rejects.toMatchObject({
+      code: "MODEL_ROUTER_INVALID",
     });
   });
 });

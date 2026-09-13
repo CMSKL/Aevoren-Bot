@@ -59,7 +59,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     });
     await page.locator(".bot-row").filter({ hasText: seeded.roomName }).click();
     await expect(page.getByRole("heading", { name: seeded.roomName })).toBeVisible();
-    await expect(page.getByText("未 @ 时，全部 3 个成员按顺序响应", { exact: true })).toBeVisible();
+    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
 
     const input = page.getByLabel("消息");
     await input.fill("@");
@@ -140,17 +140,20 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await expect(page.getByRole("listbox", { name: "提及 Bot" })).toHaveCount(0);
     await expect(input).toHaveValue("@不存在");
 
-    await input.fill("没有提及时全部成员响应。");
+    await input.fill("请由评审员标签处理自动路由。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(6);
-    await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveCount(3);
+    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(4);
+    await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveCount(1);
+    await expect(page.locator("article.message-user").last()).toContainText("自动选择");
+    await expect(page.locator("article.message-user").last()).toContainText("匹配");
+    await expect(page.locator(".speaker-link").last()).toHaveText("评审员");
 
     await mention(page, "all");
     await expect(page.getByRole("button", { name: "移除 @所有人" })).toBeVisible();
     await expect(page.getByText("已 @所有人，将调用 3 个 Bot", { exact: true })).toBeVisible();
     await input.fill("显式通知所有人。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(9);
+    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(7);
 
     await mention(page, "研");
     await input.fill("成员变化后不能静默改发给全部成员。");
@@ -163,7 +166,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await expect(page.locator("article.message-user")).toHaveCount(4);
     await page.screenshot({ path: "/tmp/ms-bot-room-mention-invalid.png", fullPage: true });
     await invalidMention.click();
-    await expect(page.getByText("未 @ 时，全部 2 个成员按顺序响应", { exact: true })).toBeVisible();
+    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
     await input.fill("");
     await page.getByLabel("选择要添加的 Bot").selectOption({ label: seeded.botNames[0] });
@@ -208,7 +211,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
 
     const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
     expect(database.prepare("SELECT COUNT(*) AS count FROM room_batches WHERE state = 'completed'").get()).toEqual({ count: 4 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM room_turns WHERE state = 'completed'").get()).toEqual({ count: 9 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM room_turns WHERE state = 'completed'").get()).toEqual({ count: 7 });
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   } finally {

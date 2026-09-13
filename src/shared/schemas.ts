@@ -57,12 +57,22 @@ export const roomMembershipSchema = z.object({
   expectedMembershipVersion: z.number().int().positive(),
 });
 
+const uniqueRoomTargets = z.array(botIdSchema).max(6).refine(
+  (ids) => new Set(ids).size === ids.length,
+  "Room targets must be unique",
+);
+
 export const roomSendCommandSchema = sendCommandSchema.extend({
   roomId: roomIdSchema,
-  targetBotIds: z.array(botIdSchema).min(1).max(6).refine(
-    (ids) => new Set(ids).size === ids.length,
-    "Room targets must be unique",
-  ),
+  targetBotIds: uniqueRoomTargets,
+  routingMode: z.enum(["automatic", "explicit", "everyone"]),
+}).superRefine((command, context) => {
+  if (command.routingMode === "automatic" && command.targetBotIds.length !== 0) {
+    context.addIssue({ code: "custom", path: ["targetBotIds"], message: "Automatic routing cannot declare targets" });
+  }
+  if (command.routingMode !== "automatic" && command.targetBotIds.length === 0) {
+    context.addIssue({ code: "custom", path: ["targetBotIds"], message: "Explicit routing requires targets" });
+  }
 });
 
 export const modelConfigurationSchema = z.object({
