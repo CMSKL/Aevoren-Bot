@@ -368,7 +368,10 @@ export function App(): React.JSX.Element {
     await openBot(bot);
     if (sessionStorage.getItem("ms-bot:selected") !== `bot:${bot.id}`) return;
     setMobilePanel("profile");
-    requestAnimationFrame(() => profileRef.current?.focusName());
+    window.setTimeout(() => {
+      if (sessionStorage.getItem("ms-bot:selected") !== `bot:${bot.id}` || document.activeElement !== document.body) return;
+      profileRef.current?.focusName();
+    }, 200);
   }
 
   async function duplicateBot(bot: Bot): Promise<boolean> {

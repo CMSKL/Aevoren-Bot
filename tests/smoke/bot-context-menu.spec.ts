@@ -97,6 +97,7 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     await menu.getByRole("menuitem", { name: "编辑资料" }).click();
     await expect(page.getByRole("heading", { name: "Beta" })).toBeVisible();
     await expect(page.getByLabel("名称")).toBeFocused();
+    await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
 
     menu = await menuFor(page, "Beta");
     await menu.getByRole("menuitem", { name: "创建副本" }).click();
