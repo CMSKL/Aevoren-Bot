@@ -252,11 +252,12 @@ export function App(): React.JSX.Element {
         ? roomResult.data.find((room) => room.id === selected.slice(5) && room.archivedAt === null)
         : undefined;
       const selectedBot = selected?.startsWith("bot:")
-        ? botResult.data.find((bot) => bot.id === selected.slice(4))
+        ? botResult.data.find((bot) => bot.id === selected.slice(4) && bot.hiddenAt === null)
         : undefined;
+      const firstVisibleBot = botResult.data.find((bot) => bot.hiddenAt === null);
       if (selectedRoom) await openRoom(selectedRoom, false);
       else if (selectedBot) await openBot(selectedBot, false);
-      else if (botResult.data[0]) await openBot(botResult.data[0], false);
+      else if (firstVisibleBot) await openBot(firstVisibleBot, false);
       else {
         const firstActiveRoom = roomResult.data.find((room) => room.archivedAt === null);
         if (firstActiveRoom) await openRoom(firstActiveRoom, false);
@@ -325,6 +326,144 @@ export function App(): React.JSX.Element {
     setSelectedBot((current) => current?.id === bot.id ? bot : current);
   }
 
+  async function setBotPinned(bot: Bot, pinned: boolean): Promise<boolean> {
+    const result = await window.msBot.bots.setPinned({ id: bot.id, pinned });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateBot(result.data);
+    return true;
+  }
+
+  async function setBotUnread(bot: Bot, unread: boolean): Promise<boolean> {
+    const result = await window.msBot.bots.setUnread({ id: bot.id, unread });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateBot(result.data);
+    return true;
+  }
+
+  async function renameBot(bot: Bot, name: string): Promise<boolean> {
+    if (selectedBot?.id === bot.id && !(await flushActive())) return false;
+    const latest = await window.msBot.bots.list();
+    if (!latest.ok) {
+      setError(latest.error);
+      return false;
+    }
+    const current = latest.data.find((item) => item.id === bot.id);
+    if (!current) return false;
+    const result = await window.msBot.bots.update({ id: bot.id, expectedVersion: current.version, patch: { name } });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateBot(result.data);
+    return true;
+  }
+
+  async function editBot(bot: Bot): Promise<void> {
+    await openBot(bot);
+    if (sessionStorage.getItem("ms-bot:selected") !== `bot:${bot.id}`) return;
+    setMobilePanel("profile");
+    requestAnimationFrame(() => profileRef.current?.focusName());
+  }
+
+  async function duplicateBot(bot: Bot): Promise<boolean> {
+    if (selectedBot?.id === bot.id && !(await flushActive())) return false;
+    const result = await window.msBot.bots.duplicate(bot.id);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    setBots((current) => [...current, result.data.bot]);
+    await openBot(result.data.bot, false);
+    return true;
+  }
+
+  async function copyBotId(bot: Bot): Promise<boolean> {
+    const result = await window.msBot.bots.copyConversationId(bot.id);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    return true;
+  }
+
+  async function setBotHidden(bot: Bot, hidden: boolean): Promise<boolean> {
+    if (selectedBot?.id === bot.id && !(await flushActive())) return false;
+    const result = await window.msBot.bots.setHidden({ id: bot.id, hidden });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateBot(result.data);
+    return true;
+  }
+
+  function clearSelection(): void {
+    sessionIdRef.current = null;
+    selectedRoomIdRef.current = null;
+    sessionStorage.removeItem("ms-bot:selected");
+    setSelectedBot(null);
+    setSelectedRoom(null);
+    setSession(null);
+    setEntries([]);
+    setRuns([]);
+    setRoomBatches([]);
+    setRoomTurns([]);
+    setRoomHandoffs([]);
+    setRoomHandoffRejections([]);
+    setLiveState(null);
+  }
+
+  async function openFallback(nextBots: Bot[], nextRooms: Room[]): Promise<void> {
+    const nextBot = nextBots.find((bot) => bot.hiddenAt === null);
+    if (nextBot) {
+      await openBot(nextBot, false);
+      return;
+    }
+    const nextRoom = nextRooms.find((room) => room.archivedAt === null);
+    if (nextRoom) {
+      await openRoom(nextRoom, false);
+      return;
+    }
+    clearSelection();
+  }
+
+  async function deleteBot(bot: Bot): Promise<boolean> {
+    if (!(await flushActive())) return false;
+    const result = await window.msBot.bots.delete(bot.id);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    const [botResult, roomResult] = await Promise.all([
+      window.msBot.bots.list(),
+      window.msBot.rooms.list({ includeArchived: true }),
+    ]);
+    if (!botResult.ok) {
+      setError(botResult.error);
+      return false;
+    }
+    if (!roomResult.ok) {
+      setError(roomResult.error);
+      return false;
+    }
+    setBots(botResult.data);
+    setRooms(roomResult.data);
+    if (selectedRoom && result.data.affectedRoomIds.includes(selectedRoom.room.id)) {
+      const currentRoom = roomResult.data.find((room) => room.id === selectedRoom.room.id && room.archivedAt === null);
+      if (currentRoom) await openRoom(currentRoom, false);
+      else await openFallback(botResult.data, roomResult.data);
+    } else if (selectedBot?.id === bot.id) {
+      await openFallback(botResult.data, roomResult.data);
+    }
+    return true;
+  }
+
   function updateRoom(detail: RoomDetail): void {
     setSelectedRoom(detail);
     setRooms((current) => current.map((item) => item.id === detail.room.id ? detail.room : item));
@@ -357,17 +496,9 @@ export function App(): React.JSX.Element {
   function handleArchived(room: Room): void {
     setRooms((current) => current.map((item) => item.id === room.id ? room : item));
     selectedRoomIdRef.current = null;
-    if (bots[0]) void openBot(bots[0], false);
-    else {
-      setSelectedRoom(null);
-      setSession(null);
-      setEntries([]);
-      setRuns([]);
-      setRoomBatches([]);
-      setRoomTurns([]);
-      setRoomHandoffs([]);
-      setRoomHandoffRejections([]);
-    }
+    const visibleBot = bots.find((bot) => bot.hiddenAt === null);
+    if (visibleBot) void openBot(visibleBot, false);
+    else clearSelection();
   }
 
   const activeRoomBatch = roomBatches.some((batch) => batch.state === "queued" || batch.state === "running");
@@ -391,6 +522,14 @@ export function App(): React.JSX.Element {
         onMobileClose={() => setMobilePanel(null)}
         onSelectBot={(bot) => void openBot(bot)}
         onSelectRoom={(room) => void openRoom(room)}
+        onPinBot={setBotPinned}
+        onMarkBotUnread={setBotUnread}
+        onRenameBot={renameBot}
+        onEditBot={(bot) => void editBot(bot)}
+        onDuplicateBot={duplicateBot}
+        onCopyBotId={copyBotId}
+        onHideBot={setBotHidden}
+        onDeleteBot={deleteBot}
         onRestoreRoom={(room) => {
           void flushActive().then(async (saved) => {
             if (!saved) return;

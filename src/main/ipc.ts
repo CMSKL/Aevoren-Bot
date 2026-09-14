@@ -1,8 +1,11 @@
-import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { clipboard, ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { IPC } from "@shared/channels";
 import {
   batchIdSchema,
+  botHiddenSchema,
   botIdSchema,
+  botPinnedSchema,
+  botUnreadSchema,
   botUpdateSchema,
   modelConfigurationSchema,
   nonceSchema,
@@ -66,6 +69,25 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.botsUpdate, (_event, input: unknown) => {
     const parsed = botUpdateSchema.parse(input);
     return repository.updateBot(parsed.id, parsed.expectedVersion, parsed.patch);
+  });
+  handle(IPC.botsSetPinned, (_event, input: unknown) => {
+    const parsed = botPinnedSchema.parse(input);
+    return repository.setBotPinned(parsed.id, parsed.pinned);
+  });
+  handle(IPC.botsSetUnread, (_event, input: unknown) => {
+    const parsed = botUnreadSchema.parse(input);
+    return repository.setBotUnread(parsed.id, parsed.unread);
+  });
+  handle(IPC.botsSetHidden, (_event, input: unknown) => {
+    const parsed = botHiddenSchema.parse(input);
+    return repository.setBotHidden(parsed.id, parsed.hidden);
+  });
+  handle(IPC.botsDuplicate, (_event, id: unknown) => repository.duplicateBot(botIdSchema.parse(id)));
+  handle(IPC.botsDelete, (_event, id: unknown) => repository.deleteBot(botIdSchema.parse(id)));
+  handle(IPC.botsCopyConversationId, (_event, id: unknown) => {
+    const parsed = botIdSchema.parse(id);
+    repository.getBot(parsed);
+    clipboard.writeText(parsed);
   });
   handle(IPC.roomsList, (_event, input: unknown) => repository.listRooms(roomListSchema.parse(input)?.includeArchived ?? false));
   handle(IPC.roomsCreate, (_event, input: unknown) => repository.createRoom(roomCreateSchema.parse(input)));

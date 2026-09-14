@@ -95,3 +95,75 @@ export function CloseIcon(props: IconProps): React.JSX.Element {
     </IconBase>
   );
 }
+
+export function PinIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="m8 4 8 8M14 3l7 7-4 2-5 5-1 4-2-2-2-2 4-1 5-5 2-4-7-7-3 3Z" />
+      <path d="m9 15-6 6" />
+    </IconBase>
+  );
+}
+
+export function BellIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+      <path d="M10 21h4" />
+    </IconBase>
+  );
+}
+
+export function PencilIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M4 20h4L19 9l-4-4L4 16v4Z" />
+      <path d="m13.5 6.5 4 4" />
+    </IconBase>
+  );
+}
+
+export function DuplicateIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <rect x="8" y="8" width="12" height="12" rx="2" />
+      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+    </IconBase>
+  );
+}
+
+export function CopyIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3" />
+    </IconBase>
+  );
+}
+
+export function EyeIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </IconBase>
+  );
+}
+
+export function EyeOffIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="m3 3 18 18" />
+      <path d="M10.6 6.2A10 10 0 0 1 12 6c6 0 9.5 6 9.5 6a16 16 0 0 1-2.2 2.8M6.2 6.2C3.8 7.8 2.5 12 2.5 12s3.5 6 9.5 6a9 9 0 0 0 3-.5" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+    </IconBase>
+  );
+}
+
+export function TrashIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6" />
+    </IconBase>
+  );
+}

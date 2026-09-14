@@ -12,6 +12,7 @@ export const ERROR_REGISTRY = {
   INVALID_REQUEST: { domain: "validation", retryable: false, safeMessage: "请求参数不符合要求。", allowedDetailKeys: [] },
   BOT_NOT_FOUND: { domain: "bot", retryable: false, safeMessage: "没有找到这个 Bot。", allowedDetailKeys: [] },
   BOT_VERSION_CONFLICT: { domain: "bot", retryable: true, safeMessage: "Bot 已在别处更新，请重新确认后再保存。", allowedDetailKeys: ["currentVersion"] },
+  BOT_BUSY: { domain: "bot", retryable: true, safeMessage: "该 Bot 正在运行，暂时不能删除。", allowedDetailKeys: [] },
   ROOM_NOT_FOUND: { domain: "room", retryable: false, safeMessage: "没有找到这个群聊。", allowedDetailKeys: [] },
   ROOM_VERSION_CONFLICT: { domain: "room", retryable: true, safeMessage: "群聊资料已更新，请重新加载后再保存。", allowedDetailKeys: ["currentVersion"] },
   ROOM_MEMBERSHIP_CONFLICT: { domain: "room", retryable: true, safeMessage: "群聊成员已发生变化，请刷新后再试。", allowedDetailKeys: ["currentVersion"] },

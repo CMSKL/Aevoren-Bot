@@ -567,6 +567,18 @@ export const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 7,
+    sql: `
+      ALTER TABLE bots ADD COLUMN pinned_at TEXT;
+      ALTER TABLE bots ADD COLUMN hidden_at TEXT;
+      ALTER TABLE bots ADD COLUMN has_unread INTEGER NOT NULL DEFAULT 0 CHECK (has_unread IN (0, 1));
+      ALTER TABLE bots ADD COLUMN deleted_at TEXT;
+
+      CREATE INDEX bots_sidebar_state
+        ON bots(deleted_at, hidden_at, pinned_at, created_at);
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -575,6 +587,10 @@ type BotRow = {
   label: string;
   description: string;
   instructions: string;
+  pinned_at: string | null;
+  hidden_at: string | null;
+  has_unread: number;
+  deleted_at: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -664,6 +680,10 @@ type RoomMemberRow = {
   label: string;
   description: string;
   instructions: string;
+  pinned_at: string | null;
+  hidden_at: string | null;
+  has_unread: number;
+  deleted_at: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -758,6 +778,9 @@ function toBot(row: BotRow): Bot {
     label: row.label,
     description: row.description,
     instructions: row.instructions,
+    pinnedAt: row.pinned_at,
+    hiddenAt: row.hidden_at,
+    hasUnread: row.has_unread === 1,
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1090,11 +1113,11 @@ export class AppRepository {
   }
 
   listBots(): Bot[] {
-    return (this.database.prepare("SELECT * FROM bots ORDER BY created_at ASC").all() as BotRow[]).map(toBot);
+    return (this.database.prepare("SELECT * FROM bots WHERE deleted_at IS NULL ORDER BY created_at ASC").all() as BotRow[]).map(toBot);
   }
 
   getBot(id: string): Bot {
-    const row = this.database.prepare("SELECT * FROM bots WHERE id = ?").get(id) as BotRow | undefined;
+    const row = this.database.prepare("SELECT * FROM bots WHERE id = ? AND deleted_at IS NULL").get(id) as BotRow | undefined;
     if (!row) throw new MsBotError("BOT_NOT_FOUND");
     return toBot(row);
   }
@@ -1143,6 +1166,118 @@ export class AppRepository {
       throw new MsBotError("BOT_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
     }
     return this.getBot(id);
+  }
+
+  setBotPinned(id: string, pinned: boolean): Bot {
+    const result = this.database
+      .prepare("UPDATE bots SET pinned_at = ?, hidden_at = CASE WHEN ? = 1 THEN NULL ELSE hidden_at END WHERE id = ? AND deleted_at IS NULL")
+      .run(pinned ? now() : null, pinned ? 1 : 0, id);
+    if (Number(result.changes) === 0) throw new MsBotError("BOT_NOT_FOUND");
+    return this.getBot(id);
+  }
+
+  setBotUnread(id: string, unread: boolean): Bot {
+    const result = this.database
+      .prepare("UPDATE bots SET has_unread = ? WHERE id = ? AND deleted_at IS NULL")
+      .run(unread ? 1 : 0, id);
+    if (Number(result.changes) === 0) throw new MsBotError("BOT_NOT_FOUND");
+    return this.getBot(id);
+  }
+
+  setBotHidden(id: string, hidden: boolean): Bot {
+    const result = this.database
+      .prepare("UPDATE bots SET hidden_at = ?, pinned_at = CASE WHEN ? = 1 THEN NULL ELSE pinned_at END WHERE id = ? AND deleted_at IS NULL")
+      .run(hidden ? now() : null, hidden ? 1 : 0, id);
+    if (Number(result.changes) === 0) throw new MsBotError("BOT_NOT_FOUND");
+    return this.getBot(id);
+  }
+
+  duplicateBot(id: string): { bot: Bot; session: Session } {
+    const source = this.getBot(id);
+    const timestamp = now();
+    const botId = randomUUID();
+    const sessionId = randomUUID();
+    const suffix = " 副本";
+    const name = `${source.name.slice(0, 80 - suffix.length)}${suffix}`;
+    this.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+        )
+        .run(botId, name, source.label, source.description, source.instructions, timestamp, timestamp);
+      this.database
+        .prepare(
+          `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+           VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
+        )
+        .run(sessionId, botId, timestamp, timestamp);
+    });
+    return { bot: this.getBot(botId), session: this.getMainSession(botId) };
+  }
+
+  deleteBot(id: string): { id: string; affectedRoomIds: string[]; archivedRoomIds: string[] } {
+    this.getBot(id);
+    const activeRuntime = this.database
+      .prepare(
+        `SELECT 1 FROM runtime_runs
+         WHERE executor_bot_id = ? AND state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested')
+         LIMIT 1`,
+      )
+      .get(id);
+    const activeRoom = this.database
+      .prepare(
+        `SELECT 1 FROM room_members
+         INNER JOIN room_batches ON room_batches.room_id = room_members.room_id
+         WHERE room_members.bot_id = ? AND room_batches.state IN ('queued', 'running')
+         LIMIT 1`,
+      )
+      .get(id);
+    if (activeRuntime || activeRoom) throw new MsBotError("BOT_BUSY");
+
+    return this.transaction(() => {
+      const timestamp = now();
+      const memberships = this.database
+        .prepare("SELECT room_id FROM room_members WHERE bot_id = ? ORDER BY room_id")
+        .all(id) as Array<{ room_id: string }>;
+      const affectedRoomIds = memberships.map((membership) => membership.room_id);
+      const archivedRoomIds: string[] = [];
+
+      this.database.prepare("DELETE FROM sessions WHERE bot_id = ?").run(id);
+      this.database.prepare("DELETE FROM room_members WHERE bot_id = ?").run(id);
+
+      for (const roomId of affectedRoomIds) {
+        const members = this.database
+          .prepare("SELECT bot_id FROM room_members WHERE room_id = ? ORDER BY position ASC")
+          .all(roomId) as Array<{ bot_id: string }>;
+        const updatePosition = this.database.prepare("UPDATE room_members SET position = ? WHERE room_id = ? AND bot_id = ?");
+        members.forEach((member, position) => updatePosition.run(position, roomId, member.bot_id));
+        const shouldArchive = members.length < 2;
+        if (shouldArchive) archivedRoomIds.push(roomId);
+        this.database
+          .prepare(
+            `UPDATE rooms
+             SET membership_version = membership_version + 1,
+                 version = version + 1,
+                 archived_at = CASE WHEN ? = 1 THEN COALESCE(archived_at, ?) ELSE archived_at END,
+                 updated_at = ?
+             WHERE id = ?`,
+          )
+          .run(shouldArchive ? 1 : 0, timestamp, timestamp, roomId);
+      }
+
+      this.database
+        .prepare(
+          `UPDATE bots
+           SET name = '已删除 Bot', label = '', description = '', instructions = '',
+               pinned_at = NULL, hidden_at = NULL, has_unread = 0,
+               deleted_at = ?, version = version + 1, updated_at = ?
+           WHERE id = ? AND deleted_at IS NULL`,
+        )
+        .run(timestamp, timestamp, id);
+
+      return { id, affectedRoomIds, archivedRoomIds };
+    });
   }
 
   listRooms(includeArchived = false): Room[] {

@@ -42,7 +42,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
   const availableBots = useMemo(
-    () => bots.filter((bot) => !detail?.members.some((member) => member.botId === bot.id)),
+    () => bots.filter((bot) => bot.hiddenAt === null && !detail?.members.some((member) => member.botId === bot.id)),
     [bots, detail],
   );
   const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);

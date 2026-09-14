@@ -1,5 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { modelConfigurationSchema, roomCreateSchema, roomSendCommandSchema } from "./schemas";
+import {
+  botHiddenSchema,
+  botPinnedSchema,
+  botUnreadSchema,
+  modelConfigurationSchema,
+  roomCreateSchema,
+  roomSendCommandSchema,
+} from "./schemas";
+
+describe("Bot sidebar action schemas", () => {
+  const id = crypto.randomUUID();
+
+  it("accepts a UUID with an explicit boolean and rejects malformed action inputs", () => {
+    for (const [schema, key] of [
+      [botPinnedSchema, "pinned"],
+      [botUnreadSchema, "unread"],
+      [botHiddenSchema, "hidden"],
+    ] as const) {
+      expect(schema.safeParse({ id, [key]: true }).success).toBe(true);
+      expect(schema.safeParse({ id: "not-a-uuid", [key]: true }).success).toBe(false);
+      expect(schema.safeParse({ id, [key]: "true" }).success).toBe(false);
+      expect(schema.safeParse({ id }).success).toBe(false);
+    }
+  });
+});
 
 describe("modelConfigurationSchema", () => {
   const validModel = { modelId: "model" };
