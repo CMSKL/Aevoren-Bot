@@ -5,11 +5,11 @@ import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test } from "@playwright/test";
 
 test("creates, persists and restores a reliable fake-provider conversation", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-smoke-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-smoke-"));
   const environment = {
     ...process.env,
-    MS_BOT_USER_DATA_DIR: userDataDir,
-    MS_BOT_FAKE_PROVIDER: "1",
+    AEVOREN_BOT_USER_DATA_DIR: userDataDir,
+    AEVOREN_BOT_FAKE_PROVIDER: "1",
   };
 
   let application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
@@ -62,7 +62,7 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await description.fill("关闭应用前未移焦，也必须可靠保存。");
   await application.close();
 
-  const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+  const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
   const storedKey = database.prepare("SELECT value, encrypted FROM app_settings WHERE key = 'model.apiKey'").get() as {
     value: string;
     encrypted: number;

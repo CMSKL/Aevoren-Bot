@@ -2,10 +2,10 @@ import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
 
-const isolatedDatabase = process.env.MS_BOT_REAL_PROVIDER_DB_PATH;
+const isolatedDatabase = process.env.AEVOREN_BOT_REAL_PROVIDER_DB_PATH;
 
 test("routes one no-mention request through the real selector with at most two Provider calls", async () => {
-  test.skip(!isolatedDatabase, "requires MS_BOT_REAL_PROVIDER_DB_PATH pointing to an isolated configured database copy");
+  test.skip(!isolatedDatabase, "requires AEVOREN_BOT_REAL_PROVIDER_DB_PATH pointing to an isolated configured database copy");
   test.setTimeout(180_000);
   const suffix = Date.now().toString(36);
   const plannerName = `自动路由规划-${suffix}`;
@@ -38,11 +38,11 @@ test("routes one no-mention request through the real selector with at most two P
 
   const environment = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] =>
-      entry[1] !== undefined && !["MS_BOT_FAKE_PROVIDER", "MS_BOT_DB_PATH", "MS_BOT_USER_DATA_DIR"].includes(entry[0]),
+      entry[1] !== undefined && !["AEVOREN_BOT_FAKE_PROVIDER", "AEVOREN_BOT_DB_PATH", "AEVOREN_BOT_USER_DATA_DIR"].includes(entry[0]),
     ),
   );
-  environment.MS_BOT_USE_SYSTEM_SAFE_STORAGE = "1";
-  environment.MS_BOT_DB_PATH = isolatedDatabase!;
+  environment.AEVOREN_BOT_USE_SYSTEM_SAFE_STORAGE = "1";
+  environment.AEVOREN_BOT_DB_PATH = isolatedDatabase!;
   const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
   try {
     const page = await application.firstWindow();

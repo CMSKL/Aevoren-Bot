@@ -1,8 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
-import type { MsBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
 
-const api: MsBotApi = {
+const api: AevorenBotApi = {
   bots: {
     list: () => ipcRenderer.invoke(IPC.botsList),
     create: () => ipcRenderer.invoke(IPC.botsCreate),
@@ -90,4 +90,4 @@ const api: MsBotApi = {
   },
 };
 
-contextBridge.exposeInMainWorld("msBot", api);
+contextBridge.exposeInMainWorld("aevorenBot", api);

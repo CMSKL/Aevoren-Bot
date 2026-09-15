@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Bot, RoomDetail, RoomSendCommand } from "@shared/contracts";
 import { AppRepository } from "./database";
-import { MsBotError } from "./errors";
+import { AevorenBotError } from "./errors";
 import type { ChatMessage, ModelEvent, ModelProvider, ModelRunContext } from "./model";
 import { ScriptedFakeModelProvider } from "./model";
 import { RoomCoordinator } from "./room-coordinator";
@@ -607,7 +607,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   });
 
   it("revalidates membership before dispatch and never falls back to the remaining Room members", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-m2-membership-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-m2-membership-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     let release!: () => void;
@@ -971,7 +971,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     let attachments = 0;
     value.repository.attachRoomTurnRuntime = (turnId, runtimeRunId) => {
       attachments += 1;
-      if (attachments === 2) throw new MsBotError("INTERNAL_ERROR");
+      if (attachments === 2) throw new AevorenBotError("INTERNAL_ERROR");
       return originalAttach(turnId, runtimeRunId);
     };
     const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
@@ -1020,7 +1020,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
         return [
           { type: "started", requestId: "a-first" },
           replay,
-          { type: "failure", error: new MsBotError("MODEL_STREAM_TRUNCATED") },
+          { type: "failure", error: new AevorenBotError("MODEL_STREAM_TRUNCATED") },
         ];
       }
       if (callIndex === 1) return completedSteps("B_ONCE");
@@ -1120,7 +1120,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   it.each(["queued", "dispatching", "accepted"] as const)(
     "recovers a %s Handoff without an automatic provider call and preserves only accepted",
     async (handoffState) => {
-      const directory = mkdtempSync(join(tmpdir(), `ms-bot-m2-recovery-${handoffState}-`));
+      const directory = mkdtempSync(join(tmpdir(), `aevoren-bot-m2-recovery-${handoffState}-`));
       temporaryDirectories.push(directory);
       const filename = join(directory, "app.sqlite");
       const initial = new AppRepository(filename);
@@ -1184,7 +1184,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   );
 
   it("restores a bounded root without Handoffs and keeps explicit Continue coordinated", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-m2-root-continue-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-m2-root-continue-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const initial = new AppRepository(filename);
@@ -1234,7 +1234,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   });
 
   it("re-arms the persisted root deadline when an interrupted coordinated root is explicitly continued", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-m2-root-deadline-rearm-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-m2-root-deadline-rearm-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const initial = new AppRepository(filename);
@@ -1284,7 +1284,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   });
 
   it("continues one recovered queued Handoff target once without recreating its audit record", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-m2-handoff-continue-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-m2-handoff-continue-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const initial = new AppRepository(filename);
@@ -1352,7 +1352,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   it.each(["dispatching", "accepted"] as const)(
     "retries one recovered %s Handoff target once without changing terminal delivery state",
     async (handoffState) => {
-      const directory = mkdtempSync(join(tmpdir(), `ms-bot-m2-handoff-retry-${handoffState}-`));
+      const directory = mkdtempSync(join(tmpdir(), `aevoren-bot-m2-handoff-retry-${handoffState}-`));
       temporaryDirectories.push(directory);
       const filename = join(directory, "app.sqlite");
       const initial = new AppRepository(filename);

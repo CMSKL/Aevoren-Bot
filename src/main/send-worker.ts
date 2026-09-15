@@ -9,7 +9,7 @@ import type {
   SessionRuntimeSnapshot,
   TranscriptEvent,
 } from "@shared/contracts";
-import { asAppError, MsBotError } from "./errors";
+import { asAppError, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 import type { ModelProvider } from "./model";
 import { RuntimeExecutor, type RuntimeExecutionResult } from "./runtime-executor";
@@ -43,13 +43,13 @@ export class RuntimeCoordinator {
   }
 
   send(command: SendCommand): SendResult {
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const session = this.repository.getSession(command.sessionId);
-    if (!session.botId || session.roomId) throw new MsBotError("SESSION_NOT_FOUND");
+    if (!session.botId || session.roomId) throw new AevorenBotError("SESSION_NOT_FOUND");
     const prepared = this.repository.prepareMessage(command);
     if (prepared.disposition === "duplicate") {
       const existingRun = this.repository.getLatestRuntimeRun(command.clientNonce);
-      if (!existingRun) throw new MsBotError("RUNTIME_NOT_FOUND");
+      if (!existingRun) throw new AevorenBotError("RUNTIME_NOT_FOUND");
       return {
         clientNonce: command.clientNonce,
         runId: existingRun.id,
@@ -64,20 +64,20 @@ export class RuntimeCoordinator {
   }
 
   retry(clientNonce: string): SendResult {
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const journal = this.repository.queueRetry(clientNonce);
     const session = this.repository.getSession(journal.sessionId);
-    if (!session.botId || session.roomId) throw new MsBotError("MESSAGE_RETRY_UNSAFE");
+    if (!session.botId || session.roomId) throw new AevorenBotError("MESSAGE_RETRY_UNSAFE");
     this.emitSendState(journal.sessionId, clientNonce, "queued");
     return this.startDirect(clientNonce);
   }
 
   retryRun(runId: string): SendResult {
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const previous = this.repository.assertRuntimeRetryEligible(runId);
     const session = this.repository.getSession(previous.sessionId);
     if (!session.botId || session.roomId) {
-      throw new MsBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "room-run" });
+      throw new AevorenBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "room-run" });
     }
     const result = this.startDirect(previous.clientNonce, previous.inputSeq);
     return { ...result, state: this.repository.getSendOrThrow(previous.clientNonce).state };
@@ -86,10 +86,10 @@ export class RuntimeCoordinator {
   cancel(clientNonce: string): void {
     const journal = this.repository.getSendOrThrow(clientNonce);
     const session = this.repository.getSession(journal.sessionId);
-    if (!session.botId || session.roomId) throw new MsBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    if (!session.botId || session.roomId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
     const run = this.repository.getLatestRuntimeRun(clientNonce);
     if (!run || ["completed", "failed", "cancelled", "interrupted"].includes(run.state)) {
-      throw new MsBotError("MESSAGE_NOT_RUNNING");
+      throw new AevorenBotError("MESSAGE_NOT_RUNNING");
     }
     this.cancelRun(run.id);
   }
@@ -97,7 +97,7 @@ export class RuntimeCoordinator {
   cancelRun(runId: string): RuntimeRun {
     const run = this.repository.getRuntimeRun(runId);
     const session = this.repository.getSession(run.sessionId);
-    if (!session.botId || session.roomId) throw new MsBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    if (!session.botId || session.roomId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
     return this.executor.cancelRun(runId);
   }
 
@@ -121,7 +121,7 @@ export class RuntimeCoordinator {
   private startDirect(clientNonce: string, inputSeq?: number): SendResult {
     const journal = this.repository.getSendOrThrow(clientNonce);
     const session = this.repository.getSession(journal.sessionId);
-    if (!session.botId) throw new MsBotError("SESSION_NOT_FOUND");
+    if (!session.botId) throw new AevorenBotError("SESSION_NOT_FOUND");
     let started: ReturnType<RuntimeExecutor["start"]>;
     try {
       started = this.executor.start({

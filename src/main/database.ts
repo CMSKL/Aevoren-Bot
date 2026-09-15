@@ -35,7 +35,7 @@ import type {
   TranscriptRole,
   TranscriptStatus,
 } from "@shared/contracts";
-import { MsBotError } from "./errors";
+import { AevorenBotError } from "./errors";
 
 const ACTIVE_RUNTIME_STATES: readonly RuntimeState[] = [
   "created",
@@ -877,7 +877,7 @@ function toRoomTurn(row: RoomTurnRow): RoomTurn {
     try {
       outcome = JSON.parse(row.outcome_json) as AgentTurnOutcome;
     } catch {
-      throw new MsBotError("INTERNAL_ERROR");
+      throw new AevorenBotError("INTERNAL_ERROR");
     }
   }
   return {
@@ -913,10 +913,10 @@ function toRoomHandoff(row: HandoffRow): RoomHandoff {
   try {
     contextRefs = JSON.parse(row.context_refs_json);
   } catch {
-    throw new MsBotError("INTERNAL_ERROR");
+    throw new AevorenBotError("INTERNAL_ERROR");
   }
   if (!Array.isArray(contextRefs) || contextRefs.some((reference) => typeof reference !== "string")) {
-    throw new MsBotError("INTERNAL_ERROR");
+    throw new AevorenBotError("INTERNAL_ERROR");
   }
   return {
     id: row.id,
@@ -954,7 +954,7 @@ function toRuntime(row: RuntimeRow): RuntimeRun {
   try {
     promptManifest = JSON.parse(row.prompt_manifest_json) as PromptManifest;
   } catch {
-    throw new MsBotError("INTERNAL_ERROR");
+    throw new AevorenBotError("INTERNAL_ERROR");
   }
   return {
     id: row.id,
@@ -1089,7 +1089,7 @@ export class AppRepository {
     const row = this.database
       .prepare("UPDATE sessions SET transcript_cursor = transcript_cursor + 1 WHERE id = ? RETURNING transcript_cursor")
       .get(sessionId) as { transcript_cursor: number } | undefined;
-    if (!row) throw new MsBotError("SESSION_NOT_FOUND");
+    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND");
     return Number(row.transcript_cursor);
   }
 
@@ -1097,7 +1097,7 @@ export class AppRepository {
     const row = this.database.prepare("SELECT session_id FROM transcript_entries WHERE id = ?").get(id) as
       | { session_id: string }
       | undefined;
-    if (!row) throw new MsBotError("TRANSCRIPT_ENTRY_NOT_FOUND");
+    if (!row) throw new AevorenBotError("TRANSCRIPT_ENTRY_NOT_FOUND");
     const updatedSeq = this.nextTranscriptUpdateSeq(row.session_id);
     const assignments = ["updated_seq = ?", "updated_at = ?"];
     const values: Array<string | number> = [updatedSeq, now()];
@@ -1118,7 +1118,7 @@ export class AppRepository {
 
   getBot(id: string): Bot {
     const row = this.database.prepare("SELECT * FROM bots WHERE id = ? AND deleted_at IS NULL").get(id) as BotRow | undefined;
-    if (!row) throw new MsBotError("BOT_NOT_FOUND");
+    if (!row) throw new AevorenBotError("BOT_NOT_FOUND");
     return toBot(row);
   }
 
@@ -1163,7 +1163,7 @@ export class AppRepository {
       .run(...fields.map(([, value]) => value), now(), id, expectedVersion);
     if (Number(result.changes) === 0) {
       const current = this.getBot(id);
-      throw new MsBotError("BOT_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+      throw new AevorenBotError("BOT_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
     }
     return this.getBot(id);
   }
@@ -1172,7 +1172,7 @@ export class AppRepository {
     const result = this.database
       .prepare("UPDATE bots SET pinned_at = ?, hidden_at = CASE WHEN ? = 1 THEN NULL ELSE hidden_at END WHERE id = ? AND deleted_at IS NULL")
       .run(pinned ? now() : null, pinned ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new MsBotError("BOT_NOT_FOUND");
+    if (Number(result.changes) === 0) throw new AevorenBotError("BOT_NOT_FOUND");
     return this.getBot(id);
   }
 
@@ -1180,7 +1180,7 @@ export class AppRepository {
     const result = this.database
       .prepare("UPDATE bots SET has_unread = ? WHERE id = ? AND deleted_at IS NULL")
       .run(unread ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new MsBotError("BOT_NOT_FOUND");
+    if (Number(result.changes) === 0) throw new AevorenBotError("BOT_NOT_FOUND");
     return this.getBot(id);
   }
 
@@ -1188,7 +1188,7 @@ export class AppRepository {
     const result = this.database
       .prepare("UPDATE bots SET hidden_at = ?, pinned_at = CASE WHEN ? = 1 THEN NULL ELSE pinned_at END WHERE id = ? AND deleted_at IS NULL")
       .run(hidden ? now() : null, hidden ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new MsBotError("BOT_NOT_FOUND");
+    if (Number(result.changes) === 0) throw new AevorenBotError("BOT_NOT_FOUND");
     return this.getBot(id);
   }
 
@@ -1233,7 +1233,7 @@ export class AppRepository {
          LIMIT 1`,
       )
       .get(id);
-    if (activeRuntime || activeRoom) throw new MsBotError("BOT_BUSY");
+    if (activeRuntime || activeRoom) throw new AevorenBotError("BOT_BUSY");
 
     return this.transaction(() => {
       const timestamp = now();
@@ -1289,7 +1289,7 @@ export class AppRepository {
 
   getRoom(id: string): Room {
     const row = this.database.prepare("SELECT * FROM rooms WHERE id = ?").get(id) as RoomRow | undefined;
-    if (!row) throw new MsBotError("ROOM_NOT_FOUND");
+    if (!row) throw new AevorenBotError("ROOM_NOT_FOUND");
     return toRoom(row);
   }
 
@@ -1311,7 +1311,7 @@ export class AppRepository {
 
   createRoom(input: { memberBotIds: string[]; name?: string; description?: string }): RoomDetail {
     if (input.memberBotIds.length < 2 || input.memberBotIds.length > 6 || new Set(input.memberBotIds).size !== input.memberBotIds.length) {
-      throw new MsBotError("ROOM_MEMBER_INVALID");
+      throw new AevorenBotError("ROOM_MEMBER_INVALID");
     }
     const roomId = randomUUID();
     const sessionId = randomUUID();
@@ -1353,7 +1353,7 @@ export class AppRepository {
       .run(...fields.map(([, value]) => value), now(), id, expectedVersion);
     if (Number(result.changes) === 0) {
       const current = this.getRoom(id);
-      throw new MsBotError("ROOM_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+      throw new AevorenBotError("ROOM_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
     }
     return this.getRoom(id);
   }
@@ -1361,12 +1361,12 @@ export class AppRepository {
   archiveRoom(id: string, archived: boolean): Room {
     const room = this.getRoom(id);
     const sessionId = this.getRoomMainSession(room.id).id;
-    if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new MsBotError("ROOM_BUSY");
+    if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new AevorenBotError("ROOM_BUSY");
     const timestamp = now();
     const result = this.database
       .prepare("UPDATE rooms SET archived_at = ?, version = version + 1, updated_at = ? WHERE id = ?")
       .run(archived ? timestamp : null, timestamp, id);
-    if (Number(result.changes) === 0) throw new MsBotError("ROOM_NOT_FOUND");
+    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
     return this.getRoom(id);
   }
 
@@ -1374,13 +1374,13 @@ export class AppRepository {
     this.transaction(() => {
       const room = this.getRoom(roomId);
       const sessionId = this.getRoomMainSession(roomId).id;
-      if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new MsBotError("ROOM_BUSY");
+      if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new AevorenBotError("ROOM_BUSY");
       this.getBot(botId);
       if (room.membershipVersion !== expectedMembershipVersion) {
-        throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+        throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
       }
       const members = this.listRoomMembers(roomId);
-      if (members.some((member) => member.botId === botId) || members.length >= 6) throw new MsBotError("ROOM_MEMBER_INVALID");
+      if (members.some((member) => member.botId === botId) || members.length >= 6) throw new AevorenBotError("ROOM_MEMBER_INVALID");
       this.database
         .prepare("INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)")
         .run(roomId, botId, members.length, now());
@@ -1393,13 +1393,13 @@ export class AppRepository {
     this.transaction(() => {
       const room = this.getRoom(roomId);
       const sessionId = this.getRoomMainSession(roomId).id;
-      if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new MsBotError("ROOM_BUSY");
+      if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new AevorenBotError("ROOM_BUSY");
       if (room.membershipVersion !== expectedMembershipVersion) {
-        throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+        throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
       }
       const members = this.listRoomMembers(roomId);
-      if (members.length <= 2) throw new MsBotError("ROOM_MEMBER_INVALID");
-      if (!members.some((member) => member.botId === botId)) throw new MsBotError("ROOM_MEMBER_NOT_FOUND");
+      if (members.length <= 2) throw new AevorenBotError("ROOM_MEMBER_INVALID");
+      if (!members.some((member) => member.botId === botId)) throw new AevorenBotError("ROOM_MEMBER_NOT_FOUND");
       this.database.prepare("DELETE FROM room_members WHERE room_id = ? AND bot_id = ?").run(roomId, botId);
       const remaining = this.database
         .prepare("SELECT bot_id FROM room_members WHERE room_id = ? ORDER BY position ASC")
@@ -1420,7 +1420,7 @@ export class AppRepository {
       .run(now(), roomId, expectedVersion);
     if (Number(result.changes) === 0) {
       const current = this.getRoom(roomId);
-      throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: current.membershipVersion });
+      throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: current.membershipVersion });
     }
   }
 
@@ -1428,7 +1428,7 @@ export class AppRepository {
     const row = this.database
       .prepare("SELECT * FROM sessions WHERE bot_id = ? AND kind = 'MAIN'")
       .get(botId) as SessionRow | undefined;
-    if (!row) throw new MsBotError("SESSION_NOT_FOUND", "没有找到该 Bot 的主会话。");
+    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND", "没有找到该 Bot 的主会话。");
     return toSession(row);
   }
 
@@ -1436,13 +1436,13 @@ export class AppRepository {
     const row = this.database
       .prepare("SELECT * FROM sessions WHERE room_id = ? AND kind = 'MAIN'")
       .get(roomId) as SessionRow | undefined;
-    if (!row) throw new MsBotError("SESSION_NOT_FOUND", "没有找到该群聊的主会话。");
+    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND", "没有找到该群聊的主会话。");
     return toSession(row);
   }
 
   getSession(sessionId: string): Session {
     const row = this.database.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as SessionRow | undefined;
-    if (!row) throw new MsBotError("SESSION_NOT_FOUND");
+    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND");
     return toSession(row);
   }
 
@@ -1450,7 +1450,7 @@ export class AppRepository {
     const row = this.database.prepare("SELECT transcript_cursor FROM sessions WHERE id = ?").get(sessionId) as
       | { transcript_cursor: number }
       | undefined;
-    if (!row) throw new MsBotError("SESSION_NOT_FOUND");
+    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND");
     return Number(row.transcript_cursor);
   }
 
@@ -1470,7 +1470,7 @@ export class AppRepository {
          WHERE sessions.id = ?`,
       )
       .get(sessionId) as BotRow | undefined;
-    if (!row) throw new MsBotError("SESSION_NOT_FOUND");
+    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND");
     return toBot(row);
   }
 
@@ -1511,10 +1511,10 @@ export class AppRepository {
     const digest = digestMessage(command.text);
     const existing = this.getSend(command.clientNonce);
     if (existing) {
-      if (existing.bodyDigest !== digest) throw new MsBotError("MESSAGE_NONCE_CONFLICT");
+      if (existing.bodyDigest !== digest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
       return { disposition: "duplicate", journal: existing };
     }
-    if (this.getActiveRuntimeRun(command.sessionId)) throw new MsBotError("SESSION_BUSY");
+    if (this.getActiveRuntimeRun(command.sessionId)) throw new AevorenBotError("SESSION_BUSY");
     const session = this.getSession(command.sessionId);
     const timestamp = now();
     this.transaction(() => {
@@ -1599,15 +1599,15 @@ export class AppRepository {
       || (routingMode === "automatic" && (!routingReason || routingReason.length > 240 || input.initialTurns.length !== 1))
       || (routingMode !== "automatic" && routingReason !== null)
     ) {
-      throw new MsBotError("INVALID_REQUEST");
+      throw new AevorenBotError("INVALID_REQUEST");
     }
     const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode);
     const targetDigest = digestMessage(JSON.stringify(canonicalTargetIds));
     const existingJournal = this.getSend(input.clientNonce);
     if (existingJournal) {
-      if (existingJournal.bodyDigest !== bodyDigest) throw new MsBotError("MESSAGE_NONCE_CONFLICT");
+      if (existingJournal.bodyDigest !== bodyDigest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
       const existing = this.getRoomBatchByNonce(input.clientNonce);
-      if (!existing) throw new MsBotError("ROOM_BATCH_NOT_FOUND");
+      if (!existing) throw new AevorenBotError("ROOM_BATCH_NOT_FOUND");
       const turns = this.listRoomTurns(existing.id).filter((turn) => turn.origin === "initial");
       const expectedTurns = input.initialTurns
         .map((turn) => `${turn.agentId}:${turn.nonce}`)
@@ -1626,27 +1626,27 @@ export class AppRepository {
         existing.deadlineAt !== input.deadlineAt ||
         JSON.stringify(actualTurns) !== JSON.stringify(expectedTurns)
       )) {
-        throw new MsBotError("ROOM_RUN_CONFLICT");
+        throw new AevorenBotError("ROOM_RUN_CONFLICT");
       }
       return { disposition: "duplicate", run: existing, turns };
     }
     if (Date.parse(input.deadlineAt) <= Date.now()) {
-      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "deadline" });
+      throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "deadline" });
     }
     const room = this.getRoom(input.roomId);
-    if (room.archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    if (room.archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     const session = this.getSession(input.sessionId);
-    if (session.roomId !== room.id) throw new MsBotError("SESSION_NOT_FOUND");
+    if (session.roomId !== room.id) throw new AevorenBotError("SESSION_NOT_FOUND");
     if (input.membershipVersion !== undefined && room.membershipVersion !== input.membershipVersion) {
-      throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+      throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
     }
     const members = this.listRoomMembers(room.id);
     const memberById = new Map(members.map((member) => [member.botId, member]));
     if (input.initialTurns.some((turn) => !memberById.has(turn.agentId))) {
-      throw new MsBotError("ROOM_MEMBER_INVALID");
+      throw new AevorenBotError("ROOM_MEMBER_INVALID");
     }
-    if (this.getActiveRoomBatch(session.id)) throw new MsBotError("ROOM_BATCH_BUSY");
-    if (this.getActiveRuntimeRun(session.id)) throw new MsBotError("ROOM_BATCH_BUSY");
+    if (this.getActiveRoomBatch(session.id)) throw new AevorenBotError("ROOM_BATCH_BUSY");
+    if (this.getActiveRuntimeRun(session.id)) throw new AevorenBotError("ROOM_BATCH_BUSY");
 
     const runId = randomUUID();
     const triggerMessageId = randomUUID();
@@ -1744,7 +1744,7 @@ export class AppRepository {
       !Array.isArray(input.contextRefs) ||
       input.contextRefs.some((reference) => typeof reference !== "string")
     ) {
-      throw new MsBotError("INVALID_REQUEST");
+      throw new AevorenBotError("INVALID_REQUEST");
     }
     const task = input.task.trim();
     const contextRefs = input.contextRefs.map((reference) => reference.trim()).toSorted();
@@ -1758,11 +1758,11 @@ export class AppRepository {
       )) ||
       new Set(contextRefs).size !== contextRefs.length
     ) {
-      throw new MsBotError("INVALID_REQUEST");
+      throw new AevorenBotError("INVALID_REQUEST");
     }
     const run = this.getRoomRun(input.runId);
     const source = this.getRoomTurn(input.fromTurnId);
-    if (source.runId !== run.id) throw new MsBotError("AGENT_TURN_CONFLICT");
+    if (source.runId !== run.id) throw new AevorenBotError("AGENT_TURN_CONFLICT");
     const target = this.getBot(input.toAgentId);
     const digest = digestHandoff(task, contextRefs);
     const existing = this.getHandoffBySemanticKey(run.id, source.logicalTurnId, target.id, digest, input.visibility);
@@ -1776,7 +1776,7 @@ export class AppRepository {
       !Number.isInteger(input.inputSeq) ||
       input.inputSeq < 1
     ) {
-      throw new MsBotError("INVALID_REQUEST");
+      throw new AevorenBotError("INVALID_REQUEST");
     }
     const session = this.getSession(run.sessionId);
     const cursor = this.database
@@ -1791,28 +1791,28 @@ export class AppRepository {
       !cursor ||
       cursor.status !== "completed"
     ) {
-      throw new MsBotError("HANDOFF_CONTEXT_INVALID");
+      throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
     }
     this.assertHandoffContextRefs(run, contextRefs, input.inputGeneration, input.inputSeq);
     if (run.state !== "running" || source.state !== "running") {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: source.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: source.state });
     }
-    if (source.agentId === target.id) throw new MsBotError("HANDOFF_CYCLE");
-    if (this.getHandoffByTarget(run.id, source.logicalTurnId, target.id)) throw new MsBotError("HANDOFF_TARGET_CONFLICT");
+    if (source.agentId === target.id) throw new AevorenBotError("HANDOFF_CYCLE");
+    if (this.getHandoffByTarget(run.id, source.logicalTurnId, target.id)) throw new AevorenBotError("HANDOFF_TARGET_CONFLICT");
     if (input.visibility === "room") {
       const room = this.getRoom(run.roomId);
       if (room.membershipVersion !== run.membershipVersion) {
-        throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+        throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
       }
       if (!this.listRoomMembers(run.roomId).some((member) => member.botId === target.id)) {
-        throw new MsBotError("ROOM_MEMBER_INVALID");
+        throw new AevorenBotError("ROOM_MEMBER_INVALID");
       }
     }
     const existingTurn = this.getAgentTurnByNonce(run.id, target.id, input.targetTurnNonce);
-    if (existingTurn) throw new MsBotError("AGENT_TURN_CONFLICT");
+    if (existingTurn) throw new AevorenBotError("AGENT_TURN_CONFLICT");
     const hop = source.hop + 1;
     this.assertRoomRunCanCreateTurn(run, source, hop);
-    if (this.wouldCreateHandoffCycle(run.id, source.logicalTurnId, target.id, digest)) throw new MsBotError("HANDOFF_CYCLE");
+    if (this.wouldCreateHandoffCycle(run.id, source.logicalTurnId, target.id, digest)) throw new AevorenBotError("HANDOFF_CYCLE");
     const position = this.nextRoomTurnPosition(run.id);
     const targetTurnId = randomUUID();
     const handoffId = randomUUID();
@@ -1877,13 +1877,13 @@ export class AppRepository {
 
   getSendOrThrow(clientNonce: string): SendJournalEntry {
     const entry = this.getSend(clientNonce);
-    if (!entry) throw new MsBotError("MESSAGE_NOT_FOUND");
+    if (!entry) throw new AevorenBotError("MESSAGE_NOT_FOUND");
     return entry;
   }
 
   getRoomBatch(id: string): RoomBatch {
     const row = this.database.prepare(`${ROOM_RUN_SELECT} WHERE room_batches.id = ?`).get(id) as RoomBatchRow | undefined;
-    if (!row) throw new MsBotError("ROOM_BATCH_NOT_FOUND");
+    if (!row) throw new AevorenBotError("ROOM_BATCH_NOT_FOUND");
     return toRoomBatch(row);
   }
 
@@ -1923,7 +1923,7 @@ export class AppRepository {
 
   getRoomTurn(id: string): RoomTurn {
     const row = this.database.prepare("SELECT * FROM room_turns WHERE id = ?").get(id) as RoomTurnRow | undefined;
-    if (!row) throw new MsBotError("ROOM_TURN_NOT_FOUND");
+    if (!row) throw new AevorenBotError("ROOM_TURN_NOT_FOUND");
     return toRoomTurn(row);
   }
 
@@ -1947,7 +1947,7 @@ export class AppRepository {
 
   getHandoff(id: string): RoomHandoff {
     const row = this.database.prepare("SELECT * FROM agent_handoffs WHERE id = ?").get(id) as HandoffRow | undefined;
-    if (!row) throw new MsBotError("HANDOFF_NOT_FOUND");
+    if (!row) throw new AevorenBotError("HANDOFF_NOT_FOUND");
     return toRoomHandoff(row);
   }
 
@@ -1965,10 +1965,10 @@ export class AppRepository {
     toolCallId: unknown;
     errorCode: string;
   }): { disposition: "created" | "duplicate"; rejection: HandoffRejection } {
-    if (!/^[A-Z][A-Z0-9_]{0,99}$/.test(input.errorCode)) throw new MsBotError("INVALID_REQUEST");
+    if (!/^[A-Z][A-Z0-9_]{0,99}$/.test(input.errorCode)) throw new AevorenBotError("INVALID_REQUEST");
     const run = this.getRoomRun(input.runId);
     const source = this.getRoomTurn(input.fromTurnId);
-    if (source.runId !== run.id) throw new MsBotError("AGENT_TURN_CONFLICT");
+    if (source.runId !== run.id) throw new AevorenBotError("AGENT_TURN_CONFLICT");
     const attemptedToAgentId = safeAttemptedAgentId(input.attemptedToAgentId);
     const toolCallKey = handoffToolCallKey(input.toolCallId);
     const existing = this.database
@@ -1992,7 +1992,7 @@ export class AppRepository {
 
   getHandoffRejection(id: string): HandoffRejection {
     const row = this.database.prepare("SELECT * FROM handoff_rejections WHERE id = ?").get(id) as HandoffRejectionRow | undefined;
-    if (!row) throw new MsBotError("HANDOFF_NOT_FOUND");
+    if (!row) throw new AevorenBotError("HANDOFF_NOT_FOUND");
     return toHandoffRejection(row);
   }
 
@@ -2075,7 +2075,7 @@ export class AppRepository {
         Number(entry.seq) > inputSeq ||
         entry.status !== "completed"
       ) {
-        throw new MsBotError("HANDOFF_CONTEXT_INVALID");
+        throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
       }
     }
   }
@@ -2113,10 +2113,10 @@ export class AppRepository {
 
   private assertRoomRunHardStopAllowsWork(run: RoomRun): void {
     if (run.windingDown) {
-      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "winding-down" });
+      throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "winding-down" });
     }
     if (Date.parse(run.deadlineAt) <= Date.now()) {
-      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "deadline" });
+      throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "deadline" });
     }
   }
 
@@ -2132,41 +2132,41 @@ export class AppRepository {
     if (incoming?.visibility === "direct") return;
     const room = this.getRoom(run.roomId);
     if (room.membershipVersion !== run.membershipVersion) {
-      throw new MsBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+      throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
     }
     if (!this.listRoomMembers(run.roomId).some((member) => member.botId === turn.agentId)) {
-      throw new MsBotError("ROOM_MEMBER_INVALID");
+      throw new AevorenBotError("ROOM_MEMBER_INVALID");
     }
   }
 
   assertRoomTurnDispatchable(turnId: string): RoomTurn {
     const turn = this.getRoomTurn(turnId);
     if (turn.state !== "queued") {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: turn.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: turn.state });
     }
     const run = this.getRoomRun(turn.runId);
     this.assertRoomRunHardStopAllowsWork(run);
     if (run.state !== "running") {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: run.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: run.state });
     }
-    if (this.getRoom(run.roomId).archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    if (this.getRoom(run.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     this.assertRoomTurnMembershipAllowsRetry(run, turn);
     return turn;
   }
 
   private assertRoomRunCanCreateTurn(run: RoomRun, parent: RoomTurn | null, hop: number): void {
     if (!["queued", "running"].includes(run.state)) {
-      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "run-state" });
+      throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "run-state" });
     }
     this.assertRoomRunHardStopAllowsWork(run);
     if (hop > run.maxHops) {
-      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-hops" });
+      throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-hops" });
     }
     const count = this.database
       .prepare("SELECT COUNT(DISTINCT logical_turn_id) AS value FROM room_turns WHERE batch_id = ?")
       .get(run.id) as { value: number };
     if (Number(count.value) >= run.maxTurns) {
-      throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-turns" });
+      throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-turns" });
     }
     if (parent) {
       const targets = this.database
@@ -2176,7 +2176,7 @@ export class AppRepository {
         )
         .get(run.id, parent.logicalTurnId) as { value: number };
       if (Number(targets.value) >= run.maxTargetsPerTurn) {
-        throw new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-targets-per-turn" });
+        throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-targets-per-turn" });
       }
     }
   }
@@ -2184,10 +2184,10 @@ export class AppRepository {
   transitionRoomBatch(id: string, state: RoomBatchState, expectedVersion?: number): RoomBatch {
     const current = this.getRoomBatch(id);
     if (expectedVersion !== undefined && expectedVersion !== current.version) {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     if (!ROOM_BATCH_TRANSITIONS[current.state].includes(state)) {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     const timestamp = now();
     const terminal = !["queued", "running"].includes(state);
@@ -2200,7 +2200,7 @@ export class AppRepository {
       .run(state, timestamp, terminal ? 1 : 0, timestamp, id, current.version, current.state);
     if (Number(result.changes) === 0) {
       const latest = this.getRoomBatch(id);
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
     }
     return this.getRoomBatch(id);
   }
@@ -2213,10 +2213,10 @@ export class AppRepository {
     const current = this.getRoomRun(id);
     if (current.windingDown) return current;
     if (expectedVersion !== undefined && expectedVersion !== current.version) {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     if (!["queued", "running"].includes(current.state)) {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     const result = this.database
       .prepare(
@@ -2227,7 +2227,7 @@ export class AppRepository {
     if (Number(result.changes) === 0) {
       const latest = this.getRoomRun(id);
       if (latest.windingDown) return latest;
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
     }
     return this.getRoomRun(id);
   }
@@ -2245,13 +2245,13 @@ export class AppRepository {
   ): RoomTurn {
     const current = this.getRoomTurn(id);
     if (options.expectedVersion !== undefined && options.expectedVersion !== current.version) {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     if (!ROOM_TURN_TRANSITIONS[current.state].includes(state)) {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     if (options.outcome && !OUTCOMES_BY_TERMINAL_TURN_STATE[state]?.includes(options.outcome.kind)) {
-      throw new MsBotError("INVALID_REQUEST");
+      throw new AevorenBotError("INVALID_REQUEST");
     }
     const timestamp = now();
     const terminal = !["queued", "running"].includes(state);
@@ -2278,7 +2278,7 @@ export class AppRepository {
       );
     if (Number(result.changes) === 0) {
       const latest = this.getRoomTurn(id);
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
     }
     return this.getRoomTurn(id);
   }
@@ -2300,10 +2300,10 @@ export class AppRepository {
   transitionHandoff(id: string, state: HandoffState, expectedVersion?: number): RoomHandoff {
     const current = this.getHandoff(id);
     if (expectedVersion !== undefined && expectedVersion !== current.version) {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     if (!HANDOFF_TRANSITIONS[current.state].includes(state)) {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     const timestamp = now();
     const terminal = ["accepted", "failed", "cancelled"].includes(state);
@@ -2316,7 +2316,7 @@ export class AppRepository {
       .run(state, timestamp, terminal ? 1 : 0, timestamp, id, current.version, current.state);
     if (Number(result.changes) === 0) {
       const latest = this.getHandoff(id);
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
     }
     return this.getHandoff(id);
   }
@@ -2351,7 +2351,7 @@ export class AppRepository {
       runtime.promptManifest.sourceTurnId !== turn.id ||
       attached
     ) {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
     }
     let changes: number;
     try {
@@ -2363,12 +2363,12 @@ export class AppRepository {
         .run(runtimeRunId, now(), id, turn.version);
       changes = Number(result.changes);
     } catch {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
     }
     if (changes === 0) {
       const latest = this.getRoomTurn(id);
       if (latest.runtimeRunId === runtimeRunId) return latest;
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
     }
     return this.getRoomTurn(id);
   }
@@ -2376,29 +2376,29 @@ export class AppRepository {
   createRoomTurnRetry(turnId: string): RoomTurn {
     const previous = this.getRoomTurn(turnId);
     if (!["failed", "cancelled", "interrupted"].includes(previous.state)) {
-      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "state" });
+      throw new AevorenBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "state" });
     }
     const batch = this.getRoomBatch(previous.batchId);
     this.assertRoomRunHardStopAllowsWork(batch);
     this.assertRoomTurnMembershipAllowsRetry(batch, previous);
-    if (this.getRoom(batch.roomId).archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    if (this.getRoom(batch.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     if (!["partial", "cancelled", "interrupted"].includes(batch.state)) {
-      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "batch-state" });
+      throw new AevorenBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "batch-state" });
     }
     const latestBatch = this.database
       .prepare("SELECT id FROM room_batches WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1")
       .get(batch.sessionId) as { id: string } | undefined;
     if (latestBatch?.id !== batch.id) {
-      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest-batch" });
+      throw new AevorenBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest-batch" });
     }
     if (this.getActiveRoomBatch(batch.sessionId) || this.getActiveRuntimeRun(batch.sessionId)) {
-      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "active-batch" });
+      throw new AevorenBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "active-batch" });
     }
     const attempt = this.database
       .prepare("SELECT COALESCE(MAX(attempt_no), 0) AS value FROM room_turns WHERE batch_id = ? AND logical_turn_id = ?")
       .get(previous.batchId, previous.logicalTurnId) as { value: number };
     if (Number(attempt.value) !== previous.attemptNo) {
-      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest" });
+      throw new AevorenBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest" });
     }
     const id = randomUUID();
     const timestamp = now();
@@ -2436,18 +2436,18 @@ export class AppRepository {
   continueInterruptedRoomBatch(batchId: string): RoomTurn[] {
     const batch = this.getRoomBatch(batchId);
     this.assertRoomRunHardStopAllowsWork(batch);
-    if (this.getRoom(batch.roomId).archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    if (this.getRoom(batch.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     if (!["interrupted", "partial"].includes(batch.state)) {
-      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "batch-state" });
+      throw new AevorenBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "batch-state" });
     }
     const latestBatch = this.database
       .prepare("SELECT id FROM room_batches WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1")
       .get(batch.sessionId) as { id: string } | undefined;
     if (latestBatch?.id !== batch.id) {
-      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest-batch" });
+      throw new AevorenBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest-batch" });
     }
     if (this.getActiveRoomBatch(batch.sessionId) || this.getActiveRuntimeRun(batch.sessionId)) {
-      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "active-batch" });
+      throw new AevorenBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "active-batch" });
     }
     const allTurns = this.listRoomTurns(batchId);
     const latest = new Map<string, RoomTurn>();
@@ -2459,7 +2459,7 @@ export class AppRepository {
       (turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null,
     );
     if (remaining.length === 0) {
-      throw new MsBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "no-remaining" });
+      throw new AevorenBotError("ROOM_TURN_RETRY_UNSAFE", undefined, undefined, { reason: "no-remaining" });
     }
     for (const turn of remaining) this.assertRoomTurnMembershipAllowsRetry(batch, turn);
     const timestamp = now();
@@ -2525,7 +2525,7 @@ export class AppRepository {
          WHERE transcript_entries.client_nonce = ? AND transcript_entries.role = 'user'`,
       )
       .get(clientNonce) as TranscriptRow | undefined;
-    if (!row) throw new MsBotError("MESSAGE_NOT_FOUND");
+    if (!row) throw new AevorenBotError("MESSAGE_NOT_FOUND");
     return toTranscript(row);
   }
 
@@ -2546,7 +2546,7 @@ export class AppRepository {
     const result = this.database
       .prepare("UPDATE send_journal SET state = ?, last_error_code = ?, updated_at = ? WHERE client_nonce = ?")
       .run(state, errorCode, now(), clientNonce);
-    if (Number(result.changes) === 0) throw new MsBotError("MESSAGE_NOT_FOUND");
+    if (Number(result.changes) === 0) throw new AevorenBotError("MESSAGE_NOT_FOUND");
     return this.getSendOrThrow(clientNonce);
   }
 
@@ -2554,14 +2554,14 @@ export class AppRepository {
     const result = this.database
       .prepare("UPDATE send_journal SET provider_request_id = ?, updated_at = ? WHERE client_nonce = ?")
       .run(providerRequestId, now(), clientNonce);
-    if (Number(result.changes) === 0) throw new MsBotError("MESSAGE_NOT_FOUND");
+    if (Number(result.changes) === 0) throw new AevorenBotError("MESSAGE_NOT_FOUND");
     return this.getSendOrThrow(clientNonce);
   }
 
   queueRetry(clientNonce: string): SendJournalEntry {
     const journal = this.getSendOrThrow(clientNonce);
-    if (journal.state !== "failed-before-acceptance") throw new MsBotError("MESSAGE_RETRY_UNSAFE");
-    if (this.getActiveRuntimeRun(journal.sessionId)) throw new MsBotError("SESSION_BUSY");
+    if (journal.state !== "failed-before-acceptance") throw new AevorenBotError("MESSAGE_RETRY_UNSAFE");
+    if (this.getActiveRuntimeRun(journal.sessionId)) throw new AevorenBotError("SESSION_BUSY");
     const user = this.getUserMessage(clientNonce);
     const timestamp = now();
     this.transaction(() => {
@@ -2629,7 +2629,7 @@ export class AppRepository {
 
   getTranscriptEntry(id: string): TranscriptEntry {
     const row = this.database.prepare("SELECT * FROM transcript_entries WHERE id = ?").get(id) as TranscriptRow | undefined;
-    if (!row) throw new MsBotError("TRANSCRIPT_ENTRY_NOT_FOUND");
+    if (!row) throw new AevorenBotError("TRANSCRIPT_ENTRY_NOT_FOUND");
     return toTranscript(row);
   }
 
@@ -2646,7 +2646,7 @@ export class AppRepository {
   ): RuntimeRun {
     const journal = this.getSendOrThrow(clientNonce);
     const input = this.getUserMessage(clientNonce);
-    if (this.getActiveRuntimeRun(journal.sessionId)) throw new MsBotError("SESSION_BUSY");
+    if (this.getActiveRuntimeRun(journal.sessionId)) throw new AevorenBotError("SESSION_BUSY");
     const executorBotId = options.executorBotId ?? this.getBotForSession(journal.sessionId).id;
     const executionKey = options.executionKey ?? clientNonce;
     const attempt = this.database
@@ -2680,7 +2680,7 @@ export class AppRepository {
           timestamp,
         );
     } catch (error) {
-      if (this.getActiveRuntimeRun(journal.sessionId)) throw new MsBotError("SESSION_BUSY");
+      if (this.getActiveRuntimeRun(journal.sessionId)) throw new AevorenBotError("SESSION_BUSY");
       throw error;
     }
     return this.getRuntimeRun(id);
@@ -2688,7 +2688,7 @@ export class AppRepository {
 
   getRuntimeRun(id: string): RuntimeRun {
     const row = this.database.prepare("SELECT * FROM runtime_runs WHERE id = ?").get(id) as RuntimeRow | undefined;
-    if (!row) throw new MsBotError("RUNTIME_NOT_FOUND");
+    if (!row) throw new AevorenBotError("RUNTIME_NOT_FOUND");
     return toRuntime(row);
   }
 
@@ -2721,7 +2721,7 @@ export class AppRepository {
   ): RuntimeRun {
     const current = this.getRuntimeRun(id);
     if (!RUNTIME_TRANSITIONS[current.state].includes(state)) {
-      throw new MsBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     const timestamp = now();
     const terminal = isRuntimeTerminal(state);
@@ -2775,18 +2775,18 @@ export class AppRepository {
   assertRuntimeRetryEligible(id: string): RuntimeRun {
     const run = this.getRuntimeRun(id);
     if (!["failed", "cancelled", "interrupted"].includes(run.state)) {
-      throw new MsBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "state" });
+      throw new AevorenBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "state" });
     }
     if (this.getActiveRuntimeRun(run.sessionId)) {
-      throw new MsBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "active-run" });
+      throw new AevorenBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "active-run" });
     }
     const journal = this.getSendOrThrow(run.clientNonce);
     if (journal.state !== "acked") {
-      throw new MsBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "message-not-acked" });
+      throw new AevorenBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "message-not-acked" });
     }
     const latest = this.getLatestUserMessage(run.sessionId);
     if (latest?.clientNonce !== run.clientNonce) {
-      throw new MsBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest" });
+      throw new AevorenBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "not-latest" });
     }
     return run;
   }

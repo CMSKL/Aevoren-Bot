@@ -73,7 +73,7 @@ function filterDetails(code: ErrorCode, details?: AppError["details"]): AppError
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 
-export class MsBotError extends Error {
+export class AevorenBotError extends Error {
   readonly retryable: boolean;
 
   constructor(
@@ -83,7 +83,7 @@ export class MsBotError extends Error {
     public readonly details?: AppError["details"],
   ) {
     super(safeMessage ?? ERROR_REGISTRY[code].safeMessage);
-    this.name = "MsBotError";
+    this.name = "AevorenBotError";
     this.retryable = retryable ?? ERROR_REGISTRY[code].retryable;
   }
 
@@ -101,9 +101,9 @@ export class MsBotError extends Error {
 }
 
 export function asAppError(error: unknown): AppError {
-  if (error instanceof MsBotError) return error.toAppError();
-  if (error instanceof ZodError) return new MsBotError("INVALID_REQUEST").toAppError();
-  return new MsBotError("INTERNAL_ERROR").toAppError();
+  if (error instanceof AevorenBotError) return error.toAppError();
+  if (error instanceof ZodError) return new AevorenBotError("INVALID_REQUEST").toAppError();
+  return new AevorenBotError("INTERNAL_ERROR").toAppError();
 }
 
 export async function apiResult<T>(operation: () => T | Promise<T>): Promise<ApiResult<T>> {

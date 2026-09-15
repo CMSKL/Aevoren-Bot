@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage, ModelEvent, ModelProvider } from "./model";
 import { AppRepository } from "./database";
-import { MsBotError } from "./errors";
+import { AevorenBotError } from "./errors";
 import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
 import { RuntimeCoordinator } from "./send-worker";
@@ -164,7 +164,7 @@ describe("RoomCoordinator", () => {
         const identity = messages[0]!.content;
         calls.push(identity);
         yield { type: "started", requestId: identity };
-        if (identity === "identity-2") throw new MsBotError("MODEL_STREAM_TRUNCATED");
+        if (identity === "identity-2") throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
         yield { type: "delta", text: identity };
         yield { type: "completed", finishReason: "stop" };
       },
@@ -243,7 +243,7 @@ describe("RoomCoordinator", () => {
       async *run(messages) {
         const identity = messages[0]!.content;
         yield { type: "started", requestId: crypto.randomUUID() };
-        if (identity === "identity-2" && memberTwoCalls++ === 0) throw new MsBotError("MODEL_STREAM_TRUNCATED");
+        if (identity === "identity-2" && memberTwoCalls++ === 0) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
         yield { type: "delta", text: `${identity}-ok` };
         yield { type: "completed", finishReason: "stop" };
       },
@@ -268,7 +268,7 @@ describe("RoomCoordinator", () => {
       async *run() {
         calls += 1;
         yield* [];
-        throw new MsBotError("MODEL_CONNECTION_FAILED");
+        throw new AevorenBotError("MODEL_CONNECTION_FAILED");
       },
       testConnection: async () => {},
     };

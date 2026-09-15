@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import type { MsBotApi, PromptManifest } from "@shared/contracts";
+import type { AevorenBotApi, PromptManifest } from "@shared/contracts";
 import { AppRepository } from "../../src/main/database";
 
 function environment(userDataDir: string, overrides: Record<string, string> = {}): Record<string, string> {
   return {
     ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-    MS_BOT_USER_DATA_DIR: userDataDir,
-    MS_BOT_FAKE_PROVIDER: "1",
+    AEVOREN_BOT_USER_DATA_DIR: userDataDir,
+    AEVOREN_BOT_FAKE_PROVIDER: "1",
     ...overrides,
   };
 }
@@ -66,7 +66,7 @@ async function requestWindowClose(application: ElectronApplication, timeoutMs = 
 }
 
 function seedCompletedRuntimeBeforeTurnSettlement(userDataDir: string): { batchId: string; firstRunId: string } {
-  const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+  const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
   try {
     const bots = ["先行者", "收尾者"].map((name) => {
       const created = repository.createBot();
@@ -124,10 +124,10 @@ function seedCompletedRuntimeBeforeTurnSettlement(userDataDir: string): { batchI
 
 test("creates and manages a deterministic multi-Bot Room with speaker bubbles", async () => {
   test.setTimeout(90_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-smoke-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-room-smoke-"));
   let application: ElectronApplication | undefined;
   try {
-    const launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
+    const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = launched.application;
     const page = launched.page;
     const consoleErrors: string[] = [];
@@ -172,27 +172,27 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
     await page.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
 
-    await page.screenshot({ path: "/tmp/ms-bot-room-desktop-light.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/aevoren-bot-room-desktop-light.png", fullPage: true });
     await page.emulateMedia({ colorScheme: "dark" });
     await expect(page.locator(".conversation")).toBeVisible();
-    await page.screenshot({ path: "/tmp/ms-bot-room-desktop-dark.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/aevoren-bot-room-desktop-dark.png", fullPage: true });
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
     await expect(page.getByRole("button", { name: "打开 Bot 列表" })).toBeVisible();
     await page.waitForTimeout(250);
     await expect(page.locator(".sidebar")).not.toBeVisible();
     await expect(page.locator(".inspector")).not.toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await page.screenshot({ path: "/tmp/ms-bot-room-narrow.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/aevoren-bot-room-narrow.png", fullPage: true });
     await page.getByRole("button", { name: "打开 Bot 设置" }).click();
     await expect(page.locator(".inspector")).toBeVisible();
     await page.waitForTimeout(250);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await page.screenshot({ path: "/tmp/ms-bot-room-narrow-profile.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/aevoren-bot-room-narrow-profile.png", fullPage: true });
     expect(consoleErrors).toEqual([]);
 
     await application.close();
     application = undefined;
-    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
     expect(database.prepare("SELECT COUNT(*) AS count FROM rooms").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT name, archived_at FROM rooms").get()).toEqual({ name: "产品协作室", archived_at: null });
     expect(database.prepare("SELECT description FROM rooms").get()).toEqual({ description: "关闭应用时也必须 flush 的 Room 描述" });
@@ -218,11 +218,11 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     database.close();
 
     const longRoutingReason = "自动选择理由".repeat(40).slice(0, 240);
-    const routingWriter = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"));
+    const routingWriter = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"));
     routingWriter.prepare("UPDATE room_batches SET routing_reason = ?").run(longRoutingReason);
     routingWriter.close();
 
-    const restarted = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
+    const restarted = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = restarted.application;
     await restarted.page.locator(".bot-list .bot-row").first().click();
     await expect(restarted.page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
@@ -251,13 +251,13 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await expect(restarted.page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
     await application.close();
     application = undefined;
-    const restoredDatabase = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    const restoredDatabase = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
     expect(restoredDatabase.prepare("SELECT description FROM bots WHERE name = ?").get("研究员")).toEqual({
       description: "恢复归档 Room 前必须先保存的 Bot 描述",
     });
     restoredDatabase.close();
 
-    const restored = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
+    const restored = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = restored.application;
     await restored.page.locator(".bot-row").filter({ hasText: "研究员" }).click();
     await expect(restored.page.getByLabel("描述")).toHaveValue("恢复归档 Room 前必须先保存的 Bot 描述");
@@ -269,10 +269,10 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
 
 test("renders historical Room speaker envelopes as clean Grok-style speaker messages", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-speaker-display-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-room-speaker-display-"));
   let application: ElectronApplication | undefined;
   try {
-    const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+    const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
     const created = repository.createBot();
     const speaker = repository.updateBot(created.bot.id, created.bot.version, { name: "运营师" });
     const observer = repository.createBot().bot;
@@ -297,9 +297,9 @@ test("renders historical Room speaker envelopes as clean Grok-style speaker mess
     await expect(launched.page.getByText("我现在在整理执行表。", { exact: true })).toBeVisible();
     await expect(launched.page.getByText(marker, { exact: false })).toHaveCount(0);
     await expect(launched.page.locator(".assistant-markdown")).not.toContainText("room-speaker");
-    await launched.page.screenshot({ path: "/tmp/ms-bot-room-speaker-sanitized.png", fullPage: true });
+    await launched.page.screenshot({ path: "/tmp/aevoren-bot-room-speaker-sanitized.png", fullPage: true });
 
-    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
     expect(database.prepare("SELECT body FROM transcript_entries WHERE id = ?").get(assistant.id)).toEqual({
       body: `开场说明。\n\n${marker} 我现在在整理执行表。`,
     });
@@ -312,10 +312,10 @@ test("renders historical Room speaker envelopes as clean Grok-style speaker mess
 
 test("disambiguates duplicate Bot identities across Room controls and speaker links", async () => {
   test.setTimeout(45_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-duplicate-identities-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-room-duplicate-identities-"));
   let application: ElectronApplication | undefined;
   try {
-    const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+    const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
     const firstCreated = repository.createBot();
     const first = repository.updateBot(firstCreated.bot.id, firstCreated.bot.version, {
       name: "重复身份",
@@ -334,7 +334,7 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     });
     repository.close();
 
-    const launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
+    const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = launched.application;
     const consoleErrors: string[] = [];
     launched.page.on("console", (message) => {
@@ -385,7 +385,7 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     await expect(launched.page.getByLabel("描述")).toHaveValue("第二位重复身份 Bot");
     await launched.page.locator(".bot-row").filter({ hasText: room.room.name }).click();
     await expect(launched.page.getByRole("heading", { name: room.room.name })).toBeVisible();
-    await launched.page.screenshot({ path: "/tmp/msbot-room-duplicate-identities.png", fullPage: true });
+    await launched.page.screenshot({ path: "/tmp/aevorenbot-room-duplicate-identities.png", fullPage: true });
     expect(consoleErrors).toEqual([]);
   } finally {
     if (application) await forceKill(application);
@@ -395,13 +395,13 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
 
 test("reattaches Room streaming after five reloads and recovers a Main crash without auto-running", async () => {
   test.setTimeout(120_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-recovery-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-room-recovery-"));
   let application: ElectronApplication | undefined;
   try {
     let launched = await launch(userDataDir, {
-      MS_BOT_FAKE_START_DELAY_MS: "3000",
-      MS_BOT_FAKE_DELAY_MS: "1000",
-      MS_BOT_FAKE_IGNORE_ABORT: "1",
+      AEVOREN_BOT_FAKE_START_DELAY_MS: "3000",
+      AEVOREN_BOT_FAKE_DELAY_MS: "1000",
+      AEVOREN_BOT_FAKE_IGNORE_ABORT: "1",
     });
     application = launched.application;
     for (const name of ["甲", "乙", "丙"]) await createNamedBot(launched.page, name);
@@ -411,7 +411,7 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(launched.page.getByText("正在连接模型", { exact: true })).toBeVisible();
     const scopeErrors = await launched.page.evaluate(async () => {
-      const api = (window as unknown as { msBot: MsBotApi }).msBot;
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       const rooms = await api.rooms.list();
       if (!rooms.ok || !rooms.data[0]) throw new Error("Room missing");
       const snapshot = await api.roomRuntime.getSnapshot(rooms.data[0].id);
@@ -440,14 +440,14 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     await launched.page.getByLabel("消息").fill("崩溃恢复测试");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(launched.page.getByText("正在生成回复", { exact: true })).toBeVisible();
-    const databasePath = join(userDataDir, "ms-bot.sqlite");
+    const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     await forceKill(application);
     application = undefined;
     let database = new DatabaseSync(databasePath, { readOnly: true });
     const beforeRestart = database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get();
     database.close();
 
-    launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "20" });
+    launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "20" });
     application = launched.application;
     await launched.page.waitForTimeout(500);
     database = new DatabaseSync(databasePath, { readOnly: true });
@@ -467,11 +467,11 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
 
 test("reconciles a completed Room Runtime and exposes Continue for only the unstarted member", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-settle-boundary-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-room-settle-boundary-"));
   let application: ElectronApplication | undefined;
   try {
     const fixture = seedCompletedRuntimeBeforeTurnSettlement(userDataDir);
-    const launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
+    const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = launched.application;
     await launched.page.locator(".bot-row").filter({ hasText: "恢复边界群聊" }).click();
     await expect(launched.page.getByTestId("room-batch-state")).toContainText("partial");
@@ -484,7 +484,7 @@ test("reconciles a completed Room Runtime and exposes Continue for only the unst
     await application.close();
     application = undefined;
 
-    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
     expect(database.prepare("SELECT state FROM runtime_runs WHERE id = ?").get(fixture.firstRunId)).toEqual({ state: "completed" });
     expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 2 });
     expect(database.prepare("SELECT state FROM room_batches WHERE id = ?").get(fixture.batchId)).toEqual({ state: "completed" });
@@ -503,10 +503,10 @@ test("reconciles a completed Room Runtime and exposes Continue for only the unst
 
 test("offers a Turn retry when a Room member fails before Provider acceptance", async () => {
   test.setTimeout(45_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-prestart-retry-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-room-prestart-retry-"));
   let application: ElectronApplication | undefined;
   try {
-    const launched = await launch(userDataDir, { MS_BOT_FAKE_FAILURE: "first-run-before-start", MS_BOT_FAKE_DELAY_MS: "10" });
+    const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_FAILURE: "first-run-before-start", AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = launched.application;
     await createNamedBot(launched.page, "前置失败成员");
     await createNamedBot(launched.page, "正常成员");
@@ -522,7 +522,7 @@ test("offers a Turn retry when a Room member fails before Provider acceptance", 
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
     await application.close();
     application = undefined;
-    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
     expect(database.prepare("SELECT COUNT(*) AS count FROM transcript_entries WHERE role='user'").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM room_turns").get()).toEqual({ count: 3 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 3 });
@@ -535,10 +535,10 @@ test("offers a Turn retry when a Room member fails before Provider acceptance", 
 
 test("settles Cancel then SIGKILL without leaving a running Turn or auto-resuming", async () => {
   test.setTimeout(45_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-cancel-crash-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-room-cancel-crash-"));
   let application: ElectronApplication | undefined;
   try {
-    let launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "1000", MS_BOT_FAKE_IGNORE_ABORT: "1" });
+    let launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "1000", AEVOREN_BOT_FAKE_IGNORE_ABORT: "1" });
     application = launched.application;
     await createNamedBot(launched.page, "取消甲");
     await createNamedBot(launched.page, "取消乙");
@@ -550,11 +550,11 @@ test("settles Cancel then SIGKILL without leaving a running Turn or auto-resumin
     await forceKill(application);
     application = undefined;
 
-    const databasePath = join(userDataDir, "ms-bot.sqlite");
+    const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     let database = new DatabaseSync(databasePath, { readOnly: true });
     const runCount = database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get();
     database.close();
-    launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
+    launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = launched.application;
     await launched.page.waitForTimeout(500);
     database = new DatabaseSync(databasePath, { readOnly: true });
@@ -572,10 +572,10 @@ test("settles Cancel then SIGKILL without leaving a running Turn or auto-resumin
 
 test("preserves Room user-cancel intent through a normal close when the Provider ignores Abort", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-cancel-close-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-room-cancel-close-"));
   let application: ElectronApplication | undefined;
   try {
-    let launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "1000", MS_BOT_FAKE_IGNORE_ABORT: "1" });
+    let launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "1000", AEVOREN_BOT_FAKE_IGNORE_ABORT: "1" });
     application = launched.application;
     await createNamedBot(launched.page, "关闭取消甲");
     await createNamedBot(launched.page, "关闭取消乙");
@@ -587,7 +587,7 @@ test("preserves Room user-cancel intent through a normal close when the Provider
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
 
-    const databasePath = join(userDataDir, "ms-bot.sqlite");
+    const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     let database = new DatabaseSync(databasePath, { readOnly: true });
     const runCount = database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get();
     expect(database.prepare("SELECT DISTINCT state FROM room_batches").all()).toEqual([{ state: "cancelled" }]);
@@ -596,7 +596,7 @@ test("preserves Room user-cancel intent through a normal close when the Provider
     expect(database.prepare("SELECT DISTINCT status FROM transcript_entries WHERE role='assistant'").all()).toEqual([{ status: "cancelled" }]);
     database.close();
 
-    launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "10" });
+    launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = launched.application;
     await launched.page.waitForTimeout(500);
     database = new DatabaseSync(databasePath, { readOnly: true });

@@ -6,11 +6,11 @@ import { AppRepository } from "../../src/main/database";
 
 test("keeps compact header controls visible at 150 and 200 percent zoom", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-responsive-edge-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-responsive-edge-"));
   const application = await electron.launch({
     args: ["."],
     cwd: process.cwd(),
-    env: { ...process.env, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1" },
+    env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
 
   try {
@@ -60,7 +60,7 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
       expect(layout.titleWidth).toBeGreaterThanOrEqual(40);
     }
 
-    await page.screenshot({ path: "/tmp/ms-bot-responsive-zoom-200-fixed.png" });
+    await page.screenshot({ path: "/tmp/aevoren-bot-responsive-zoom-200-fixed.png" });
     expect(consoleErrors).toEqual([]);
   } finally {
     await application.close();
@@ -70,11 +70,11 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
 
 test("keeps inspector and model settings usable at 200 percent zoom", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-responsive-panels-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-responsive-panels-"));
   const application = await electron.launch({
     args: ["."],
     cwd: process.cwd(),
-    env: { ...process.env, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1" },
+    env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
 
   try {
@@ -130,7 +130,7 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
     expect(inspectorLayout.inspectorWidth).toBeGreaterThanOrEqual(170);
     expect(inspectorLayout.headingHeight).toBeLessThanOrEqual(30);
     expect(inspectorLayout.fieldWidth).toBeGreaterThanOrEqual(140);
-    await page.screenshot({ path: "/tmp/ms-bot-responsive-inspector-zoom-200-fixed.png" });
+    await page.screenshot({ path: "/tmp/aevoren-bot-responsive-inspector-zoom-200-fixed.png" });
     await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
 
     await page.getByRole("button", { name: "模型设置" }).click();
@@ -158,7 +158,7 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
       descriptionContained: true,
       controlsContained: true,
     });
-    await page.screenshot({ path: "/tmp/ms-bot-responsive-settings-zoom-200-fixed.png" });
+    await page.screenshot({ path: "/tmp/aevoren-bot-responsive-settings-zoom-200-fixed.png" });
     expect(consoleErrors).toEqual([]);
   } finally {
     await application.close();
@@ -168,8 +168,8 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
 
 test("keeps Room member actions on one line beside a long Bot name", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-responsive-members-"));
-  const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-responsive-members-"));
+  const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
   const longName = "执行员 · 负责验证窄窗口候选和提及标签不会撑破布局的超长名称";
   const roomName = "长名称成员验收群聊";
   try {
@@ -185,7 +185,7 @@ test("keeps Room member actions on one line beside a long Bot name", async () =>
   const application = await electron.launch({
     args: ["."],
     cwd: process.cwd(),
-    env: { ...process.env, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1" },
+    env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
 
   try {
@@ -217,7 +217,7 @@ test("keeps Room member actions on one line beside a long Bot name", async () =>
     expect(layout.removeWhiteSpace).toBe("nowrap");
     expect(layout.nameEllipses).toBe(true);
     expect(layout.controlsSeparated).toBe(true);
-    await page.screenshot({ path: "/tmp/ms-bot-responsive-long-member-fixed.png" });
+    await page.screenshot({ path: "/tmp/aevoren-bot-responsive-long-member-fixed.png" });
   } finally {
     await application.close();
     rmSync(userDataDir, { recursive: true, force: true });
@@ -226,11 +226,11 @@ test("keeps Room member actions on one line beside a long Bot name", async () =>
 
 test("uses a two-stage compact layout around the desktop breakpoint", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-responsive-breakpoint-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-responsive-breakpoint-"));
   const application = await electron.launch({
     args: ["."],
     cwd: process.cwd(),
-    env: { ...process.env, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1" },
+    env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
 
   try {
@@ -267,8 +267,8 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
       expect(layout.inspector).toBe(item.inspector);
       expect(layout.conversationWidth).toBeGreaterThanOrEqual(item.minConversationWidth);
       expect(layout.rootContained).toBe(true);
-      if (item.width === 1180) await page.screenshot({ path: "/tmp/ms-bot-responsive-two-pane-1180-fixed.png" });
-      if (item.width === 1020) await page.screenshot({ path: "/tmp/ms-bot-responsive-single-pane-1020-fixed.png" });
+      if (item.width === 1180) await page.screenshot({ path: "/tmp/aevoren-bot-responsive-two-pane-1180-fixed.png" });
+      if (item.width === 1020) await page.screenshot({ path: "/tmp/aevoren-bot-responsive-single-pane-1020-fixed.png" });
     }
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1180, 700));
@@ -285,11 +285,11 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
 
 test("does not stack the new-chat chooser over an open narrow sidebar", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-responsive-chooser-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-responsive-chooser-"));
   const application = await electron.launch({
     args: ["."],
     cwd: process.cwd(),
-    env: { ...process.env, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1" },
+    env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
 
   try {
@@ -317,7 +317,7 @@ test("does not stack the new-chat chooser over an open narrow sidebar", async ()
       };
     });
     expect(layout).toEqual({ sidebarVisible: false, chooserContained: true });
-    await page.screenshot({ path: "/tmp/ms-bot-responsive-narrow-chooser-fixed.png" });
+    await page.screenshot({ path: "/tmp/aevoren-bot-responsive-narrow-chooser-fixed.png" });
     await page.getByRole("button", { name: "关闭新聊天" }).click();
     await expect(page.locator(".sidebar")).not.toBeVisible();
   } finally {
@@ -328,8 +328,8 @@ test("does not stack the new-chat chooser over an open narrow sidebar", async ()
 
 test("keeps a long sidebar scrollable without pushing the conversation below the viewport", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-responsive-sidebar-height-"));
-  const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-responsive-sidebar-height-"));
+  const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
   try {
     const botIds = Array.from({ length: 12 }, (_, index) => {
       const created = repository.createBot();
@@ -345,7 +345,7 @@ test("keeps a long sidebar scrollable without pushing the conversation below the
   const application = await electron.launch({
     args: ["."],
     cwd: process.cwd(),
-    env: { ...process.env, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1" },
+    env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
 
   try {
@@ -399,7 +399,7 @@ test("keeps a long sidebar scrollable without pushing the conversation below the
     });
     expect(scrollResult.scrollTop).toBeGreaterThan(0);
     expect(scrollResult.lastRowVisible).toBe(true);
-    await page.screenshot({ path: "/tmp/ms-bot-layout-height-regression-fixed.png" });
+    await page.screenshot({ path: "/tmp/aevoren-bot-layout-height-regression-fixed.png" });
     expect(consoleErrors).toEqual([]);
   } finally {
     await application.close();

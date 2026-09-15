@@ -21,7 +21,7 @@ import {
   sessionIdSchema,
   turnIdSchema,
 } from "@shared/schemas";
-import { apiResult, MsBotError } from "./errors";
+import { apiResult, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 import { OpenAiCompatibleProvider } from "./model";
 import type { ModelSettingsService } from "./settings";
@@ -45,7 +45,7 @@ function isTrusted(event: IpcMainEvent | IpcMainInvokeEvent, window: BrowserWind
 
 function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
   if (!isTrusted(event, window)) {
-    throw new MsBotError("UNTRUSTED_RENDERER", "请求来源不受信任。", false);
+    throw new AevorenBotError("UNTRUSTED_RENDERER", "请求来源不受信任。", false);
   }
 }
 
@@ -135,7 +135,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (dependencies.forceFakeProvider) return;
     const configuration = settings.getConfiguration();
     if (!configuration.modelId || !configuration.apiKeyConfigured) {
-      throw new MsBotError("MODEL_NOT_CONFIGURED", "请先保存 Base URL、Model ID 和 API Key。", false);
+      throw new AevorenBotError("MODEL_NOT_CONFIGURED", "请先保存 Base URL、Model ID 和 API Key。", false);
     }
     const provider = new OpenAiCompatibleProvider(
       configuration.baseUrl,
@@ -147,7 +147,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
     try {
       await provider.testConnection(controller.signal);
     } catch (error) {
-      if (controller.signal.aborted) throw new MsBotError("MODEL_CONNECTION_TIMEOUT");
+      if (controller.signal.aborted) throw new AevorenBotError("MODEL_CONNECTION_TIMEOUT");
       throw error;
     } finally {
       clearTimeout(timer);

@@ -8,7 +8,7 @@ import type {
   TranscriptStatus,
 } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
-import { asAppError, MsBotError } from "./errors";
+import { asAppError, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 import {
   FakeModelProvider,
@@ -103,7 +103,7 @@ export class RuntimeExecutor {
   }
 
   start(input: RuntimeExecutionInput): { run: RuntimeRun; completion: Promise<RuntimeExecutionResult> } {
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const journal = this.repository.getSendOrThrow(input.clientNonce);
     const session = this.repository.getSession(journal.sessionId);
     const bot = this.repository.getBot(input.executorBotId);
@@ -223,12 +223,12 @@ export class RuntimeExecutor {
   }
 
   async selectRoomOwner(text: string, roster: readonly RoomPeer[], signal: AbortSignal): Promise<RoomOwnerSelection> {
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const provider = this.createProvider();
     const selector = provider.selectRoomOwner;
-    if (!selector) throw new MsBotError("MODEL_ROUTER_UNSUPPORTED");
+    if (!selector) throw new AevorenBotError("MODEL_ROUTER_UNSUPPORTED");
     const result = await selector.call(provider, text, roster, signal);
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     return result;
   }
 
@@ -252,7 +252,7 @@ export class RuntimeExecutor {
       const run = this.repository.getRuntimeRun(active.runId);
       if (!["completed", "failed", "cancelled", "interrupted"].includes(run.state)) {
         const userCancelled = active.abortReason === "user" || run.state === "cancel-requested";
-        const error = new MsBotError(userCancelled ? "MESSAGE_CANCELLED" : "APP_INTERRUPTED").toAppError();
+        const error = new AevorenBotError(userCancelled ? "MESSAGE_CANCELLED" : "APP_INTERRUPTED").toAppError();
         const settled = this.repository.transitionRuntimeRun(run.id, userCancelled ? "cancelled" : "interrupted", {
           errorCode: error.code,
         });
@@ -268,7 +268,7 @@ export class RuntimeExecutor {
 
   private async dispatch(runId: string): Promise<RuntimeExecutionResult> {
     const active = this.active.get(runId);
-    if (!active) throw new MsBotError("RUNTIME_NOT_FOUND");
+    if (!active) throw new AevorenBotError("RUNTIME_NOT_FOUND");
     let run = this.repository.transitionRuntimeRun(runId, "dispatching");
     let iterator: AsyncIterator<ModelEvent> | null = null;
     this.emitRuntime(run);
@@ -290,7 +290,7 @@ export class RuntimeExecutor {
           return { run: persistedRun, providerStarted: active.providerStarted };
         }
         if (event.type === "started") {
-          if (active.providerStarted) throw new MsBotError("RUNTIME_STATE_INVALID");
+          if (active.providerStarted) throw new AevorenBotError("RUNTIME_STATE_INVALID");
           active.providerStarted = true;
           run = this.repository.transitionRuntimeRun(runId, "running", { providerRequestId: event.requestId });
           active.onProviderStarted?.(event.requestId);
@@ -309,7 +309,7 @@ export class RuntimeExecutor {
           continue;
         }
         if (event.type === "delta") {
-          if (!active.assistantEntryId) throw new MsBotError("RUNTIME_STATE_INVALID");
+          if (!active.assistantEntryId) throw new AevorenBotError("RUNTIME_STATE_INVALID");
           if (run.state === "running") {
             run = this.repository.transitionRuntimeRun(runId, "streaming");
             this.emitRuntime(run);
@@ -324,7 +324,7 @@ export class RuntimeExecutor {
           continue;
         }
         if (event.type === "handoff") {
-          if (!active.providerStarted || !active.onHandoff) throw new MsBotError("RUNTIME_STATE_INVALID");
+          if (!active.providerStarted || !active.onHandoff) throw new AevorenBotError("RUNTIME_STATE_INVALID");
           active.onHandoff(event);
           run = this.repository.touchRuntimeRun(runId);
           this.emitRuntime(run);
@@ -340,7 +340,7 @@ export class RuntimeExecutor {
       }
       const current = this.repository.getRuntimeRun(runId);
       if (!["completed", "failed", "cancelled", "interrupted"].includes(current.state)) {
-        throw new MsBotError("MODEL_STREAM_TRUNCATED");
+        throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
       }
       return { run: current, providerStarted: active.providerStarted };
     } catch (error) {
@@ -360,7 +360,7 @@ export class RuntimeExecutor {
     }
     const aborted = error instanceof DOMException && error.name === "AbortError";
     const appError = aborted
-      ? new MsBotError(
+      ? new AevorenBotError(
           active.abortReason === "app-shutdown"
             ? "APP_INTERRUPTED"
             : active.abortReason === "deadline"
@@ -417,7 +417,7 @@ export class RuntimeExecutor {
     if (this.providerOverride) return this.providerOverride;
     if (this.fakeProvider) return this.fakeProvider;
     const configuration = this.settings.getConfiguration();
-    if (!configuration.modelId || !configuration.apiKeyConfigured) throw new MsBotError("MODEL_NOT_CONFIGURED");
+    if (!configuration.modelId || !configuration.apiKeyConfigured) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
     return new OpenAiCompatibleProvider(configuration.baseUrl, configuration.modelId, this.settings.getApiKey());
   }
 

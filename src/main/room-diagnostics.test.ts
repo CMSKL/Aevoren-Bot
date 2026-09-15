@@ -30,7 +30,7 @@ function sha256(filename: string): string {
 }
 
 function createV6Fixture(): string {
-  const directory = mkdtempSync(join(tmpdir(), "ms-bot-room-diagnostics-"));
+  const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-room-diagnostics-"));
   directories.push(directory);
   const filename = join(directory, "app.sqlite");
   const repository = new AppRepository(filename);
@@ -165,7 +165,7 @@ describe("room diagnostics CLI", () => {
     expect(JSON.parse(unavailable.stderr).error.code).toBe("DATABASE_UNAVAILABLE");
     expect(unavailable.stderr).not.toContain(unavailablePath);
 
-    const oldDirectory = mkdtempSync(join(tmpdir(), "ms-bot-room-diagnostics-old-"));
+    const oldDirectory = mkdtempSync(join(tmpdir(), "aevoren-bot-room-diagnostics-old-"));
     directories.push(oldDirectory);
     const oldFilename = join(oldDirectory, "old.sqlite");
     const oldDatabase = new DatabaseSync(oldFilename);
@@ -182,7 +182,7 @@ describe("room diagnostics CLI", () => {
     expect(JSON.parse(oldSchema.stderr).error.code).toBe("UNSUPPORTED_SCHEMA");
     expect(oldSchema.stderr).not.toContain(oldFilename);
 
-    const incompleteDirectory = mkdtempSync(join(tmpdir(), "ms-bot-room-diagnostics-incomplete-"));
+    const incompleteDirectory = mkdtempSync(join(tmpdir(), "aevoren-bot-room-diagnostics-incomplete-"));
     directories.push(incompleteDirectory);
     const incompleteFilename = join(incompleteDirectory, "incomplete.sqlite");
     const incomplete = new DatabaseSync(incompleteFilename);

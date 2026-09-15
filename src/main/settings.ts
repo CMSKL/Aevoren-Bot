@@ -1,5 +1,5 @@
 import type { ModelConfiguration, SaveModelConfigurationInput } from "@shared/contracts";
-import { MsBotError } from "./errors";
+import { AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 
 const BASE_URL_KEY = "model.baseUrl";
@@ -32,7 +32,7 @@ export class ModelSettingsService {
     this.repository.setSetting(MODEL_ID_KEY, input.modelId, false);
     if (input.apiKey) {
       if (!this.secretCodec.isAvailable()) {
-        throw new MsBotError(
+        throw new AevorenBotError(
           "SECURE_STORAGE_UNAVAILABLE",
           "系统安全存储当前不可用，API Key 未保存。",
           false,
@@ -45,14 +45,14 @@ export class ModelSettingsService {
 
   getApiKey(): string {
     const setting = this.repository.getSetting(API_KEY_KEY);
-    if (!setting) throw new MsBotError("MODEL_NOT_CONFIGURED", "请先在模型设置中保存 API Key。", false);
+    if (!setting) throw new AevorenBotError("MODEL_NOT_CONFIGURED", "请先在模型设置中保存 API Key。", false);
     if (!setting.encrypted || !this.secretCodec.isAvailable()) {
-      throw new MsBotError("SECURE_STORAGE_UNAVAILABLE", "无法安全读取模型 API Key。", false);
+      throw new AevorenBotError("SECURE_STORAGE_UNAVAILABLE", "无法安全读取模型 API Key。", false);
     }
     try {
       return this.secretCodec.decrypt(setting.value);
     } catch {
-      throw new MsBotError("SECURE_STORAGE_UNAVAILABLE", "无法安全读取模型 API Key。", false);
+      throw new AevorenBotError("SECURE_STORAGE_UNAVAILABLE", "无法安全读取模型 API Key。", false);
     }
   }
 }

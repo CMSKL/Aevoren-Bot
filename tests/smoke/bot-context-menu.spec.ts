@@ -9,7 +9,7 @@ function environment(userDataDir: string, overrides: Record<string, string> = {}
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
-  return { ...inherited, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1", ...overrides };
+  return { ...inherited, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1", ...overrides };
 }
 
 async function launch(userDataDir: string, overrides: Record<string, string> = {}): Promise<{ application: ElectronApplication; page: Page }> {
@@ -30,10 +30,10 @@ async function menuFor(page: Page, name: string): Promise<Locator> {
 
 test("supports Grok-style Bot context actions and restores their sidebar state", async () => {
   test.setTimeout(75_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-context-menu-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-context-menu-"));
   let application: ElectronApplication | undefined;
   try {
-    const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+    const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
     const alphaCreated = repository.createBot();
     repository.updateBot(alphaCreated.bot.id, alphaCreated.bot.version, { name: "Alpha", label: "研究" });
     const betaCreated = repository.createBot();
@@ -59,7 +59,7 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
       "从侧边栏隐藏",
       "删除",
     ]);
-    await page.screenshot({ path: "/tmp/msbot-bot-context-menu.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/aevorenbot-bot-context-menu.png", fullPage: true });
     await expect(menu.getByRole("menuitem").first()).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(menu.getByRole("menuitem").nth(1)).toBeFocused();
@@ -104,7 +104,7 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     await expect(page.getByRole("heading", { name: "Beta 副本" })).toBeVisible();
     await expect(page.getByLabel("描述")).toHaveValue("需要复制的资料");
     const duplicateId = (() => {
-      const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+      const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
       try {
         return (database.prepare("SELECT id FROM bots WHERE name = 'Beta 副本' AND deleted_at IS NULL").get() as { id: string }).id;
       } finally {
@@ -145,7 +145,7 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     await deleteDialog.getByRole("button", { name: "删除", exact: true }).click();
     await expect(row(page, "Gamma")).toHaveCount(0);
     const deleted = (() => {
-      const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+      const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
       try {
         return database.prepare("SELECT name, deleted_at FROM bots WHERE id = ?").get(gammaCreated.bot.id) as {
           name: string;
@@ -186,15 +186,15 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
 });
 
 test("keeps the delete confirmation open when the Bot is running", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-context-delete-busy-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-context-delete-busy-"));
   let application: ElectronApplication | undefined;
   try {
-    const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+    const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
     const created = repository.createBot();
     repository.updateBot(created.bot.id, created.bot.version, { name: "运行中的 Bot" });
     repository.close();
 
-    const launched = await launch(userDataDir, { MS_BOT_FAKE_START_DELAY_MS: "5000" });
+    const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_START_DELAY_MS: "5000" });
     application = launched.application;
     const page = launched.page;
     await page.getByLabel("消息").fill("保持运行");
@@ -220,10 +220,10 @@ test("keeps the delete confirmation open when the Bot is running", async () => {
 });
 
 test("keeps inline rename recoverable when persistence fails", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-context-rename-failure-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-context-rename-failure-"));
   let application: ElectronApplication | undefined;
   try {
-    const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+    const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
     const created = repository.createBot();
     repository.updateBot(created.bot.id, created.bot.version, { name: "可恢复名称" });
     repository.close();
@@ -231,7 +231,7 @@ test("keeps inline rename recoverable when persistence fails", async () => {
     const launched = await launch(userDataDir);
     application = launched.application;
     const page = launched.page;
-    const databasePath = join(userDataDir, "ms-bot.sqlite");
+    const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     let database = new DatabaseSync(databasePath);
     database.exec("CREATE TRIGGER reject_context_rename BEFORE UPDATE OF name ON bots BEGIN SELECT RAISE(ABORT, 'rename test'); END;");
     database.close();

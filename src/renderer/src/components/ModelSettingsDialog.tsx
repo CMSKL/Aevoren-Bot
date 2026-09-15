@@ -16,7 +16,7 @@ export function ModelSettingsDialog({ open, onClose }: ModelSettingsDialogProps)
 
   useEffect(() => {
     if (!open) return;
-    void window.msBot.settings.getModelConfiguration().then((result) => {
+    void window.aevorenBot.settings.getModelConfiguration().then((result) => {
       if (!result.ok) {
         setError(result.error);
         return;
@@ -35,7 +35,7 @@ export function ModelSettingsDialog({ open, onClose }: ModelSettingsDialogProps)
   async function save(): Promise<boolean> {
     setStatus("saving");
     setError(null);
-    const result = await window.msBot.settings.saveModelConfiguration({
+    const result = await window.aevorenBot.settings.saveModelConfiguration({
       baseUrl,
       modelId,
       ...(apiKey.trim() ? { apiKey } : {}),
@@ -55,7 +55,7 @@ export function ModelSettingsDialog({ open, onClose }: ModelSettingsDialogProps)
     const saved = await save();
     if (!saved) return;
     setStatus("testing");
-    const result = await window.msBot.settings.testModelConnection();
+    const result = await window.aevorenBot.settings.testModelConnection();
     if (!result.ok) {
       setError(result.error);
       setStatus("idle");

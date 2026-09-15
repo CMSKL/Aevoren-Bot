@@ -5,10 +5,10 @@ import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
 
-const maliciousLongTask = '请复核 <img src=x onerror="window.__msBotHandoffXss=1"> 当前方案中的目标、边界、异常处理和验收标准，并指出需要补充的内容；这是一段用于验证窄窗口省略显示且不会造成页面横向溢出的较长任务说明。'.repeat(2);
+const maliciousLongTask = '请复核 <img src=x onerror="window.__aevorenBotHandoffXss=1"> 当前方案中的目标、边界、异常处理和验收标准，并指出需要补充的内容；这是一段用于验证窄窗口省略显示且不会造成页面横向溢出的较长任务说明。'.repeat(2);
 
 function seed(userDataDir: string): { roomName: string; fromName: string; toName: string } {
-  const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+  const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
   try {
     const firstCreated = repository.createBot();
     const first = repository.updateBot(firstCreated.bot.id, firstCreated.bot.version, { name: "协作员", label: "策划" });
@@ -35,12 +35,12 @@ async function launch(userDataDir: string): Promise<{ application: ElectronAppli
     cwd: process.cwd(),
     env: {
       ...process.env,
-      MS_BOT_USER_DATA_DIR: userDataDir,
-      MS_BOT_FAKE_PROVIDER: "1",
-      MS_BOT_FAKE_DELAY_MS: "1",
-      MS_BOT_FAKE_HANDOFF: "first-other",
-      MS_BOT_FAKE_HANDOFF_TOOL_ONLY: "1",
-      MS_BOT_FAKE_HANDOFF_TASK: maliciousLongTask,
+      AEVOREN_BOT_USER_DATA_DIR: userDataDir,
+      AEVOREN_BOT_FAKE_PROVIDER: "1",
+      AEVOREN_BOT_FAKE_DELAY_MS: "1",
+      AEVOREN_BOT_FAKE_HANDOFF: "first-other",
+      AEVOREN_BOT_FAKE_HANDOFF_TOOL_ONLY: "1",
+      AEVOREN_BOT_FAKE_HANDOFF_TASK: maliciousLongTask,
     },
   });
   return { application, page: await application.firstWindow() };
@@ -53,7 +53,7 @@ async function openRoom(page: Page, roomName: string): Promise<void> {
 
 test("runs and restores a visible A-to-B fake handoff without responsive overflow", async () => {
   test.setTimeout(90_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-m3-handoff-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-m3-handoff-"));
   const seeded = seed(userDataDir);
   let failedTargetTurnId: string;
   let application: ElectronApplication | undefined;
@@ -81,11 +81,11 @@ test("runs and restores a visible A-to-B fake handoff without responsive overflo
     await expect(handoff).toContainText("<img src=x");
     await expect(handoff).not.toContainText("[room-speaker");
     await expect(handoff.locator("img, script")).toHaveCount(0);
-    expect(await launched.page.evaluate(() => (window as unknown as { __msBotHandoffXss?: unknown }).__msBotHandoffXss)).toBeUndefined();
+    expect(await launched.page.evaluate(() => (window as unknown as { __aevorenBotHandoffXss?: unknown }).__aevorenBotHandoffXss)).toBeUndefined();
 
     await application.close();
     application = undefined;
-    const rejectionRepository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+    const rejectionRepository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
     try {
       const batch = rejectionRepository.listRoomBatches(rejectionRepository.listRooms()[0]!.id)[0]!;
       const source = rejectionRepository.listRoomTurns(batch.id)[0]!;
@@ -93,14 +93,14 @@ test("runs and restores a visible A-to-B fake handoff without responsive overflo
       rejectionRepository.recordHandoffRejection({
         runId: batch.id,
         fromTurnId: source.id,
-        attemptedToAgentId: '<img src=x onerror="window.__msBotHandoffRejectionXss=1">',
+        attemptedToAgentId: '<img src=x onerror="window.__aevorenBotHandoffRejectionXss=1">',
         toolCallId: "RAW_REJECTION_TOOL_SECRET",
         errorCode: "HANDOFF_CYCLE",
       });
     } finally {
       rejectionRepository.close();
     }
-    const failureInjector = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"));
+    const failureInjector = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"));
     try {
       failureInjector.prepare(
         `UPDATE room_turns
@@ -129,15 +129,15 @@ test("runs and restores a visible A-to-B fake handoff without responsive overflo
     await expect(rejection).not.toContainText("RAW_REJECTION_TOOL_SECRET");
     await expect(rejection.locator("img, script")).toHaveCount(0);
     expect(await launched.page.evaluate(() => (
-      window as unknown as { __msBotHandoffRejectionXss?: unknown }
-    ).__msBotHandoffRejectionXss)).toBeUndefined();
+      window as unknown as { __aevorenBotHandoffRejectionXss?: unknown }
+    ).__aevorenBotHandoffRejectionXss)).toBeUndefined();
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
 
     const retryResult = await launched.page.evaluate(async (turnId) => (
       window as unknown as {
-        msBot: { roomRuntime: { retryTurn(id: string): Promise<{ ok: boolean }> } };
+        aevorenBot: { roomRuntime: { retryTurn(id: string): Promise<{ ok: boolean }> } };
       }
-    ).msBot.roomRuntime.retryTurn(turnId), failedTargetTurnId);
+    ).aevorenBot.roomRuntime.retryTurn(turnId), failedTargetTurnId);
     expect(retryResult.ok).toBe(true);
     await expect(launched.page.getByTestId("room-handoff-list")).toContainText("投递：失败");
     await expect(launched.page.getByTestId("room-handoff-list")).toContainText("执行：已完成");
@@ -156,7 +156,7 @@ test("runs and restores a visible A-to-B fake handoff without responsive overflo
     })).toBe(true);
     expect(consoleErrors).toEqual([]);
 
-    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
     try {
       expect(database.prepare("SELECT COUNT(*) AS count FROM agent_handoffs").get()).toEqual({ count: 1 });
       expect(database.prepare("SELECT COUNT(*) AS count FROM agent_handoffs WHERE state = 'failed'").get()).toEqual({ count: 1 });

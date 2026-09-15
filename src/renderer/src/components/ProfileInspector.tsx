@@ -82,7 +82,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
     const expectedVersion = versionRef.current;
     setStatus("saving");
     onError(null);
-    const operation = window.msBot.bots.update({ id, expectedVersion, patch: snapshot as BotPatch }).then((result) => {
+    const operation = window.aevorenBot.bots.update({ id, expectedVersion, patch: snapshot as BotPatch }).then((result) => {
       if (!result.ok) {
         setStatus("failed");
         onError(result.error);

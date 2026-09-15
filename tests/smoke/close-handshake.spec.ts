@@ -9,7 +9,7 @@ function environment(userDataDir: string): Record<string, string> {
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
-  return { ...inherited, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1" };
+  return { ...inherited, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" };
 }
 
 async function launch(userDataDir: string): Promise<{ application: ElectronApplication; page: Page }> {
@@ -84,7 +84,7 @@ test("closes successfully on each of ten immediate startup close requests", asyn
   test.setTimeout(60_000);
   const failures: number[] = [];
   for (let attempt = 1; attempt <= 10; attempt += 1) {
-    const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-close-ready-"));
+    const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-ready-"));
     const { application } = await launch(userDataDir);
     if (!(await requestWindowClose(application, 1_500))) failures.push(attempt);
     rmSync(userDataDir, { recursive: true, force: true });
@@ -94,8 +94,8 @@ test("closes successfully on each of ten immediate startup close requests", asyn
 
 test("flushes a dirty profile and preserves its database hash across three restarts", async () => {
   test.setTimeout(60_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-close-restart-"));
-  const databasePath = join(userDataDir, "ms-bot.sqlite");
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-restart-"));
+  const databasePath = join(userDataDir, "aevoren-bot.sqlite");
   let application: ElectronApplication | undefined;
   try {
     let launched = await launch(userDataDir);
@@ -124,8 +124,8 @@ test("flushes a dirty profile and preserves its database hash across three resta
 
 test("keeps the window open when a dirty profile cannot be saved, then closes after retry", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-close-failure-"));
-  const databasePath = join(userDataDir, "ms-bot.sqlite");
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-failure-"));
+  const databasePath = join(userDataDir, "aevoren-bot.sqlite");
   let application: ElectronApplication | undefined;
   try {
     const launched = await launch(userDataDir);
@@ -155,7 +155,7 @@ test("keeps the window open when a dirty profile cannot be saved, then closes af
 
 test("flushes a dirty profile through the application quit path", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-close-quit-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-quit-"));
   let application: ElectronApplication | undefined;
   try {
     let launched = await launch(userDataDir);

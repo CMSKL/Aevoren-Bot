@@ -9,9 +9,9 @@ import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
 import { ModelSettingsService, type SecretCodec } from "./settings";
 
-const userDataOverride = process.env.MS_BOT_USER_DATA_DIR;
+const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
-const hideTestWindow = process.env.MS_BOT_TEST_HIDDEN === "1";
+const hideTestWindow = process.env.AEVOREN_BOT_TEST_HIDDEN === "1";
 
 let mainWindow: BrowserWindow | null = null;
 let repository: AppRepository | null = null;
@@ -166,14 +166,14 @@ app.whenReady().then(() => {
     if (hideTestWindow) app.dock?.hide();
     else app.dock?.setIcon(appIconPath());
   }
-  const databasePath = process.env.MS_BOT_DB_PATH ?? join(app.getPath("userData"), "ms-bot.sqlite");
+  const databasePath = process.env.AEVOREN_BOT_DB_PATH ?? join(app.getPath("userData"), "aevoren-bot.sqlite");
   repository = new AppRepository(databasePath);
   repository.recoverInterruptedSends();
   repository.recoverInterruptedRooms();
   repository.recoverInterruptedRuntimeRuns();
   const settings = new ModelSettingsService(repository, electronSecretCodec);
   mainWindow = createWindow();
-  const forceFakeProvider = process.env.MS_BOT_FAKE_PROVIDER === "1";
+  const forceFakeProvider = process.env.AEVOREN_BOT_FAKE_PROVIDER === "1";
   const sendWorker = new SendWorker(
     repository,
     settings,

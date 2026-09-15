@@ -441,7 +441,7 @@ export type RuntimeEvent = {
   error?: AppError;
 };
 
-export interface MsBotApi {
+export interface AevorenBotApi {
   bots: {
     list(): Promise<ApiResult<Bot[]>>;
     create(): Promise<ApiResult<{ bot: Bot; session: Session }>>;

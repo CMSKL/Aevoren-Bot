@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PromptManifest } from "@shared/contracts";
 import { AppRepository } from "./database";
-import { MsBotError } from "./errors";
+import { AevorenBotError } from "./errors";
 
 const repositories: AppRepository[] = [];
 const temporaryDirectories: string[] = [];
@@ -57,7 +57,7 @@ describe("AppRepository", () => {
   });
 
   it("rolls back the bot when its MAIN session cannot be created", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-create-rollback-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-create-rollback-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const repository = new AppRepository(filename);
@@ -105,13 +105,13 @@ describe("AppRepository", () => {
     const updated = repository.updateBot(bot.id, bot.version, { description: "新版描述" });
     expect(updated.version).toBe(2);
     expect(() => repository.updateBot(bot.id, bot.version, { description: "旧请求" })).toThrowError(
-      expect.objectContaining<Partial<MsBotError>>({ code: "BOT_VERSION_CONFLICT" }),
+      expect.objectContaining<Partial<AevorenBotError>>({ code: "BOT_VERSION_CONFLICT" }),
     );
     expect(repository.getBot(bot.id).description).toBe("新版描述");
   });
 
   it("persists pin, unread and hidden sidebar state without conflicting with profile versions", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-sidebar-state-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-sidebar-state-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const first = new AppRepository(filename);
@@ -226,7 +226,7 @@ describe("AppRepository", () => {
     expect(repository.prepareMessage(command).disposition).toBe("prepared");
     expect(repository.prepareMessage(command).disposition).toBe("duplicate");
     expect(() => repository.prepareMessage({ ...command, text: "不同内容" })).toThrowError(
-      expect.objectContaining<Partial<MsBotError>>({ code: "MESSAGE_NONCE_CONFLICT" }),
+      expect.objectContaining<Partial<AevorenBotError>>({ code: "MESSAGE_NONCE_CONFLICT" }),
     );
     expect(repository.listTranscript(session.id)).toHaveLength(1);
   });
@@ -250,7 +250,7 @@ describe("AppRepository", () => {
   });
 
   it("persists data across repository restarts and repeated migrations", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-database-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-database-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const first = new AppRepository(filename);
