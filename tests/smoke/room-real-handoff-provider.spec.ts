@@ -4,7 +4,7 @@ import { AppRepository } from "../../src/main/database";
 
 const isolatedDatabase = process.env.AEVOREN_BOT_REAL_PROVIDER_DB_PATH;
 
-test("runs one real-provider A-to-B handoff with at most two Provider calls", async () => {
+test("runs one real-provider A-to-B handoff from ordinary Chinese Room profiles", async () => {
   test.skip(!isolatedDatabase, "requires AEVOREN_BOT_REAL_PROVIDER_DB_PATH pointing to an isolated configured database copy");
   test.setTimeout(240_000);
   const suffix = Date.now().toString(36);
@@ -17,15 +17,15 @@ test("runs one real-provider A-to-B handoff with at most two Provider calls", as
     const first = repository.updateBot(firstCreated.bot.id, firstCreated.bot.version, {
       name: firstName,
       label: "转交发起者",
-      description: "只负责把任务转交给指定评审角色。",
-      instructions: `You are the handoff initiator. For every Room user request, do not answer with text. Call handoff_to_agent exactly once. From the room peer roster, find the peer whose name is exactly ${JSON.stringify(secondName)}, use that peer's exact id as toAgentId, pass a concise review task, an empty contextRefs array, and visibility room. Never call any other peer.`,
+      description: `你是群聊任务总控。收到用户请求后，可以先给出一句简短 ASSIGN，然后必须让名称恰好为“${secondName}”的评审角色立即继续执行；不要要求用户再次 @，也不要只在正文里声称已经转交。`,
+      instructions: "",
     });
     const secondCreated = repository.createBot();
     const second = repository.updateBot(secondCreated.bot.id, secondCreated.bot.version, {
       name: secondName,
       label: "评审角色",
-      description: "接收转交并完成复核。",
-      instructions: "When you receive an incoming handoff, answer in one short sentence. Never call handoff_to_agent.",
+      description: "你是评审角色。收到上游实际转交后，用一句中文完成复核，然后结束并等待用户。",
+      instructions: "",
     });
     repository.createRoom({ name: roomName, memberBotIds: [first.id, second.id] });
   } finally {
@@ -48,7 +48,7 @@ test("runs one real-provider A-to-B handoff with at most two Provider calls", as
     await input.fill(`@${firstName}`);
     await expect(page.getByRole("listbox", { name: "提及 Bot" })).toBeVisible();
     await input.press("Enter");
-    await input.fill("请完成一次真实结构化转交验收。");
+    await input.fill(`请先发出一条简短 ASSIGN，然后立即交给${secondName}完成复核；本轮不需要等待我确认。`);
     await page.getByRole("button", { name: "发送", exact: true }).click();
 
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2, { timeout: 180_000 });

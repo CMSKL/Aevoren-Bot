@@ -111,6 +111,23 @@ function expectRoomRosterMessage(message: ChatMessage, bots: Bot[]): void {
   expect(message.content).not.toMatch(/PROFILE_[ABC]/);
 }
 
+function expectRoomHandoffContractMessage(message: ChatMessage, incomingFromAgentId?: string): void {
+  expect(message.role).toBe("system");
+  const parsed = JSON.parse(message.content) as { notice: string; rules: string[]; incomingFromAgentId?: string };
+  expect(parsed.notice).toBe("ROOM_HANDOFF_EXECUTION_CONTRACT");
+  expect(parsed.rules).toEqual(expect.arrayContaining([
+    expect.stringContaining("Only a successful handoff_to_agent function call"),
+    expect.stringContaining("never starts another agent"),
+  ]));
+  if (incomingFromAgentId) {
+    expect(parsed.incomingFromAgentId).toBe(incomingFromAgentId);
+    expect(parsed.rules).toEqual(expect.arrayContaining([
+      expect.stringContaining("INCOMING_HANDOFF"),
+      expect.stringContaining("distinct next step"),
+    ]));
+  }
+}
+
 function synchronousThrowingReturnProvider(mode: "completed" | "pending"): ModelProvider {
   return {
     run(): AsyncIterable<ModelEvent> {
@@ -165,6 +182,117 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       "ROOT_QUESTION",
       "A_VISIBLE",
     ]);
+  });
+
+  it("uses a structured continuation decision when a completed draft assigns immediate work to a peer", async () => {
+    const calls: string[] = [];
+    const continuationDrafts: string[] = [];
+    const value = harness(({ bots }) => ({
+      async *run(_messages, _signal, context) {
+        calls.push(context!.executorBotId);
+        yield { type: "started", requestId: randomUUID() } as const;
+        yield {
+          type: "delta",
+          text: context!.executorBotId === bots[0]!.id
+            ? "ASSIGN：请 Agent B 立即复核当前结果。"
+            : "B_VISIBLE",
+        } as const;
+        yield { type: "completed", finishReason: "stop" } as const;
+      },
+      testConnection: async () => {},
+      async selectRoomContinuation(draft) {
+        continuationDrafts.push(draft);
+        return {
+          action: "handoff" as const,
+          toAgentId: bots[1]!.id,
+          task: "通过 handoff_to_agent 复核当前结果。",
+          contextRefs: [],
+          visibility: "room" as const,
+          reason: "草稿明确要求 Agent B 立即复核。",
+        };
+      },
+    }), 2);
+
+    const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
+    await waitForBatch(value.repository, sent.batchId, ["completed"]);
+
+    expect(continuationDrafts).toEqual(["ASSIGN：请 Agent B 立即复核当前结果。"]);
+    expect(calls).toEqual([value.bots[0]!.id, value.bots[1]!.id]);
+    expect(value.repository.listAgentTurns(sent.batchId).map((turn) => [turn.origin, turn.agentId, turn.state])).toEqual([
+      ["initial", value.bots[0]!.id, "completed"],
+      ["handoff", value.bots[1]!.id, "completed"],
+    ]);
+    expect(value.repository.listHandoffs(sent.batchId)).toHaveLength(1);
+    expect(value.repository.listHandoffs(sent.batchId)[0]).toMatchObject({
+      toAgentId: value.bots[1]!.id,
+      task: "通过 结构化转交 复核当前结果。",
+      state: "accepted",
+    });
+    expect(JSON.stringify(value.repository.listTranscript(value.detail.session.id))).not.toContain("handoff_to_agent");
+  });
+
+  it("does not let a rejected Provider Handoff suppress the structured continuation fallback", async () => {
+    const value = harness(({ bots }) => ({
+      async *run(_messages, _signal, context) {
+        yield { type: "started", requestId: randomUUID() } as const;
+        if (context!.executorBotId === bots[0]!.id) {
+          yield { type: "delta", text: "ASSIGN：请 Agent B 立即复核。" } as const;
+          yield {
+            type: "handoff",
+            toolCallId: "provider-invalid-context",
+            toAgentId: bots[1]!.id,
+            task: "复核",
+            contextRefs: ["not-a-transcript-entry"],
+            visibility: "room",
+          } as const;
+        } else {
+          yield { type: "delta", text: "B_DONE" } as const;
+        }
+        yield { type: "completed", finishReason: "stop" } as const;
+      },
+      testConnection: async () => {},
+      async selectRoomContinuation() {
+        return {
+          action: "handoff" as const,
+          toAgentId: bots[1]!.id,
+          task: "复核",
+          contextRefs: [],
+          visibility: "room" as const,
+          reason: "立即转交 Agent B。",
+        };
+      },
+    }), 2);
+
+    const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
+    await waitForBatch(value.repository, sent.batchId, ["completed"]);
+
+    expect(value.repository.listHandoffRejections(sent.batchId)).toHaveLength(1);
+    expect(value.repository.listHandoffRejections(sent.batchId)[0]).toMatchObject({ errorCode: "HANDOFF_CONTEXT_INVALID" });
+    expect(value.repository.listHandoffs(sent.batchId)).toHaveLength(1);
+    expect(value.repository.listHandoffs(sent.batchId)[0]).toMatchObject({ toAgentId: value.bots[1]!.id, state: "accepted" });
+  });
+
+  it("does not continue past a structured human-approval decision", async () => {
+    let continuationChecks = 0;
+    const value = harness(() => ({
+      async *run() {
+        yield { type: "started", requestId: randomUUID() } as const;
+        yield { type: "delta", text: "等待用户批准后再交给 Agent B；当前停止。" } as const;
+        yield { type: "completed", finishReason: "stop" } as const;
+      },
+      testConnection: async () => {},
+      async selectRoomContinuation() {
+        continuationChecks += 1;
+        return { action: "complete" as const, reason: "当前处于人工批准门禁。" };
+      },
+    }), 2);
+
+    const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
+    await waitForBatch(value.repository, sent.batchId, ["completed"]);
+
+    expect(continuationChecks).toBe(1);
+    expect(value.repository.listAgentTurns(sent.batchId)).toHaveLength(1);
+    expect(value.repository.listHandoffs(sent.batchId)).toHaveLength(0);
   });
 
   it("reuses the persisted root policy/nonces for exact duplicates without another provider call", async () => {
@@ -256,13 +384,17 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     const persistedHandoff = value.repository.listHandoffs(sent.batchId)[0]!;
     expect(persistedHandoff).toMatchObject({ state: "accepted", targetTurnId: turns[1]!.id });
     expect(turns[1]!.nonce).toBe("TOOL_CALL_SECRET");
-    expect(bMessages).toHaveLength(4);
+    expect(bMessages).toHaveLength(5);
     expect(bMessages[0]).toEqual({ role: "system", content: "PROFILE_B" });
-    expectRoomRosterMessage(bMessages[1]!, value.bots);
-    expect(bMessages.slice(2)).toEqual([
-      { role: "user", content: "ROOT_QUESTION" },
-      { role: "user", content: "HANDOFF_TASK_FOR_B" },
-    ]);
+    expectRoomHandoffContractMessage(bMessages[1]!, value.bots[0]!.id);
+    expectRoomRosterMessage(bMessages[2]!, value.bots);
+    expect(bMessages[3]).toEqual({ role: "user", content: "ROOT_QUESTION" });
+    expect(bMessages[4]?.role).toBe("user");
+    expect(JSON.parse(bMessages[4]!.content)).toMatchObject({
+      notice: "INCOMING_HANDOFF_TASK",
+      fromAgentId: value.bots[0]!.id,
+      task: "HANDOFF_TASK_FOR_B",
+    });
     expect(bContext?.incomingHandoff).toMatchObject({
       id: persistedHandoff.id,
       fromAgentId: value.bots[0]!.id,
@@ -346,14 +478,20 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     )!;
     expect(bTurn.promptCutoffSeq).toBe(aEntry.seq);
     expect(cTurn).toMatchObject({ inputSeq: bTurn.promptCutoffSeq, promptCutoffSeq: bTurn.promptCutoffSeq });
-    expect(cMessages).toHaveLength(5);
+    expect(cMessages).toHaveLength(6);
     expect(cMessages[0]).toEqual({ role: "system", content: "PROFILE_C" });
-    expectRoomRosterMessage(cMessages[1]!, value.bots);
-    expect(cMessages.slice(2)).toEqual([
+    expectRoomHandoffContractMessage(cMessages[1]!, value.bots[1]!.id);
+    expectRoomRosterMessage(cMessages[2]!, value.bots);
+    expect(cMessages.slice(3, 5)).toEqual([
       { role: "user", content: "ROOT_QUESTION" },
       { role: "assistant", content: `[room-speaker id="${value.bots[0]!.id}" name="Agent A"]\nA_AUTHORITY_OUTPUT` },
-      { role: "user", content: "C_REVIEW_TASK" },
     ]);
+    expect(cMessages[5]?.role).toBe("user");
+    expect(JSON.parse(cMessages[5]!.content)).toMatchObject({
+      notice: "INCOMING_HANDOFF_TASK",
+      fromAgentId: value.bots[1]!.id,
+      task: "C_REVIEW_TASK",
+    });
     expect(JSON.stringify(cMessages)).not.toMatch(/B_FUTURE_OUTPUT|A_MAIN_PRIVATE|C_MAIN_PRIVATE|OTHER_ROOM_PRIVATE/);
     const cRun = value.repository.getRuntimeRun(cTurn.runtimeRunId!);
     expect(cRun).toMatchObject({ inputSeq: bTurn.promptCutoffSeq, promptCutoffSeq: bTurn.promptCutoffSeq });

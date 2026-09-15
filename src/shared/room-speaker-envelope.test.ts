@@ -10,18 +10,25 @@ describe("sanitizeRoomSpeakerOutput", () => {
     expect(sanitizeRoomSpeakerOutput(`开场说明。\n${marker} 我现在在整理执行表。`)).toBe(
       "开场说明。\n我现在在整理执行表。",
     );
+    expect(sanitizeRoomSpeakerOutput(`${marker}\n正文\n[/room-speaker]\n后续`)).toBe("正文\n后续");
+    expect(sanitizeRoomSpeakerOutput(`正文[/room-speaker]后续`)).toBe("正文后续");
   });
 
   it("hides a partial envelope anywhere in a streaming prefix", () => {
     expect(sanitizeRoomSpeakerOutput("[room-spea", true)).toBe("");
     expect(sanitizeRoomSpeakerOutput(`开场。\n${marker}\n正`, true)).toBe("开场。\n正");
     expect(sanitizeRoomSpeakerOutput("开场。\n[room-spea", true)).toBe("开场。\n");
+    expect(sanitizeRoomSpeakerOutput("开场。\n[/room-spea", true)).toBe("开场。\n");
     expect(sanitizeRoomSpeakerOutput("[room-spea", false)).toBe("[room-spea");
+    expect(sanitizeRoomSpeakerOutput("[/room-spea", false)).toBe("[/room-spea");
   });
 
   it("preserves normal prose and non-protocol marker-like text", () => {
     expect(sanitizeRoomSpeakerOutput('[room-speaker id="not-a-uuid" name="示例"]\n正文')).toBe(
       '[room-speaker id="not-a-uuid" name="示例"]\n正文',
+    );
+    expect(sanitizeRoomSpeakerOutput("普通 [room-speaker-ish] 与 [/room-speaker-ish] 文本")).toBe(
+      "普通 [room-speaker-ish] 与 [/room-speaker-ish] 文本",
     );
   });
 });

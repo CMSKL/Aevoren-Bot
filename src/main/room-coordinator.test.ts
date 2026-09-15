@@ -159,7 +159,7 @@ describe("RoomCoordinator", () => {
       async *run(messages) {
         captured.push(messages);
         yield { type: "started", requestId: `request-${captured.length}` };
-        const reply = captured.length === 1 ? `intro\n${leakedMarker} first answer` : "second answer";
+        const reply = captured.length === 1 ? `intro\n${leakedMarker} first answer\n[/room-speaker]` : "second answer";
         yield { type: "delta", text: reply.slice(0, 18) };
         yield { type: "delta", text: reply.slice(18) };
         yield { type: "completed", finishReason: "stop" };
