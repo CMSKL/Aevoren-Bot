@@ -3,6 +3,10 @@ import {
   botHiddenSchema,
   botPinnedSchema,
   botUnreadSchema,
+  memoryCreateSchema,
+  memoryListSchema,
+  memoryMutationSchema,
+  memoryUpdateSchema,
   modelConfigurationSchema,
   roomCreateSchema,
   roomSendCommandSchema,
@@ -22,6 +26,30 @@ describe("Bot sidebar action schemas", () => {
       expect(schema.safeParse({ id, [key]: "true" }).success).toBe(false);
       expect(schema.safeParse({ id }).success).toBe(false);
     }
+  });
+});
+
+describe("Memory schemas", () => {
+  const botId = crypto.randomUUID();
+  const id = crypto.randomUUID();
+
+  it("accepts valid inputs and rejects undeclared policy fields", () => {
+    expect(memoryListSchema.parse({ botId, includeDeleted: true })).toEqual({ botId, includeDeleted: true });
+    expect(memoryCreateSchema.parse({ botId, content: "  可核验事实  " })).toEqual({ botId, content: "可核验事实" });
+    expect(memoryUpdateSchema.parse({ id, expectedVersion: 1, content: "更新事实" })).toEqual({ id, expectedVersion: 1, content: "更新事实" });
+    expect(memoryMutationSchema.parse({ id, expectedVersion: 2 })).toEqual({ id, expectedVersion: 2 });
+    expect(memoryListSchema.safeParse({ botId, includeOtherBots: true }).success).toBe(false);
+    expect(memoryCreateSchema.safeParse({ botId, content: "事实", autoSynthesize: true }).success).toBe(false);
+    expect(memoryUpdateSchema.safeParse({ id, expectedVersion: 1, content: "事实", force: true }).success).toBe(false);
+    expect(memoryMutationSchema.safeParse({ id, expectedVersion: 2, hardDelete: true }).success).toBe(false);
+  });
+
+  it("rejects empty, oversized and malformed inputs", () => {
+    expect(memoryCreateSchema.safeParse({ botId, content: "   " }).success).toBe(false);
+    expect(memoryCreateSchema.safeParse({ botId, content: "x".repeat(4001) }).success).toBe(false);
+    expect(memoryCreateSchema.safeParse({ botId: "bad", content: "事实" }).success).toBe(false);
+    expect(memoryUpdateSchema.safeParse({ id, expectedVersion: 0, content: "事实" }).success).toBe(false);
+    expect(memoryMutationSchema.safeParse({ id: "bad", expectedVersion: 1 }).success).toBe(false);
   });
 });
 

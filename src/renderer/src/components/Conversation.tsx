@@ -280,7 +280,7 @@ export function Conversation({
   const transcriptRef = useRef<HTMLElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const pendingComposerCaretRef = useRef<number | null>(null);
-  const dismissedMentionStartRef = useRef<number | null>(null);
+  const dismissedMentionRef = useRef<{ start: number; text: string } | null>(null);
   const followTranscriptTailRef = useRef(true);
   const activeRunId = liveState?.activeRunId ?? null;
   const activeBatch = roomBatches.toReversed().find((batch) => batch.state === "queued" || batch.state === "running") ?? null;
@@ -425,7 +425,7 @@ export function Conversation({
       setDraft("");
       setRoomMentions([]);
       setMentionQuery(null);
-      dismissedMentionStartRef.current = null;
+      dismissedMentionRef.current = null;
     }
   }
 
@@ -433,15 +433,15 @@ export function Conversation({
     if (!room) return;
     const next = findActiveMentionQuery(text, caret);
     if (!next) {
-      dismissedMentionStartRef.current = null;
+      dismissedMentionRef.current = null;
       setMentionQuery(null);
       return;
     }
-    if (dismissedMentionStartRef.current === next.start) {
+    if (dismissedMentionRef.current?.start === next.start && dismissedMentionRef.current.text === text) {
       setMentionQuery(null);
       return;
     }
-    dismissedMentionStartRef.current = null;
+    dismissedMentionRef.current = null;
     setActiveMentionIndex(0);
     setMentionQuery(next);
   }
@@ -460,7 +460,7 @@ export function Conversation({
     pendingComposerCaretRef.current = nextDraft.caret;
     setDraft(nextDraft.text);
     setMentionQuery(null);
-    dismissedMentionStartRef.current = null;
+    dismissedMentionRef.current = null;
   }
 
   return (
@@ -671,7 +671,7 @@ export function Conversation({
                   }
                   if (event.key === "Escape") {
                     event.preventDefault();
-                    dismissedMentionStartRef.current = mentionQuery.start;
+                    dismissedMentionRef.current = { start: mentionQuery.start, text: draft };
                     setMentionQuery(null);
                     return;
                   }

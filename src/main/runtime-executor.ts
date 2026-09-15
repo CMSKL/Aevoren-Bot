@@ -125,6 +125,7 @@ export class RuntimeExecutor {
             ...(input.incomingHandoff ? { handoff: input.incomingHandoff } : {}),
           }
         : undefined,
+      this.repository.listMemories(bot.id),
     );
     const run = this.repository.createRuntimeRun(input.clientNonce, this.route(), prompt.manifest, {
       executorBotId: bot.id,

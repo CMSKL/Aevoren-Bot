@@ -1434,6 +1434,11 @@ textarea:focus-visible {
   font-weight: 650;
 }
 
+.inspector-header h2 {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .save-status {
   display: inline-flex;
   align-items: center;
@@ -1492,6 +1497,118 @@ textarea:focus-visible {
 
 .field-grow textarea {
   min-height: 150px;
+}
+
+.memory-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.memory-panel-heading,
+.memory-panel-toolbar,
+.memory-item-meta,
+.memory-item-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.memory-panel-heading h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.memory-panel-heading p,
+.memory-panel-note,
+.memory-list-empty,
+.memory-item-meta {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.memory-status {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.memory-status.status-saved {
+  color: var(--success);
+}
+
+.memory-status.status-failed {
+  color: var(--danger);
+}
+
+.memory-compose {
+  gap: 5px;
+}
+
+.memory-panel-toolbar {
+  justify-content: flex-start;
+}
+
+.memory-panel-toolbar .text-button,
+.memory-item-actions .text-button {
+  margin-left: 0;
+  font-size: 10px;
+}
+
+.memory-panel-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.memory-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-list-empty {
+  padding: 7px 0 2px;
+}
+
+.memory-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.memory-item-deleted {
+  opacity: 0.68;
+}
+
+.memory-item textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 62px;
+  padding: 7px 8px;
+  resize: vertical;
+}
+
+.memory-item-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.danger-text-button {
+  color: var(--danger);
 }
 
 .room-members {

@@ -50,6 +50,34 @@ function createWorker(provider: ModelProvider = new TestProvider()): {
 }
 
 describe("RuntimeCoordinator", () => {
+  it("injects only the executor Bot active Memory into a Direct run", async () => {
+    const captured: ChatMessage[][] = [];
+    const provider: ModelProvider = {
+      async *run(messages) {
+        captured.push(messages);
+        yield { type: "started", requestId: "memory-direct" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, worker } = createWorker(provider);
+    const first = repository.createBot();
+    const second = repository.createBot();
+    repository.createMemory(first.bot.id, "DIRECT_MEMORY_A");
+    repository.createMemory(second.bot.id, "DIRECT_MEMORY_B");
+    const deleted = repository.createMemory(first.bot.id, "DELETED_MEMORY");
+    repository.deleteMemory(deleted.id, deleted.version);
+
+    const sent = worker.send({ sessionId: first.session.id, clientNonce: crypto.randomUUID(), text: "当前问题" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    const serialized = JSON.stringify(captured);
+    expect(serialized).toContain("DIRECT_MEMORY_A");
+    expect(serialized).not.toContain("DIRECT_MEMORY_B");
+    expect(serialized).not.toContain("DELETED_MEMORY");
+    expect(repository.getRuntimeRun(sent.runId).promptManifest).toMatchObject({ schemaVersion: 3 });
+    expect(JSON.stringify(repository.getRuntimeRun(sent.runId).promptManifest)).not.toContain("DIRECT_MEMORY_A");
+  });
+
   it("persists Direct dispatching before the Provider request starts", async () => {
     const dispatchContext: { repository?: AppRepository; nonce: string } = { nonce: "" };
     let journalStateAtDispatch: string | undefined;

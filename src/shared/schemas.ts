@@ -19,6 +19,25 @@ export const botIdSchema = z.string().uuid();
 export const botPinnedSchema = z.object({ id: botIdSchema, pinned: z.boolean() });
 export const botUnreadSchema = z.object({ id: botIdSchema, unread: z.boolean() });
 export const botHiddenSchema = z.object({ id: botIdSchema, hidden: z.boolean() });
+export const memoryIdSchema = z.string().uuid();
+const memoryContentSchema = z.string().trim().min(1).max(4_000);
+export const memoryListSchema = z.object({
+  botId: botIdSchema,
+  includeDeleted: z.boolean().optional(),
+}).strict();
+export const memoryCreateSchema = z.object({
+  botId: botIdSchema,
+  content: memoryContentSchema,
+}).strict();
+export const memoryUpdateSchema = z.object({
+  id: memoryIdSchema,
+  expectedVersion: z.number().int().positive(),
+  content: memoryContentSchema,
+}).strict();
+export const memoryMutationSchema = z.object({
+  id: memoryIdSchema,
+  expectedVersion: z.number().int().positive(),
+}).strict();
 export const sessionIdSchema = z.string().uuid();
 export const nonceSchema = z.string().uuid();
 export const runIdSchema = z.string().uuid();

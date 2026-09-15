@@ -8,6 +8,10 @@ import {
   botUnreadSchema,
   botUpdateSchema,
   modelConfigurationSchema,
+  memoryCreateSchema,
+  memoryListSchema,
+  memoryMutationSchema,
+  memoryUpdateSchema,
   nonceSchema,
   roomArchiveSchema,
   roomCreateSchema,
@@ -88,6 +92,26 @@ export function registerIpc(dependencies: IpcDependencies): void {
     const parsed = botIdSchema.parse(id);
     repository.getBot(parsed);
     clipboard.writeText(parsed);
+  });
+  handle(IPC.memoriesList, (_event, input: unknown) => {
+    const parsed = memoryListSchema.parse(input);
+    return repository.listMemories(parsed.botId, parsed.includeDeleted ?? false);
+  });
+  handle(IPC.memoriesCreate, (_event, input: unknown) => {
+    const parsed = memoryCreateSchema.parse(input);
+    return repository.createMemory(parsed.botId, parsed.content);
+  });
+  handle(IPC.memoriesUpdate, (_event, input: unknown) => {
+    const parsed = memoryUpdateSchema.parse(input);
+    return repository.updateMemory(parsed.id, parsed.expectedVersion, parsed.content);
+  });
+  handle(IPC.memoriesDelete, (_event, input: unknown) => {
+    const parsed = memoryMutationSchema.parse(input);
+    return repository.deleteMemory(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.memoriesRestore, (_event, input: unknown) => {
+    const parsed = memoryMutationSchema.parse(input);
+    return repository.restoreMemory(parsed.id, parsed.expectedVersion);
   });
   handle(IPC.roomsList, (_event, input: unknown) => repository.listRooms(roomListSchema.parse(input)?.includeArchived ?? false));
   handle(IPC.roomsCreate, (_event, input: unknown) => repository.createRoom(roomCreateSchema.parse(input)));
