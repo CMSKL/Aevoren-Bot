@@ -15,6 +15,9 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   let application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
   let page = await application.firstWindow();
 
+  await expect(page.locator(".brand")).toHaveText("Aevoren Bot");
+  await expect(page).toHaveTitle("Aevoren Bot");
+  expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getTitle())).toBe("Aevoren Bot");
   await expect(page.getByText("从创建第一个 Bot 开始")).toBeVisible();
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();

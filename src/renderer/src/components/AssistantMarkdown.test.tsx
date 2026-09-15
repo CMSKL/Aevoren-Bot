@@ -25,7 +25,7 @@ console.log(value);
 
 | 字段 | 内容 |
 | --- | --- |
-| 名称 | MS-Bot |
+| 名称 | Aevoren Bot |
 
 ---
 

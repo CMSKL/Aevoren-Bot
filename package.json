@@ -1,9 +1,9 @@
 {
-  "name": "ms-bot",
-  "productName": "ms-bot",
+  "name": "aevoren-bot",
+  "productName": "Aevoren Bot",
   "version": "0.1.0",
   "private": true,
-  "description": "A reliable local desktop workspace for persistent AI bots.",
+  "description": "Aevoren Bot is a reliable local desktop workspace for persistent AI bots.",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {

@@ -117,7 +117,7 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     icon: appIconPath(),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#080808" : "#f5f5f5",
-    title: "MS-Bot",
+    title: "Aevoren Bot",
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 12, y: 12 } }
       : {}),

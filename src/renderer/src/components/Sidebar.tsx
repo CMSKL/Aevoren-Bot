@@ -228,7 +228,7 @@ export function Sidebar({
   return (
     <aside className={`sidebar${mobileOpen ? " mobile-open" : ""}`} aria-label="聊天列表">
       <div className="sidebar-header">
-        <div className="brand">MS-Bot</div>
+        <div className="brand">Aevoren Bot</div>
         <div className="sidebar-header-actions">
           <button ref={createButtonRef} className="new-bot-button" type="button" aria-label="新建聊天" onClick={onCreate} disabled={busy}>
             <PlusIcon />

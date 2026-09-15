@@ -117,7 +117,7 @@ const TranscriptItem = memo(function TranscriptItem({
     : entry.body;
   const longAssistant = entry.role === "assistant" && assistantBody.length > 160;
   const hasVisibleBody = entry.role === "user" || assistantBody.trim().length > 0;
-  const speakerName = entry.role === "assistant" ? speakerDisplayName ?? entry.speakerNameSnapshot ?? "MS-Bot" : "你";
+  const speakerName = entry.role === "assistant" ? speakerDisplayName ?? entry.speakerNameSnapshot ?? "Aevoren Bot" : "你";
 
   return (
     <article
@@ -291,7 +291,7 @@ export function Conversation({
   const invalidRoomMentions = roomMentions.filter((mention) => mention.kind === "bot" && !memberBotIds.includes(mention.id));
   const hasInvalidRoomMentions = invalidRoomMentions.length > 0;
   const targetBotIds = room ? resolveRoomTargetIds(roomMentions, memberBotIds) : [];
-  const subjectName = bot?.name ?? room?.room.name ?? "MS-Bot";
+  const subjectName = bot?.name ?? room?.room.name ?? "Aevoren Bot";
   const latestUserNonce = useMemo(
     () => entries.toReversed().find((entry) => entry.role === "user")?.clientNonce ?? null,
     [entries],

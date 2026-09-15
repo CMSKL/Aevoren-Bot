@@ -1,8 +1,8 @@
-# MS-Bot 实现合同
+# Aevoren Bot 实现合同
 
 ## 1. 设计原则
 
-MS-Bot 应复用 Grok Bot 的强点——对象分层、流式转录、反向本地执行、权限分层和模板不可信——同时补齐可验证的一致性合同。
+Aevoren Bot 应复用 Grok Bot 的强点——对象分层、流式转录、反向本地执行、权限分层和模板不可信——同时补齐可验证的一致性合同。
 
 P0 原则：
 
@@ -170,7 +170,7 @@ Resolution：allow-once、deny、standing-allow、standing-deny；财务、crede
 - daemon：SSE/watch + poll fallback，heartbeat/stale/re-resolve。
 - daemon response batch 丢弃后由端到端 status 恢复。
 
-本地权限默认 `ask` 或更严格；MS-Bot 的初始发行建议默认 `never`，用户显式开启后才注册 provider。
+本地权限默认 `ask` 或更严格；Aevoren Bot 的初始发行建议默认 `never`，用户显式开启后才注册 provider。
 
 ## 11. Box 合同（P1）
 
@@ -193,7 +193,7 @@ Resolution：allow-once、deny、standing-allow、standing-deny；财务、crede
 ## 13. Room 合同（P1）
 
 - Room 是 kind=ROOM 的 Agent，拥有独立 session/transcript。
-- `[MS-Bot proposal]` members 为 2～6；Grok 0.47 的实测/静态边界是 1～6，至少 2 是 MS-Bot 对“多 Bot 协作”的产品约束，不是兼容事实。[E4-006]
+- `[Aevoren Bot proposal]` members 为 2～6；Grok 0.47 的实测/静态边界是 1～6，至少 2 是 Aevoren Bot 对“多 Bot 协作”的产品约束，不是兼容事实。[E4-006]
 - 成员变更必须版本化；不复制 Grok 当前无 `expected_version` 的完整列表覆盖写法。
 - member turn nonce 唯一；parent/root 形成 DAG。
 - 最大深度、最大 fan-out、turn budget 和 deadline 必须配置。
