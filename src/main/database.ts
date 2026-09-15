@@ -4,6 +4,8 @@ import type {
   AgentTurn,
   AgentTurnOutcome,
   AgentTurnOrigin,
+  ApprovalRequest,
+  ApprovalResolution,
   Bot,
   BotPatch,
   CreateHandoffInput,
@@ -35,7 +37,14 @@ import type {
   TranscriptEntry,
   TranscriptRole,
   TranscriptStatus,
+  ToolApprovalResult,
+  ToolInvocation,
+  ToolInvocationCommand,
+  ToolInvocationState,
+  ToolPrepareResult,
+  WorkspaceToolRequest,
 } from "@shared/contracts";
+import { toolInvocationCommandSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
 
 const ACTIVE_RUNTIME_STATES: readonly RuntimeState[] = [
@@ -58,6 +67,29 @@ const RUNTIME_TRANSITIONS: Record<RuntimeState, readonly RuntimeState[]> = {
   cancelled: [],
   interrupted: [],
 };
+
+const TOOL_INVOCATION_TRANSITIONS: Record<ToolInvocationState, readonly ToolInvocationState[]> = {
+  prepared: ["awaiting-approval"],
+  "awaiting-approval": ["cancelled"],
+  approved: ["dispatching", "cancelled", "expired"],
+  dispatching: ["running", "failed-before-execution", "cancelled", "interrupted-unknown"],
+  running: ["succeeded", "cancelled", "interrupted-unknown"],
+  succeeded: [],
+  denied: [],
+  expired: [],
+  cancelled: [],
+  "failed-before-execution": [],
+  "interrupted-unknown": [],
+};
+
+const TERMINAL_TOOL_INVOCATION_STATES: readonly ToolInvocationState[] = [
+  "succeeded",
+  "denied",
+  "expired",
+  "cancelled",
+  "failed-before-execution",
+  "interrupted-unknown",
+];
 
 const ROOM_BATCH_TRANSITIONS: Record<RoomBatchState, readonly RoomBatchState[]> = {
   queued: ["running", "cancelled", "interrupted"],
@@ -603,6 +635,72 @@ export const MIGRATIONS = [
         ON memory_items(bot_id, deleted_at, created_at, id);
     `,
   },
+  {
+    version: 9,
+    sql: `
+      CREATE TABLE approval_requests (
+        id TEXT PRIMARY KEY,
+        tool_invocation_id TEXT NOT NULL UNIQUE
+          REFERENCES tool_invocations(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        action_kind TEXT NOT NULL CHECK (action_kind IN ('workspace-list', 'workspace-read', 'workspace-search')),
+        workspace_id TEXT NOT NULL,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 1024),
+        target_digest TEXT NOT NULL CHECK (length(target_digest) = 64),
+        arguments_digest TEXT NOT NULL CHECK (length(arguments_digest) = 64),
+        requested_scope TEXT NOT NULL CHECK (requested_scope = 'once'),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'allowed', 'denied', 'expired', 'cancelled')),
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('allow-once', 'deny')),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE tool_invocations (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN ('workspace-list', 'workspace-read', 'workspace-search')),
+        workspace_id TEXT NOT NULL,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 1024),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 4096),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      CREATE INDEX tool_invocations_by_session
+        ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime
+        ON tool_invocations(runtime_run_id, created_at, id);
+      CREATE INDEX approval_requests_pending
+        ON approval_requests(state, expires_at, created_at, id);
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -694,6 +792,53 @@ type RuntimeRow = {
   accepted_at: string | null;
   last_activity_at: string;
   finished_at: string | null;
+};
+
+type ToolInvocationRow = {
+  id: string;
+  runtime_run_id: string;
+  session_id: string;
+  executor_bot_id: string;
+  tool_call_id: string;
+  idempotency_key: string;
+  command_digest: string;
+  tool_kind: WorkspaceToolRequest["kind"];
+  workspace_id: string;
+  target_path: string;
+  arguments_json: string;
+  state: ToolInvocationState;
+  attempt_count: number;
+  approval_request_id: string;
+  result_digest: string | null;
+  result_metadata_json: string | null;
+  last_error_code: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+type ApprovalRequestRow = {
+  id: string;
+  tool_invocation_id: string;
+  runtime_run_id: string;
+  session_id: string;
+  executor_bot_id: string;
+  action_kind: WorkspaceToolRequest["kind"];
+  workspace_id: string;
+  target_path: string;
+  target_digest: string;
+  arguments_digest: string;
+  requested_scope: "once";
+  state: ApprovalRequest["state"];
+  resolution: ApprovalResolution | null;
+  policy_version: number;
+  version: number;
+  expires_at: string;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 type RoomRow = {
@@ -883,6 +1028,59 @@ function toSend(row: SendRow): SendJournalEntry {
   };
 }
 
+function toToolInvocation(row: ToolInvocationRow): ToolInvocation {
+  return {
+    id: row.id,
+    runtimeRunId: row.runtime_run_id,
+    sessionId: row.session_id,
+    executorBotId: row.executor_bot_id,
+    toolCallId: row.tool_call_id,
+    idempotencyKey: row.idempotency_key,
+    commandDigest: row.command_digest,
+    toolKind: row.tool_kind,
+    workspaceId: row.workspace_id,
+    targetPath: row.target_path,
+    arguments: JSON.parse(row.arguments_json) as WorkspaceToolRequest,
+    state: row.state,
+    attemptCount: Number(row.attempt_count),
+    approvalRequestId: row.approval_request_id,
+    resultDigest: row.result_digest,
+    resultMetadata: row.result_metadata_json
+      ? JSON.parse(row.result_metadata_json) as Record<string, string | number | boolean | null>
+      : null,
+    lastErrorCode: row.last_error_code,
+    version: Number(row.version),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+  };
+}
+
+function toApprovalRequest(row: ApprovalRequestRow): ApprovalRequest {
+  return {
+    id: row.id,
+    toolInvocationId: row.tool_invocation_id,
+    runtimeRunId: row.runtime_run_id,
+    sessionId: row.session_id,
+    executorBotId: row.executor_bot_id,
+    actionKind: row.action_kind,
+    workspaceId: row.workspace_id,
+    targetPath: row.target_path,
+    targetDigest: row.target_digest,
+    argumentsDigest: row.arguments_digest,
+    requestedScope: row.requested_scope,
+    state: row.state,
+    resolution: row.resolution,
+    policyVersion: Number(row.policy_version),
+    version: Number(row.version),
+    expiresAt: row.expires_at,
+    resolvedAt: row.resolved_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function toRoom(row: RoomRow): Room {
   return {
     id: row.id,
@@ -1040,6 +1238,22 @@ function normalizeMemoryContent(content: string): string {
 
 function digestMemoryContent(content: string): string {
   return digestMessage(content.normalize("NFC").replace(/\s+/g, " ").trim());
+}
+
+function canonicalToolCommand(input: ToolInvocationCommand): string {
+  return JSON.stringify({
+    runtimeRunId: input.runtimeRunId,
+    toolCallId: input.toolCallId,
+    tool: input.tool,
+  });
+}
+
+function toolTargetDigest(tool: WorkspaceToolRequest): string {
+  return digestMessage(JSON.stringify({ workspaceId: tool.workspaceId, path: tool.path }));
+}
+
+function defaultApprovalExpiry(): string {
+  return new Date(Date.now() + 5 * 60_000).toISOString();
 }
 
 export function digestRoomCommand(
@@ -1356,6 +1570,326 @@ export class AppRepository {
   private throwMemoryConflict(id: string): never {
     const current = this.getMemory(id);
     throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+  }
+
+  prepareToolInvocation(
+    input: ToolInvocationCommand,
+    expiresAt = defaultApprovalExpiry(),
+  ): ToolPrepareResult {
+    const parsed = toolInvocationCommandSchema.parse(input) as ToolInvocationCommand;
+    if (!Number.isFinite(Date.parse(expiresAt))) throw new AevorenBotError("INVALID_REQUEST");
+    const runtime = this.getRuntimeRun(parsed.runtimeRunId);
+    if (runtime.state !== "running" && runtime.state !== "streaming") {
+      throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
+    }
+    const session = this.getSession(runtime.sessionId);
+    const commandDigest = digestMessage(canonicalToolCommand(parsed));
+    const existingByKey = this.database
+      .prepare("SELECT * FROM tool_invocations WHERE idempotency_key = ?")
+      .get(parsed.idempotencyKey) as ToolInvocationRow | undefined;
+    const existingByCall = this.database
+      .prepare("SELECT * FROM tool_invocations WHERE runtime_run_id = ? AND tool_call_id = ?")
+      .get(runtime.id, parsed.toolCallId) as ToolInvocationRow | undefined;
+    if (existingByKey && existingByCall && existingByKey.id !== existingByCall.id) {
+      throw new AevorenBotError("TOOL_IDEMPOTENCY_CONFLICT");
+    }
+    const existing = existingByKey ?? existingByCall;
+    if (existing) {
+      if (existing.command_digest !== commandDigest) throw new AevorenBotError("TOOL_IDEMPOTENCY_CONFLICT");
+      const invocation = toToolInvocation(existing);
+      return {
+        disposition: "duplicate",
+        invocation,
+        approval: this.getApprovalRequest(invocation.approvalRequestId),
+      };
+    }
+
+    const invocationId = randomUUID();
+    const approvalId = randomUUID();
+    const timestamp = now();
+    const argumentsJson = JSON.stringify(parsed.tool);
+    const targetDigest = toolTargetDigest(parsed.tool);
+    this.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO tool_invocations(
+             id, runtime_run_id, session_id, executor_bot_id, tool_call_id, idempotency_key,
+             command_digest, tool_kind, workspace_id, target_path, arguments_json, state,
+             attempt_count, approval_request_id, result_digest, result_metadata_json,
+             last_error_code, version, created_at, updated_at, started_at, finished_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting-approval',
+             0, ?, NULL, NULL, NULL, 1, ?, ?, NULL, NULL)`,
+        )
+        .run(
+          invocationId,
+          runtime.id,
+          session.id,
+          runtime.executorBotId,
+          parsed.toolCallId,
+          parsed.idempotencyKey,
+          commandDigest,
+          parsed.tool.kind,
+          parsed.tool.workspaceId,
+          parsed.tool.path,
+          argumentsJson,
+          approvalId,
+          timestamp,
+          timestamp,
+        );
+      this.database
+        .prepare(
+          `INSERT INTO approval_requests(
+             id, tool_invocation_id, runtime_run_id, session_id, executor_bot_id,
+             action_kind, workspace_id, target_path, target_digest, arguments_digest,
+             requested_scope, state, resolution, policy_version, version,
+             expires_at, resolved_at, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'once', 'pending', NULL, 1, 1, ?, NULL, ?, ?)`,
+        )
+        .run(
+          approvalId,
+          invocationId,
+          runtime.id,
+          session.id,
+          runtime.executorBotId,
+          parsed.tool.kind,
+          parsed.tool.workspaceId,
+          parsed.tool.path,
+          targetDigest,
+          commandDigest,
+          expiresAt,
+          timestamp,
+          timestamp,
+        );
+    });
+    return {
+      disposition: "prepared",
+      invocation: this.getToolInvocation(invocationId),
+      approval: this.getApprovalRequest(approvalId),
+    };
+  }
+
+  getToolInvocation(id: string): ToolInvocation {
+    const row = this.database.prepare("SELECT * FROM tool_invocations WHERE id = ?").get(id) as
+      | ToolInvocationRow
+      | undefined;
+    if (!row) throw new AevorenBotError("TOOL_INVOCATION_NOT_FOUND");
+    return toToolInvocation(row);
+  }
+
+  listToolInvocations(sessionId: string): ToolInvocation[] {
+    this.getSession(sessionId);
+    return (
+      this.database
+        .prepare("SELECT * FROM tool_invocations WHERE session_id = ? ORDER BY created_at ASC, id ASC")
+        .all(sessionId) as ToolInvocationRow[]
+    ).map(toToolInvocation);
+  }
+
+  getApprovalRequest(id: string): ApprovalRequest {
+    const row = this.database.prepare("SELECT * FROM approval_requests WHERE id = ?").get(id) as
+      | ApprovalRequestRow
+      | undefined;
+    if (!row) throw new AevorenBotError("APPROVAL_NOT_FOUND");
+    return toApprovalRequest(row);
+  }
+
+  listPendingApprovalRequests(sessionId: string): ApprovalRequest[] {
+    this.getSession(sessionId);
+    return (
+      this.database
+        .prepare(
+          `SELECT * FROM approval_requests
+           WHERE session_id = ? AND state = 'pending'
+           ORDER BY created_at ASC, id ASC`,
+        )
+        .all(sessionId) as ApprovalRequestRow[]
+    ).map(toApprovalRequest);
+  }
+
+  resolveToolApproval(
+    id: string,
+    expectedVersion: number,
+    resolution: ApprovalResolution,
+  ): ToolApprovalResult {
+    let expired = false;
+    let result: ToolApprovalResult | null = null;
+    this.transaction(() => {
+      const approval = this.getApprovalRequest(id);
+      if (approval.version !== expectedVersion) {
+        throw new AevorenBotError("APPROVAL_VERSION_CONFLICT", undefined, undefined, {
+          currentVersion: approval.version,
+        });
+      }
+      if (approval.state !== "pending") throw new AevorenBotError("APPROVAL_ALREADY_RESOLVED");
+      const invocation = this.getToolInvocation(approval.toolInvocationId);
+      if (
+        invocation.state !== "awaiting-approval" ||
+        invocation.runtimeRunId !== approval.runtimeRunId ||
+        invocation.sessionId !== approval.sessionId ||
+        invocation.executorBotId !== approval.executorBotId ||
+        invocation.toolKind !== approval.actionKind ||
+        invocation.workspaceId !== approval.workspaceId ||
+        invocation.targetPath !== approval.targetPath ||
+        invocation.commandDigest !== approval.argumentsDigest
+      ) {
+        throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      }
+
+      const timestamp = now();
+      if (Date.parse(approval.expiresAt) <= Date.parse(timestamp)) {
+        this.database
+          .prepare(
+            `UPDATE approval_requests
+             SET state = 'expired', version = version + 1, resolved_at = ?, updated_at = ?
+             WHERE id = ? AND version = ? AND state = 'pending'`,
+          )
+          .run(timestamp, timestamp, id, expectedVersion);
+        this.database
+          .prepare(
+            `UPDATE tool_invocations
+             SET state = 'expired', version = version + 1, finished_at = ?, updated_at = ?
+             WHERE id = ? AND state = 'awaiting-approval'`,
+          )
+          .run(timestamp, timestamp, invocation.id);
+        expired = true;
+        return;
+      }
+
+      const approvalState = resolution === "allow-once" ? "allowed" : "denied";
+      const invocationState = resolution === "allow-once" ? "approved" : "denied";
+      const approvalUpdate = this.database
+        .prepare(
+          `UPDATE approval_requests
+           SET state = ?, resolution = ?, version = version + 1, resolved_at = ?, updated_at = ?
+           WHERE id = ? AND version = ? AND state = 'pending'`,
+        )
+        .run(approvalState, resolution, timestamp, timestamp, id, expectedVersion);
+      const invocationUpdate = this.database
+        .prepare(
+          `UPDATE tool_invocations
+           SET state = ?, version = version + 1, finished_at = CASE WHEN ? = 'denied' THEN ? ELSE NULL END,
+               updated_at = ?
+           WHERE id = ? AND state = 'awaiting-approval'`,
+        )
+        .run(invocationState, invocationState, timestamp, timestamp, invocation.id);
+      if (Number(approvalUpdate.changes) !== 1 || Number(invocationUpdate.changes) !== 1) {
+        throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      }
+      result = {
+        approval: this.getApprovalRequest(id),
+        invocation: this.getToolInvocation(invocation.id),
+      };
+    });
+    if (expired) throw new AevorenBotError("APPROVAL_EXPIRED");
+    if (!result) throw new AevorenBotError("INTERNAL_ERROR");
+    return result;
+  }
+
+  transitionToolInvocation(id: string, state: ToolInvocationState): ToolInvocation {
+    const current = this.getToolInvocation(id);
+    if (!TOOL_INVOCATION_TRANSITIONS[current.state].includes(state)) {
+      throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
+    if (state === "dispatching") {
+      const approval = this.getApprovalRequest(current.approvalRequestId);
+      if (
+        approval.state !== "allowed" ||
+        approval.resolution !== "allow-once" ||
+        approval.toolInvocationId !== current.id ||
+        approval.argumentsDigest !== current.commandDigest
+      ) {
+        throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      }
+    }
+    const timestamp = now();
+    const terminal = TERMINAL_TOOL_INVOCATION_STATES.includes(state);
+    const update = this.database
+      .prepare(
+        `UPDATE tool_invocations
+         SET state = ?, attempt_count = attempt_count + CASE WHEN ? = 'dispatching' THEN 1 ELSE 0 END,
+             version = version + 1,
+             started_at = CASE WHEN ? = 'dispatching' AND started_at IS NULL THEN ? ELSE started_at END,
+             finished_at = CASE WHEN ? THEN ? ELSE NULL END,
+             updated_at = ?
+         WHERE id = ? AND version = ? AND state = ?`,
+      )
+      .run(
+        state,
+        state,
+        state,
+        timestamp,
+        terminal ? 1 : 0,
+        timestamp,
+        timestamp,
+        id,
+        current.version,
+        current.state,
+      );
+    if (Number(update.changes) !== 1) {
+      const latest = this.getToolInvocation(id);
+      throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
+    return this.getToolInvocation(id);
+  }
+
+  recoverToolInvocations(): { expired: number; interrupted: number } {
+    const timestamp = now();
+    return this.transaction(() => {
+      const expiredPending = this.database
+        .prepare(
+          `SELECT approval.id, approval.tool_invocation_id
+           FROM approval_requests AS approval
+           JOIN tool_invocations AS invocation ON invocation.id = approval.tool_invocation_id
+           WHERE approval.state = 'pending' AND invocation.state = 'awaiting-approval'
+             AND approval.expires_at <= ?`,
+        )
+        .all(timestamp) as Array<{ id: string; tool_invocation_id: string }>;
+      for (const approval of expiredPending) {
+        this.database
+          .prepare(
+            "UPDATE approval_requests SET state = 'expired', version = version + 1, resolved_at = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(timestamp, timestamp, approval.id);
+        this.database
+          .prepare(
+            "UPDATE tool_invocations SET state = 'expired', version = version + 1, finished_at = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(timestamp, timestamp, approval.tool_invocation_id);
+      }
+
+      const approved = this.database
+        .prepare("SELECT id, approval_request_id FROM tool_invocations WHERE state = 'approved'")
+        .all() as Array<{ id: string; approval_request_id: string }>;
+      for (const invocation of approved) {
+        this.database
+          .prepare(
+            `UPDATE approval_requests
+             SET state = 'expired', version = version + 1, updated_at = ?
+             WHERE id = ? AND state = 'allowed'`,
+          )
+          .run(timestamp, invocation.approval_request_id);
+        this.database
+          .prepare(
+            "UPDATE tool_invocations SET state = 'expired', version = version + 1, finished_at = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(timestamp, timestamp, invocation.id);
+      }
+
+      const interrupted = this.database
+        .prepare("SELECT id FROM tool_invocations WHERE state IN ('dispatching', 'running')")
+        .all() as Array<{ id: string }>;
+      for (const invocation of interrupted) {
+        this.database
+          .prepare(
+            `UPDATE tool_invocations
+             SET state = 'interrupted-unknown', version = version + 1,
+                 last_error_code = 'APP_INTERRUPTED', finished_at = ?, updated_at = ?
+             WHERE id = ?`,
+          )
+          .run(timestamp, timestamp, invocation.id);
+      }
+      return { expired: expiredPending.length + approved.length, interrupted: interrupted.length };
+    });
   }
 
   setBotPinned(id: string, pinned: boolean): Bot {

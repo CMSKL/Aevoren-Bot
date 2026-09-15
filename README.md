@@ -1,6 +1,6 @@
 # Aevoren Bot
 
-Aevoren Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在 P0-A/P0-B 可靠对话和 Runtime 之上增加 P1-A1 确定性多 Bot Room。
+Aevoren Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在可靠对话、Runtime 和确定性多 Bot Room 之上，已完成显式 Memory，并建立 Approval + Tool Journal 安全基础。
 
 ## 当前范围
 
@@ -28,6 +28,8 @@ Aevoren Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在 P0
 - 共享 Transcript、稳定 speaker/source Turn、Partial、批次取消和单成员重试；
 - 串行、有界的 Agent Handoff，包含 Turn/Hop/单 Turn 目标数、deadline、循环抑制和拒绝审计；
 - Room Renderer Reload、Main crash 中断恢复和禁止自动重发。
+- 每个 Bot 的显式、版本化 Memory，以及 Direct/Room executor 隔离注入；
+- 一次性 Approval 与持久化 Tool Journal 基础合同；当前没有真实文件或工具执行入口。
 
 无界或并行 fan-out、Memory synthesis、Summary、Routine、Plugin/MCP、Local Exec、Computer Use 和 Cloud Computer 尚未实现。
 
@@ -76,7 +78,7 @@ pnpm validate
 ## 数据与安全
 
 - SQLite 数据库位于 Electron `userData` 目录；
-- 数据库当前为 v7：v3～v6 依次增加 Room、确定性多 Agent Run/Handoff、自动路由和拒绝审计，v7 增加 Bot 侧边栏状态；全部迁移按版本顺序执行并保留旧逻辑记录；
+- 数据库当前为 v9：v3～v7 增加 Room、多 Agent Runtime/Handoff、自动路由、拒绝审计和 Bot 侧边栏状态，v8 增加显式 Memory，v9 增加 Approval 与 Tool Journal；全部迁移按版本顺序执行并保留旧逻辑记录；
 - P0-A beta 与 P0-B 并行验证时必须使用不同的 `AEVOREN_BOT_USER_DATA_DIR`；不支持用旧代码继续写入已升级的 v2 数据库；
 - 可用 `AEVOREN_BOT_USER_DATA_DIR` 为测试指定隔离目录；
 - 可用 `AEVOREN_BOT_DB_PATH` 单独覆盖数据库路径；
@@ -110,6 +112,8 @@ pnpm validate
 - [Grok Bot 逆向规格包](docs/reverse-engineering/grok-bot/README.md)
 - [P0-C 显式 Memory 与 Context 计划](docs/plans/p0-c-explicit-memory-context.md)
 - [P0-C 显式 Memory 验收标准](docs/validation/p0-c-explicit-memory-acceptance-checklist.md)
+- [P0-D1 Approval 与 Tool Journal 基础合同](docs/plans/p0-d1-approval-tool-journal-foundation.md)
+- [P0-D1 Approval 与 Tool Journal 验收标准](docs/validation/p0-d1-approval-tool-journal-acceptance.md)
 - [试用反馈模板](docs/templates/pilot-feedback.md)
 
 ## 分支流程

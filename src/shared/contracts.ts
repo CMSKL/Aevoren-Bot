@@ -172,6 +172,108 @@ export type RuntimeRun = {
   finishedAt: string | null;
 };
 
+export type WorkspaceToolRequest =
+  | {
+      kind: "workspace-list";
+      workspaceId: string;
+      path: string;
+      maxEntries: number;
+    }
+  | {
+      kind: "workspace-read";
+      workspaceId: string;
+      path: string;
+      maxBytes: number;
+    }
+  | {
+      kind: "workspace-search";
+      workspaceId: string;
+      path: string;
+      query: string;
+      maxMatches: number;
+    };
+
+export type ToolInvocationCommand = {
+  runtimeRunId: string;
+  toolCallId: string;
+  idempotencyKey: string;
+  tool: WorkspaceToolRequest;
+};
+
+export type ToolInvocationState =
+  | "prepared"
+  | "awaiting-approval"
+  | "approved"
+  | "dispatching"
+  | "running"
+  | "succeeded"
+  | "denied"
+  | "expired"
+  | "cancelled"
+  | "failed-before-execution"
+  | "interrupted-unknown";
+
+export type ToolInvocation = {
+  id: string;
+  runtimeRunId: string;
+  sessionId: string;
+  executorBotId: string;
+  toolCallId: string;
+  idempotencyKey: string;
+  commandDigest: string;
+  toolKind: WorkspaceToolRequest["kind"];
+  workspaceId: string;
+  targetPath: string;
+  arguments: WorkspaceToolRequest;
+  state: ToolInvocationState;
+  attemptCount: number;
+  approvalRequestId: string;
+  resultDigest: string | null;
+  resultMetadata: Record<string, string | number | boolean | null> | null;
+  lastErrorCode: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+export type ApprovalState = "pending" | "allowed" | "denied" | "expired" | "cancelled";
+export type ApprovalResolution = "allow-once" | "deny";
+
+export type ApprovalRequest = {
+  id: string;
+  toolInvocationId: string;
+  runtimeRunId: string;
+  sessionId: string;
+  executorBotId: string;
+  actionKind: WorkspaceToolRequest["kind"];
+  workspaceId: string;
+  targetPath: string;
+  targetDigest: string;
+  argumentsDigest: string;
+  requestedScope: "once";
+  state: ApprovalState;
+  resolution: ApprovalResolution | null;
+  policyVersion: number;
+  version: number;
+  expiresAt: string;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ToolPrepareResult = {
+  disposition: "prepared" | "duplicate";
+  invocation: ToolInvocation;
+  approval: ApprovalRequest;
+};
+
+export type ToolApprovalResult = {
+  invocation: ToolInvocation;
+  approval: ApprovalRequest;
+};
+
 export type Room = {
   id: string;
   name: string;
@@ -422,6 +524,8 @@ export type ErrorDomain =
   | "memory"
   | "message"
   | "runtime"
+  | "tool"
+  | "approval"
   | "provider"
   | "storage"
   | "security"
@@ -474,6 +578,18 @@ export interface AevorenBotApi {
     update(input: { id: string; expectedVersion: number; content: string }): Promise<ApiResult<MemoryItem>>;
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
     restore(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
+  };
+  tools: {
+    list(input: { sessionId: string }): Promise<ApiResult<ToolInvocation[]>>;
+  };
+  approvals: {
+    listPending(input: { sessionId: string }): Promise<ApiResult<ApprovalRequest[]>>;
+    resolve(input: {
+      sessionId: string;
+      id: string;
+      expectedVersion: number;
+      resolution: ApprovalResolution;
+    }): Promise<ApiResult<ToolApprovalResult>>;
   };
   sessions: {
     getMain(botId: string): Promise<ApiResult<Session>>;

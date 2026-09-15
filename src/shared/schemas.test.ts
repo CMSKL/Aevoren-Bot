@@ -3,6 +3,7 @@ import {
   botHiddenSchema,
   botPinnedSchema,
   botUnreadSchema,
+  approvalResolutionSchema,
   memoryCreateSchema,
   memoryListSchema,
   memoryMutationSchema,
@@ -10,6 +11,9 @@ import {
   modelConfigurationSchema,
   roomCreateSchema,
   roomSendCommandSchema,
+  toolInvocationCommandSchema,
+  toolSessionScopeSchema,
+  workspaceRelativePathSchema,
 } from "./schemas";
 
 describe("Bot sidebar action schemas", () => {
@@ -50,6 +54,66 @@ describe("Memory schemas", () => {
     expect(memoryCreateSchema.safeParse({ botId: "bad", content: "事实" }).success).toBe(false);
     expect(memoryUpdateSchema.safeParse({ id, expectedVersion: 0, content: "事实" }).success).toBe(false);
     expect(memoryMutationSchema.safeParse({ id: "bad", expectedVersion: 1 }).success).toBe(false);
+  });
+});
+
+describe("Approval and Tool Journal schemas", () => {
+  const runtimeRunId = crypto.randomUUID();
+  const workspaceId = crypto.randomUUID();
+  const idempotencyKey = crypto.randomUUID();
+
+  it.each([
+    { kind: "workspace-list", workspaceId, path: "", maxEntries: 500 },
+    { kind: "workspace-read", workspaceId, path: "docs/spec.md", maxBytes: 1_048_576 },
+    { kind: "workspace-search", workspaceId, path: "src", query: "Memory", maxMatches: 200 },
+  ])("accepts the bounded $kind request", (tool) => {
+    expect(toolInvocationCommandSchema.safeParse({
+      runtimeRunId,
+      toolCallId: "call-1",
+      idempotencyKey,
+      tool,
+    }).success).toBe(true);
+  });
+
+  it.each([
+    "/etc/passwd",
+    "../secret",
+    "docs/../secret",
+    "./docs",
+    "docs//secret",
+    "docs\\secret",
+    "docs\0secret",
+  ])("rejects unsafe relative path %s", (path) => {
+    expect(workspaceRelativePathSchema.safeParse(path).success).toBe(false);
+  });
+
+  it("rejects limits and undeclared execution or policy fields", () => {
+    expect(toolInvocationCommandSchema.safeParse({
+      runtimeRunId,
+      toolCallId: "call-1",
+      idempotencyKey,
+      tool: { kind: "workspace-read", workspaceId, path: "file", maxBytes: 0 },
+    }).success).toBe(false);
+    expect(toolInvocationCommandSchema.safeParse({
+      runtimeRunId,
+      toolCallId: "call-1",
+      idempotencyKey,
+      autoApprove: true,
+      tool: { kind: "workspace-list", workspaceId, path: "", maxEntries: 1 },
+    }).success).toBe(false);
+    expect(toolInvocationCommandSchema.safeParse({
+      runtimeRunId,
+      toolCallId: "call-1",
+      idempotencyKey,
+      tool: { kind: "workspace-search", workspaceId, path: "", query: "", maxMatches: 1 },
+    }).success).toBe(false);
+    expect(approvalResolutionSchema.safeParse({
+      sessionId: crypto.randomUUID(),
+      id: crypto.randomUUID(),
+      expectedVersion: 1,
+      resolution: "always-allow",
+    }).success).toBe(false);
+    expect(toolSessionScopeSchema.safeParse({ sessionId: crypto.randomUUID(), includeAll: true }).success).toBe(false);
   });
 });
 
