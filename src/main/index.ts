@@ -1,0 +1,237 @@
+import "./identity";
+import { join } from "node:path";
+import { app, BrowserWindow, nativeTheme, safeStorage, shell } from "electron";
+import { IPC } from "@shared/channels";
+import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import { AppRepository } from "./database";
+import { registerIpc } from "./ipc";
+import { SendWorker } from "./send-worker";
+import { RoomCoordinator } from "./room-coordinator";
+import { ModelSettingsService, type SecretCodec } from "./settings";
+
+const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
+if (userDataOverride) app.setPath("userData", userDataOverride);
+const hideTestWindow = process.env.AEVOREN_BOT_TEST_HIDDEN === "1";
+
+let mainWindow: BrowserWindow | null = null;
+let repository: AppRepository | null = null;
+let runtimeCoordinator: SendWorker | null = null;
+let roomCoordinator: RoomCoordinator | null = null;
+let allowClose = false;
+let closeRequested = false;
+let quitRequested = false;
+let rendererReady = false;
+let rendererEverReady = false;
+let pendingClose = false;
+let closeConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
+let shutdownPromise: Promise<void> | null = null;
+
+const CLOSE_CONFIRMATION_TIMEOUT_MS = 5_000;
+
+function appIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, "icon.png")
+    : join(app.getAppPath(), "resources", "icon.png");
+}
+
+const electronSecretCodec: SecretCodec = {
+  isAvailable: () => safeStorage.isEncryptionAvailable(),
+  encrypt: (value) => safeStorage.encryptString(value).toString("base64"),
+  decrypt: (value) => safeStorage.decryptString(Buffer.from(value, "base64")),
+};
+
+function emitTranscript(event: TranscriptEvent): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.transcriptEvent, event);
+}
+
+function emitSendState(event: SendStateEvent): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.sendStateEvent, event);
+}
+
+function emitRuntime(event: RuntimeEvent): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.runtimeEvent, event);
+}
+
+function emitRoomRuntime(event: RoomRuntimeEvent): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.roomRuntimeEvent, event);
+}
+
+function clearCloseConfirmationTimer(): void {
+  if (!closeConfirmationTimer) return;
+  clearTimeout(closeConfirmationTimer);
+  closeConfirmationTimer = null;
+}
+
+function armCloseConfirmationTimer(): void {
+  clearCloseConfirmationTimer();
+  closeConfirmationTimer = setTimeout(() => {
+    closeConfirmationTimer = null;
+    closeRequested = false;
+    pendingClose = false;
+    quitRequested = false;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.appCloseBlocked);
+  }, CLOSE_CONFIRMATION_TIMEOUT_MS);
+}
+
+async function finishClose(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  roomCoordinator?.beginShutdown();
+  shutdownPromise ??= (async () => {
+    await runtimeCoordinator?.shutdown();
+    await roomCoordinator?.shutdown();
+  })();
+  try {
+    await shutdownPromise;
+  } catch {
+    shutdownPromise = null;
+    closeRequested = false;
+    pendingClose = false;
+    quitRequested = false;
+    mainWindow.webContents.send(IPC.appCloseBlocked);
+    return;
+  }
+  allowClose = true;
+  if (quitRequested) app.quit();
+  else mainWindow.close();
+}
+
+function requestRendererFlush(window: BrowserWindow): void {
+  if (closeRequested) return;
+  if (!rendererReady) {
+    pendingClose = true;
+    armCloseConfirmationTimer();
+    return;
+  }
+  closeRequested = true;
+  pendingClose = false;
+  window.webContents.send(IPC.appBeforeClose);
+  armCloseConfirmationTimer();
+}
+
+function createWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    show: !hideTestWindow,
+    minWidth: 390,
+    minHeight: 640,
+    icon: appIconPath(),
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#080808" : "#f5f5f5",
+    title: "Aevoren Bot",
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 12, y: 12 } }
+      : {}),
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webviewTag: false,
+      backgroundThrottling: !hideTestWindow,
+    },
+  });
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https://") || url.startsWith("http://")) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    const currentUrl = window.webContents.getURL();
+    if (url !== currentUrl) event.preventDefault();
+  });
+  window.webContents.on("did-start-loading", () => {
+    rendererReady = false;
+    if (!closeRequested) return;
+    clearCloseConfirmationTimer();
+    closeRequested = false;
+    pendingClose = true;
+    armCloseConfirmationTimer();
+  });
+  window.on("close", (event) => {
+    if (allowClose) return;
+    if (!rendererEverReady) return;
+    event.preventDefault();
+    requestRendererFlush(window);
+  });
+
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
+  if (rendererUrl) void window.loadURL(rendererUrl);
+  else void window.loadFile(join(__dirname, "../renderer/index.html"));
+
+  return window;
+}
+
+app.whenReady().then(() => {
+  if (process.platform === "darwin") {
+    if (hideTestWindow) app.dock?.hide();
+    else app.dock?.setIcon(appIconPath());
+  }
+  const databasePath = process.env.AEVOREN_BOT_DB_PATH ?? join(app.getPath("userData"), "aevoren-bot.sqlite");
+  repository = new AppRepository(databasePath);
+  repository.recoverInterruptedSends();
+  repository.recoverInterruptedRooms();
+  repository.recoverInterruptedRuntimeRuns();
+  const settings = new ModelSettingsService(repository, electronSecretCodec);
+  mainWindow = createWindow();
+  const forceFakeProvider = process.env.AEVOREN_BOT_FAKE_PROVIDER === "1";
+  const sendWorker = new SendWorker(
+    repository,
+    settings,
+    { transcript: emitTranscript, sendState: emitSendState, runtime: emitRuntime },
+    forceFakeProvider,
+  );
+  runtimeCoordinator = sendWorker;
+  roomCoordinator = new RoomCoordinator(repository, sendWorker.executor, {
+    transcript: emitTranscript,
+    roomRuntime: emitRoomRuntime,
+  });
+  registerIpc({
+    window: mainWindow,
+    repository,
+    settings,
+    sendWorker,
+    roomCoordinator,
+    forceFakeProvider,
+    rendererReady() {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      rendererReady = true;
+      rendererEverReady = true;
+      if (pendingClose) requestRendererFlush(mainWindow);
+    },
+    confirmClose(canClose) {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (!closeRequested) return;
+      clearCloseConfirmationTimer();
+      if (!canClose) {
+        closeRequested = false;
+        pendingClose = false;
+        quitRequested = false;
+        return;
+      }
+      void finishClose();
+    },
+  });
+});
+
+app.on("window-all-closed", () => app.quit());
+app.on("before-quit", (event) => {
+  if (allowClose) return;
+  if (!rendererEverReady) {
+    allowClose = true;
+    return;
+  }
+  event.preventDefault();
+  quitRequested = true;
+  if (mainWindow && !mainWindow.isDestroyed()) requestRendererFlush(mainWindow);
+  else {
+    allowClose = true;
+    app.quit();
+  }
+});
+app.on("quit", () => {
+  clearCloseConfirmationTimer();
+  repository?.close();
+  repository = null;
+  runtimeCoordinator = null;
+  roomCoordinator = null;
+});
