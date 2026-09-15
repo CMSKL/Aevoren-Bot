@@ -11,6 +11,7 @@ import { ModelSettingsService, type SecretCodec } from "./settings";
 
 const userDataOverride = process.env.MS_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
+const hideTestWindow = process.env.MS_BOT_TEST_HIDDEN === "1";
 
 let mainWindow: BrowserWindow | null = null;
 let repository: AppRepository | null = null;
@@ -111,6 +112,7 @@ function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
+    show: !hideTestWindow,
     minWidth: 390,
     minHeight: 640,
     icon: appIconPath(),
@@ -125,6 +127,7 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false,
+      backgroundThrottling: !hideTestWindow,
     },
   });
 
@@ -159,7 +162,10 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
-  if (process.platform === "darwin") app.dock?.setIcon(appIconPath());
+  if (process.platform === "darwin") {
+    if (hideTestWindow) app.dock?.hide();
+    else app.dock?.setIcon(appIconPath());
+  }
   const databasePath = process.env.MS_BOT_DB_PATH ?? join(app.getPath("userData"), "ms-bot.sqlite");
   repository = new AppRepository(databasePath);
   repository.recoverInterruptedSends();

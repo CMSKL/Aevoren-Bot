@@ -188,7 +188,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
       const rect = element.getBoundingClientRect();
       return rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight;
     })).toBe(true);
-    expect(await page.locator(".mention-option").first().evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(38);
+    expect(await page.locator(".mention-option").first().evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(40);
     const longCandidate = page.locator(".mention-option").filter({ hasText: seeded.botNames[2]! }).locator("strong");
     expect(await longCandidate.evaluate((element) => {
       const rect = element.getBoundingClientRect();

@@ -325,3 +325,84 @@ test("does not stack the new-chat chooser over an open narrow sidebar", async ()
     rmSync(userDataDir, { recursive: true, force: true });
   }
 });
+
+test("keeps a long sidebar scrollable without pushing the conversation below the viewport", async () => {
+  test.setTimeout(30_000);
+  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-responsive-sidebar-height-"));
+  const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+  try {
+    const botIds = Array.from({ length: 12 }, (_, index) => {
+      const created = repository.createBot();
+      return repository.updateBot(created.bot.id, created.bot.version, { name: `滚动验收 Bot ${index + 1}` }).id;
+    });
+    repository.createRoom({ name: "滚动验收群聊 1", memberBotIds: botIds.slice(0, 2) });
+    repository.createRoom({ name: "滚动验收群聊 2", memberBotIds: botIds.slice(2, 4) });
+    repository.createRoom({ name: "滚动验收群聊 3", memberBotIds: botIds.slice(4, 6) });
+  } finally {
+    repository.close();
+  }
+
+  const application = await electron.launch({
+    args: ["."],
+    cwd: process.cwd(),
+    env: { ...process.env, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1" },
+  });
+
+  try {
+    const page = await application.firstWindow();
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1338, 808));
+    await expect(page.locator(".conversation")).toBeVisible();
+    await expect(page.locator(".bot-list")).toBeVisible();
+
+    const layout = await page.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>(".app-shell");
+      const sidebar = document.querySelector<HTMLElement>(".sidebar");
+      const list = document.querySelector<HTMLElement>(".bot-list");
+      const conversation = document.querySelector<HTMLElement>(".conversation");
+      const composer = document.querySelector<HTMLElement>(".composer-wrap");
+      if (!shell || !sidebar || !list || !conversation || !composer) throw new Error("missing primary layout");
+      const sidebarRect = sidebar.getBoundingClientRect();
+      const conversationRect = conversation.getBoundingClientRect();
+      const composerRect = composer.getBoundingClientRect();
+      return {
+        shellContained: shell.scrollHeight <= shell.clientHeight,
+        sidebarContained: sidebarRect.top >= 0 && sidebarRect.bottom <= window.innerHeight,
+        conversationContained: conversationRect.top >= 0 && conversationRect.bottom <= window.innerHeight,
+        composerVisible: composerRect.top >= 0 && composerRect.bottom <= window.innerHeight,
+        listCanScroll: list.scrollHeight > list.clientHeight,
+      };
+    });
+    expect(layout).toEqual({
+      shellContained: true,
+      sidebarContained: true,
+      conversationContained: true,
+      composerVisible: true,
+      listCanScroll: true,
+    });
+
+    const scrollResult = await page.locator(".bot-list").evaluate((list) => {
+      list.scrollTop = list.scrollHeight;
+      const lastRow = list.querySelector<HTMLElement>('.bot-row[aria-label="滚动验收 Bot 12"]');
+      if (!lastRow) throw new Error("missing final sidebar row");
+      const listRect = list.getBoundingClientRect();
+      const rowRect = lastRow.getBoundingClientRect();
+      return {
+        scrollTop: list.scrollTop,
+        lastRowVisible: rowRect.top >= listRect.top
+          && rowRect.bottom <= listRect.bottom
+          && rowRect.bottom <= window.innerHeight,
+      };
+    });
+    expect(scrollResult.scrollTop).toBeGreaterThan(0);
+    expect(scrollResult.lastRowVisible).toBe(true);
+    await page.screenshot({ path: "/tmp/ms-bot-layout-height-regression-fixed.png" });
+    expect(consoleErrors).toEqual([]);
+  } finally {
+    await application.close();
+    rmSync(userDataDir, { recursive: true, force: true });
+  }
+});
