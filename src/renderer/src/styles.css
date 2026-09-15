@@ -1139,6 +1139,127 @@ textarea:focus-visible {
   gap: 3px;
 }
 
+.message-tools {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 6px;
+  gap: 5px;
+}
+
+.tool-activity {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  font-size: 10px;
+}
+
+.tool-activity-heading {
+  display: flex;
+  min-width: 0;
+  gap: 7px;
+  align-items: center;
+}
+
+.tool-activity-icon {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--panel-bg);
+}
+
+.tool-activity-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.tool-activity-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.tool-activity-copy strong,
+.tool-activity-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-activity-copy strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.tool-activity-state {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.tool-succeeded {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+}
+
+.tool-failed,
+.tool-failed-before-execution {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+}
+
+.tool-approval-actions {
+  display: flex;
+  min-width: 0;
+  margin-top: 8px;
+  padding-top: 8px;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--border);
+}
+
+.tool-approval-actions p {
+  min-width: 0;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.tool-approval-actions > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.tool-approval-actions button {
+  min-height: 28px;
+  padding-inline: 9px;
+  font-size: 10px;
+}
+
+@media (max-width: 520px) {
+  .tool-activity-heading,
+  .tool-approval-actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .tool-activity-state {
+    width: 100%;
+    padding-left: 29px;
+  }
+
+  .tool-approval-actions > div {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
 .room-handoff-row {
   display: grid;
   min-width: 0;
@@ -1881,6 +2002,77 @@ textarea:focus-visible {
   margin-top: 22px;
 }
 
+.workspace-list {
+  display: flex;
+  min-height: 92px;
+  max-height: min(360px, calc(100vh - 310px));
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+}
+
+.workspace-empty {
+  display: grid;
+  min-height: 92px;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.workspace-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.workspace-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--panel-bg);
+}
+
+.workspace-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.workspace-copy {
+  min-width: 0;
+}
+
+.workspace-copy strong,
+.workspace-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-copy strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workspace-copy span {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.workspace-dialog .security-note {
+  margin-top: 12px;
+}
+
 .icon-button {
   width: 32px;
   height: 32px;
@@ -2300,30 +2492,30 @@ textarea:focus-visible {
   }
 
   .conversation-header {
-    gap: 4px;
-    padding: 7px 8px 7px 36px;
+    gap: 3px;
+    padding: 7px 6px 7px 30px;
   }
 
   .conversation-header > .mobile-panel-button,
   .conversation-actions .mobile-panel-button {
-    width: 30px;
-    height: 30px;
-    flex-basis: 30px;
+    width: 24px;
+    height: 24px;
+    flex-basis: 24px;
   }
 
   .conversation-header > .mobile-panel-button svg,
   .conversation-actions .mobile-panel-button svg {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
   }
 
   .conversation-actions {
-    gap: 4px;
+    gap: 3px;
   }
 
   .model-settings-button {
-    width: 28px;
-    min-height: 28px;
+    width: 24px;
+    min-height: 24px;
   }
 
   .conversation-title,

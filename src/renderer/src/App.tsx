@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppError,
+  ApprovalRequest,
   Bot,
   Room,
   RoomBatch,
@@ -13,6 +14,8 @@ import type {
   RuntimeRun,
   Session,
   SessionLiveState,
+  ToolEvent,
+  ToolInvocation,
   TranscriptEntry,
   TranscriptEvent,
 } from "@shared/contracts";
@@ -22,8 +25,32 @@ import { NewBotChooser } from "./components/NewBotChooser";
 import { ProfileInspector, type ProfileInspectorHandle } from "./components/ProfileInspector";
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
 import { Sidebar } from "./components/Sidebar";
+import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
 import { mergeRoomRuntimeEvents } from "./room-runtime-state";
+
+function mergeToolInvocation(current: ToolInvocation[], next: ToolInvocation): ToolInvocation[] {
+  const existing = current.find((item) => item.id === next.id);
+  if (existing && existing.version >= next.version) return current;
+  return [...current.filter((item) => item.id !== next.id), next]
+    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+}
+
+function mergePendingApproval(current: ApprovalRequest[], next: ApprovalRequest): ApprovalRequest[] {
+  const without = current.filter((item) => item.id !== next.id);
+  return next.state === "pending" ? [...without, next] : without;
+}
+
+function mergeToolEvents(
+  invocations: ToolInvocation[],
+  approvals: ApprovalRequest[],
+  events: readonly ToolEvent[],
+): { invocations: ToolInvocation[]; approvals: ApprovalRequest[] } {
+  return events.reduce((current, event) => ({
+    invocations: mergeToolInvocation(current.invocations, event.invocation),
+    approvals: mergePendingApproval(current.approvals, event.approval),
+  }), { invocations, approvals });
+}
 
 export function App(): React.JSX.Element {
   const [bots, setBots] = useState<Bot[]>([]);
@@ -33,6 +60,8 @@ export function App(): React.JSX.Element {
   const [session, setSession] = useState<Session | null>(null);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [runs, setRuns] = useState<RuntimeRun[]>([]);
+  const [toolInvocations, setToolInvocations] = useState<ToolInvocation[]>([]);
+  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
   const [roomBatches, setRoomBatches] = useState<RoomBatch[]>([]);
   const [roomTurns, setRoomTurns] = useState<RoomTurn[]>([]);
   const [roomHandoffs, setRoomHandoffs] = useState<RoomHandoffView[]>([]);
@@ -43,6 +72,7 @@ export function App(): React.JSX.Element {
   const [error, setError] = useState<AppError | null>(null);
   const [closeNotice, setCloseNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"bots" | "profile" | null>(null);
   const [creatingBot, setCreatingBot] = useState(false);
@@ -56,6 +86,7 @@ export function App(): React.JSX.Element {
   const bufferedTranscriptRef = useRef<TranscriptEvent[]>([]);
   const bufferedRuntimeRef = useRef<RuntimeEvent[]>([]);
   const bufferedRoomRef = useRef<RoomRuntimeEvent[]>([]);
+  const bufferedToolRef = useRef<ToolEvent[]>([]);
   const runtimeVersionsRef = useRef(new Map<string, number>());
   const openRequestRef = useRef(0);
   const chooserActionRef = useRef<"create" | "select" | null>(null);
@@ -101,6 +132,15 @@ export function App(): React.JSX.Element {
       setRoomHandoffRejections((current) => mergeRoomRuntimeEvents([], [], [], current, [event]).rejections);
       if (event.error) setError(event.error);
     });
+    const unsubscribeTool = window.aevorenBot.events.subscribeTool((event) => {
+      if (event.sessionId === loadingSessionIdRef.current) {
+        bufferedToolRef.current.push(event);
+        return;
+      }
+      if (event.sessionId !== sessionIdRef.current) return;
+      setToolInvocations((current) => mergeToolInvocation(current, event.invocation));
+      setApprovalRequests((current) => mergePendingApproval(current, event.approval));
+    });
     const unsubscribeClose = window.aevorenBot.app.subscribeBeforeClose(() => {
       void flushActive().then((saved) => window.aevorenBot.app.confirmClose(saved));
     });
@@ -113,6 +153,7 @@ export function App(): React.JSX.Element {
       unsubscribeSend();
       unsubscribeRuntime();
       unsubscribeRoom();
+      unsubscribeTool();
       unsubscribeClose();
       unsubscribeCloseBlocked();
     };
@@ -136,11 +177,28 @@ export function App(): React.JSX.Element {
     bufferedTranscriptRef.current = [];
     bufferedRuntimeRef.current = [];
     bufferedRoomRef.current = [];
-    const snapshotResult = await window.aevorenBot.runtime.getSessionSnapshot(nextSession.id);
+    bufferedToolRef.current = [];
+    const [snapshotResult, toolsResult, approvalsResult] = await Promise.all([
+      window.aevorenBot.runtime.getSessionSnapshot(nextSession.id),
+      window.aevorenBot.tools.list({ sessionId: nextSession.id }),
+      window.aevorenBot.approvals.listPending({ sessionId: nextSession.id }),
+    ]);
     if (requestId !== openRequestRef.current) return;
     if (!snapshotResult.ok) {
       loadingSessionIdRef.current = null;
       setError(snapshotResult.error);
+      setLoading(false);
+      return;
+    }
+    if (!toolsResult.ok) {
+      loadingSessionIdRef.current = null;
+      setError(toolsResult.error);
+      setLoading(false);
+      return;
+    }
+    if (!approvalsResult.ok) {
+      loadingSessionIdRef.current = null;
+      setError(approvalsResult.error);
       setLoading(false);
       return;
     }
@@ -150,6 +208,7 @@ export function App(): React.JSX.Element {
       bufferedTranscriptRef.current,
       bufferedRuntimeRef.current,
     );
+    const toolState = mergeToolEvents(toolsResult.data, approvalsResult.data, bufferedToolRef.current);
     sessionIdRef.current = nextSession.id;
     selectedRoomIdRef.current = null;
     sessionStorage.setItem("aevoren-bot:selected", `bot:${bot.id}`);
@@ -159,6 +218,8 @@ export function App(): React.JSX.Element {
     setSession(nextSession);
     setEntries(buffered.entries);
     setRuns(buffered.runs);
+    setToolInvocations(toolState.invocations);
+    setApprovalRequests(toolState.approvals);
     setRoomBatches([]);
     setRoomTurns([]);
     setRoomHandoffs([]);
@@ -189,11 +250,28 @@ export function App(): React.JSX.Element {
     bufferedTranscriptRef.current = [];
     bufferedRuntimeRef.current = [];
     bufferedRoomRef.current = [];
-    const snapshotResult = await window.aevorenBot.roomRuntime.getSnapshot(room.id);
+    bufferedToolRef.current = [];
+    const [snapshotResult, toolsResult, approvalsResult] = await Promise.all([
+      window.aevorenBot.roomRuntime.getSnapshot(room.id),
+      window.aevorenBot.tools.list({ sessionId: nextSession.id }),
+      window.aevorenBot.approvals.listPending({ sessionId: nextSession.id }),
+    ]);
     if (requestId !== openRequestRef.current) return;
     if (!snapshotResult.ok) {
       loadingSessionIdRef.current = null;
       setError(snapshotResult.error);
+      setLoading(false);
+      return;
+    }
+    if (!toolsResult.ok) {
+      loadingSessionIdRef.current = null;
+      setError(toolsResult.error);
+      setLoading(false);
+      return;
+    }
+    if (!approvalsResult.ok) {
+      loadingSessionIdRef.current = null;
+      setError(approvalsResult.error);
       setLoading(false);
       return;
     }
@@ -210,6 +288,7 @@ export function App(): React.JSX.Element {
       snapshotResult.data.rejections ?? [],
       bufferedRoomRef.current,
     );
+    const toolState = mergeToolEvents(toolsResult.data, approvalsResult.data, bufferedToolRef.current);
     sessionIdRef.current = nextSession.id;
     selectedRoomIdRef.current = room.id;
     sessionStorage.setItem("aevoren-bot:selected", `room:${room.id}`);
@@ -219,6 +298,8 @@ export function App(): React.JSX.Element {
     setSession(nextSession);
     setEntries(buffered.entries);
     setRuns(buffered.runs);
+    setToolInvocations(toolState.invocations);
+    setApprovalRequests(toolState.approvals);
     setRoomBatches(roomState.batches);
     setRoomTurns(roomState.turns);
     setRoomHandoffs(roomState.handoffs);
@@ -415,6 +496,8 @@ export function App(): React.JSX.Element {
     setSession(null);
     setEntries([]);
     setRuns([]);
+    setToolInvocations([]);
+    setApprovalRequests([]);
     setRoomBatches([]);
     setRoomTurns([]);
     setRoomHandoffs([]);
@@ -556,6 +639,8 @@ export function App(): React.JSX.Element {
         roomHandoffRejections={roomHandoffRejections}
         entries={entries}
         runs={runs}
+        toolInvocations={toolInvocations}
+        approvalRequests={approvalRequests}
         liveState={liveState}
         loading={loading}
         submitting={submitting}
@@ -564,6 +649,22 @@ export function App(): React.JSX.Element {
         onOpenBots={() => setMobilePanel("bots")}
         onOpenProfile={() => setMobilePanel("profile")}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenWorkspaces={() => setWorkspacesOpen(true)}
+        onResolveApproval={async (approval, resolution) => {
+          const result = await window.aevorenBot.approvals.resolve({
+            sessionId: approval.sessionId,
+            id: approval.id,
+            expectedVersion: approval.version,
+            resolution,
+          });
+          if (!result.ok) {
+            setError(result.error);
+            return false;
+          }
+          setToolInvocations((current) => mergeToolInvocation(current, result.data.invocation));
+          setApprovalRequests((current) => mergePendingApproval(current, result.data.approval));
+          return true;
+        }}
         onSend={sendMessage}
         onRetryMessage={(clientNonce) => {
           setSubmitting(true);
@@ -614,6 +715,7 @@ export function App(): React.JSX.Element {
       )}
       {mobilePanel ? <button className="drawer-backdrop" type="button" aria-label="关闭侧边面板" onClick={() => void closeMobilePanel()} /> : null}
       <ModelSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <WorkspaceDialog open={workspacesOpen} onClose={() => setWorkspacesOpen(false)} />
       {newBotOpen ? (
         <NewBotChooser
           bots={bots}

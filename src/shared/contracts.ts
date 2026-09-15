@@ -34,6 +34,20 @@ export type MemoryItem = {
   updatedAt: string;
 };
 
+export type Workspace = {
+  id: string;
+  name: string;
+  version: number;
+  removedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkspaceRegistrationResult = {
+  disposition: "registered" | "duplicate" | "restored";
+  workspace: Workspace;
+};
+
 export type Session = {
   id: string;
   botId: string | null;
@@ -207,6 +221,7 @@ export type ToolInvocationState =
   | "dispatching"
   | "running"
   | "succeeded"
+  | "failed"
   | "denied"
   | "expired"
   | "cancelled"
@@ -522,6 +537,7 @@ export type ErrorDomain =
   | "session"
   | "room"
   | "memory"
+  | "workspace"
   | "message"
   | "runtime"
   | "tool"
@@ -560,6 +576,12 @@ export type RuntimeEvent = {
   error?: AppError;
 };
 
+export type ToolEvent = {
+  sessionId: string;
+  invocation: ToolInvocation;
+  approval: ApprovalRequest;
+};
+
 export interface AevorenBotApi {
   bots: {
     list(): Promise<ApiResult<Bot[]>>;
@@ -578,6 +600,11 @@ export interface AevorenBotApi {
     update(input: { id: string; expectedVersion: number; content: string }): Promise<ApiResult<MemoryItem>>;
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
     restore(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
+  };
+  workspaces: {
+    list(): Promise<ApiResult<Workspace[]>>;
+    add(): Promise<ApiResult<WorkspaceRegistrationResult | null>>;
+    remove(input: { id: string; expectedVersion: number }): Promise<ApiResult<Workspace>>;
   };
   tools: {
     list(input: { sessionId: string }): Promise<ApiResult<ToolInvocation[]>>;
@@ -634,6 +661,7 @@ export interface AevorenBotApi {
     subscribeSendState(listener: (event: SendStateEvent) => void): () => void;
     subscribeRuntime(listener: (event: RuntimeEvent) => void): () => void;
     subscribeRoomRuntime(listener: (event: RoomRuntimeEvent) => void): () => void;
+    subscribeTool(listener: (event: ToolEvent) => void): () => void;
   };
   app: {
     ready(): void;

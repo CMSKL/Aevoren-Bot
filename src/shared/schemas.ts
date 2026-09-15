@@ -44,6 +44,10 @@ export const runIdSchema = z.string().uuid();
 export const toolInvocationIdSchema = z.string().uuid();
 export const approvalIdSchema = z.string().uuid();
 export const workspaceIdSchema = z.string().uuid();
+export const workspaceMutationSchema = z.object({
+  id: workspaceIdSchema,
+  expectedVersion: z.number().int().positive(),
+}).strict();
 export const workspaceRelativePathSchema = z
   .string()
   .max(1_024)
@@ -57,7 +61,7 @@ export const workspaceRelativePathSchema = z
     }
   })
   .transform((value) => value.normalize("NFC"));
-const workspaceToolRequestSchema = z.discriminatedUnion("kind", [
+export const workspaceToolRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("workspace-list"),
     workspaceId: workspaceIdSchema,

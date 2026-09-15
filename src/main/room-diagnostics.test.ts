@@ -116,7 +116,7 @@ describe("room diagnostics CLI", () => {
     expect(result.stdout).not.toContain("instructions");
 
     expect(JSON.parse(result.stdout)).toEqual({
-      schemaVersion: 9,
+      schemaVersion: 10,
       runId: RUN_ID,
       roomId: ROOM_ID,
       sessionId: SESSION_ID,

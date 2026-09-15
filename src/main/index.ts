@@ -1,13 +1,16 @@
 import "./identity";
 import { join } from "node:path";
-import { app, BrowserWindow, nativeTheme, safeStorage, shell } from "electron";
+import { app, BrowserWindow, dialog, nativeTheme, safeStorage, shell } from "electron";
 import { IPC } from "@shared/channels";
-import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent } from "@shared/contracts";
 import { AppRepository } from "./database";
 import { registerIpc } from "./ipc";
 import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
 import { ModelSettingsService, type SecretCodec } from "./settings";
+import { WorkspaceService } from "./workspace-service";
+import { WorkspaceToolExecutor } from "./workspace-tool-executor";
+import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
@@ -54,6 +57,10 @@ function emitRuntime(event: RuntimeEvent): void {
 
 function emitRoomRuntime(event: RoomRuntimeEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.roomRuntimeEvent, event);
+}
+
+function emitTool(event: ToolEvent): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.toolEvent, event);
 }
 
 function clearCloseConfirmationTimer(): void {
@@ -173,6 +180,12 @@ app.whenReady().then(() => {
   repository.recoverInterruptedRuntimeRuns();
   repository.recoverToolInvocations();
   const settings = new ModelSettingsService(repository, electronSecretCodec);
+  const workspaceService = new WorkspaceService(repository);
+  const workspaceToolCoordinator = new WorkspaceToolCoordinator(
+    repository,
+    new WorkspaceToolExecutor(repository, workspaceService),
+    emitTool,
+  );
   mainWindow = createWindow();
   const forceFakeProvider = process.env.AEVOREN_BOT_FAKE_PROVIDER === "1";
   const sendWorker = new SendWorker(
@@ -180,6 +193,9 @@ app.whenReady().then(() => {
     settings,
     { transcript: emitTranscript, sendState: emitSendState, runtime: emitRuntime },
     forceFakeProvider,
+    undefined,
+    undefined,
+    workspaceToolCoordinator,
   );
   runtimeCoordinator = sendWorker;
   roomCoordinator = new RoomCoordinator(repository, sendWorker.executor, {
@@ -192,6 +208,17 @@ app.whenReady().then(() => {
     settings,
     sendWorker,
     roomCoordinator,
+    workspaceService,
+    workspaceToolCoordinator,
+    async pickWorkspaceRoot() {
+      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: "选择工作区文件夹",
+        buttonLabel: "授权此文件夹",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      return result.canceled ? null : result.filePaths[0] ?? null;
+    },
     forceFakeProvider,
     rendererReady() {
       if (!mainWindow || mainWindow.isDestroyed()) return;

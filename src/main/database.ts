@@ -42,6 +42,8 @@ import type {
   ToolInvocationCommand,
   ToolInvocationState,
   ToolPrepareResult,
+  Workspace,
+  WorkspaceRegistrationResult,
   WorkspaceToolRequest,
 } from "@shared/contracts";
 import { toolInvocationCommandSchema } from "@shared/schemas";
@@ -73,8 +75,9 @@ const TOOL_INVOCATION_TRANSITIONS: Record<ToolInvocationState, readonly ToolInvo
   "awaiting-approval": ["cancelled"],
   approved: ["dispatching", "cancelled", "expired"],
   dispatching: ["running", "failed-before-execution", "cancelled", "interrupted-unknown"],
-  running: ["succeeded", "cancelled", "interrupted-unknown"],
+  running: ["succeeded", "failed", "cancelled", "interrupted-unknown"],
   succeeded: [],
+  failed: [],
   denied: [],
   expired: [],
   cancelled: [],
@@ -84,6 +87,7 @@ const TOOL_INVOCATION_TRANSITIONS: Record<ToolInvocationState, readonly ToolInvo
 
 const TERMINAL_TOOL_INVOCATION_STATES: readonly ToolInvocationState[] = [
   "succeeded",
+  "failed",
   "denied",
   "expired",
   "cancelled",
@@ -701,6 +705,78 @@ export const MIGRATIONS = [
         ON approval_requests(state, expires_at, created_at, id);
     `,
   },
+  {
+    version: 10,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE tool_invocations_v10 (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN ('workspace-list', 'workspace-read', 'workspace-search')),
+        workspace_id TEXT NOT NULL,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 1024),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 4096),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded', 'failed',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      INSERT INTO tool_invocations_v10(
+        id, runtime_run_id, session_id, executor_bot_id, tool_call_id, idempotency_key,
+        command_digest, tool_kind, workspace_id, target_path, arguments_json, state,
+        attempt_count, approval_request_id, result_digest, result_metadata_json,
+        last_error_code, version, created_at, updated_at, started_at, finished_at
+      )
+      SELECT id, runtime_run_id, session_id, executor_bot_id, tool_call_id, idempotency_key,
+             command_digest, tool_kind, workspace_id, target_path, arguments_json, state,
+             attempt_count, approval_request_id, result_digest, result_metadata_json,
+             last_error_code, version, created_at, updated_at, started_at, finished_at
+      FROM tool_invocations;
+
+      DROP TABLE tool_invocations;
+      ALTER TABLE tool_invocations_v10 RENAME TO tool_invocations;
+      CREATE INDEX tool_invocations_by_session
+        ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime
+        ON tool_invocations(runtime_run_id, created_at, id);
+
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
+        canonical_root TEXT NOT NULL,
+        canonical_root_digest TEXT NOT NULL CHECK (length(canonical_root_digest) = 64),
+        version INTEGER NOT NULL CHECK (version > 0),
+        removed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX workspace_active_canonical_root
+        ON workspaces(canonical_root) WHERE removed_at IS NULL;
+      CREATE INDEX workspaces_visible
+        ON workspaces(removed_at, created_at, id);
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -837,6 +913,17 @@ type ApprovalRequestRow = {
   version: number;
   expires_at: string;
   resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type WorkspaceRow = {
+  id: string;
+  name: string;
+  canonical_root: string;
+  canonical_root_digest: string;
+  version: number;
+  removed_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1076,6 +1163,17 @@ function toApprovalRequest(row: ApprovalRequestRow): ApprovalRequest {
     version: Number(row.version),
     expiresAt: row.expires_at,
     resolvedAt: row.resolved_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toWorkspace(row: WorkspaceRow): Workspace {
+  return {
+    id: row.id,
+    name: row.name,
+    version: Number(row.version),
+    removedAt: row.removed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1572,6 +1670,79 @@ export class AppRepository {
     throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
   }
 
+  registerWorkspaceRoot(canonicalRoot: string, name: string): WorkspaceRegistrationResult {
+    const normalizedName = name.trim().slice(0, 120);
+    if (!canonicalRoot || !normalizedName) throw new AevorenBotError("WORKSPACE_INVALID_ROOT");
+    const existing = this.database
+      .prepare("SELECT * FROM workspaces WHERE canonical_root = ? ORDER BY created_at ASC LIMIT 1")
+      .get(canonicalRoot) as WorkspaceRow | undefined;
+    if (existing && !existing.removed_at) {
+      return { disposition: "duplicate", workspace: toWorkspace(existing) };
+    }
+    if (existing) {
+      const timestamp = now();
+      const updated = this.database
+        .prepare(
+          `UPDATE workspaces
+           SET name = ?, removed_at = NULL, version = version + 1, updated_at = ?
+           WHERE id = ? AND removed_at IS NOT NULL AND version = ?`,
+        )
+        .run(normalizedName, timestamp, existing.id, existing.version);
+      if (Number(updated.changes) !== 1) throw new AevorenBotError("WORKSPACE_VERSION_CONFLICT");
+      return { disposition: "restored", workspace: this.getWorkspace(existing.id) };
+    }
+    const id = randomUUID();
+    const timestamp = now();
+    this.database
+      .prepare(
+        `INSERT INTO workspaces(
+           id, name, canonical_root, canonical_root_digest, version, removed_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, 1, NULL, ?, ?)`,
+      )
+      .run(id, normalizedName, canonicalRoot, digestMessage(canonicalRoot), timestamp, timestamp);
+    return { disposition: "registered", workspace: this.getWorkspace(id) };
+  }
+
+  listWorkspaces(): Workspace[] {
+    return (
+      this.database
+        .prepare("SELECT * FROM workspaces WHERE removed_at IS NULL ORDER BY created_at ASC, id ASC")
+        .all() as WorkspaceRow[]
+    ).map(toWorkspace);
+  }
+
+  getWorkspace(id: string, includeRemoved = false): Workspace {
+    const row = this.database.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as WorkspaceRow | undefined;
+    if (!row || row.removed_at && !includeRemoved) throw new AevorenBotError("WORKSPACE_NOT_FOUND");
+    return toWorkspace(row);
+  }
+
+  getWorkspaceRoot(id: string): { workspace: Workspace; rootPath: string } {
+    const row = this.database.prepare("SELECT * FROM workspaces WHERE id = ? AND removed_at IS NULL").get(id) as
+      | WorkspaceRow
+      | undefined;
+    if (!row) throw new AevorenBotError("WORKSPACE_NOT_FOUND");
+    return { workspace: toWorkspace(row), rootPath: row.canonical_root };
+  }
+
+  removeWorkspace(id: string, expectedVersion: number): Workspace {
+    const timestamp = now();
+    const updated = this.database
+      .prepare(
+        `UPDATE workspaces
+         SET removed_at = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND version = ? AND removed_at IS NULL`,
+      )
+      .run(timestamp, timestamp, id, expectedVersion);
+    if (Number(updated.changes) !== 1) {
+      const current = this.getWorkspace(id, true);
+      throw new AevorenBotError("WORKSPACE_VERSION_CONFLICT", undefined, undefined, {
+        currentVersion: current.version,
+      });
+    }
+    return this.getWorkspace(id, true);
+  }
+
   prepareToolInvocation(
     input: ToolInvocationCommand,
     expiresAt = defaultApprovalExpiry(),
@@ -1832,6 +2003,92 @@ export class AppRepository {
     return this.getToolInvocation(id);
   }
 
+  completeToolInvocation(
+    id: string,
+    resultDigest: string,
+    resultMetadata: Record<string, string | number | boolean | null>,
+  ): ToolInvocation {
+    if (!/^[a-f0-9]{64}$/.test(resultDigest)) throw new AevorenBotError("INVALID_REQUEST");
+    const current = this.getToolInvocation(id);
+    if (current.state !== "running") {
+      throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
+    const metadataJson = JSON.stringify(resultMetadata);
+    if (metadataJson.length > 4_096) throw new AevorenBotError("INVALID_REQUEST");
+    const timestamp = now();
+    const updated = this.database
+      .prepare(
+        `UPDATE tool_invocations
+         SET state = 'succeeded', result_digest = ?, result_metadata_json = ?, last_error_code = NULL,
+             version = version + 1, finished_at = ?, updated_at = ?
+         WHERE id = ? AND version = ? AND state = 'running'`,
+      )
+      .run(resultDigest, metadataJson, timestamp, timestamp, id, current.version);
+    if (Number(updated.changes) !== 1) {
+      const latest = this.getToolInvocation(id);
+      throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
+    return this.getToolInvocation(id);
+  }
+
+  failToolInvocation(id: string, errorCode: string): ToolInvocation {
+    const current = this.getToolInvocation(id);
+    const state: ToolInvocationState = current.state === "dispatching"
+      ? "failed-before-execution"
+      : current.state === "running"
+        ? "failed"
+        : (() => {
+            throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: current.state });
+          })();
+    const timestamp = now();
+    const updated = this.database
+      .prepare(
+        `UPDATE tool_invocations
+         SET state = ?, result_digest = NULL, result_metadata_json = NULL, last_error_code = ?,
+             version = version + 1, finished_at = ?, updated_at = ?
+         WHERE id = ? AND version = ? AND state = ?`,
+      )
+      .run(state, errorCode.slice(0, 100), timestamp, timestamp, id, current.version, current.state);
+    if (Number(updated.changes) !== 1) {
+      const latest = this.getToolInvocation(id);
+      throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
+    return this.getToolInvocation(id);
+  }
+
+  cancelToolInvocation(id: string): ToolInvocation {
+    return this.transaction(() => {
+      const current = this.getToolInvocation(id);
+      if (!["awaiting-approval", "approved", "dispatching", "running"].includes(current.state)) {
+        throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      }
+      const timestamp = now();
+      const approval = this.getApprovalRequest(current.approvalRequestId);
+      if (approval.state === "pending" || approval.state === "allowed") {
+        this.database
+          .prepare(
+            `UPDATE approval_requests
+             SET state = 'cancelled', version = version + 1, resolved_at = COALESCE(resolved_at, ?), updated_at = ?
+             WHERE id = ? AND version = ? AND state = ?`,
+          )
+          .run(timestamp, timestamp, approval.id, approval.version, approval.state);
+      }
+      const updated = this.database
+        .prepare(
+          `UPDATE tool_invocations
+           SET state = 'cancelled', version = version + 1, last_error_code = 'TOOL_EXECUTION_CANCELLED',
+               finished_at = ?, updated_at = ?
+           WHERE id = ? AND version = ? AND state = ?`,
+        )
+        .run(timestamp, timestamp, id, current.version, current.state);
+      if (Number(updated.changes) !== 1) {
+        const latest = this.getToolInvocation(id);
+        throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+      }
+      return this.getToolInvocation(id);
+    });
+  }
+
   recoverToolInvocations(): { expired: number; interrupted: number } {
     const timestamp = now();
     return this.transaction(() => {
@@ -1845,6 +2102,29 @@ export class AppRepository {
         )
         .all(timestamp) as Array<{ id: string; tool_invocation_id: string }>;
       for (const approval of expiredPending) {
+        this.database
+          .prepare(
+            "UPDATE approval_requests SET state = 'expired', version = version + 1, resolved_at = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(timestamp, timestamp, approval.id);
+        this.database
+          .prepare(
+            "UPDATE tool_invocations SET state = 'expired', version = version + 1, finished_at = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(timestamp, timestamp, approval.tool_invocation_id);
+      }
+
+      const orphanedPending = this.database
+        .prepare(
+          `SELECT approval.id, approval.tool_invocation_id
+           FROM approval_requests AS approval
+           JOIN tool_invocations AS invocation ON invocation.id = approval.tool_invocation_id
+           JOIN runtime_runs AS runtime ON runtime.id = invocation.runtime_run_id
+           WHERE approval.state = 'pending' AND invocation.state = 'awaiting-approval'
+             AND runtime.state NOT IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested')`,
+        )
+        .all() as Array<{ id: string; tool_invocation_id: string }>;
+      for (const approval of orphanedPending) {
         this.database
           .prepare(
             "UPDATE approval_requests SET state = 'expired', version = version + 1, resolved_at = ?, updated_at = ? WHERE id = ?",
@@ -1888,7 +2168,7 @@ export class AppRepository {
           )
           .run(timestamp, timestamp, invocation.id);
       }
-      return { expired: expiredPending.length + approved.length, interrupted: interrupted.length };
+      return { expired: expiredPending.length + orphanedPending.length + approved.length, interrupted: interrupted.length };
     });
   }
 
