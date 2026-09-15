@@ -126,7 +126,7 @@ describe("Approval and Tool Journal repository", () => {
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(logicalV8Hash(inspected)).toBe(beforeHash);
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual(
-      Array.from({ length: 9 }, (_, index) => ({ version: index + 1 })),
+      Array.from({ length: 10 }, (_, index) => ({ version: index + 1 })),
     );
     expect(inspected.prepare("PRAGMA table_info(tool_invocations)").all()).not.toEqual([]);
     expect(inspected.prepare("PRAGMA table_info(approval_requests)").all()).not.toEqual([]);

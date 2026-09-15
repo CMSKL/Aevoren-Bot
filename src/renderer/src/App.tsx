@@ -22,6 +22,7 @@ import { NewBotChooser } from "./components/NewBotChooser";
 import { ProfileInspector, type ProfileInspectorHandle } from "./components/ProfileInspector";
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
 import { Sidebar } from "./components/Sidebar";
+import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
 import { mergeRoomRuntimeEvents } from "./room-runtime-state";
 
@@ -43,6 +44,7 @@ export function App(): React.JSX.Element {
   const [error, setError] = useState<AppError | null>(null);
   const [closeNotice, setCloseNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"bots" | "profile" | null>(null);
   const [creatingBot, setCreatingBot] = useState(false);
@@ -564,6 +566,7 @@ export function App(): React.JSX.Element {
         onOpenBots={() => setMobilePanel("bots")}
         onOpenProfile={() => setMobilePanel("profile")}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenWorkspaces={() => setWorkspacesOpen(true)}
         onSend={sendMessage}
         onRetryMessage={(clientNonce) => {
           setSubmitting(true);
@@ -614,6 +617,7 @@ export function App(): React.JSX.Element {
       )}
       {mobilePanel ? <button className="drawer-backdrop" type="button" aria-label="关闭侧边面板" onClick={() => void closeMobilePanel()} /> : null}
       <ModelSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <WorkspaceDialog open={workspacesOpen} onClose={() => setWorkspacesOpen(false)} />
       {newBotOpen ? (
         <NewBotChooser
           bots={bots}

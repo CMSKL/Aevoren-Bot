@@ -1881,6 +1881,77 @@ textarea:focus-visible {
   margin-top: 22px;
 }
 
+.workspace-list {
+  display: flex;
+  min-height: 92px;
+  max-height: min(360px, calc(100vh - 310px));
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+}
+
+.workspace-empty {
+  display: grid;
+  min-height: 92px;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.workspace-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.workspace-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--panel-bg);
+}
+
+.workspace-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.workspace-copy {
+  min-width: 0;
+}
+
+.workspace-copy strong,
+.workspace-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-copy strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workspace-copy span {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.workspace-dialog .security-note {
+  margin-top: 12px;
+}
+
 .icon-button {
   width: 32px;
   height: 32px;
@@ -2300,30 +2371,30 @@ textarea:focus-visible {
   }
 
   .conversation-header {
-    gap: 4px;
-    padding: 7px 8px 7px 36px;
+    gap: 3px;
+    padding: 7px 6px 7px 30px;
   }
 
   .conversation-header > .mobile-panel-button,
   .conversation-actions .mobile-panel-button {
-    width: 30px;
-    height: 30px;
-    flex-basis: 30px;
+    width: 24px;
+    height: 24px;
+    flex-basis: 24px;
   }
 
   .conversation-header > .mobile-panel-button svg,
   .conversation-actions .mobile-panel-button svg {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
   }
 
   .conversation-actions {
-    gap: 4px;
+    gap: 3px;
   }
 
   .model-settings-button {
-    width: 28px;
-    min-height: 28px;
+    width: 24px;
+    min-height: 24px;
   }
 
   .conversation-title,

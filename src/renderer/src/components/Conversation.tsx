@@ -27,7 +27,7 @@ import {
   type RoomMention,
 } from "../room-mentions";
 import { AssistantMarkdown } from "./AssistantMarkdown";
-import { BotIcon, MenuIcon, PanelIcon, SendIcon, SettingsIcon, StopIcon } from "./Icons";
+import { BotIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, SettingsIcon, StopIcon } from "./Icons";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
@@ -237,6 +237,7 @@ type ConversationProps = {
   onOpenBots(): void;
   onOpenProfile(): void;
   onOpenSettings(): void;
+  onOpenWorkspaces(): void;
   onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode): Promise<boolean>;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
@@ -264,6 +265,7 @@ export function Conversation({
   onOpenBots,
   onOpenProfile,
   onOpenSettings,
+  onOpenWorkspaces,
   onSend,
   onRetryMessage,
   onRetryRun,
@@ -474,6 +476,10 @@ export function Conversation({
           <p>{room?.room.description || bot?.description || (room ? `${room.members.length} 个 Bot 协作，未点名时自动选择。` : bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
         </div>
         <div className="conversation-actions">
+          <button className="secondary-button model-settings-button" type="button" aria-label="工作区" title="工作区" onClick={onOpenWorkspaces}>
+            <FolderIcon />
+            <span>工作区</span>
+          </button>
           <button className="secondary-button model-settings-button" type="button" aria-label="模型设置" title="模型设置" onClick={onOpenSettings}>
             <SettingsIcon />
             <span>模型设置</span>

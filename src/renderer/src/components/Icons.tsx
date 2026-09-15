@@ -38,6 +38,14 @@ export function SettingsIcon(props: IconProps): React.JSX.Element {
   );
 }
 
+export function FolderIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5v-11Z" />
+    </IconBase>
+  );
+}
+
 export function SendIcon(props: IconProps): React.JSX.Element {
   return (
     <IconBase {...props}>

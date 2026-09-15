@@ -42,6 +42,8 @@ import type {
   ToolInvocationCommand,
   ToolInvocationState,
   ToolPrepareResult,
+  Workspace,
+  WorkspaceRegistrationResult,
   WorkspaceToolRequest,
 } from "@shared/contracts";
 import { toolInvocationCommandSchema } from "@shared/schemas";
@@ -701,6 +703,26 @@ export const MIGRATIONS = [
         ON approval_requests(state, expires_at, created_at, id);
     `,
   },
+  {
+    version: 10,
+    sql: `
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
+        canonical_root TEXT NOT NULL,
+        canonical_root_digest TEXT NOT NULL CHECK (length(canonical_root_digest) = 64),
+        version INTEGER NOT NULL CHECK (version > 0),
+        removed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX workspace_active_canonical_root
+        ON workspaces(canonical_root) WHERE removed_at IS NULL;
+      CREATE INDEX workspaces_visible
+        ON workspaces(removed_at, created_at, id);
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -837,6 +859,17 @@ type ApprovalRequestRow = {
   version: number;
   expires_at: string;
   resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type WorkspaceRow = {
+  id: string;
+  name: string;
+  canonical_root: string;
+  canonical_root_digest: string;
+  version: number;
+  removed_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1076,6 +1109,17 @@ function toApprovalRequest(row: ApprovalRequestRow): ApprovalRequest {
     version: Number(row.version),
     expiresAt: row.expires_at,
     resolvedAt: row.resolved_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toWorkspace(row: WorkspaceRow): Workspace {
+  return {
+    id: row.id,
+    name: row.name,
+    version: Number(row.version),
+    removedAt: row.removed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1570,6 +1614,79 @@ export class AppRepository {
   private throwMemoryConflict(id: string): never {
     const current = this.getMemory(id);
     throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+  }
+
+  registerWorkspaceRoot(canonicalRoot: string, name: string): WorkspaceRegistrationResult {
+    const normalizedName = name.trim().slice(0, 120);
+    if (!canonicalRoot || !normalizedName) throw new AevorenBotError("WORKSPACE_INVALID_ROOT");
+    const existing = this.database
+      .prepare("SELECT * FROM workspaces WHERE canonical_root = ? ORDER BY created_at ASC LIMIT 1")
+      .get(canonicalRoot) as WorkspaceRow | undefined;
+    if (existing && !existing.removed_at) {
+      return { disposition: "duplicate", workspace: toWorkspace(existing) };
+    }
+    if (existing) {
+      const timestamp = now();
+      const updated = this.database
+        .prepare(
+          `UPDATE workspaces
+           SET name = ?, removed_at = NULL, version = version + 1, updated_at = ?
+           WHERE id = ? AND removed_at IS NOT NULL AND version = ?`,
+        )
+        .run(normalizedName, timestamp, existing.id, existing.version);
+      if (Number(updated.changes) !== 1) throw new AevorenBotError("WORKSPACE_VERSION_CONFLICT");
+      return { disposition: "restored", workspace: this.getWorkspace(existing.id) };
+    }
+    const id = randomUUID();
+    const timestamp = now();
+    this.database
+      .prepare(
+        `INSERT INTO workspaces(
+           id, name, canonical_root, canonical_root_digest, version, removed_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, 1, NULL, ?, ?)`,
+      )
+      .run(id, normalizedName, canonicalRoot, digestMessage(canonicalRoot), timestamp, timestamp);
+    return { disposition: "registered", workspace: this.getWorkspace(id) };
+  }
+
+  listWorkspaces(): Workspace[] {
+    return (
+      this.database
+        .prepare("SELECT * FROM workspaces WHERE removed_at IS NULL ORDER BY created_at ASC, id ASC")
+        .all() as WorkspaceRow[]
+    ).map(toWorkspace);
+  }
+
+  getWorkspace(id: string, includeRemoved = false): Workspace {
+    const row = this.database.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as WorkspaceRow | undefined;
+    if (!row || row.removed_at && !includeRemoved) throw new AevorenBotError("WORKSPACE_NOT_FOUND");
+    return toWorkspace(row);
+  }
+
+  getWorkspaceRoot(id: string): { workspace: Workspace; rootPath: string } {
+    const row = this.database.prepare("SELECT * FROM workspaces WHERE id = ? AND removed_at IS NULL").get(id) as
+      | WorkspaceRow
+      | undefined;
+    if (!row) throw new AevorenBotError("WORKSPACE_NOT_FOUND");
+    return { workspace: toWorkspace(row), rootPath: row.canonical_root };
+  }
+
+  removeWorkspace(id: string, expectedVersion: number): Workspace {
+    const timestamp = now();
+    const updated = this.database
+      .prepare(
+        `UPDATE workspaces
+         SET removed_at = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND version = ? AND removed_at IS NULL`,
+      )
+      .run(timestamp, timestamp, id, expectedVersion);
+    if (Number(updated.changes) !== 1) {
+      const current = this.getWorkspace(id, true);
+      throw new AevorenBotError("WORKSPACE_VERSION_CONFLICT", undefined, undefined, {
+        currentVersion: current.version,
+      });
+    }
+    return this.getWorkspace(id, true);
   }
 
   prepareToolInvocation(

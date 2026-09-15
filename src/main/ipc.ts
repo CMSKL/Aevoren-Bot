@@ -26,6 +26,7 @@ import {
   sessionIdSchema,
   toolSessionScopeSchema,
   turnIdSchema,
+  workspaceMutationSchema,
 } from "@shared/schemas";
 import { apiResult, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
@@ -33,6 +34,7 @@ import { OpenAiCompatibleProvider } from "./model";
 import type { ModelSettingsService } from "./settings";
 import type { SendWorker } from "./send-worker";
 import type { RoomCoordinator } from "./room-coordinator";
+import type { WorkspaceService } from "./workspace-service";
 
 type IpcDependencies = {
   window: BrowserWindow;
@@ -40,6 +42,8 @@ type IpcDependencies = {
   settings: ModelSettingsService;
   sendWorker: SendWorker;
   roomCoordinator: RoomCoordinator;
+  workspaceService: WorkspaceService;
+  pickWorkspaceRoot(): Promise<string | null>;
   forceFakeProvider: boolean;
   rendererReady(): void;
   confirmClose(canClose: boolean): void;
@@ -56,7 +60,7 @@ function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
 }
 
 export function registerIpc(dependencies: IpcDependencies): void {
-  const { window, repository, settings, sendWorker, roomCoordinator } = dependencies;
+  const { window, repository, settings, sendWorker, roomCoordinator, workspaceService } = dependencies;
 
   const handle = <TArgs extends unknown[], TResult>(
     channel: string,
@@ -114,6 +118,15 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.memoriesRestore, (_event, input: unknown) => {
     const parsed = memoryMutationSchema.parse(input);
     return repository.restoreMemory(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.workspacesList, () => repository.listWorkspaces());
+  handle(IPC.workspacesAdd, async () => {
+    const rootPath = await dependencies.pickWorkspaceRoot();
+    return rootPath ? workspaceService.registerRoot(rootPath) : null;
+  });
+  handle(IPC.workspacesRemove, (_event, input: unknown) => {
+    const parsed = workspaceMutationSchema.parse(input);
+    return repository.removeWorkspace(parsed.id, parsed.expectedVersion);
   });
   handle(IPC.toolsList, (_event, input: unknown) => {
     const parsed = toolSessionScopeSchema.parse(input);

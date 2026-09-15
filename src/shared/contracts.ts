@@ -34,6 +34,20 @@ export type MemoryItem = {
   updatedAt: string;
 };
 
+export type Workspace = {
+  id: string;
+  name: string;
+  version: number;
+  removedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkspaceRegistrationResult = {
+  disposition: "registered" | "duplicate" | "restored";
+  workspace: Workspace;
+};
+
 export type Session = {
   id: string;
   botId: string | null;
@@ -522,6 +536,7 @@ export type ErrorDomain =
   | "session"
   | "room"
   | "memory"
+  | "workspace"
   | "message"
   | "runtime"
   | "tool"
@@ -578,6 +593,11 @@ export interface AevorenBotApi {
     update(input: { id: string; expectedVersion: number; content: string }): Promise<ApiResult<MemoryItem>>;
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
     restore(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
+  };
+  workspaces: {
+    list(): Promise<ApiResult<Workspace[]>>;
+    add(): Promise<ApiResult<WorkspaceRegistrationResult | null>>;
+    remove(input: { id: string; expectedVersion: number }): Promise<ApiResult<Workspace>>;
   };
   tools: {
     list(input: { sessionId: string }): Promise<ApiResult<ToolInvocation[]>>;

@@ -21,6 +21,11 @@ const api: AevorenBotApi = {
     delete: (input) => ipcRenderer.invoke(IPC.memoriesDelete, input),
     restore: (input) => ipcRenderer.invoke(IPC.memoriesRestore, input),
   },
+  workspaces: {
+    list: () => ipcRenderer.invoke(IPC.workspacesList),
+    add: () => ipcRenderer.invoke(IPC.workspacesAdd),
+    remove: (input) => ipcRenderer.invoke(IPC.workspacesRemove, input),
+  },
   tools: {
     list: (input) => ipcRenderer.invoke(IPC.toolsList, input),
   },
