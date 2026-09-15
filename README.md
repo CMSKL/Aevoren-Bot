@@ -1,6 +1,6 @@
 # Aevoren Bot
 
-Aevoren Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在可靠对话、Runtime 和确定性多 Bot Room 之上，已完成显式 Memory，并建立 Approval + Tool Journal 安全基础。
+Aevoren Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在可靠对话、Runtime 和确定性多 Bot Room 之上，已完成显式 Memory，以及经一次性审批的只读 Workspace 工具闭环。
 
 ## 当前范围
 
@@ -29,7 +29,7 @@ Aevoren Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在可
 - 串行、有界的 Agent Handoff，包含 Turn/Hop/单 Turn 目标数、deadline、循环抑制和拒绝审计；
 - Room Renderer Reload、Main crash 中断恢复和禁止自动重发。
 - 每个 Bot 的显式、版本化 Memory，以及 Direct/Room executor 隔离注入；
-- 一次性 Approval、持久化 Tool Journal、用户显式授权的 Workspace Registry，以及 Main-only 的受限只读执行器；当前没有 Renderer/模型执行入口或命令执行能力。
+- 一次性 Approval、持久化 Tool Journal、用户显式授权的 Workspace Registry，以及由模型结构化请求、Renderer 明确确认、Main 受限执行的只读 List/Read/Search；不具备命令执行或文件写入能力。
 
 无界或并行 fan-out、Memory synthesis、Summary、Routine、Plugin/MCP、Local Exec、Computer Use 和 Cloud Computer 尚未实现。
 
@@ -84,7 +84,7 @@ pnpm validate
 - 可用 `AEVOREN_BOT_DB_PATH` 单独覆盖数据库路径；
 - Renderer 启用 Context Isolation、Sandbox，并禁用 Node Integration 与 WebView；
 - Preload 不暴露原始 `ipcRenderer`、文件系统、Shell 或数据库；
-- P0-A 不具备读取任意本地文件、运行命令或控制桌面的能力。
+- 当前版本不能读取用户未授权的 Workspace 或 Workspace 外路径，也不具备运行命令、写入文件或控制桌面的能力。
 
 ## 文档
 
@@ -118,6 +118,8 @@ pnpm validate
 - [P0-D2a Workspace Registry 验收标准](docs/validation/p0-d2a-workspace-registry-acceptance.md)
 - [P0-D2b 经批准的只读 Workspace 执行器](docs/plans/p0-d2b-readonly-workspace-executor.md)
 - [P0-D2b 只读 Workspace 执行器验收标准](docs/validation/p0-d2b-readonly-workspace-executor-acceptance.md)
+- [P0-D2c Workspace 只读工具端到端接线](docs/plans/p0-d2c-workspace-tools-e2e.md)
+- [P0-D2c Workspace 只读工具端到端验收结果](docs/validation/p0-d2c-workspace-tools-e2e-acceptance.md)
 - [试用反馈模板](docs/templates/pilot-feedback.md)
 
 ## 分支流程
