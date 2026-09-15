@@ -20,6 +20,20 @@ export type BotDeleteResult = {
   archivedRoomIds: string[];
 };
 
+export type MemorySource = "manual-user";
+
+export type MemoryItem = {
+  id: string;
+  botId: string;
+  content: string;
+  contentDigest: string;
+  source: MemorySource;
+  version: number;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Session = {
   id: string;
   botId: string | null;
@@ -100,7 +114,7 @@ export type RuntimeState =
   | "interrupted";
 
 export type RuntimeRoute = "fake" | "openai-compatible";
-export type PromptAuthority = "agent-profile" | "room-context" | "user" | "assistant";
+export type PromptAuthority = "agent-profile" | "memory" | "room-context" | "user" | "assistant";
 
 export type PromptManifestBlock = {
   authority: PromptAuthority;
@@ -113,7 +127,7 @@ export type PromptManifestBlock = {
 };
 
 export type PromptManifest = {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   botId: string;
   profileVersion: number;
   sessionId: string;
@@ -405,6 +419,7 @@ export type ErrorDomain =
   | "bot"
   | "session"
   | "room"
+  | "memory"
   | "message"
   | "runtime"
   | "provider"
@@ -452,6 +467,13 @@ export interface AevorenBotApi {
     duplicate(id: string): Promise<ApiResult<{ bot: Bot; session: Session }>>;
     delete(id: string): Promise<ApiResult<BotDeleteResult>>;
     copyConversationId(id: string): Promise<ApiResult<void>>;
+  };
+  memories: {
+    list(input: { botId: string; includeDeleted?: boolean }): Promise<ApiResult<MemoryItem[]>>;
+    create(input: { botId: string; content: string }): Promise<ApiResult<MemoryItem>>;
+    update(input: { id: string; expectedVersion: number; content: string }): Promise<ApiResult<MemoryItem>>;
+    delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
+    restore(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
   };
   sessions: {
     getMain(botId: string): Promise<ApiResult<Session>>;

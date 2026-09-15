@@ -10,6 +10,7 @@ import type {
   CreateRoomRunInput,
   HandoffState,
   HandoffVisibility,
+  MemoryItem,
   PromptManifest,
   Room,
   RoomBatch,
@@ -98,6 +99,8 @@ const EXISTING_ROOM_RUN_DEADLINE = "9999-12-31T23:59:59.999Z";
 const MAX_HANDOFF_TASK_LENGTH = 20_000;
 const MAX_HANDOFF_CONTEXT_REFS = 64;
 const MAX_HANDOFF_CONTEXT_REF_LENGTH = 200;
+const MAX_ACTIVE_MEMORIES_PER_BOT = 100;
+const MAX_ACTIVE_MEMORY_CHARACTERS = 20_000;
 
 export const MIGRATIONS = [
   {
@@ -579,6 +582,27 @@ export const MIGRATIONS = [
         ON bots(deleted_at, hidden_at, pinned_at, created_at);
     `,
   },
+  {
+    version: 8,
+    sql: `
+      CREATE TABLE memory_items (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        content TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 4000),
+        content_digest TEXT NOT NULL CHECK (length(content_digest) = 64),
+        source TEXT NOT NULL CHECK (source = 'manual-user'),
+        version INTEGER NOT NULL CHECK (version > 0),
+        deleted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX memory_one_active_content_per_bot
+        ON memory_items(bot_id, content_digest) WHERE deleted_at IS NULL;
+      CREATE INDEX memory_items_by_bot
+        ON memory_items(bot_id, deleted_at, created_at, id);
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -592,6 +616,18 @@ type BotRow = {
   has_unread: number;
   deleted_at: string | null;
   version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type MemoryRow = {
+  id: string;
+  bot_id: string;
+  content: string;
+  content_digest: string;
+  source: "manual-user";
+  version: number;
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -782,6 +818,20 @@ function toBot(row: BotRow): Bot {
     hiddenAt: row.hidden_at,
     hasUnread: row.has_unread === 1,
     version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toMemory(row: MemoryRow): MemoryItem {
+  return {
+    id: row.id,
+    botId: row.bot_id,
+    content: row.content,
+    contentDigest: row.content_digest,
+    source: row.source,
+    version: Number(row.version),
+    deletedAt: row.deleted_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -984,6 +1034,14 @@ export function digestMessage(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
+function normalizeMemoryContent(content: string): string {
+  return content.trim();
+}
+
+function digestMemoryContent(content: string): string {
+  return digestMessage(content.normalize("NFC").replace(/\s+/g, " ").trim());
+}
+
 export function digestRoomCommand(
   roomId: string,
   sessionId: string,
@@ -1168,6 +1226,138 @@ export class AppRepository {
     return this.getBot(id);
   }
 
+  listMemories(botId: string, includeDeleted = false): MemoryItem[] {
+    this.getBot(botId);
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM memory_items
+         WHERE bot_id = ? ${includeDeleted ? "" : "AND deleted_at IS NULL"}
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all(botId) as MemoryRow[];
+    return rows.map(toMemory);
+  }
+
+  getMemory(id: string): MemoryItem {
+    const row = this.database.prepare("SELECT * FROM memory_items WHERE id = ?").get(id) as MemoryRow | undefined;
+    if (!row) throw new AevorenBotError("MEMORY_NOT_FOUND");
+    return toMemory(row);
+  }
+
+  createMemory(botId: string, content: string): MemoryItem {
+    this.getBot(botId);
+    const normalized = normalizeMemoryContent(content);
+    const contentDigest = digestMemoryContent(normalized);
+    this.assertMemoryContent(normalized);
+    this.assertNoActiveMemoryDuplicate(botId, contentDigest);
+    this.assertMemoryCapacity(botId, normalized.length, 1);
+    const id = randomUUID();
+    const timestamp = now();
+    this.database
+      .prepare(
+        `INSERT INTO memory_items(
+           id, bot_id, content, content_digest, source, version, deleted_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, 'manual-user', 1, NULL, ?, ?)`,
+      )
+      .run(id, botId, normalized, contentDigest, timestamp, timestamp);
+    return this.getMemory(id);
+  }
+
+  updateMemory(id: string, expectedVersion: number, content: string): MemoryItem {
+    const current = this.getMemory(id);
+    if (current.deletedAt) throw new AevorenBotError("MEMORY_DELETED");
+    if (current.version !== expectedVersion) {
+      throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+    }
+    const normalized = normalizeMemoryContent(content);
+    const contentDigest = digestMemoryContent(normalized);
+    this.assertMemoryContent(normalized);
+    this.assertNoActiveMemoryDuplicate(current.botId, contentDigest, id);
+    this.assertMemoryCapacity(current.botId, normalized.length - current.content.length, 0);
+    const result = this.database
+      .prepare(
+        `UPDATE memory_items
+         SET content = ?, content_digest = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND version = ? AND deleted_at IS NULL`,
+      )
+      .run(normalized, contentDigest, now(), id, expectedVersion);
+    if (Number(result.changes) === 0) this.throwMemoryConflict(id);
+    return this.getMemory(id);
+  }
+
+  deleteMemory(id: string, expectedVersion: number): MemoryItem {
+    const current = this.getMemory(id);
+    if (current.version !== expectedVersion) {
+      throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+    }
+    if (current.deletedAt) throw new AevorenBotError("MEMORY_DELETED");
+    const timestamp = now();
+    const result = this.database
+      .prepare(
+        `UPDATE memory_items
+         SET deleted_at = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND version = ? AND deleted_at IS NULL`,
+      )
+      .run(timestamp, timestamp, id, expectedVersion);
+    if (Number(result.changes) === 0) this.throwMemoryConflict(id);
+    return this.getMemory(id);
+  }
+
+  restoreMemory(id: string, expectedVersion: number): MemoryItem {
+    const current = this.getMemory(id);
+    if (current.version !== expectedVersion) {
+      throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+    }
+    if (!current.deletedAt) return current;
+    this.getBot(current.botId);
+    this.assertNoActiveMemoryDuplicate(current.botId, current.contentDigest, id);
+    this.assertMemoryCapacity(current.botId, current.content.length, 1);
+    const result = this.database
+      .prepare(
+        `UPDATE memory_items
+         SET deleted_at = NULL, version = version + 1, updated_at = ?
+         WHERE id = ? AND version = ? AND deleted_at IS NOT NULL`,
+      )
+      .run(now(), id, expectedVersion);
+    if (Number(result.changes) === 0) this.throwMemoryConflict(id);
+    return this.getMemory(id);
+  }
+
+  private assertMemoryContent(content: string): void {
+    if (content.length === 0 || content.length > 4_000) throw new AevorenBotError("INVALID_REQUEST");
+  }
+
+  private assertNoActiveMemoryDuplicate(botId: string, contentDigest: string, excludedId?: string): void {
+    const duplicate = this.database
+      .prepare(
+        `SELECT 1 FROM memory_items
+         WHERE bot_id = ? AND content_digest = ? AND deleted_at IS NULL ${excludedId ? "AND id <> ?" : ""}
+         LIMIT 1`,
+      )
+      .get(...(excludedId ? [botId, contentDigest, excludedId] : [botId, contentDigest]));
+    if (duplicate) throw new AevorenBotError("MEMORY_DUPLICATE");
+  }
+
+  private assertMemoryCapacity(botId: string, characterDelta: number, countDelta: number): void {
+    const row = this.database
+      .prepare(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(length(content)), 0) AS characters
+         FROM memory_items WHERE bot_id = ? AND deleted_at IS NULL`,
+      )
+      .get(botId) as { count: number; characters: number };
+    if (Number(row.count) + countDelta > MAX_ACTIVE_MEMORIES_PER_BOT) {
+      throw new AevorenBotError("MEMORY_LIMIT_EXCEEDED", undefined, undefined, { reason: "item-count" });
+    }
+    if (Number(row.characters) + characterDelta > MAX_ACTIVE_MEMORY_CHARACTERS) {
+      throw new AevorenBotError("MEMORY_LIMIT_EXCEEDED", undefined, undefined, { reason: "character-count" });
+    }
+  }
+
+  private throwMemoryConflict(id: string): never {
+    const current = this.getMemory(id);
+    throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+  }
+
   setBotPinned(id: string, pinned: boolean): Bot {
     const result = this.database
       .prepare("UPDATE bots SET pinned_at = ?, hidden_at = CASE WHEN ? = 1 THEN NULL ELSE hidden_at END WHERE id = ? AND deleted_at IS NULL")
@@ -1243,6 +1433,7 @@ export class AppRepository {
       const affectedRoomIds = memberships.map((membership) => membership.room_id);
       const archivedRoomIds: string[] = [];
 
+      this.database.prepare("DELETE FROM memory_items WHERE bot_id = ?").run(id);
       this.database.prepare("DELETE FROM sessions WHERE bot_id = ?").run(id);
       this.database.prepare("DELETE FROM room_members WHERE bot_id = ?").run(id);
 

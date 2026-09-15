@@ -51,6 +51,29 @@ function command(detail: ReturnType<AppRepository["createRoom"]>, targetBotIds: 
 }
 
 describe("RoomCoordinator", () => {
+  it("injects each Room executor's own Memory without leaking peer Memory", async () => {
+    const captured: ChatMessage[][] = [];
+    const provider: ModelProvider = {
+      async *run(messages) {
+        captured.push(messages);
+        yield { type: "started", requestId: `memory-room-${captured.length}` };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, bots, detail, coordinator } = setup(provider, 2);
+    repository.createMemory(bots[0]!.bot.id, "ROOM_MEMORY_A");
+    repository.createMemory(bots[1]!.bot.id, "ROOM_MEMORY_B");
+
+    const sent = coordinator.send(command(detail, bots.map(({ bot }) => bot.id)));
+    await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
+    expect(JSON.stringify(captured[0])).toContain("ROOM_MEMORY_A");
+    expect(JSON.stringify(captured[0])).not.toContain("ROOM_MEMORY_B");
+    expect(JSON.stringify(captured[1])).toContain("ROOM_MEMORY_B");
+    expect(JSON.stringify(captured[1])).not.toContain("ROOM_MEMORY_A");
+    expect(repository.listRuntimeRuns(detail.session.id).every((run) => run.promptManifest.schemaVersion === 3)).toBe(true);
+  });
+
   it("deduplicates the same command and rejects a changed command before another provider call", async () => {
     let calls = 0;
     const provider: ModelProvider = {

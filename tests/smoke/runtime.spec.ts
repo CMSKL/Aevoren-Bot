@@ -355,8 +355,12 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.getSnapshot("not-a-uuid"),
     );
     expect(roomResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    const memoryResult = await launched.page.evaluate(() =>
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.memories.list({ botId: "not-a-uuid" }),
+    );
+    expect(memoryResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "bots", "events", "messages", "roomRuntime", "rooms", "runtime", "sessions", "settings", "transcript",
+      "app", "bots", "events", "memories", "messages", "roomRuntime", "rooms", "runtime", "sessions", "settings", "transcript",
     ]);
     expect(await launched.page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).toBe("undefined");
     expect(await launched.page.evaluate(() => typeof (window as unknown as { process?: unknown }).process)).toBe("undefined");
