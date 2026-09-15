@@ -75,8 +75,9 @@ const TOOL_INVOCATION_TRANSITIONS: Record<ToolInvocationState, readonly ToolInvo
   "awaiting-approval": ["cancelled"],
   approved: ["dispatching", "cancelled", "expired"],
   dispatching: ["running", "failed-before-execution", "cancelled", "interrupted-unknown"],
-  running: ["succeeded", "cancelled", "interrupted-unknown"],
+  running: ["succeeded", "failed", "cancelled", "interrupted-unknown"],
   succeeded: [],
+  failed: [],
   denied: [],
   expired: [],
   cancelled: [],
@@ -86,6 +87,7 @@ const TOOL_INVOCATION_TRANSITIONS: Record<ToolInvocationState, readonly ToolInvo
 
 const TERMINAL_TOOL_INVOCATION_STATES: readonly ToolInvocationState[] = [
   "succeeded",
+  "failed",
   "denied",
   "expired",
   "cancelled",
@@ -705,7 +707,59 @@ export const MIGRATIONS = [
   },
   {
     version: 10,
+    foreignKeysOff: true,
     sql: `
+      CREATE TABLE tool_invocations_v10 (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN ('workspace-list', 'workspace-read', 'workspace-search')),
+        workspace_id TEXT NOT NULL,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 1024),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 4096),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded', 'failed',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      INSERT INTO tool_invocations_v10(
+        id, runtime_run_id, session_id, executor_bot_id, tool_call_id, idempotency_key,
+        command_digest, tool_kind, workspace_id, target_path, arguments_json, state,
+        attempt_count, approval_request_id, result_digest, result_metadata_json,
+        last_error_code, version, created_at, updated_at, started_at, finished_at
+      )
+      SELECT id, runtime_run_id, session_id, executor_bot_id, tool_call_id, idempotency_key,
+             command_digest, tool_kind, workspace_id, target_path, arguments_json, state,
+             attempt_count, approval_request_id, result_digest, result_metadata_json,
+             last_error_code, version, created_at, updated_at, started_at, finished_at
+      FROM tool_invocations;
+
+      DROP TABLE tool_invocations;
+      ALTER TABLE tool_invocations_v10 RENAME TO tool_invocations;
+      CREATE INDEX tool_invocations_by_session
+        ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime
+        ON tool_invocations(runtime_run_id, created_at, id);
+
       CREATE TABLE workspaces (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
@@ -1947,6 +2001,92 @@ export class AppRepository {
       throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: latest.state });
     }
     return this.getToolInvocation(id);
+  }
+
+  completeToolInvocation(
+    id: string,
+    resultDigest: string,
+    resultMetadata: Record<string, string | number | boolean | null>,
+  ): ToolInvocation {
+    if (!/^[a-f0-9]{64}$/.test(resultDigest)) throw new AevorenBotError("INVALID_REQUEST");
+    const current = this.getToolInvocation(id);
+    if (current.state !== "running") {
+      throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: current.state });
+    }
+    const metadataJson = JSON.stringify(resultMetadata);
+    if (metadataJson.length > 4_096) throw new AevorenBotError("INVALID_REQUEST");
+    const timestamp = now();
+    const updated = this.database
+      .prepare(
+        `UPDATE tool_invocations
+         SET state = 'succeeded', result_digest = ?, result_metadata_json = ?, last_error_code = NULL,
+             version = version + 1, finished_at = ?, updated_at = ?
+         WHERE id = ? AND version = ? AND state = 'running'`,
+      )
+      .run(resultDigest, metadataJson, timestamp, timestamp, id, current.version);
+    if (Number(updated.changes) !== 1) {
+      const latest = this.getToolInvocation(id);
+      throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
+    return this.getToolInvocation(id);
+  }
+
+  failToolInvocation(id: string, errorCode: string): ToolInvocation {
+    const current = this.getToolInvocation(id);
+    const state: ToolInvocationState = current.state === "dispatching"
+      ? "failed-before-execution"
+      : current.state === "running"
+        ? "failed"
+        : (() => {
+            throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: current.state });
+          })();
+    const timestamp = now();
+    const updated = this.database
+      .prepare(
+        `UPDATE tool_invocations
+         SET state = ?, result_digest = NULL, result_metadata_json = NULL, last_error_code = ?,
+             version = version + 1, finished_at = ?, updated_at = ?
+         WHERE id = ? AND version = ? AND state = ?`,
+      )
+      .run(state, errorCode.slice(0, 100), timestamp, timestamp, id, current.version, current.state);
+    if (Number(updated.changes) !== 1) {
+      const latest = this.getToolInvocation(id);
+      throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
+    return this.getToolInvocation(id);
+  }
+
+  cancelToolInvocation(id: string): ToolInvocation {
+    return this.transaction(() => {
+      const current = this.getToolInvocation(id);
+      if (!["awaiting-approval", "approved", "dispatching", "running"].includes(current.state)) {
+        throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: current.state });
+      }
+      const timestamp = now();
+      const approval = this.getApprovalRequest(current.approvalRequestId);
+      if (approval.state === "pending" || approval.state === "allowed") {
+        this.database
+          .prepare(
+            `UPDATE approval_requests
+             SET state = 'cancelled', version = version + 1, resolved_at = COALESCE(resolved_at, ?), updated_at = ?
+             WHERE id = ? AND version = ? AND state = ?`,
+          )
+          .run(timestamp, timestamp, approval.id, approval.version, approval.state);
+      }
+      const updated = this.database
+        .prepare(
+          `UPDATE tool_invocations
+           SET state = 'cancelled', version = version + 1, last_error_code = 'TOOL_EXECUTION_CANCELLED',
+               finished_at = ?, updated_at = ?
+           WHERE id = ? AND version = ? AND state = ?`,
+        )
+        .run(timestamp, timestamp, id, current.version, current.state);
+      if (Number(updated.changes) !== 1) {
+        const latest = this.getToolInvocation(id);
+        throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+      }
+      return this.getToolInvocation(id);
+    });
   }
 
   recoverToolInvocations(): { expired: number; interrupted: number } {

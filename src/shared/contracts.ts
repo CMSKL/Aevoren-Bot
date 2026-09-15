@@ -221,6 +221,7 @@ export type ToolInvocationState =
   | "dispatching"
   | "running"
   | "succeeded"
+  | "failed"
   | "denied"
   | "expired"
   | "cancelled"

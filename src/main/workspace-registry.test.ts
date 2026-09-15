@@ -56,6 +56,55 @@ function logicalV9Hash(database: DatabaseSync): string {
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
 
+function seedBoundV9Invocation(database: DatabaseSync): void {
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  const digest = "0".repeat(64);
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    database.prepare(
+      `INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at)
+       VALUES('bot-v9', 'Bot', '', '', '', 1, ?, ?)`,
+    ).run(timestamp, timestamp);
+    database.prepare(
+      `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+       VALUES('session-v9', 'bot-v9', NULL, 'MAIN', 1, 0, ?, ?)`,
+    ).run(timestamp, timestamp);
+    database.prepare(
+      `INSERT INTO send_journal(client_nonce, session_id, body_digest, state, attempt_count, created_at, updated_at)
+       VALUES('nonce-v9', 'session-v9', ?, 'acked', 1, ?, ?)`,
+    ).run(digest, timestamp, timestamp);
+    database.prepare(
+      `INSERT INTO runtime_runs(
+         id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route,
+         input_generation, input_seq, prompt_cutoff_seq, prompt_manifest_json, version,
+         created_at, last_activity_at
+       ) VALUES('runtime-v9', 'session-v9', 'nonce-v9', 'execution-v9', 'bot-v9', 1, 'running', 'fake',
+         1, 1, 1, '{}', 1, ?, ?)`,
+    ).run(timestamp, timestamp);
+    database.prepare(
+      `INSERT INTO approval_requests(
+         id, tool_invocation_id, runtime_run_id, session_id, executor_bot_id, action_kind,
+         workspace_id, target_path, target_digest, arguments_digest, requested_scope, state,
+         resolution, policy_version, version, expires_at, resolved_at, created_at, updated_at
+       ) VALUES('approval-v9', 'invocation-v9', 'runtime-v9', 'session-v9', 'bot-v9', 'workspace-read',
+         'workspace-v9', 'notes.txt', ?, ?, 'once', 'allowed', 'allow-once', 1, 2, ?, ?, ?, ?)`,
+    ).run(digest, digest, timestamp, timestamp, timestamp, timestamp);
+    database.prepare(
+      `INSERT INTO tool_invocations(
+         id, runtime_run_id, session_id, executor_bot_id, tool_call_id, idempotency_key,
+         command_digest, tool_kind, workspace_id, target_path, arguments_json, state,
+         attempt_count, approval_request_id, version, created_at, updated_at, started_at
+       ) VALUES('invocation-v9', 'runtime-v9', 'session-v9', 'bot-v9', 'call-v9', 'key-v9',
+         ?, 'workspace-read', 'workspace-v9', 'notes.txt', '{"kind":"workspace-read"}', 'running',
+         1, 'approval-v9', 3, ?, ?, ?)`,
+    ).run(digest, timestamp, timestamp, timestamp);
+    database.exec("COMMIT;");
+  } catch (error) {
+    database.exec("ROLLBACK;");
+    throw error;
+  }
+}
+
 afterEach(() => {
   while (repositories.length > 0) repositories.pop()?.close();
   while (temporaryDirectories.length > 0) {
@@ -70,6 +119,7 @@ describe("Workspace Registry", () => {
     const filename = join(directory, "app.sqlite");
     migrateThroughV9(filename);
     const before = new DatabaseSync(filename);
+    seedBoundV9Invocation(before);
     const beforeHash = logicalV9Hash(before);
     before.close();
 
@@ -84,6 +134,7 @@ describe("Workspace Registry", () => {
       Array.from({ length: 10 }, (_, index) => ({ version: index + 1 })),
     );
     expect(inspected.prepare("PRAGMA table_info(workspaces)").all()).not.toEqual([]);
+    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     inspected.close();
   });
 
