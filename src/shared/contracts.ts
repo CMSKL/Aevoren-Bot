@@ -576,6 +576,12 @@ export type RuntimeEvent = {
   error?: AppError;
 };
 
+export type ToolEvent = {
+  sessionId: string;
+  invocation: ToolInvocation;
+  approval: ApprovalRequest;
+};
+
 export interface AevorenBotApi {
   bots: {
     list(): Promise<ApiResult<Bot[]>>;
@@ -655,6 +661,7 @@ export interface AevorenBotApi {
     subscribeSendState(listener: (event: SendStateEvent) => void): () => void;
     subscribeRuntime(listener: (event: RuntimeEvent) => void): () => void;
     subscribeRoomRuntime(listener: (event: RoomRuntimeEvent) => void): () => void;
+    subscribeTool(listener: (event: ToolEvent) => void): () => void;
   };
   app: {
     ready(): void;

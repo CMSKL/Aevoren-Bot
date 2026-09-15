@@ -61,7 +61,7 @@ export const workspaceRelativePathSchema = z
     }
   })
   .transform((value) => value.normalize("NFC"));
-const workspaceToolRequestSchema = z.discriminatedUnion("kind", [
+export const workspaceToolRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("workspace-list"),
     workspaceId: workspaceIdSchema,

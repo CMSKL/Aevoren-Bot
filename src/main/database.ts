@@ -2114,6 +2114,29 @@ export class AppRepository {
           .run(timestamp, timestamp, approval.tool_invocation_id);
       }
 
+      const orphanedPending = this.database
+        .prepare(
+          `SELECT approval.id, approval.tool_invocation_id
+           FROM approval_requests AS approval
+           JOIN tool_invocations AS invocation ON invocation.id = approval.tool_invocation_id
+           JOIN runtime_runs AS runtime ON runtime.id = invocation.runtime_run_id
+           WHERE approval.state = 'pending' AND invocation.state = 'awaiting-approval'
+             AND runtime.state NOT IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested')`,
+        )
+        .all() as Array<{ id: string; tool_invocation_id: string }>;
+      for (const approval of orphanedPending) {
+        this.database
+          .prepare(
+            "UPDATE approval_requests SET state = 'expired', version = version + 1, resolved_at = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(timestamp, timestamp, approval.id);
+        this.database
+          .prepare(
+            "UPDATE tool_invocations SET state = 'expired', version = version + 1, finished_at = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(timestamp, timestamp, approval.tool_invocation_id);
+      }
+
       const approved = this.database
         .prepare("SELECT id, approval_request_id FROM tool_invocations WHERE state = 'approved'")
         .all() as Array<{ id: string; approval_request_id: string }>;
@@ -2145,7 +2168,7 @@ export class AppRepository {
           )
           .run(timestamp, timestamp, invocation.id);
       }
-      return { expired: expiredPending.length + approved.length, interrupted: interrupted.length };
+      return { expired: expiredPending.length + orphanedPending.length + approved.length, interrupted: interrupted.length };
     });
   }
 

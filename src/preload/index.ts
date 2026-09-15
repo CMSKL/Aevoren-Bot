@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
-import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent } from "@shared/contracts";
 
 const api: AevorenBotApi = {
   bots: {
@@ -91,6 +91,11 @@ const api: AevorenBotApi = {
       const wrapped = (_event: Electron.IpcRendererEvent, value: RoomRuntimeEvent): void => listener(value);
       ipcRenderer.on(IPC.roomRuntimeEvent, wrapped);
       return () => ipcRenderer.removeListener(IPC.roomRuntimeEvent, wrapped);
+    },
+    subscribeTool(listener) {
+      const wrapped = (_event: Electron.IpcRendererEvent, value: ToolEvent): void => listener(value);
+      ipcRenderer.on(IPC.toolEvent, wrapped);
+      return () => ipcRenderer.removeListener(IPC.toolEvent, wrapped);
     },
   },
   app: {

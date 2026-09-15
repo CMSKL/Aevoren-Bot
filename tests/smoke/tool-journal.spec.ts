@@ -29,7 +29,7 @@ function createRunningRuntime(repository: AppRepository, name: string) {
   return { bot, session: created.session, runtime };
 }
 
-test("scopes Approval IPC to one Session and never dispatches an approved foundation call", async () => {
+test("scopes Approval IPC and blocks detached allow after a process boundary", async () => {
   test.setTimeout(30_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-tool-ipc-"));
   const databasePath = join(userDataDir, "aevoren-bot.sqlite");
@@ -74,19 +74,13 @@ test("scopes Approval IPC to one Session and never dispatches an approved founda
           resolution: "allow-once",
         });
         const pendingAfterRejection = await api.approvals.listPending({ sessionId: firstSessionId });
-        const allowed = await api.approvals.resolve({
+        const detachedAllow = await api.approvals.resolve({
           sessionId: firstSessionId,
           id: approvalId,
           expectedVersion: 1,
           resolution: "allow-once",
         });
-        const stale = await api.approvals.resolve({
-          sessionId: firstSessionId,
-          id: approvalId,
-          expectedVersion: 1,
-          resolution: "deny",
-        });
-        return { firstTools, secondTools, firstApprovals, crossSession, pendingAfterRejection, allowed, stale };
+        return { firstTools, secondTools, firstApprovals, crossSession, pendingAfterRejection, detachedAllow };
       },
       {
         firstSessionId: first.session.id,
@@ -97,31 +91,18 @@ test("scopes Approval IPC to one Session and never dispatches an approved founda
 
     expect(snapshot.firstTools).toMatchObject({
       ok: true,
-      data: [{ id: prepared.invocation.id, sessionId: first.session.id, state: "awaiting-approval" }],
+      data: [{ id: prepared.invocation.id, sessionId: first.session.id, state: "expired" }],
     });
     expect(snapshot.secondTools).toEqual({ ok: true, data: [] });
-    expect(snapshot.firstApprovals).toMatchObject({
-      ok: true,
-      data: [{ id: prepared.approval.id, sessionId: first.session.id, state: "pending" }],
-    });
+    expect(snapshot.firstApprovals).toEqual({ ok: true, data: [] });
     expect(snapshot.crossSession).toMatchObject({
       ok: false,
       error: { code: "APPROVAL_SCOPE_INVALID", domain: "approval" },
     });
-    expect(snapshot.pendingAfterRejection).toMatchObject({
-      ok: true,
-      data: [{ id: prepared.approval.id, state: "pending", version: 1 }],
-    });
-    expect(snapshot.allowed).toMatchObject({
-      ok: true,
-      data: {
-        invocation: { state: "approved", attemptCount: 0 },
-        approval: { state: "allowed", resolution: "allow-once", version: 2 },
-      },
-    });
-    expect(snapshot.stale).toMatchObject({
+    expect(snapshot.pendingAfterRejection).toEqual({ ok: true, data: [] });
+    expect(snapshot.detachedAllow).toMatchObject({
       ok: false,
-      error: { code: "APPROVAL_VERSION_CONFLICT", details: { currentVersion: 2 } },
+      error: { code: "TOOL_STATE_INVALID", domain: "tool" },
     });
     await application.close();
     application = undefined;
@@ -145,7 +126,7 @@ test("scopes Approval IPC to one Session and never dispatches an approved founda
     ).toEqual({ state: "expired", attempt_count: 0, result_digest: null });
     expect(
       database.prepare("SELECT state,resolution FROM approval_requests WHERE id = ?").get(prepared.approval.id),
-    ).toEqual({ state: "expired", resolution: "allow-once" });
+    ).toEqual({ state: "expired", resolution: null });
     expect(database.prepare("SELECT COUNT(*) AS count FROM tool_invocations").get()).toEqual({ count: 1 });
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();

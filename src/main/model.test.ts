@@ -72,6 +72,49 @@ describe("parseOpenAiStream", () => {
     ]);
   });
 
+  it("parses one bounded workspace read for an explicitly registered workspace", async () => {
+    const workspaceId = crypto.randomUUID();
+    const args = JSON.stringify({ workspaceId, path: "docs/spec.md", maxBytes: 4096 });
+    const stream = streamFrom([
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "read-1", type: "function", function: { name: "workspace_read", arguments: args } }] }, finish_reason: "tool_calls" }] })}\n\n`,
+    ]);
+    expect(await collect(parseOpenAiStream(
+      stream,
+      new AbortController().signal,
+      DEFAULT_PROVIDER_TIMEOUTS,
+      undefined,
+      new Set([workspaceId]),
+    ))).toEqual([
+      { type: "workspace-tool", toolCallId: "read-1", tool: { kind: "workspace-read", workspaceId, path: "docs/spec.md", maxBytes: 4096 } },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
+  it("fails closed for out-of-scope and mixed workspace tool calls", async () => {
+    const allowedWorkspaceId = crypto.randomUUID();
+    const outsideWorkspaceId = crypto.randomUUID();
+    const target = crypto.randomUUID();
+    const cases = [
+      [{ index: 0, id: "read", type: "function", function: { name: "workspace_read", arguments: JSON.stringify({ workspaceId: outsideWorkspaceId, path: "secret", maxBytes: 10 }) } }],
+      [
+        { index: 0, id: "read", type: "function", function: { name: "workspace_read", arguments: JSON.stringify({ workspaceId: allowedWorkspaceId, path: "safe", maxBytes: 10 }) } },
+        { index: 1, id: "handoff", type: "function", function: { name: "handoff_to_agent", arguments: JSON.stringify({ toAgentId: target, task: "review", contextRefs: [], visibility: "room" }) } },
+      ],
+    ];
+    for (const toolCalls of cases) {
+      const stream = streamFrom([
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: toolCalls }, finish_reason: "tool_calls" }] })}\n\n`,
+      ]);
+      await expect(collect(parseOpenAiStream(
+        stream,
+        new AbortController().signal,
+        DEFAULT_PROVIDER_TIMEOUTS,
+        new Set([target]),
+        new Set([allowedWorkspaceId]),
+      ))).rejects.toMatchObject({ code: "MODEL_WORKSPACE_TOOL_INVALID" });
+    }
+  });
+
   it("ignores usage-only and nonzero-choice events", async () => {
     const stream = streamFrom([
       'data: {"choices":[],"usage":{"completion_tokens":1}}\n\n',
@@ -309,6 +352,30 @@ describe("parseOpenAiStream", () => {
     }));
     const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<string, unknown>;
     expect(request).not.toHaveProperty("tools");
+  });
+
+  it("advertises only bounded read-only workspace tools with stable workspace IDs", async () => {
+    const workspaceId = crypto.randomUUID();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      streamFrom(['data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n']),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "test-model", "test-key");
+    await collect(provider.run([{ role: "user", content: "inspect" }], new AbortController().signal, {
+      executorBotId: crypto.randomUUID(),
+      executionKey: "workspace-run",
+      workspaces: [{ id: workspaceId, name: "private-local-name" }],
+    }));
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
+      tools: Array<{ function: { name: string; parameters: unknown } }>;
+    };
+    expect(request.tools.map((tool) => tool.function.name)).toEqual(["workspace_list", "workspace_read", "workspace_search"]);
+    expect(JSON.stringify(request.tools)).toContain(workspaceId);
+    expect(JSON.stringify(request.tools)).not.toContain("private-local-name");
+    expect(JSON.stringify(request)).toContain("UNTRUSTED_WORKSPACE_LABEL_DATA");
+    expect(JSON.stringify(request)).toContain("private-local-name");
+    expect(JSON.stringify(request.tools)).not.toContain("workspace-write");
   });
 
   it("uses the locked P0-B timeout defaults", () => {

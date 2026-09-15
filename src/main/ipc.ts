@@ -35,6 +35,7 @@ import type { ModelSettingsService } from "./settings";
 import type { SendWorker } from "./send-worker";
 import type { RoomCoordinator } from "./room-coordinator";
 import type { WorkspaceService } from "./workspace-service";
+import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 
 type IpcDependencies = {
   window: BrowserWindow;
@@ -43,6 +44,7 @@ type IpcDependencies = {
   sendWorker: SendWorker;
   roomCoordinator: RoomCoordinator;
   workspaceService: WorkspaceService;
+  workspaceToolCoordinator: WorkspaceToolCoordinator;
   pickWorkspaceRoot(): Promise<string | null>;
   forceFakeProvider: boolean;
   rendererReady(): void;
@@ -60,7 +62,7 @@ function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
 }
 
 export function registerIpc(dependencies: IpcDependencies): void {
-  const { window, repository, settings, sendWorker, roomCoordinator, workspaceService } = dependencies;
+  const { window, repository, settings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
 
   const handle = <TArgs extends unknown[], TResult>(
     channel: string,
@@ -136,11 +138,9 @@ export function registerIpc(dependencies: IpcDependencies): void {
     const parsed = toolSessionScopeSchema.parse(input);
     return repository.listPendingApprovalRequests(parsed.sessionId);
   });
-  handle(IPC.approvalsResolve, (_event, input: unknown) => {
+  handle(IPC.approvalsResolve, async (_event, input: unknown) => {
     const parsed = approvalResolutionSchema.parse(input);
-    const approval = repository.getApprovalRequest(parsed.id);
-    if (approval.sessionId !== parsed.sessionId) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
-    return repository.resolveToolApproval(parsed.id, parsed.expectedVersion, parsed.resolution);
+    return workspaceToolCoordinator.resolve(parsed.sessionId, parsed.id, parsed.expectedVersion, parsed.resolution);
   });
   handle(IPC.roomsList, (_event, input: unknown) => repository.listRooms(roomListSchema.parse(input)?.includeArchived ?? false));
   handle(IPC.roomsCreate, (_event, input: unknown) => repository.createRoom(roomCreateSchema.parse(input)));

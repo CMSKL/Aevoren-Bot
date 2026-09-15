@@ -47,6 +47,7 @@ export const IPC = {
   sendStateEvent: "events:send-state",
   runtimeEvent: "events:runtime",
   roomRuntimeEvent: "events:room-runtime",
+  toolEvent: "events:tool",
   appRendererReady: "app:renderer-ready",
   appBeforeClose: "app:before-close",
   appConfirmClose: "app:confirm-close",
