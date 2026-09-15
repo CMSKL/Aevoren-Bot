@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { asAppError, ERROR_REGISTRY, MsBotError } from "./errors";
+import { asAppError, ERROR_REGISTRY, AevorenBotError } from "./errors";
 
 describe("error registry", () => {
   it("maps schema errors to a stable validation envelope", () => {
@@ -15,7 +15,7 @@ describe("error registry", () => {
   });
 
   it("allows only registered detail keys across the error boundary", () => {
-    expect(new MsBotError("BOT_VERSION_CONFLICT", undefined, undefined, {
+    expect(new AevorenBotError("BOT_VERSION_CONFLICT", undefined, undefined, {
       currentVersion: 2,
       sql: "SELECT secret",
     }).toAppError()).toEqual({

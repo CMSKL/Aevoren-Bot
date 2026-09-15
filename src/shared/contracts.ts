@@ -4,12 +4,21 @@ export type Bot = {
   label: string;
   description: string;
   instructions: string;
+  pinnedAt: string | null;
+  hiddenAt: string | null;
+  hasUnread: boolean;
   version: number;
   createdAt: string;
   updatedAt: string;
 };
 
 export type BotPatch = Partial<Pick<Bot, "name" | "label" | "description" | "instructions">>;
+
+export type BotDeleteResult = {
+  id: string;
+  affectedRoomIds: string[];
+  archivedRoomIds: string[];
+};
 
 export type Session = {
   id: string;
@@ -432,11 +441,17 @@ export type RuntimeEvent = {
   error?: AppError;
 };
 
-export interface MsBotApi {
+export interface AevorenBotApi {
   bots: {
     list(): Promise<ApiResult<Bot[]>>;
     create(): Promise<ApiResult<{ bot: Bot; session: Session }>>;
     update(input: { id: string; expectedVersion: number; patch: BotPatch }): Promise<ApiResult<Bot>>;
+    setPinned(input: { id: string; pinned: boolean }): Promise<ApiResult<Bot>>;
+    setUnread(input: { id: string; unread: boolean }): Promise<ApiResult<Bot>>;
+    setHidden(input: { id: string; hidden: boolean }): Promise<ApiResult<Bot>>;
+    duplicate(id: string): Promise<ApiResult<{ bot: Bot; session: Session }>>;
+    delete(id: string): Promise<ApiResult<BotDeleteResult>>;
+    copyConversationId(id: string): Promise<ApiResult<void>>;
   };
   sessions: {
     getMain(botId: string): Promise<ApiResult<Session>>;

@@ -12,7 +12,7 @@ import type {
   RoomRoutingMode,
 } from "@shared/contracts";
 import { digestRoomCommand, type AppRepository } from "./database";
-import { asAppError, MsBotError } from "./errors";
+import { asAppError, AevorenBotError } from "./errors";
 import type { ModelEvent } from "./model";
 import type { RuntimeExecutor, RuntimeExecutionResult } from "./runtime-executor";
 
@@ -108,7 +108,7 @@ export class RoomCoordinator {
   }
 
   send(command: Omit<RoomSendCommand, "routingMode">): RoomSendResult {
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const prepared = this.repository.prepareRoomMessage(command);
     if (prepared.disposition === "duplicate") {
       return {
@@ -127,13 +127,13 @@ export class RoomCoordinator {
 
   /** Internal M2 entry point. It is deliberately not exposed through preload or IPC. */
   sendCoordinated(command: RoomSendCommand, policy: CoordinatedRoomPolicy = {}): RoomSendResult {
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const routingMode = command.routingMode;
-    if (routingMode === "automatic") throw new MsBotError("INVALID_REQUEST");
+    if (routingMode === "automatic") throw new AevorenBotError("INVALID_REQUEST");
     this.assertRouteShape(command, routingMode);
     const deadlineMs = policy.deadlineMs ?? DEFAULT_ROOT_DEADLINE_MS;
     const existing = this.repository.getRoomBatchByNonce(command.clientNonce);
-    if (!existing && (!Number.isFinite(deadlineMs) || deadlineMs <= 0)) throw new MsBotError("INVALID_REQUEST");
+    if (!existing && (!Number.isFinite(deadlineMs) || deadlineMs <= 0)) throw new AevorenBotError("INVALID_REQUEST");
     if (!existing) this.assertLiveRoute(command, routingMode);
     const prepared = existing
       ? this.prepareExactDuplicate(command, existing)
@@ -171,7 +171,7 @@ export class RoomCoordinator {
   }
 
   async routeAndSend(command: RoomSendCommand, policy: CoordinatedRoomPolicy = {}): Promise<RoomSendResult> {
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const routingMode = command.routingMode;
     this.assertRouteShape(command, routingMode);
     const commandDigest = digestRoomCommand(
@@ -183,15 +183,15 @@ export class RoomCoordinator {
     );
     const pending = this.routingInFlight.get(command.clientNonce);
     if (pending) {
-      if (pending.digest !== commandDigest) throw new MsBotError("MESSAGE_NONCE_CONFLICT");
+      if (pending.digest !== commandDigest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
       return pending.promise;
     }
     const existing = this.repository.getRoomBatchByNonce(command.clientNonce);
     if (existing) return this.duplicateResult(command, existing);
     const existingJournal = this.repository.getSend(command.clientNonce);
     if (existingJournal) {
-      if (existingJournal.bodyDigest !== commandDigest) throw new MsBotError("MESSAGE_NONCE_CONFLICT");
-      throw new MsBotError("ROOM_BATCH_NOT_FOUND");
+      if (existingJournal.bodyDigest !== commandDigest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
+      throw new AevorenBotError("ROOM_BATCH_NOT_FOUND");
     }
     if (routingMode !== "automatic") return this.sendCoordinated(command, policy);
 
@@ -210,7 +210,7 @@ export class RoomCoordinator {
       if (!batch.windingDown) {
         this.stopCoordinatedRun(
           batchId,
-          new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "deadline" }).toAppError(),
+          new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "deadline" }).toAppError(),
         );
       }
       return this.repository.getRoomBatch(batchId);
@@ -228,7 +228,7 @@ export class RoomCoordinator {
   }
 
   retryTurn(turnId: string): RoomTurn {
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const turn = this.repository.createRoomTurnRetry(turnId);
     const run = this.repository.getRoomRun(turn.batchId);
     const coordinated = this.isCoordinated(turn.batchId);
@@ -239,7 +239,7 @@ export class RoomCoordinator {
   }
 
   continue(batchId: string): RoomBatch {
-    if (this.shuttingDown) throw new MsBotError("APP_INTERRUPTED");
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const turns = this.repository.continueInterruptedRoomBatch(batchId);
     const batch = this.repository.getRoomBatch(batchId);
     const coordinated = this.isCoordinated(batchId);
@@ -295,7 +295,7 @@ export class RoomCoordinator {
       if (coordinated) {
         try {
           if (this.repository.getIncomingHandoff(pending.id)?.visibility === "direct") {
-            throw new MsBotError("INVALID_REQUEST");
+            throw new AevorenBotError("INVALID_REQUEST");
           }
           this.repository.assertRoomTurnDispatchable(pending.id);
         } catch (error) {
@@ -436,9 +436,9 @@ export class RoomCoordinator {
     const routingMode = command.routingMode;
     const journal = this.repository.getSendOrThrow(command.clientNonce);
     if (journal.bodyDigest !== digestRoomCommand(command.roomId, command.sessionId, command.text, command.targetBotIds, routingMode)) {
-      throw new MsBotError("MESSAGE_NONCE_CONFLICT");
+      throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
     }
-    if (existing.routingMode !== routingMode) throw new MsBotError("MESSAGE_NONCE_CONFLICT");
+    if (existing.routingMode !== routingMode) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
     const initialTurns = this.repository.listRoomTurns(existing.id).filter((turn) => turn.origin === "initial");
     return this.repository.createRoomRunWithInitialTurns({
       roomId: existing.roomId,
@@ -467,39 +467,39 @@ export class RoomCoordinator {
   }
 
   private assertRouteShape(command: RoomSendCommand, routingMode: Exclude<RoomRoutingMode, "legacy">): void {
-    if (!["automatic", "explicit", "everyone"].includes(routingMode)) throw new MsBotError("INVALID_REQUEST");
+    if (!["automatic", "explicit", "everyone"].includes(routingMode)) throw new AevorenBotError("INVALID_REQUEST");
     const uniqueTargets = new Set(command.targetBotIds);
     if (uniqueTargets.size !== command.targetBotIds.length || command.targetBotIds.length > 6) {
-      throw new MsBotError("INVALID_REQUEST");
+      throw new AevorenBotError("INVALID_REQUEST");
     }
     if (routingMode === "automatic") {
-      if (command.targetBotIds.length !== 0) throw new MsBotError("INVALID_REQUEST");
+      if (command.targetBotIds.length !== 0) throw new AevorenBotError("INVALID_REQUEST");
       return;
     }
-    if (command.targetBotIds.length === 0) throw new MsBotError("INVALID_REQUEST");
+    if (command.targetBotIds.length === 0) throw new AevorenBotError("INVALID_REQUEST");
   }
 
   private assertLiveRoute(command: RoomSendCommand, routingMode: "explicit" | "everyone"): void {
     const detail = this.repository.getRoomDetail(command.roomId);
-    if (detail.session.id !== command.sessionId) throw new MsBotError("SESSION_NOT_FOUND");
+    if (detail.session.id !== command.sessionId) throw new AevorenBotError("SESSION_NOT_FOUND");
     const memberIds = detail.members.map((member) => member.botId);
     const uniqueTargets = new Set(command.targetBotIds);
-    if (command.targetBotIds.some((id) => !memberIds.includes(id))) throw new MsBotError("ROOM_MEMBER_INVALID");
+    if (command.targetBotIds.some((id) => !memberIds.includes(id))) throw new AevorenBotError("ROOM_MEMBER_INVALID");
     if (routingMode === "everyone" && (
       command.targetBotIds.length !== memberIds.length || memberIds.some((id) => !uniqueTargets.has(id))
     )) {
-      throw new MsBotError("ROOM_MEMBER_INVALID");
+      throw new AevorenBotError("ROOM_MEMBER_INVALID");
     }
   }
 
   private async selectAndSend(command: RoomSendCommand, policy: CoordinatedRoomPolicy): Promise<RoomSendResult> {
     const deadlineMs = policy.deadlineMs ?? DEFAULT_ROOT_DEADLINE_MS;
-    if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new MsBotError("INVALID_REQUEST");
+    if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new AevorenBotError("INVALID_REQUEST");
     const detail = this.repository.getRoomDetail(command.roomId);
-    if (detail.session.id !== command.sessionId) throw new MsBotError("SESSION_NOT_FOUND");
-    if (detail.room.archivedAt) throw new MsBotError("ROOM_ARCHIVED");
+    if (detail.session.id !== command.sessionId) throw new AevorenBotError("SESSION_NOT_FOUND");
+    if (detail.room.archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     if (this.repository.getActiveRoomBatch(detail.session.id) || this.repository.getActiveRuntimeRun(detail.session.id)) {
-      throw new MsBotError("ROOM_BATCH_BUSY");
+      throw new AevorenBotError("ROOM_BATCH_BUSY");
     }
     const roster = detail.members.map((member) => ({
       id: member.botId,
@@ -517,26 +517,26 @@ export class RoomCoordinator {
     try {
       const abortGate = new Promise<never>((_resolve, reject) => {
         controller.signal.addEventListener("abort", () => {
-          reject(new MsBotError(timedOut ? "MODEL_ROUTER_TIMEOUT" : "APP_INTERRUPTED"));
+          reject(new AevorenBotError(timedOut ? "MODEL_ROUTER_TIMEOUT" : "APP_INTERRUPTED"));
         }, { once: true });
       });
       const selectionPromise = this.executor.selectRoomOwner(command.text, roster, controller.signal);
       // Promise.race installs rejection handlers on both inputs. A provider that
       // ignores Abort can settle late, but it can no longer reach persistence.
       const selection: unknown = await Promise.race([selectionPromise, abortGate]);
-      if (timedOut) throw new MsBotError("MODEL_ROUTER_TIMEOUT");
-      if (this.shuttingDown || controller.signal.aborted) throw new MsBotError("APP_INTERRUPTED");
-      if (!selection || typeof selection !== "object" || Array.isArray(selection)) throw new MsBotError("MODEL_ROUTER_INVALID");
+      if (timedOut) throw new AevorenBotError("MODEL_ROUTER_TIMEOUT");
+      if (this.shuttingDown || controller.signal.aborted) throw new AevorenBotError("APP_INTERRUPTED");
+      if (!selection || typeof selection !== "object" || Array.isArray(selection)) throw new AevorenBotError("MODEL_ROUTER_INVALID");
       const values = selection as Record<string, unknown>;
       if (
         Object.keys(values).toSorted().join("\0") !== ["ownerAgentId", "reason"].toSorted().join("\0") ||
         typeof values.ownerAgentId !== "string" || typeof values.reason !== "string"
       ) {
-        throw new MsBotError("MODEL_ROUTER_INVALID");
+        throw new AevorenBotError("MODEL_ROUTER_INVALID");
       }
-      if (!roster.some((peer) => peer.id === values.ownerAgentId)) throw new MsBotError("MODEL_ROUTER_INVALID");
+      if (!roster.some((peer) => peer.id === values.ownerAgentId)) throw new AevorenBotError("MODEL_ROUTER_INVALID");
       const reason = values.reason.trim();
-      if (!reason || reason.length > 240) throw new MsBotError("MODEL_ROUTER_INVALID");
+      if (!reason || reason.length > 240) throw new AevorenBotError("MODEL_ROUTER_INVALID");
       const prepared = this.repository.createRoomRunWithInitialTurns({
         roomId: command.roomId,
         sessionId: command.sessionId,
@@ -578,9 +578,9 @@ export class RoomCoordinator {
         event.contextRefs.some((reference) => typeof reference !== "string") ||
         !event.toolCallId.trim()
       ) {
-        throw new MsBotError("INVALID_REQUEST");
+        throw new AevorenBotError("INVALID_REQUEST");
       }
-      if (event.visibility !== "room") throw new MsBotError("INVALID_REQUEST");
+      if (event.visibility !== "room") throw new AevorenBotError("INVALID_REQUEST");
       const source = this.repository.getRoomTurn(fromTurnId);
       const created = this.repository.createHandoff({
         runId,
@@ -596,7 +596,7 @@ export class RoomCoordinator {
       if (created.disposition === "duplicate") return;
       this.emit(this.repository.getRoomRun(runId));
     } catch (error) {
-      if (error instanceof MsBotError && EXPECTED_HANDOFF_REJECTIONS.has(error.code)) {
+      if (error instanceof AevorenBotError && EXPECTED_HANDOFF_REJECTIONS.has(error.code)) {
         this.repository.recordHandoffRejection({
           runId,
           fromTurnId,
@@ -618,7 +618,7 @@ export class RoomCoordinator {
       this.deadlineTimers.delete(runId);
       this.stopCoordinatedRun(
         runId,
-        new MsBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "deadline" }).toAppError(),
+        new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "deadline" }).toAppError(),
       );
     }, delay);
     this.deadlineTimers.set(runId, timer);

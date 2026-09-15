@@ -12,6 +12,7 @@ export const ERROR_REGISTRY = {
   INVALID_REQUEST: { domain: "validation", retryable: false, safeMessage: "请求参数不符合要求。", allowedDetailKeys: [] },
   BOT_NOT_FOUND: { domain: "bot", retryable: false, safeMessage: "没有找到这个 Bot。", allowedDetailKeys: [] },
   BOT_VERSION_CONFLICT: { domain: "bot", retryable: true, safeMessage: "Bot 已在别处更新，请重新确认后再保存。", allowedDetailKeys: ["currentVersion"] },
+  BOT_BUSY: { domain: "bot", retryable: true, safeMessage: "该 Bot 正在运行，暂时不能删除。", allowedDetailKeys: [] },
   ROOM_NOT_FOUND: { domain: "room", retryable: false, safeMessage: "没有找到这个群聊。", allowedDetailKeys: [] },
   ROOM_VERSION_CONFLICT: { domain: "room", retryable: true, safeMessage: "群聊资料已更新，请重新加载后再保存。", allowedDetailKeys: ["currentVersion"] },
   ROOM_MEMBERSHIP_CONFLICT: { domain: "room", retryable: true, safeMessage: "群聊成员已发生变化，请刷新后再试。", allowedDetailKeys: ["currentVersion"] },
@@ -72,7 +73,7 @@ function filterDetails(code: ErrorCode, details?: AppError["details"]): AppError
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 
-export class MsBotError extends Error {
+export class AevorenBotError extends Error {
   readonly retryable: boolean;
 
   constructor(
@@ -82,7 +83,7 @@ export class MsBotError extends Error {
     public readonly details?: AppError["details"],
   ) {
     super(safeMessage ?? ERROR_REGISTRY[code].safeMessage);
-    this.name = "MsBotError";
+    this.name = "AevorenBotError";
     this.retryable = retryable ?? ERROR_REGISTRY[code].retryable;
   }
 
@@ -100,9 +101,9 @@ export class MsBotError extends Error {
 }
 
 export function asAppError(error: unknown): AppError {
-  if (error instanceof MsBotError) return error.toAppError();
-  if (error instanceof ZodError) return new MsBotError("INVALID_REQUEST").toAppError();
-  return new MsBotError("INTERNAL_ERROR").toAppError();
+  if (error instanceof AevorenBotError) return error.toAppError();
+  if (error instanceof ZodError) return new AevorenBotError("INVALID_REQUEST").toAppError();
+  return new AevorenBotError("INTERNAL_ERROR").toAppError();
 }
 
 export async function apiResult<T>(operation: () => T | Promise<T>): Promise<ApiResult<T>> {

@@ -66,17 +66,17 @@ export function App(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    const unsubscribeTranscript = window.msBot.events.subscribeTranscript((event) => {
+    const unsubscribeTranscript = window.aevorenBot.events.subscribeTranscript((event) => {
       if (event.sessionId === loadingSessionIdRef.current) {
         bufferedTranscriptRef.current.push(event);
         return;
       }
       if (event.sessionId === sessionIdRef.current) setEntries((current) => mergeTranscriptEntry(current, event.entry));
     });
-    const unsubscribeSend = window.msBot.events.subscribeSendState((event) => {
+    const unsubscribeSend = window.aevorenBot.events.subscribeSendState((event) => {
       if (event.sessionId === sessionIdRef.current && event.error) setError(event.error);
     });
-    const unsubscribeRuntime = window.msBot.events.subscribeRuntime((event) => {
+    const unsubscribeRuntime = window.aevorenBot.events.subscribeRuntime((event) => {
       if (event.sessionId === loadingSessionIdRef.current) {
         bufferedRuntimeRef.current.push(event);
         return;
@@ -89,7 +89,7 @@ export function App(): React.JSX.Element {
       setLiveState(event.liveState);
       if (event.error) setError(event.error);
     });
-    const unsubscribeRoom = window.msBot.events.subscribeRoomRuntime((event) => {
+    const unsubscribeRoom = window.aevorenBot.events.subscribeRoomRuntime((event) => {
       if (event.sessionId === loadingSessionIdRef.current) {
         bufferedRoomRef.current.push(event);
         return;
@@ -101,13 +101,13 @@ export function App(): React.JSX.Element {
       setRoomHandoffRejections((current) => mergeRoomRuntimeEvents([], [], [], current, [event]).rejections);
       if (event.error) setError(event.error);
     });
-    const unsubscribeClose = window.msBot.app.subscribeBeforeClose(() => {
-      void flushActive().then((saved) => window.msBot.app.confirmClose(saved));
+    const unsubscribeClose = window.aevorenBot.app.subscribeBeforeClose(() => {
+      void flushActive().then((saved) => window.aevorenBot.app.confirmClose(saved));
     });
-    const unsubscribeCloseBlocked = window.msBot.app.subscribeCloseBlocked(() => {
+    const unsubscribeCloseBlocked = window.aevorenBot.app.subscribeCloseBlocked(() => {
       setCloseNotice("关闭未完成：资料仍保留在当前窗口，请稍后重试关闭。");
     });
-    window.msBot.app.ready();
+    window.aevorenBot.app.ready();
     return () => {
       unsubscribeTranscript();
       unsubscribeSend();
@@ -124,7 +124,7 @@ export function App(): React.JSX.Element {
     setLoading(true);
     setError(null);
     setCloseNotice(null);
-    const sessionResult = await window.msBot.sessions.getMain(bot.id);
+    const sessionResult = await window.aevorenBot.sessions.getMain(bot.id);
     if (requestId !== openRequestRef.current) return;
     if (!sessionResult.ok) {
       setError(sessionResult.error);
@@ -136,7 +136,7 @@ export function App(): React.JSX.Element {
     bufferedTranscriptRef.current = [];
     bufferedRuntimeRef.current = [];
     bufferedRoomRef.current = [];
-    const snapshotResult = await window.msBot.runtime.getSessionSnapshot(nextSession.id);
+    const snapshotResult = await window.aevorenBot.runtime.getSessionSnapshot(nextSession.id);
     if (requestId !== openRequestRef.current) return;
     if (!snapshotResult.ok) {
       loadingSessionIdRef.current = null;
@@ -152,7 +152,7 @@ export function App(): React.JSX.Element {
     );
     sessionIdRef.current = nextSession.id;
     selectedRoomIdRef.current = null;
-    sessionStorage.setItem("ms-bot:selected", `bot:${bot.id}`);
+    sessionStorage.setItem("aevoren-bot:selected", `bot:${bot.id}`);
     loadingSessionIdRef.current = null;
     setSelectedBot(bot);
     setSelectedRoom(null);
@@ -177,7 +177,7 @@ export function App(): React.JSX.Element {
     setLoading(true);
     setError(null);
     setCloseNotice(null);
-    const detailResult = await window.msBot.rooms.get(room.id);
+    const detailResult = await window.aevorenBot.rooms.get(room.id);
     if (requestId !== openRequestRef.current) return;
     if (!detailResult.ok) {
       setError(detailResult.error);
@@ -189,7 +189,7 @@ export function App(): React.JSX.Element {
     bufferedTranscriptRef.current = [];
     bufferedRuntimeRef.current = [];
     bufferedRoomRef.current = [];
-    const snapshotResult = await window.msBot.roomRuntime.getSnapshot(room.id);
+    const snapshotResult = await window.aevorenBot.roomRuntime.getSnapshot(room.id);
     if (requestId !== openRequestRef.current) return;
     if (!snapshotResult.ok) {
       loadingSessionIdRef.current = null;
@@ -212,7 +212,7 @@ export function App(): React.JSX.Element {
     );
     sessionIdRef.current = nextSession.id;
     selectedRoomIdRef.current = room.id;
-    sessionStorage.setItem("ms-bot:selected", `room:${room.id}`);
+    sessionStorage.setItem("aevoren-bot:selected", `room:${room.id}`);
     loadingSessionIdRef.current = null;
     setSelectedBot(null);
     setSelectedRoom(snapshotResult.data.detail);
@@ -233,7 +233,7 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([window.msBot.bots.list(), window.msBot.rooms.list({ includeArchived: true })]).then(async ([botResult, roomResult]) => {
+    void Promise.all([window.aevorenBot.bots.list(), window.aevorenBot.rooms.list({ includeArchived: true })]).then(async ([botResult, roomResult]) => {
       if (cancelled) return;
       if (!botResult.ok) {
         setError(botResult.error);
@@ -247,16 +247,17 @@ export function App(): React.JSX.Element {
       }
       setBots(botResult.data);
       setRooms(roomResult.data);
-      const selected = sessionStorage.getItem("ms-bot:selected");
+      const selected = sessionStorage.getItem("aevoren-bot:selected");
       const selectedRoom = selected?.startsWith("room:")
         ? roomResult.data.find((room) => room.id === selected.slice(5) && room.archivedAt === null)
         : undefined;
       const selectedBot = selected?.startsWith("bot:")
-        ? botResult.data.find((bot) => bot.id === selected.slice(4))
+        ? botResult.data.find((bot) => bot.id === selected.slice(4) && bot.hiddenAt === null)
         : undefined;
+      const firstVisibleBot = botResult.data.find((bot) => bot.hiddenAt === null);
       if (selectedRoom) await openRoom(selectedRoom, false);
       else if (selectedBot) await openBot(selectedBot, false);
-      else if (botResult.data[0]) await openBot(botResult.data[0], false);
+      else if (firstVisibleBot) await openBot(firstVisibleBot, false);
       else {
         const firstActiveRoom = roomResult.data.find((room) => room.archivedAt === null);
         if (firstActiveRoom) await openRoom(firstActiveRoom, false);
@@ -287,7 +288,7 @@ export function App(): React.JSX.Element {
     try {
       if (!(await flushActive())) return;
       setCreateError(null);
-      const result = await window.msBot.bots.create();
+      const result = await window.aevorenBot.bots.create();
       if (!result.ok) {
         setCreateError(result.error);
         return;
@@ -307,7 +308,7 @@ export function App(): React.JSX.Element {
     try {
       if (!(await flushActive())) return;
       setCreateError(null);
-      const result = await window.msBot.rooms.create({ memberBotIds });
+      const result = await window.aevorenBot.rooms.create({ memberBotIds });
       if (!result.ok) {
         setCreateError(result.error);
         return;
@@ -325,6 +326,147 @@ export function App(): React.JSX.Element {
     setSelectedBot((current) => current?.id === bot.id ? bot : current);
   }
 
+  async function setBotPinned(bot: Bot, pinned: boolean): Promise<boolean> {
+    const result = await window.aevorenBot.bots.setPinned({ id: bot.id, pinned });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateBot(result.data);
+    return true;
+  }
+
+  async function setBotUnread(bot: Bot, unread: boolean): Promise<boolean> {
+    const result = await window.aevorenBot.bots.setUnread({ id: bot.id, unread });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateBot(result.data);
+    return true;
+  }
+
+  async function renameBot(bot: Bot, name: string): Promise<boolean> {
+    if (selectedBot?.id === bot.id && !(await flushActive())) return false;
+    const latest = await window.aevorenBot.bots.list();
+    if (!latest.ok) {
+      setError(latest.error);
+      return false;
+    }
+    const current = latest.data.find((item) => item.id === bot.id);
+    if (!current) return false;
+    const result = await window.aevorenBot.bots.update({ id: bot.id, expectedVersion: current.version, patch: { name } });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateBot(result.data);
+    return true;
+  }
+
+  async function editBot(bot: Bot): Promise<void> {
+    await openBot(bot);
+    if (sessionStorage.getItem("aevoren-bot:selected") !== `bot:${bot.id}`) return;
+    setMobilePanel("profile");
+    window.setTimeout(() => {
+      if (sessionStorage.getItem("aevoren-bot:selected") !== `bot:${bot.id}` || document.activeElement !== document.body) return;
+      profileRef.current?.focusName();
+    }, 200);
+  }
+
+  async function duplicateBot(bot: Bot): Promise<boolean> {
+    if (selectedBot?.id === bot.id && !(await flushActive())) return false;
+    const result = await window.aevorenBot.bots.duplicate(bot.id);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    setBots((current) => [...current, result.data.bot]);
+    await openBot(result.data.bot, false);
+    return true;
+  }
+
+  async function copyBotId(bot: Bot): Promise<boolean> {
+    const result = await window.aevorenBot.bots.copyConversationId(bot.id);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    return true;
+  }
+
+  async function setBotHidden(bot: Bot, hidden: boolean): Promise<boolean> {
+    if (selectedBot?.id === bot.id && !(await flushActive())) return false;
+    const result = await window.aevorenBot.bots.setHidden({ id: bot.id, hidden });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateBot(result.data);
+    return true;
+  }
+
+  function clearSelection(): void {
+    sessionIdRef.current = null;
+    selectedRoomIdRef.current = null;
+    sessionStorage.removeItem("aevoren-bot:selected");
+    setSelectedBot(null);
+    setSelectedRoom(null);
+    setSession(null);
+    setEntries([]);
+    setRuns([]);
+    setRoomBatches([]);
+    setRoomTurns([]);
+    setRoomHandoffs([]);
+    setRoomHandoffRejections([]);
+    setLiveState(null);
+  }
+
+  async function openFallback(nextBots: Bot[], nextRooms: Room[]): Promise<void> {
+    const nextBot = nextBots.find((bot) => bot.hiddenAt === null);
+    if (nextBot) {
+      await openBot(nextBot, false);
+      return;
+    }
+    const nextRoom = nextRooms.find((room) => room.archivedAt === null);
+    if (nextRoom) {
+      await openRoom(nextRoom, false);
+      return;
+    }
+    clearSelection();
+  }
+
+  async function deleteBot(bot: Bot): Promise<boolean> {
+    if (!(await flushActive())) return false;
+    const result = await window.aevorenBot.bots.delete(bot.id);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    const [botResult, roomResult] = await Promise.all([
+      window.aevorenBot.bots.list(),
+      window.aevorenBot.rooms.list({ includeArchived: true }),
+    ]);
+    if (!botResult.ok) {
+      setError(botResult.error);
+      return false;
+    }
+    if (!roomResult.ok) {
+      setError(roomResult.error);
+      return false;
+    }
+    setBots(botResult.data);
+    setRooms(roomResult.data);
+    if (selectedRoom && result.data.affectedRoomIds.includes(selectedRoom.room.id)) {
+      const currentRoom = roomResult.data.find((room) => room.id === selectedRoom.room.id && room.archivedAt === null);
+      if (currentRoom) await openRoom(currentRoom, false);
+      else await openFallback(botResult.data, roomResult.data);
+    } else if (selectedBot?.id === bot.id) {
+      await openFallback(botResult.data, roomResult.data);
+    }
+    return true;
+  }
+
   function updateRoom(detail: RoomDetail): void {
     setSelectedRoom(detail);
     setRooms((current) => current.map((item) => item.id === detail.room.id ? detail.room : item));
@@ -337,7 +479,7 @@ export function App(): React.JSX.Element {
     setCloseNotice(null);
     const clientNonce = crypto.randomUUID();
     const result = selectedRoom
-      ? await window.msBot.roomRuntime.send({
+      ? await window.aevorenBot.roomRuntime.send({
           roomId: selectedRoom.room.id,
           sessionId: session.id,
           clientNonce,
@@ -345,7 +487,7 @@ export function App(): React.JSX.Element {
           targetBotIds: targetBotIds ?? [],
           routingMode: routingMode ?? "automatic",
         })
-      : await window.msBot.messages.send({ sessionId: session.id, clientNonce, text });
+      : await window.aevorenBot.messages.send({ sessionId: session.id, clientNonce, text });
     setSubmitting(false);
     if (!result.ok) {
       setError(result.error);
@@ -357,17 +499,9 @@ export function App(): React.JSX.Element {
   function handleArchived(room: Room): void {
     setRooms((current) => current.map((item) => item.id === room.id ? room : item));
     selectedRoomIdRef.current = null;
-    if (bots[0]) void openBot(bots[0], false);
-    else {
-      setSelectedRoom(null);
-      setSession(null);
-      setEntries([]);
-      setRuns([]);
-      setRoomBatches([]);
-      setRoomTurns([]);
-      setRoomHandoffs([]);
-      setRoomHandoffRejections([]);
-    }
+    const visibleBot = bots.find((bot) => bot.hiddenAt === null);
+    if (visibleBot) void openBot(visibleBot, false);
+    else clearSelection();
   }
 
   const activeRoomBatch = roomBatches.some((batch) => batch.state === "queued" || batch.state === "running");
@@ -391,10 +525,18 @@ export function App(): React.JSX.Element {
         onMobileClose={() => setMobilePanel(null)}
         onSelectBot={(bot) => void openBot(bot)}
         onSelectRoom={(room) => void openRoom(room)}
+        onPinBot={setBotPinned}
+        onMarkBotUnread={setBotUnread}
+        onRenameBot={renameBot}
+        onEditBot={(bot) => void editBot(bot)}
+        onDuplicateBot={duplicateBot}
+        onCopyBotId={copyBotId}
+        onHideBot={setBotHidden}
+        onDeleteBot={deleteBot}
         onRestoreRoom={(room) => {
           void flushActive().then(async (saved) => {
             if (!saved) return;
-            const result = await window.msBot.rooms.archive({ id: room.id, archived: false });
+            const result = await window.aevorenBot.rooms.archive({ id: room.id, archived: false });
             if (!result.ok) {
               setError(result.error);
               return;
@@ -425,22 +567,22 @@ export function App(): React.JSX.Element {
         onSend={sendMessage}
         onRetryMessage={(clientNonce) => {
           setSubmitting(true);
-          void window.msBot.messages.retry(clientNonce).then((result) => {
+          void window.aevorenBot.messages.retry(clientNonce).then((result) => {
             setSubmitting(false);
             if (!result.ok) setError(result.error);
           });
         }}
         onRetryRun={(runId) => {
           setSubmitting(true);
-          void window.msBot.runtime.retry(runId).then((result) => {
+          void window.aevorenBot.runtime.retry(runId).then((result) => {
             setSubmitting(false);
             if (!result.ok) setError(result.error);
           });
         }}
-        onCancelRun={(runId) => void window.msBot.runtime.cancel(runId).then((result) => { if (!result.ok) setError(result.error); })}
-        onCancelRoomBatch={(batchId) => void window.msBot.roomRuntime.cancel(batchId).then((result) => { if (!result.ok) setError(result.error); })}
-        onRetryRoomTurn={(turnId) => void window.msBot.roomRuntime.retryTurn(turnId).then((result) => { if (!result.ok) setError(result.error); })}
-        onContinueRoomBatch={(batchId) => void window.msBot.roomRuntime.continue(batchId).then((result) => { if (!result.ok) setError(result.error); })}
+        onCancelRun={(runId) => void window.aevorenBot.runtime.cancel(runId).then((result) => { if (!result.ok) setError(result.error); })}
+        onCancelRoomBatch={(batchId) => void window.aevorenBot.roomRuntime.cancel(batchId).then((result) => { if (!result.ok) setError(result.error); })}
+        onRetryRoomTurn={(turnId) => void window.aevorenBot.roomRuntime.retryTurn(turnId).then((result) => { if (!result.ok) setError(result.error); })}
+        onContinueRoomBatch={(batchId) => void window.aevorenBot.roomRuntime.continue(batchId).then((result) => { if (!result.ok) setError(result.error); })}
         onOpenSpeaker={(botId) => {
           const bot = bots.find((item) => item.id === botId);
           if (bot) void openBot(bot);

@@ -9,8 +9,9 @@ import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
 import { ModelSettingsService, type SecretCodec } from "./settings";
 
-const userDataOverride = process.env.MS_BOT_USER_DATA_DIR;
+const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
+const hideTestWindow = process.env.AEVOREN_BOT_TEST_HIDDEN === "1";
 
 let mainWindow: BrowserWindow | null = null;
 let repository: AppRepository | null = null;
@@ -26,6 +27,12 @@ let closeConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
 let shutdownPromise: Promise<void> | null = null;
 
 const CLOSE_CONFIRMATION_TIMEOUT_MS = 5_000;
+
+function appIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, "icon.png")
+    : join(app.getAppPath(), "resources", "icon.png");
+}
 
 const electronSecretCodec: SecretCodec = {
   isAvailable: () => safeStorage.isEncryptionAvailable(),
@@ -105,10 +112,12 @@ function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
+    show: !hideTestWindow,
     minWidth: 390,
     minHeight: 640,
+    icon: appIconPath(),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#080808" : "#f5f5f5",
-    title: "MS-Bot",
+    title: "Aevoren Bot",
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 12, y: 12 } }
       : {}),
@@ -118,6 +127,7 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false,
+      backgroundThrottling: !hideTestWindow,
     },
   });
 
@@ -152,14 +162,18 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
-  const databasePath = process.env.MS_BOT_DB_PATH ?? join(app.getPath("userData"), "ms-bot.sqlite");
+  if (process.platform === "darwin") {
+    if (hideTestWindow) app.dock?.hide();
+    else app.dock?.setIcon(appIconPath());
+  }
+  const databasePath = process.env.AEVOREN_BOT_DB_PATH ?? join(app.getPath("userData"), "aevoren-bot.sqlite");
   repository = new AppRepository(databasePath);
   repository.recoverInterruptedSends();
   repository.recoverInterruptedRooms();
   repository.recoverInterruptedRuntimeRuns();
   const settings = new ModelSettingsService(repository, electronSecretCodec);
   mainWindow = createWindow();
-  const forceFakeProvider = process.env.MS_BOT_FAKE_PROVIDER === "1";
+  const forceFakeProvider = process.env.AEVOREN_BOT_FAKE_PROVIDER === "1";
   const sendWorker = new SendWorker(
     repository,
     settings,

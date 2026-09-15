@@ -7,6 +7,7 @@ export type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
 
 export type ProfileInspectorHandle = {
   flush(): Promise<boolean>;
+  focusName(): void;
 };
 
 type ProfileInspectorProps = {
@@ -47,6 +48,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   const versionRef = useRef(bot?.version ?? 1);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (bot?.id === botIdRef.current) {
@@ -80,7 +82,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
     const expectedVersion = versionRef.current;
     setStatus("saving");
     onError(null);
-    const operation = window.msBot.bots.update({ id, expectedVersion, patch: snapshot as BotPatch }).then((result) => {
+    const operation = window.aevorenBot.bots.update({ id, expectedVersion, patch: snapshot as BotPatch }).then((result) => {
       if (!result.ok) {
         setStatus("failed");
         onError(result.error);
@@ -111,7 +113,13 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
     return true;
   }
 
-  useImperativeHandle(ref, () => ({ flush }));
+  useImperativeHandle(ref, () => ({
+    flush,
+    focusName() {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    },
+  }));
 
   function update(field: keyof ProfileDraft, value: string): void {
     if (!draftRef.current) return;
@@ -156,7 +164,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
 
       <label className="field">
         <span>名称</span>
-        <input value={draft.name} maxLength={80} placeholder="Bob" onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
+        <input ref={nameInputRef} value={draft.name} maxLength={80} placeholder="Bob" onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
       </label>
       <label className="field">
         <span>标签（可选）</span>

@@ -70,7 +70,7 @@ describe("P0-B repository and migration", () => {
   }
 
   it("migrates a v1 database without changing existing logical records", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v1-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v1-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const legacy = new DatabaseSync(filename);
@@ -114,6 +114,7 @@ describe("P0-B repository and migration", () => {
       { version: 4 },
       { version: 5 },
       { version: 6 },
+      { version: 7 },
     ]);
     expect(inspected.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 0 });
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -122,7 +123,7 @@ describe("P0-B repository and migration", () => {
   });
 
   it("rolls back the v2 migration when its first schema change conflicts", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v2-failure-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v2-failure-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const legacy = new DatabaseSync(filename);
@@ -141,7 +142,7 @@ describe("P0-B repository and migration", () => {
   });
 
   it("migrates a populated v2 runtime to v3 without changing logical data", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v2-room-migration-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v2-room-migration-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const legacy = createV2Database(filename);
@@ -166,13 +167,13 @@ describe("P0-B repository and migration", () => {
     expect(logicalV2Hash(inspected)).toBe(beforeHash);
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 },
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 },
     ]);
     inspected.close();
   });
 
   it("rolls back every v3 shadow table when migration fails", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v3-failure-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v3-failure-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const legacy = createV2Database(filename);

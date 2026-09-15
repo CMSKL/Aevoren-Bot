@@ -85,7 +85,7 @@ describe("Room repository", () => {
   });
 
   it("rolls back Room, members and MAIN session as one transaction", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-room-rollback-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-room-rollback-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = new AppRepository(filename);

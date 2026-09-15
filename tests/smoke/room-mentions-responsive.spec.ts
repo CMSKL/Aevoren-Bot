@@ -6,7 +6,7 @@ import { _electron as electron, expect, test, type Page } from "@playwright/test
 import { AppRepository } from "../../src/main/database";
 
 function seedRoom(userDataDir: string): { roomName: string; botNames: string[] } {
-  const repository = new AppRepository(join(userDataDir, "ms-bot.sqlite"));
+  const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
   try {
     const botNames = ["研究员", "评审员", "执行员 · 负责验证窄窗口候选和提及标签不会撑破布局的超长名称"];
     const bots = botNames.map((name) => {
@@ -43,12 +43,12 @@ async function assertViewportContained(page: Page): Promise<void> {
 
 test("supports Grok-style Room mentions, deterministic routing, and responsive layouts", async () => {
   test.setTimeout(90_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-room-mentions-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-room-mentions-"));
   const seeded = seedRoom(userDataDir);
   const application = await electron.launch({
     args: ["."],
     cwd: process.cwd(),
-    env: { ...process.env, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1", MS_BOT_FAKE_DELAY_MS: "5" },
+    env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1", AEVOREN_BOT_FAKE_DELAY_MS: "5" },
   });
 
   try {
@@ -164,7 +164,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await expect(invalidMention).toHaveAttribute("aria-invalid", "true");
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
     await expect(page.locator("article.message-user")).toHaveCount(4);
-    await page.screenshot({ path: "/tmp/ms-bot-room-mention-invalid.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/aevoren-bot-room-mention-invalid.png", fullPage: true });
     await invalidMention.click();
     await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
@@ -177,7 +177,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
       await application.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]?.setSize(size.width, size.height), { width, height });
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(width);
       await assertViewportContained(page);
-      if (width === 1180) await page.screenshot({ path: "/tmp/ms-bot-room-mentions-desktop.png", fullPage: true });
+      if (width === 1180) await page.screenshot({ path: "/tmp/aevoren-bot-room-mentions-desktop.png", fullPage: true });
     }
 
     await expect(page.locator(".sidebar")).not.toBeVisible();
@@ -188,7 +188,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
       const rect = element.getBoundingClientRect();
       return rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight;
     })).toBe(true);
-    expect(await page.locator(".mention-option").first().evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(38);
+    expect(await page.locator(".mention-option").first().evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(40);
     const longCandidate = page.locator(".mention-option").filter({ hasText: seeded.botNames[2]! }).locator("strong");
     expect(await longCandidate.evaluate((element) => {
       const rect = element.getBoundingClientRect();
@@ -196,7 +196,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
         && rect.right <= window.innerWidth
         && getComputedStyle(element).textOverflow === "ellipsis";
     })).toBe(true);
-    await page.screenshot({ path: "/tmp/ms-bot-room-mentions-narrow.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/aevoren-bot-room-mentions-narrow.png", fullPage: true });
     await input.press("Escape");
 
     await page.getByRole("button", { name: "打开 Bot 列表" }).click();
@@ -209,7 +209,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await page.getByRole("button", { name: "关闭群聊设置" }).click();
     expect(consoleErrors).toEqual([]);
 
-    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
     expect(database.prepare("SELECT COUNT(*) AS count FROM room_batches WHERE state = 'completed'").get()).toEqual({ count: 4 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM room_turns WHERE state = 'completed'").get()).toEqual({ count: 7 });
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);

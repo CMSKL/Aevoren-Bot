@@ -8,7 +8,7 @@ function environment(userDataDir: string): Record<string, string> {
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
-  return { ...inherited, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1" };
+  return { ...inherited, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" };
 }
 
 async function launch(userDataDir: string): Promise<{ application: ElectronApplication; page: Page }> {
@@ -17,7 +17,7 @@ async function launch(userDataDir: string): Promise<{ application: ElectronAppli
 }
 
 function databaseCounts(userDataDir: string): { bots: number; sessions: number; transcript: number } {
-  const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+  const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
   try {
     const count = (table: string): number =>
       Number((database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count);
@@ -36,7 +36,7 @@ async function openChooser(page: Page): Promise<ReturnType<Page["getByRole"]>> {
 }
 
 test("keeps the database empty until Create new Bot is explicitly selected", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-create-cancel-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-create-cancel-"));
   let application: ElectronApplication | undefined;
   try {
     const launched = await launch(userDataDir);
@@ -74,7 +74,7 @@ test("keeps the database empty until Create new Bot is explicitly selected", asy
 });
 
 test("creates one neutral Bot and one MAIN session under a duplicate trigger, then restores profile edits", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-create-once-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-create-once-"));
   let application: ElectronApplication | undefined;
   try {
     let launched = await launch(userDataDir);
@@ -125,13 +125,13 @@ test("creates one neutral Bot and one MAIN session under a duplicate trigger, th
 });
 
 test("rolls back a failed create and keeps the chooser recoverable", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-create-failure-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-create-failure-"));
   let application: ElectronApplication | undefined;
   try {
     const launched = await launch(userDataDir);
     application = launched.application;
     const page = launched.page;
-    const databasePath = join(userDataDir, "ms-bot.sqlite");
+    const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     let database = new DatabaseSync(databasePath);
     database.exec("CREATE TRIGGER reject_main BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'test'); END;");
     database.close();
@@ -157,7 +157,7 @@ test("rolls back a failed create and keeps the chooser recoverable", async () =>
 });
 
 test("supports Enter to create from the recipient search field", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-create-keyboard-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-create-keyboard-"));
   let application: ElectronApplication | undefined;
   try {
     const launched = await launch(userDataDir);
@@ -176,7 +176,7 @@ test("supports Enter to create from the recipient search field", async () => {
 });
 
 test("filters and selects an existing Bot without creating another resource", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-create-existing-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-create-existing-"));
   let application: ElectronApplication | undefined;
   try {
     const launched = await launch(userDataDir);

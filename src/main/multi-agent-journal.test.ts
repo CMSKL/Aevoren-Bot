@@ -160,10 +160,12 @@ function logicalV5Hash(database: DatabaseSync): string {
     "bots", "sessions", "transcript_entries", "send_journal", "app_settings", "runtime_runs",
     "rooms", "room_members", "room_batches", "room_turns", "agent_handoffs",
   ];
-  const snapshot = Object.fromEntries(tables.map((table) => [
-    table,
-    database.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
-  ]));
+  const snapshot = Object.fromEntries(tables.map((table) => {
+    const columns = table === "bots"
+      ? "id, name, label, description, instructions, version, created_at, updated_at"
+      : "*";
+    return [table, database.prepare(`SELECT ${columns} FROM ${table} ORDER BY rowid`).all()];
+  }));
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
 
@@ -177,7 +179,7 @@ afterEach(() => {
 
 describe("multi-agent RoomRun journal", () => {
   it("migrates a populated v5 database to v6 without changing existing logical data", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v6-rejection-migration-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v6-rejection-migration-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     migrateFixtureThroughV5(filename);
@@ -194,7 +196,7 @@ describe("multi-agent RoomRun journal", () => {
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(logicalV5Hash(inspected)).toBe(beforeHash);
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 },
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 },
     ]);
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(inspected.prepare("PRAGMA table_info(handoff_rejections)").all().map((column) => (
@@ -206,7 +208,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("rolls back v6 atomically when the rejection audit table already exists", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v6-rejection-rollback-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v6-rejection-rollback-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     migrateFixtureThroughV5(filename);
@@ -229,7 +231,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("migrates populated v3 data once and preserves it across repeated opens", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v4-migration-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v4-migration-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     createPopulatedV3Database(filename);
@@ -271,14 +273,14 @@ describe("multi-agent RoomRun journal", () => {
     expect(reopened.getRoomRun("run").triggerMessageId).toBe("message");
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 },
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 },
     ]);
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     inspected.close();
   });
 
   it("rolls back the complete v4 migration when its final table creation fails", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v4-rollback-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v4-rollback-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     createPopulatedV3Database(filename);
@@ -298,7 +300,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("rolls back the v5 shadow migration and keeps legacy routing truthful", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v5-rollback-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v5-rollback-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     migrateFixtureThroughV4(filename);
@@ -322,7 +324,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("enforces routing mode and reason consistency in SQLite", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v5-routing-check-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v5-routing-check-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
@@ -348,7 +350,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("fails closed and rolls back v4 when legacy Turns share one Runtime", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-v4-runtime-duplicate-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-v4-runtime-duplicate-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     createPopulatedV3Database(filename);
@@ -398,7 +400,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("rejects an already-expired new root atomically but returns an existing duplicate first", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-root-deadline-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-root-deadline-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
@@ -481,7 +483,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("journals a Handoff rejection idempotently without storing provider task or raw tool-call content", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-handoff-rejection-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-handoff-rejection-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
@@ -524,7 +526,7 @@ describe("multi-agent RoomRun journal", () => {
     const createCase = (fileBacked = false) => {
       let filename = ":memory:";
       if (fileBacked) {
-        const directory = mkdtempSync(join(tmpdir(), "ms-bot-handoff-input-limits-"));
+        const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-handoff-input-limits-"));
         temporaryDirectories.push(directory);
         filename = join(directory, "app.sqlite");
       }
@@ -763,7 +765,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("rejects room-visible Handoffs after membership changes without falling back to another Agent", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-handoff-membership-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-handoff-membership-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
@@ -1002,7 +1004,7 @@ describe("multi-agent RoomRun journal", () => {
       toAgentId: thirdOutside.id,
     })).toThrowError(expect.objectContaining({ code: "ROOM_RUN_LIMIT_EXCEEDED", details: { reason: "max-targets-per-turn" } }));
 
-    const deadlineDirectory = mkdtempSync(join(tmpdir(), "ms-bot-deadline-limit-"));
+    const deadlineDirectory = mkdtempSync(join(tmpdir(), "aevoren-bot-deadline-limit-"));
     temporaryDirectories.push(deadlineDirectory);
     const deadlineFilename = join(deadlineDirectory, "app.sqlite");
     const deadlineValue = repository(deadlineFilename);
@@ -1069,7 +1071,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("blocks retry and interrupted continuation after winding-down or deadline", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-hard-stop-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-hard-stop-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
@@ -1105,7 +1107,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("applies frozen membership to initial/room retries but preserves direct retry semantics atomically", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-retry-membership-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-retry-membership-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
@@ -1324,7 +1326,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("enforces one AgentTurn per Runtime at the database boundary", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-runtime-unique-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-runtime-unique-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
@@ -1362,7 +1364,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("rolls back every initial AgentTurn when root creation fails midway", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-room-run-rollback-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-room-run-rollback-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
@@ -1387,7 +1389,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("rolls back the target AgentTurn when Handoff journaling fails", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-handoff-rollback-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-handoff-rollback-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
@@ -1409,7 +1411,7 @@ describe("multi-agent RoomRun journal", () => {
   });
 
   it("restores the complete RoomRun, AgentTurn and Handoff journal after reopen", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ms-bot-journal-reopen-"));
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-journal-reopen-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);

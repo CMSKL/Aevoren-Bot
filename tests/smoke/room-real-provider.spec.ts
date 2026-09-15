@@ -1,10 +1,10 @@
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type Page } from "@playwright/test";
-import type { MsBotApi } from "@shared/contracts";
+import type { AevorenBotApi } from "@shared/contracts";
 
-const isolatedUserData = process.env.MS_BOT_REAL_PROVIDER_USER_DATA_DIR;
-const isolatedDatabase = process.env.MS_BOT_REAL_PROVIDER_DB_PATH;
+const isolatedUserData = process.env.AEVOREN_BOT_REAL_PROVIDER_USER_DATA_DIR;
+const isolatedDatabase = process.env.AEVOREN_BOT_REAL_PROVIDER_DB_PATH;
 
 async function createNamedBot(page: Page, name: string): Promise<void> {
   const before = await page.locator(".bot-row").count();
@@ -34,32 +34,32 @@ test("routes explicit, multiple, and automatic Room targets through the configur
   test.setTimeout(300_000);
   expect(
     !(isolatedDatabase && isolatedUserData),
-    "set only one of MS_BOT_REAL_PROVIDER_DB_PATH or MS_BOT_REAL_PROVIDER_USER_DATA_DIR",
+    "set only one of AEVOREN_BOT_REAL_PROVIDER_DB_PATH or AEVOREN_BOT_REAL_PROVIDER_USER_DATA_DIR",
   ).toBe(true);
   const environment = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] =>
       entry[1] !== undefined && ![
-        "MS_BOT_FAKE_PROVIDER",
-        "MS_BOT_DB_PATH",
-        "MS_BOT_USER_DATA_DIR",
+        "AEVOREN_BOT_FAKE_PROVIDER",
+        "AEVOREN_BOT_DB_PATH",
+        "AEVOREN_BOT_USER_DATA_DIR",
       ].includes(entry[0]),
     ),
   );
-  environment.MS_BOT_USE_SYSTEM_SAFE_STORAGE = "1";
-  if (isolatedDatabase) environment.MS_BOT_DB_PATH = isolatedDatabase;
-  else environment.MS_BOT_USER_DATA_DIR = isolatedUserData!;
-  const databasePath = isolatedDatabase ?? join(isolatedUserData!, "ms-bot.sqlite");
+  environment.AEVOREN_BOT_USE_SYSTEM_SAFE_STORAGE = "1";
+  if (isolatedDatabase) environment.AEVOREN_BOT_DB_PATH = isolatedDatabase;
+  else environment.AEVOREN_BOT_USER_DATA_DIR = isolatedUserData!;
+  const databasePath = isolatedDatabase ?? join(isolatedUserData!, "aevoren-bot.sqlite");
   const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
   let roomName: string;
   try {
     const page = await application.firstWindow();
     const configured = await page.evaluate(async () => {
-      const result = await (window as unknown as { msBot: MsBotApi }).msBot.settings.getModelConfiguration();
+      const result = await (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.settings.getModelConfiguration();
       return result.ok && result.data.apiKeyConfigured && Boolean(result.data.modelId);
     });
     expect(configured).toBe(true);
     const connection = await page.evaluate(() =>
-      (window as unknown as { msBot: MsBotApi }).msBot.settings.testModelConnection(),
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.settings.testModelConnection(),
     );
     expect(connection.ok, connection.ok ? undefined : connection.error.code).toBe(true);
     await expect(page.locator(".bot-row").first()).toBeVisible();

@@ -30,7 +30,7 @@ function sha256(filename: string): string {
 }
 
 function createV6Fixture(): string {
-  const directory = mkdtempSync(join(tmpdir(), "ms-bot-room-diagnostics-"));
+  const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-room-diagnostics-"));
   directories.push(directory);
   const filename = join(directory, "app.sqlite");
   const repository = new AppRepository(filename);
@@ -39,7 +39,7 @@ function createV6Fixture(): string {
   database.exec("PRAGMA foreign_keys = ON;");
   const timestamp = "2026-01-01T00:00:00.000Z";
   database.exec(`
-    INSERT INTO bots VALUES
+    INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at) VALUES
       ('${BOT_A}', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 1, '${timestamp}', '${timestamp}'),
       ('${BOT_B}', 'Agent B', '', '', '', 1, '${timestamp}', '${timestamp}');
     INSERT INTO rooms VALUES('${ROOM_ID}', 'Room', '', 1, 1, NULL, '${timestamp}', '${timestamp}');
@@ -101,7 +101,7 @@ afterEach(() => {
 });
 
 describe("room diagnostics CLI", () => {
-  it("returns only aggregate allowlisted v6 diagnostics without changing the database", () => {
+  it("returns only aggregate allowlisted diagnostics without changing the database", () => {
     const filename = createV6Fixture();
     const before = sha256(filename);
     const result = run(filename);
@@ -116,7 +116,7 @@ describe("room diagnostics CLI", () => {
     expect(result.stdout).not.toContain("instructions");
 
     expect(JSON.parse(result.stdout)).toEqual({
-      schemaVersion: 6,
+      schemaVersion: 7,
       runId: RUN_ID,
       roomId: ROOM_ID,
       sessionId: SESSION_ID,
@@ -165,7 +165,7 @@ describe("room diagnostics CLI", () => {
     expect(JSON.parse(unavailable.stderr).error.code).toBe("DATABASE_UNAVAILABLE");
     expect(unavailable.stderr).not.toContain(unavailablePath);
 
-    const oldDirectory = mkdtempSync(join(tmpdir(), "ms-bot-room-diagnostics-old-"));
+    const oldDirectory = mkdtempSync(join(tmpdir(), "aevoren-bot-room-diagnostics-old-"));
     directories.push(oldDirectory);
     const oldFilename = join(oldDirectory, "old.sqlite");
     const oldDatabase = new DatabaseSync(oldFilename);
@@ -182,7 +182,7 @@ describe("room diagnostics CLI", () => {
     expect(JSON.parse(oldSchema.stderr).error.code).toBe("UNSUPPORTED_SCHEMA");
     expect(oldSchema.stderr).not.toContain(oldFilename);
 
-    const incompleteDirectory = mkdtempSync(join(tmpdir(), "ms-bot-room-diagnostics-incomplete-"));
+    const incompleteDirectory = mkdtempSync(join(tmpdir(), "aevoren-bot-room-diagnostics-incomplete-"));
     directories.push(incompleteDirectory);
     const incompleteFilename = join(incompleteDirectory, "incomplete.sqlite");
     const incomplete = new DatabaseSync(incompleteFilename);

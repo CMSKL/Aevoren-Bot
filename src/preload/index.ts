@@ -1,12 +1,18 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
-import type { MsBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
 
-const api: MsBotApi = {
+const api: AevorenBotApi = {
   bots: {
     list: () => ipcRenderer.invoke(IPC.botsList),
     create: () => ipcRenderer.invoke(IPC.botsCreate),
     update: (input) => ipcRenderer.invoke(IPC.botsUpdate, input),
+    setPinned: (input) => ipcRenderer.invoke(IPC.botsSetPinned, input),
+    setUnread: (input) => ipcRenderer.invoke(IPC.botsSetUnread, input),
+    setHidden: (input) => ipcRenderer.invoke(IPC.botsSetHidden, input),
+    duplicate: (id) => ipcRenderer.invoke(IPC.botsDuplicate, id),
+    delete: (id) => ipcRenderer.invoke(IPC.botsDelete, id),
+    copyConversationId: (id) => ipcRenderer.invoke(IPC.botsCopyConversationId, id),
   },
   rooms: {
     list: (input) => ipcRenderer.invoke(IPC.roomsList, input),
@@ -84,4 +90,4 @@ const api: MsBotApi = {
   },
 };
 
-contextBridge.exposeInMainWorld("msBot", api);
+contextBridge.exposeInMainWorld("aevorenBot", api);

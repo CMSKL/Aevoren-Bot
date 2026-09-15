@@ -1,8 +1,8 @@
-import type { MsBotApi } from "@shared/contracts";
+import type { AevorenBotApi } from "@shared/contracts";
 
 declare global {
   interface Window {
-    msBot: MsBotApi;
+    aevorenBot: AevorenBotApi;
   }
 }
 

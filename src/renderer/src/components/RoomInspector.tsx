@@ -42,7 +42,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
   const availableBots = useMemo(
-    () => bots.filter((bot) => !detail?.members.some((member) => member.botId === bot.id)),
+    () => bots.filter((bot) => bot.hiddenAt === null && !detail?.members.some((member) => member.botId === bot.id)),
     [bots, detail],
   );
   const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);
@@ -57,7 +57,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
     const snapshot = { ...draftRef.current };
     setStatus("saving");
     onError(null);
-    const operation = window.msBot.rooms.update({
+    const operation = window.aevorenBot.rooms.update({
       id: currentDetail.room.id,
       expectedVersion: currentDetail.room.version,
       patch: snapshot as RoomPatch,
@@ -112,7 +112,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
     setMemberPending(true);
     onError(null);
     const input = { roomId: current.room.id, botId, expectedMembershipVersion: current.room.membershipVersion };
-    const result = operation === "add" ? await window.msBot.rooms.addMember(input) : await window.msBot.rooms.removeMember(input);
+    const result = operation === "add" ? await window.aevorenBot.rooms.addMember(input) : await window.aevorenBot.rooms.removeMember(input);
     setMemberPending(false);
     if (!result.ok) {
       onError(result.error);
@@ -179,7 +179,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
         disabled={active || memberPending}
         onClick={async () => {
           if (!(await flush())) return;
-          const result = await window.msBot.rooms.archive({ id: detail.room.id, archived: true });
+          const result = await window.aevorenBot.rooms.archive({ id: detail.room.id, archived: true });
           if (!result.ok) onError(result.error);
           else onArchived(result.data);
         }}

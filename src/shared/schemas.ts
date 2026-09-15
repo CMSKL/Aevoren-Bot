@@ -16,6 +16,9 @@ export const botUpdateSchema = z.object({
 });
 
 export const botIdSchema = z.string().uuid();
+export const botPinnedSchema = z.object({ id: botIdSchema, pinned: z.boolean() });
+export const botUnreadSchema = z.object({ id: botIdSchema, unread: z.boolean() });
+export const botHiddenSchema = z.object({ id: botIdSchema, hidden: z.boolean() });
 export const sessionIdSchema = z.string().uuid();
 export const nonceSchema = z.string().uuid();
 export const runIdSchema = z.string().uuid();

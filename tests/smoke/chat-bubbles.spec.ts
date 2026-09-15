@@ -7,11 +7,11 @@ import { _electron as electron, expect, test } from "@playwright/test";
 
 test("renders grouped role bubbles across desktop, dark mode and a narrow window", async () => {
   test.setTimeout(60_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-chat-bubbles-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-chat-bubbles-"));
   const application = await electron.launch({
     args: ["."],
     cwd: process.cwd(),
-    env: { ...process.env, MS_BOT_USER_DATA_DIR: userDataDir, MS_BOT_FAKE_PROVIDER: "1" },
+    env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
 
   try {
@@ -72,9 +72,9 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     expect(desktopLayout.headerHeight).toBeLessThanOrEqual(56);
     expect(desktopLayout.selectedChatHeight).toBeLessThanOrEqual(52);
     await transcript.evaluate((element) => element.scrollTo({ top: 0 }));
-    await page.screenshot({ path: "/tmp/ms-bot-chat-bubbles-desktop.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/aevoren-bot-chat-bubbles-desktop.png", fullPage: true });
 
-    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"));
+    const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"));
     try {
       const latest = database
         .prepare("SELECT session_id, generation, seq, updated_seq, created_at, updated_at FROM transcript_entries WHERE role = 'assistant' ORDER BY seq DESC LIMIT 1")
@@ -151,7 +151,7 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
       return bubble.getBoundingClientRect().width / document.documentElement.clientWidth;
     });
     expect(narrowBubbleRatio).toBeLessThanOrEqual(0.9);
-    await page.screenshot({ path: "/tmp/ms-bot-chat-bubbles-narrow-dark.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/aevoren-bot-chat-bubbles-narrow-dark.png", fullPage: true });
   } finally {
     await application.close();
     rmSync(userDataDir, { recursive: true, force: true });

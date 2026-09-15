@@ -27,7 +27,7 @@ console.log(value);
 
 | 字段 | 内容 |
 | --- | --- |
-| 名称 | MS-Bot |
+| 名称 | Aevoren Bot |
 
 ---
 
@@ -36,12 +36,12 @@ console.log(value);
 [危险链接](javascript:alert('xss'))`;
 
 test("renders Markdown during streaming and keeps the same semantic structure when completed", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-markdown-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-markdown-"));
   const environment = {
     ...process.env,
-    MS_BOT_USER_DATA_DIR: userDataDir,
-    MS_BOT_FAKE_PROVIDER: "1",
-    MS_BOT_FAKE_DELAY_MS: "180",
+    AEVOREN_BOT_USER_DATA_DIR: userDataDir,
+    AEVOREN_BOT_FAKE_PROVIDER: "1",
+    AEVOREN_BOT_FAKE_DELAY_MS: "180",
   };
 
   const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
@@ -69,7 +69,7 @@ test("renders Markdown during streaming and keeps the same semantic structure wh
     await expect(assistant.locator("ol > li")).toHaveCount(2);
     await expect(assistant.locator("h2", { hasText: "背景" })).toHaveCount(1);
 
-    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"));
+    const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"));
     try {
       database
         .prepare(
@@ -113,7 +113,7 @@ test("renders Markdown during streaming and keeps the same semantic structure wh
     expect(tableLayout).toEqual({ overflowX: "auto", contained: true });
     await expect(markdown.locator("pre")).toHaveCSS("overflow-x", "auto");
     await expect(markdown.locator("pre > code")).toHaveCSS("white-space", "pre");
-    await page.screenshot({ path: "/tmp/ms-bot-markdown-rendered.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/aevoren-bot-markdown-rendered.png", fullPage: true });
   } finally {
     await application.close();
     rmSync(userDataDir, { recursive: true, force: true });

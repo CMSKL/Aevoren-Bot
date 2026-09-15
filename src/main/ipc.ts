@@ -1,8 +1,11 @@
-import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { clipboard, ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { IPC } from "@shared/channels";
 import {
   batchIdSchema,
+  botHiddenSchema,
   botIdSchema,
+  botPinnedSchema,
+  botUnreadSchema,
   botUpdateSchema,
   modelConfigurationSchema,
   nonceSchema,
@@ -18,7 +21,7 @@ import {
   sessionIdSchema,
   turnIdSchema,
 } from "@shared/schemas";
-import { apiResult, MsBotError } from "./errors";
+import { apiResult, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 import { OpenAiCompatibleProvider } from "./model";
 import type { ModelSettingsService } from "./settings";
@@ -42,7 +45,7 @@ function isTrusted(event: IpcMainEvent | IpcMainInvokeEvent, window: BrowserWind
 
 function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
   if (!isTrusted(event, window)) {
-    throw new MsBotError("UNTRUSTED_RENDERER", "请求来源不受信任。", false);
+    throw new AevorenBotError("UNTRUSTED_RENDERER", "请求来源不受信任。", false);
   }
 }
 
@@ -66,6 +69,25 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.botsUpdate, (_event, input: unknown) => {
     const parsed = botUpdateSchema.parse(input);
     return repository.updateBot(parsed.id, parsed.expectedVersion, parsed.patch);
+  });
+  handle(IPC.botsSetPinned, (_event, input: unknown) => {
+    const parsed = botPinnedSchema.parse(input);
+    return repository.setBotPinned(parsed.id, parsed.pinned);
+  });
+  handle(IPC.botsSetUnread, (_event, input: unknown) => {
+    const parsed = botUnreadSchema.parse(input);
+    return repository.setBotUnread(parsed.id, parsed.unread);
+  });
+  handle(IPC.botsSetHidden, (_event, input: unknown) => {
+    const parsed = botHiddenSchema.parse(input);
+    return repository.setBotHidden(parsed.id, parsed.hidden);
+  });
+  handle(IPC.botsDuplicate, (_event, id: unknown) => repository.duplicateBot(botIdSchema.parse(id)));
+  handle(IPC.botsDelete, (_event, id: unknown) => repository.deleteBot(botIdSchema.parse(id)));
+  handle(IPC.botsCopyConversationId, (_event, id: unknown) => {
+    const parsed = botIdSchema.parse(id);
+    repository.getBot(parsed);
+    clipboard.writeText(parsed);
   });
   handle(IPC.roomsList, (_event, input: unknown) => repository.listRooms(roomListSchema.parse(input)?.includeArchived ?? false));
   handle(IPC.roomsCreate, (_event, input: unknown) => repository.createRoom(roomCreateSchema.parse(input)));
@@ -113,7 +135,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (dependencies.forceFakeProvider) return;
     const configuration = settings.getConfiguration();
     if (!configuration.modelId || !configuration.apiKeyConfigured) {
-      throw new MsBotError("MODEL_NOT_CONFIGURED", "请先保存 Base URL、Model ID 和 API Key。", false);
+      throw new AevorenBotError("MODEL_NOT_CONFIGURED", "请先保存 Base URL、Model ID 和 API Key。", false);
     }
     const provider = new OpenAiCompatibleProvider(
       configuration.baseUrl,
@@ -125,7 +147,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
     try {
       await provider.testConnection(controller.signal);
     } catch (error) {
-      if (controller.signal.aborted) throw new MsBotError("MODEL_CONNECTION_TIMEOUT");
+      if (controller.signal.aborted) throw new AevorenBotError("MODEL_CONNECTION_TIMEOUT");
       throw error;
     } finally {
       clearTimeout(timer);

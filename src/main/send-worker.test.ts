@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRepository } from "./database";
-import { MsBotError } from "./errors";
+import { AevorenBotError } from "./errors";
 import type { ChatMessage, ModelEvent, ModelProvider } from "./model";
 import { RuntimeCoordinator } from "./send-worker";
 import { ModelSettingsService, type SecretCodec } from "./settings";
@@ -112,7 +112,7 @@ describe("RuntimeCoordinator", () => {
         calls += 1;
         if (calls === 1) {
           yield* [];
-          throw new MsBotError("MODEL_NOT_CONFIGURED");
+          throw new AevorenBotError("MODEL_NOT_CONFIGURED");
         }
         yield { type: "started", requestId: "retried" };
         yield { type: "delta", text: "ok" };
@@ -140,7 +140,7 @@ describe("RuntimeCoordinator", () => {
       async *run() {
         calls += 1;
         yield* [];
-        throw new MsBotError("MODEL_TRANSPORT_ERROR");
+        throw new AevorenBotError("MODEL_TRANSPORT_ERROR");
       },
       testConnection: async () => {},
     };
@@ -191,7 +191,7 @@ describe("RuntimeCoordinator", () => {
       async *run() {
         calls += 1;
         yield { type: "started", requestId: `request-${calls}` };
-        if (calls === 1) throw new MsBotError("MODEL_STREAM_TRUNCATED");
+        if (calls === 1) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
         yield { type: "delta", text: "recovered" };
         yield { type: "completed", finishReason: "stop" };
       },
@@ -236,7 +236,7 @@ describe("RuntimeCoordinator", () => {
     const provider: ModelProvider = {
       async *run() {
         yield { type: "started", requestId: crypto.randomUUID() };
-        throw new MsBotError("MODEL_STREAM_TRUNCATED");
+        throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
       },
       testConnection: async () => {},
     };

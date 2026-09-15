@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import type { MsBotApi } from "@shared/contracts";
+import type { AevorenBotApi } from "@shared/contracts";
 
 function environment(userDataDir: string, overrides: Record<string, string> = {}): Record<string, string> {
   const inherited = Object.fromEntries(
@@ -11,8 +11,8 @@ function environment(userDataDir: string, overrides: Record<string, string> = {}
   );
   return {
     ...inherited,
-    MS_BOT_USER_DATA_DIR: userDataDir,
-    MS_BOT_FAKE_PROVIDER: "1",
+    AEVOREN_BOT_USER_DATA_DIR: userDataDir,
+    AEVOREN_BOT_FAKE_PROVIDER: "1",
     ...overrides,
   };
 }
@@ -59,24 +59,24 @@ test("reattaches the active runtime after renderer reloads in three phases", asy
   const phases: Array<{ name: string; overrides: Record<string, string>; stateText: string }> = [
     {
       name: "dispatching",
-      overrides: { MS_BOT_FAKE_START_DELAY_MS: "500", MS_BOT_FAKE_DELAY_MS: "80" },
+      overrides: { AEVOREN_BOT_FAKE_START_DELAY_MS: "500", AEVOREN_BOT_FAKE_DELAY_MS: "80" },
       stateText: "正在连接模型",
     },
     {
       name: "running",
-      overrides: { MS_BOT_FAKE_DELAY_MS: "500" },
+      overrides: { AEVOREN_BOT_FAKE_DELAY_MS: "500" },
       stateText: "模型已接受，正在运行",
     },
     {
       name: "streaming",
-      overrides: { MS_BOT_FAKE_DELAY_MS: "250" },
+      overrides: { AEVOREN_BOT_FAKE_DELAY_MS: "250" },
       stateText: "正在生成回复",
     },
   ];
 
   for (const phase of phases) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const userDataDir = mkdtempSync(join(tmpdir(), `ms-bot-reload-${phase.name}-`));
+      const userDataDir = mkdtempSync(join(tmpdir(), `aevoren-bot-reload-${phase.name}-`));
       let application: ElectronApplication | undefined;
       try {
         const launched = await launch(userDataDir, phase.overrides);
@@ -92,7 +92,7 @@ test("reattaches the active runtime after renderer reloads in three phases", asy
         await application.close();
         application = undefined;
 
-        const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+        const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
         expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 1 });
         expect(database.prepare("SELECT state FROM runtime_runs").get()).toEqual({ state: "completed" });
         expect(database.prepare("SELECT role, COUNT(*) AS count FROM transcript_entries GROUP BY role ORDER BY role").all()).toEqual([
@@ -110,13 +110,13 @@ test("reattaches the active runtime after renderer reloads in three phases", asy
 
 test("regenerates a failed accepted run without duplicating its user entry", async () => {
   test.setTimeout(60_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-regenerate-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-regenerate-"));
   let application: ElectronApplication | undefined;
   try {
     const launched = await launch(userDataDir, {
-      MS_BOT_FAKE_DELAY_MS: "30",
-      MS_BOT_FAKE_START_DELAY_MS: "300",
-      MS_BOT_FAKE_FAILURE: "first-run-after-delta",
+      AEVOREN_BOT_FAKE_DELAY_MS: "30",
+      AEVOREN_BOT_FAKE_START_DELAY_MS: "300",
+      AEVOREN_BOT_FAKE_FAILURE: "first-run-after-delta",
     });
     application = launched.application;
     const page = launched.page;
@@ -131,7 +131,7 @@ test("regenerates a failed accepted run without duplicating its user entry", asy
     await application.close();
     application = undefined;
 
-    const database = new DatabaseSync(join(userDataDir, "ms-bot.sqlite"), { readOnly: true });
+    const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
     expect(database.prepare("SELECT COUNT(*) AS count FROM transcript_entries WHERE role='user'").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM transcript_entries WHERE role='assistant'").get()).toEqual({ count: 2 });
     expect(database.prepare("SELECT attempt_no,state FROM runtime_runs ORDER BY attempt_no").all()).toEqual([
@@ -147,24 +147,24 @@ test("regenerates a failed accepted run without duplicating its user entry", asy
 
 test("closes a streaming runtime as interrupted and does not restart it", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-runtime-close-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-runtime-close-"));
   let application: ElectronApplication | undefined;
   try {
-    let launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "500" });
+    let launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "500" });
     application = launched.application;
     await createAndSend(launched.page, "close during streaming");
     await expect(launched.page.getByText("正在生成回复", { exact: true })).toBeVisible();
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
 
-    const databasePath = join(userDataDir, "ms-bot.sqlite");
+    const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     let database = new DatabaseSync(databasePath, { readOnly: true });
     expect(database.prepare("SELECT state FROM runtime_runs").get()).toEqual({ state: "interrupted" });
     expect(database.prepare("SELECT status FROM transcript_entries WHERE role='assistant'").get()).toEqual({ status: "failed" });
     const runCount = database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get();
     database.close();
 
-    launched = await launch(userDataDir, { MS_BOT_FAKE_DELAY_MS: "500" });
+    launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "500" });
     application = launched.application;
     await expect(launched.page.getByText("运行被应用中断，没有自动重新发送。")).toBeVisible();
     database = new DatabaseSync(databasePath, { readOnly: true });
@@ -191,12 +191,12 @@ test("recovers running, streaming and cancel-requested runs after SIGKILL", asyn
   ];
 
   for (const phase of phases) {
-    const userDataDir = mkdtempSync(join(tmpdir(), `ms-bot-sigkill-${phase.name}-`));
+    const userDataDir = mkdtempSync(join(tmpdir(), `aevoren-bot-sigkill-${phase.name}-`));
     let application: ElectronApplication | undefined;
     try {
       let launched = await launch(userDataDir, {
-        MS_BOT_FAKE_DELAY_MS: "1000",
-        MS_BOT_FAKE_IGNORE_ABORT: "1",
+        AEVOREN_BOT_FAKE_DELAY_MS: "1000",
+        AEVOREN_BOT_FAKE_IGNORE_ABORT: "1",
       });
       application = launched.application;
       await createAndSend(launched.page, `SIGKILL ${phase.name}`);
@@ -208,10 +208,10 @@ test("recovers running, streaming and cancel-requested runs after SIGKILL", asyn
       await forceKill(application);
       application = undefined;
 
-      const databasePath = join(userDataDir, "ms-bot.sqlite");
+      const databasePath = join(userDataDir, "aevoren-bot.sqlite");
       launched = await launch(userDataDir, {
-        MS_BOT_FAKE_DELAY_MS: "1000",
-        MS_BOT_FAKE_IGNORE_ABORT: "1",
+        AEVOREN_BOT_FAKE_DELAY_MS: "1000",
+        AEVOREN_BOT_FAKE_IGNORE_ABORT: "1",
       });
       application = launched.application;
       await expect(launched.page.getByText("运行被应用中断，没有自动重新发送。")).toBeVisible();
@@ -231,15 +231,15 @@ test("recovers running, streaming and cancel-requested runs after SIGKILL", asyn
 
 test("recovers a Direct pre-start SIGKILL as unknown without offering a safe retry", async () => {
   test.setTimeout(30_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-direct-pre-start-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-direct-pre-start-"));
   let application: ElectronApplication | undefined;
   try {
-    let launched = await launch(userDataDir, { MS_BOT_FAKE_START_DELAY_MS: "20000" });
+    let launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_START_DELAY_MS: "20000" });
     application = launched.application;
     await createAndSend(launched.page, "crash after Direct dispatch starts");
     await expect(launched.page.getByText("正在连接模型", { exact: true })).toBeVisible();
 
-    const databasePath = join(userDataDir, "ms-bot.sqlite");
+    const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     let database = new DatabaseSync(databasePath, { readOnly: true });
     expect(database.prepare("SELECT state FROM send_journal").get()).toEqual({ state: "dispatching" });
     expect(database.prepare("SELECT state FROM runtime_runs").get()).toEqual({ state: "dispatching" });
@@ -248,7 +248,7 @@ test("recovers a Direct pre-start SIGKILL as unknown without offering a safe ret
 
     await forceKill(application);
     application = undefined;
-    launched = await launch(userDataDir, { MS_BOT_FAKE_START_DELAY_MS: "20000" });
+    launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_START_DELAY_MS: "20000" });
     application = launched.application;
     await expect(launched.page.getByText("应用中断，模型可能已接受该消息；不会自动重发。", { exact: true })).toBeVisible();
     await expect(launched.page.getByRole("button", { name: "安全重试发送" })).toHaveCount(0);
@@ -275,12 +275,12 @@ test("recovers a Direct pre-start SIGKILL as unknown without offering a safe ret
 
 test("shows stale after thirty seconds without provider activity and remains cancellable", async () => {
   test.setTimeout(45_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-runtime-stale-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-runtime-stale-"));
   let application: ElectronApplication | undefined;
   try {
     const launched = await launch(userDataDir, {
-      MS_BOT_FAKE_START_DELAY_MS: "35000",
-      MS_BOT_FAKE_DELAY_MS: "20",
+      AEVOREN_BOT_FAKE_START_DELAY_MS: "35000",
+      AEVOREN_BOT_FAKE_DELAY_MS: "20",
     });
     application = launched.application;
     const startedAt = Date.now();
@@ -302,7 +302,7 @@ test("shows stale after thirty seconds without provider activity and remains can
 
 test("keeps the window open and explains a close handshake timeout", async () => {
   test.setTimeout(20_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-close-notice-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-notice-"));
   let application: ElectronApplication | undefined;
   try {
     const launched = await launch(userDataDir);
@@ -329,15 +329,15 @@ test("keeps the window open and explains a close handshake timeout", async () =>
 });
 
 test("exposes only typed runtime capabilities and validates run ids", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "ms-bot-runtime-ipc-"));
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-runtime-ipc-"));
   let application: ElectronApplication | undefined;
   try {
     const launched = await launch(userDataDir);
     application = launched.application;
-    expect(await application.evaluate(({ app }) => app.getName())).toBe("ms-bot");
+    expect(await application.evaluate(({ app }) => app.getName())).toBe("Aevoren Bot");
     expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("use-mock-keychain"))).toBe(true);
     const result = await launched.page.evaluate(() =>
-      (window as unknown as { msBot: MsBotApi }).msBot.runtime.cancel("not-a-uuid"),
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.runtime.cancel("not-a-uuid"),
     );
     expect(result).toEqual({
       ok: false,
@@ -349,13 +349,13 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
       },
     });
     expect(await launched.page.evaluate(() =>
-      typeof (window as unknown as { msBot: MsBotApi }).msBot.runtime.getSessionSnapshot,
+      typeof (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.runtime.getSessionSnapshot,
     )).toBe("function");
     const roomResult = await launched.page.evaluate(() =>
-      (window as unknown as { msBot: MsBotApi }).msBot.roomRuntime.getSnapshot("not-a-uuid"),
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.getSnapshot("not-a-uuid"),
     );
     expect(roomResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
-    expect(await launched.page.evaluate(() => Object.keys((window as unknown as { msBot: MsBotApi }).msBot).toSorted())).toEqual([
+    expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
       "app", "bots", "events", "messages", "roomRuntime", "rooms", "runtime", "sessions", "settings", "transcript",
     ]);
     expect(await launched.page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).toBe("undefined");

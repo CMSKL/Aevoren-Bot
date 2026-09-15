@@ -26,12 +26,13 @@ export function NewBotChooser({
   const [groupMode, setGroupMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const createRef = useRef<HTMLButtonElement>(null);
+  const visibleBots = useMemo(() => bots.filter((bot) => bot.hiddenAt === null), [bots]);
   const filteredBots = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    if (!normalized) return bots;
-    return bots.filter((bot) => `${bot.name}\n${bot.label}`.toLocaleLowerCase().includes(normalized));
-  }, [bots, query]);
-  const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);
+    if (!normalized) return visibleBots;
+    return visibleBots.filter((bot) => `${bot.name}\n${bot.label}`.toLocaleLowerCase().includes(normalized));
+  }, [query, visibleBots]);
+  const botIdentities = useMemo(() => buildBotIdentityMap(visibleBots), [visibleBots]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
@@ -95,7 +96,7 @@ export function NewBotChooser({
           <button
             className={`recipient-option${groupMode ? " selected" : ""}`}
             type="button"
-            disabled={creating || bots.length < 2}
+            disabled={creating || visibleBots.length < 2}
             onClick={() => {
               setGroupMode(true);
               setQuery("");
@@ -145,7 +146,7 @@ export function NewBotChooser({
               className="primary-button"
               type="button"
               disabled={creating || selectedIds.size < 2}
-              onClick={() => onCreateRoom(bots.filter((bot) => selectedIds.has(bot.id)).map((bot) => bot.id))}
+              onClick={() => onCreateRoom(visibleBots.filter((bot) => selectedIds.has(bot.id)).map((bot) => bot.id))}
             >{creating ? "创建中…" : "创建群聊"}</button>
           </footer>
         ) : null}

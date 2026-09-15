@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { PromptMessage } from "./prompt";
-import { MsBotError } from "./errors";
+import { AevorenBotError } from "./errors";
 
 export type ChatMessage = PromptMessage;
 
@@ -119,7 +119,7 @@ function normalizedTerms(value: string): string[] {
 }
 
 export function selectDeterministicRoomOwner(text: string, roster: readonly RoomPeer[]): RoomOwnerSelection {
-  if (roster.length === 0) throw new MsBotError("MODEL_ROUTER_INVALID");
+  if (roster.length === 0) throw new AevorenBotError("MODEL_ROUTER_INVALID");
   const normalizedText = text.toLocaleLowerCase("zh-CN");
   let selected = roster[0]!;
   let selectedField = "成员顺序";
@@ -184,11 +184,11 @@ export class FakeModelProvider implements ModelProvider {
   private runCount = 0;
 
   constructor(
-    private readonly delayMs = Number(process.env.MS_BOT_FAKE_DELAY_MS ?? 20),
+    private readonly delayMs = Number(process.env.AEVOREN_BOT_FAKE_DELAY_MS ?? 20),
     private readonly output: readonly string[] = FAKE_OUTPUT,
-    private readonly startDelayMs = Number(process.env.MS_BOT_FAKE_START_DELAY_MS ?? 0),
-    private readonly failureMode = process.env.MS_BOT_FAKE_FAILURE ?? "",
-    private readonly ignoreAbort = process.env.MS_BOT_FAKE_IGNORE_ABORT === "1",
+    private readonly startDelayMs = Number(process.env.AEVOREN_BOT_FAKE_START_DELAY_MS ?? 0),
+    private readonly failureMode = process.env.AEVOREN_BOT_FAKE_FAILURE ?? "",
+    private readonly ignoreAbort = process.env.AEVOREN_BOT_FAKE_IGNORE_ABORT === "1",
   ) {}
 
   async *run(
@@ -199,32 +199,32 @@ export class FakeModelProvider implements ModelProvider {
     if (signal.aborted) throw abortError();
     this.runCount += 1;
     if (this.failureMode === "first-run-before-start" && this.runCount === 1) {
-      throw new MsBotError("MODEL_CONNECTION_FAILED");
+      throw new AevorenBotError("MODEL_CONNECTION_FAILED");
     }
     if (this.startDelayMs > 0) {
       if (this.ignoreAbort) await new Promise((resolve) => setTimeout(resolve, this.startDelayMs));
       else await delay(this.startDelayMs, signal);
     }
     yield { type: "started", requestId: `fake-${randomUUID()}` };
-    const toolOnlyHandoff = process.env.MS_BOT_FAKE_HANDOFF_TOOL_ONLY === "1" && !context?.incomingHandoff;
+    const toolOnlyHandoff = process.env.AEVOREN_BOT_FAKE_HANDOFF_TOOL_ONLY === "1" && !context?.incomingHandoff;
     if (!toolOnlyHandoff) {
       for (const [index, text] of this.output.entries()) {
         if (this.ignoreAbort) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
         else await delay(this.delayMs, signal);
         yield { type: "delta", text };
         if (index === 0 && this.failureMode === "first-run-after-delta" && this.runCount === 1) {
-          throw new MsBotError("MODEL_STREAM_TRUNCATED");
+          throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
         }
       }
     }
-    if (process.env.MS_BOT_FAKE_HANDOFF === "first-other" && !context?.incomingHandoff) {
+    if (process.env.AEVOREN_BOT_FAKE_HANDOFF === "first-other" && !context?.incomingHandoff) {
       const target = context?.roomRoster?.find((member) => member.id !== context.executorBotId);
       if (target) {
         yield {
           type: "handoff",
           toolCallId: `fake-handoff-${context?.executionKey ?? "unknown"}`,
           toAgentId: target.id,
-          task: process.env.MS_BOT_FAKE_HANDOFF_TASK ?? "继续处理当前群聊任务。",
+          task: process.env.AEVOREN_BOT_FAKE_HANDOFF_TASK ?? "继续处理当前群聊任务。",
           contextRefs: [],
           visibility: "room",
         };
@@ -263,7 +263,7 @@ const MAX_HANDOFF_CONTEXT_REF_LENGTH = 200;
 const MAX_HANDOFF_TOOL_CALLS = 2;
 
 function invalidHandoff(): never {
-  throw new MsBotError("MODEL_HANDOFF_INVALID");
+  throw new AevorenBotError("MODEL_HANDOFF_INVALID");
 }
 
 function appendToolCallDelta(value: unknown, pending: Map<number, PendingToolCall>): void {
@@ -357,15 +357,15 @@ function decodeSseEvent(
   try {
     parsed = JSON.parse(data);
   } catch {
-    throw new MsBotError("MODEL_STREAM_INVALID");
+    throw new AevorenBotError("MODEL_STREAM_INVALID");
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new MsBotError("MODEL_STREAM_INVALID");
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new AevorenBotError("MODEL_STREAM_INVALID");
   const choices = (parsed as {
     choices?: Array<{ index?: unknown; delta?: { content?: unknown; tool_calls?: unknown }; finish_reason?: unknown }>;
   }).choices;
-  if (choices !== undefined && !Array.isArray(choices)) throw new MsBotError("MODEL_STREAM_INVALID");
+  if (choices !== undefined && !Array.isArray(choices)) throw new AevorenBotError("MODEL_STREAM_INVALID");
   if (Array.isArray(choices) && choices.some((candidate) => !candidate || typeof candidate !== "object" || Array.isArray(candidate))) {
-    throw new MsBotError("MODEL_STREAM_INVALID");
+    throw new AevorenBotError("MODEL_STREAM_INVALID");
   }
   const choice = Array.isArray(choices)
     ? choices.find((candidate) => candidate.index === 0)
@@ -394,7 +394,7 @@ function readWithTimeout(
 ): Promise<ReadableStreamReadResult<Uint8Array>> {
   if (signal.aborted) return Promise.reject(abortError());
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new MsBotError(timeoutCode)), milliseconds);
+    const timer = setTimeout(() => reject(new AevorenBotError(timeoutCode)), milliseconds);
     const onAbort = (): void => {
       clearTimeout(timer);
       reject(abortError());
@@ -431,7 +431,7 @@ export async function* parseOpenAiStream(
   try {
     while (!terminal) {
       const remaining = timeouts.totalMs - (Date.now() - startedAt);
-      if (remaining <= 0) throw new MsBotError("MODEL_RUN_TIMEOUT");
+      if (remaining <= 0) throw new AevorenBotError("MODEL_RUN_TIMEOUT");
       const timeoutMs = Math.min(remaining, sawEvent ? timeouts.idleMs : timeouts.firstEventMs);
       const timeoutCode = remaining <= (sawEvent ? timeouts.idleMs : timeouts.firstEventMs)
         ? "MODEL_RUN_TIMEOUT"
@@ -459,11 +459,11 @@ export async function* parseOpenAiStream(
       for (const modelEvent of decoded.events) yield modelEvent;
       terminal = decoded.terminal;
     }
-    if (!terminal) throw new MsBotError("MODEL_STREAM_TRUNCATED");
+    if (!terminal) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
   } catch (error) {
     if (signal.aborted) throw abortError();
-    if (error instanceof MsBotError) throw error;
-    throw new MsBotError("MODEL_TRANSPORT_ERROR");
+    if (error instanceof AevorenBotError) throw error;
+    throw new AevorenBotError("MODEL_TRANSPORT_ERROR");
   } finally {
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
@@ -483,7 +483,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     const relayAbort = (): void => controller.abort(signal.reason);
     signal.addEventListener("abort", relayAbort, { once: true });
     const connectTimer = setTimeout(
-      () => controller.abort(new MsBotError("MODEL_CONNECTION_TIMEOUT")),
+      () => controller.abort(new AevorenBotError("MODEL_CONNECTION_TIMEOUT")),
       this.timeouts.connectMs,
     );
     let response: Response;
@@ -525,14 +525,14 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       });
     } catch {
       if (signal.aborted) throw abortError();
-      if (controller.signal.reason instanceof MsBotError) throw controller.signal.reason;
-      throw new MsBotError("MODEL_TRANSPORT_ERROR");
+      if (controller.signal.reason instanceof AevorenBotError) throw controller.signal.reason;
+      throw new AevorenBotError("MODEL_TRANSPORT_ERROR");
     } finally {
       clearTimeout(connectTimer);
       signal.removeEventListener("abort", relayAbort);
     }
     if (!response.ok || !response.body) {
-      throw new MsBotError(
+      throw new AevorenBotError(
         "MODEL_REQUEST_REFUSED",
         `模型服务拒绝了请求（HTTP ${response.status}）。`,
         response.status >= 500,
@@ -557,10 +557,10 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       });
     } catch {
       if (signal.aborted) throw abortError();
-      throw new MsBotError("MODEL_CONNECTION_FAILED");
+      throw new AevorenBotError("MODEL_CONNECTION_FAILED");
     }
     if (!response.ok) {
-      throw new MsBotError(
+      throw new AevorenBotError(
         "MODEL_CONNECTION_FAILED",
         `无法连接模型服务（HTTP ${response.status}）。`,
         response.status >= 500,
@@ -570,7 +570,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
   }
 
   async selectRoomOwner(text: string, roster: readonly RoomPeer[], signal: AbortSignal): Promise<RoomOwnerSelection> {
-    if (roster.length === 0 || roster.length > 6) throw new MsBotError("MODEL_ROUTER_INVALID");
+    if (roster.length === 0 || roster.length > 6) throw new AevorenBotError("MODEL_ROUTER_INVALID");
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -618,61 +618,61 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       });
     } catch {
       if (signal.aborted) throw abortError();
-      throw new MsBotError("MODEL_ROUTER_FAILED");
+      throw new AevorenBotError("MODEL_ROUTER_FAILED");
     }
     if (!response.ok) {
-      throw new MsBotError("MODEL_ROUTER_FAILED", undefined, response.status >= 500, { status: response.status });
+      throw new AevorenBotError("MODEL_ROUTER_FAILED", undefined, response.status >= 500, { status: response.status });
     }
     let raw: string;
     try {
       raw = await response.text();
     } catch {
-      throw new MsBotError("MODEL_ROUTER_FAILED");
+      throw new AevorenBotError("MODEL_ROUTER_FAILED");
     }
-    if (raw.length > MAX_ROUTER_RESPONSE_LENGTH) throw new MsBotError("MODEL_ROUTER_INVALID");
+    if (raw.length > MAX_ROUTER_RESPONSE_LENGTH) throw new AevorenBotError("MODEL_ROUTER_INVALID");
     let payload: unknown;
     try {
       payload = JSON.parse(raw);
     } catch {
-      throw new MsBotError("MODEL_ROUTER_INVALID");
+      throw new AevorenBotError("MODEL_ROUTER_INVALID");
     }
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new MsBotError("MODEL_ROUTER_INVALID");
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new AevorenBotError("MODEL_ROUTER_INVALID");
     const choices = (payload as { choices?: unknown }).choices;
-    if (!Array.isArray(choices) || choices.length !== 1) throw new MsBotError("MODEL_ROUTER_INVALID");
+    if (!Array.isArray(choices) || choices.length !== 1) throw new AevorenBotError("MODEL_ROUTER_INVALID");
     const choice = choices[0];
-    if (!choice || typeof choice !== "object" || Array.isArray(choice)) throw new MsBotError("MODEL_ROUTER_INVALID");
+    if (!choice || typeof choice !== "object" || Array.isArray(choice)) throw new AevorenBotError("MODEL_ROUTER_INVALID");
     const message = (choice as { message?: unknown }).message;
-    if (!message || typeof message !== "object" || Array.isArray(message)) throw new MsBotError("MODEL_ROUTER_INVALID");
+    if (!message || typeof message !== "object" || Array.isArray(message)) throw new AevorenBotError("MODEL_ROUTER_INVALID");
     const toolCalls = (message as { tool_calls?: unknown }).tool_calls;
-    if (!Array.isArray(toolCalls) || toolCalls.length !== 1) throw new MsBotError("MODEL_ROUTER_INVALID");
+    if (!Array.isArray(toolCalls) || toolCalls.length !== 1) throw new AevorenBotError("MODEL_ROUTER_INVALID");
     const rawCall = toolCalls[0];
-    if (!rawCall || typeof rawCall !== "object" || Array.isArray(rawCall)) throw new MsBotError("MODEL_ROUTER_INVALID");
+    if (!rawCall || typeof rawCall !== "object" || Array.isArray(rawCall)) throw new AevorenBotError("MODEL_ROUTER_INVALID");
     const call = rawCall as { type?: unknown; function?: unknown };
     const functionCall = call.function;
     if (!functionCall || typeof functionCall !== "object" || Array.isArray(functionCall)) {
-      throw new MsBotError("MODEL_ROUTER_INVALID");
+      throw new AevorenBotError("MODEL_ROUTER_INVALID");
     }
     const functionValue = functionCall as { name?: unknown; arguments?: unknown };
     if (call.type !== "function" || functionValue.name !== ROOM_OWNER_TOOL_NAME || typeof functionValue.arguments !== "string") {
-      throw new MsBotError("MODEL_ROUTER_INVALID");
+      throw new AevorenBotError("MODEL_ROUTER_INVALID");
     }
     let args: unknown;
     try {
       args = JSON.parse(functionValue.arguments);
     } catch {
-      throw new MsBotError("MODEL_ROUTER_INVALID");
+      throw new AevorenBotError("MODEL_ROUTER_INVALID");
     }
-    if (!args || typeof args !== "object" || Array.isArray(args)) throw new MsBotError("MODEL_ROUTER_INVALID");
+    if (!args || typeof args !== "object" || Array.isArray(args)) throw new AevorenBotError("MODEL_ROUTER_INVALID");
     const values = args as Record<string, unknown>;
     if (Object.keys(values).toSorted().join("\0") !== ["ownerAgentId", "reason"].toSorted().join("\0")) {
-      throw new MsBotError("MODEL_ROUTER_INVALID");
+      throw new AevorenBotError("MODEL_ROUTER_INVALID");
     }
     const allowedIds = new Set(roster.map((peer) => peer.id));
     if (
       typeof values.ownerAgentId !== "string" || !allowedIds.has(values.ownerAgentId) ||
       typeof values.reason !== "string" || values.reason.trim().length === 0 || values.reason.length > MAX_ROUTING_REASON_LENGTH
     ) {
-      throw new MsBotError("MODEL_ROUTER_INVALID");
+      throw new AevorenBotError("MODEL_ROUTER_INVALID");
     }
     return { ownerAgentId: values.ownerAgentId, reason: values.reason.trim() };
   }
