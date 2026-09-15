@@ -115,6 +115,12 @@ describe("real Provider handoff integration", () => {
     const rosterMessage = (requestBodies[0]?.messages as Array<{ role: string; content: string }>).find((message) =>
       message.role === "system" && message.content.includes("UNTRUSTED_ROOM_PEER_DATA")
     );
+    const handoffContractMessage = (requestBodies[0]?.messages as Array<{ role: string; content: string }>).find((message) =>
+      message.role === "system" && message.content.includes("ROOM_HANDOFF_EXECUTION_CONTRACT")
+    );
+    expect(handoffContractMessage?.content).toContain("Only a successful handoff_to_agent function call");
+    expect(handoffContractMessage?.content).toContain("@Agent, HANDOFF, ASSIGN, or next_owner");
+    expect(handoffContractMessage?.content).toContain("wait for user approval or input");
     expect(rosterMessage?.content).toContain(`"id":"${botB.id}"`);
     expect(rosterMessage?.content).toContain('"label":"评审角色"');
     expect(rosterMessage?.content).toContain(`"id":"${botC.id}"`);

@@ -27,6 +27,11 @@ const DEFAULT_MAX_HOPS = 6;
 const DEFAULT_MAX_TARGETS_PER_TURN = 2;
 const DEFAULT_ROOT_DEADLINE_MS = 5 * 60_000;
 const ROOM_ROUTER_TIMEOUT_MS = 30_000;
+const INTERNAL_HANDOFF_TOOL_NAME = /\bhandoff_to_agent\b/giu;
+
+function publicHandoffTask(task: string): string {
+  return task.replace(INTERNAL_HANDOFF_TOOL_NAME, "结构化转交");
+}
 
 export type CoordinatedRoomPolicy = {
   maxTurns?: number;
@@ -568,7 +573,7 @@ export class RoomCoordinator {
     runId: string,
     fromTurnId: string,
     event: Extract<ModelEvent, { type: "handoff" }>,
-  ): void {
+  ): boolean {
     try {
       if (
         typeof event.toolCallId !== "string" ||
@@ -586,15 +591,16 @@ export class RoomCoordinator {
         runId,
         fromTurnId,
         toAgentId: event.toAgentId,
-        task: event.task,
+        task: publicHandoffTask(event.task),
         contextRefs: event.contextRefs,
         visibility: event.visibility,
         targetTurnNonce: event.toolCallId,
         inputGeneration: source.inputGeneration,
         inputSeq: source.promptCutoffSeq ?? source.inputSeq,
       });
-      if (created.disposition === "duplicate") return;
+      if (created.disposition === "duplicate") return true;
       this.emit(this.repository.getRoomRun(runId));
+      return true;
     } catch (error) {
       if (error instanceof AevorenBotError && EXPECTED_HANDOFF_REJECTIONS.has(error.code)) {
         this.repository.recordHandoffRejection({
@@ -605,7 +611,7 @@ export class RoomCoordinator {
           errorCode: error.code,
         });
         this.emit(this.repository.getRoomRun(runId), error.toAppError());
-        return;
+        return false;
       }
       throw error;
     }

@@ -18,6 +18,7 @@ import {
   type ModelProvider,
   type ModelRunContext,
   type RoomPeer,
+  type RoomContinuationDecision,
   type RoomOwnerSelection,
 } from "./model";
 import { buildPrompt } from "./prompt";
@@ -50,7 +51,7 @@ export type RuntimeExecutionInput = {
   onRunCreated?(run: RuntimeRun): void;
   onDispatchStart?(): void;
   onProviderStarted?(requestId: string): void;
-  onHandoff?(event: Extract<ModelEvent, { type: "handoff" }>): void;
+  onHandoff?(event: Extract<ModelEvent, { type: "handoff" }>): boolean | void;
 };
 
 export type RuntimeExecutionResult = {
@@ -80,6 +81,7 @@ type ActiveRun = {
   staleTimer: ReturnType<typeof setTimeout> | null;
   abortReason: AbortReason | null;
   providerStarted: boolean;
+  handoffEmitted: boolean;
 };
 
 export const STALE_AFTER_MS = 30_000;
@@ -167,6 +169,7 @@ export class RuntimeExecutor {
       staleTimer: null,
       abortReason: null,
       providerStarted: false,
+      handoffEmitted: false,
     };
     this.active.set(run.id, active);
     this.emitRuntime(run);
@@ -343,7 +346,7 @@ export class RuntimeExecutor {
         }
         if (event.type === "handoff") {
           if (!active.providerStarted || !active.onHandoff) throw new AevorenBotError("RUNTIME_STATE_INVALID");
-          active.onHandoff(event);
+          active.handoffEmitted = active.onHandoff(event) !== false || active.handoffEmitted;
           run = this.repository.touchRuntimeRun(runId);
           this.emitRuntime(run);
           this.armStaleTimer(active);
@@ -389,6 +392,18 @@ export class RuntimeExecutor {
         if (event.type === "completed") {
           roundCompleted = true;
           if (workspaceContinuation) break;
+          const continuation = await this.selectRoomContinuation(provider, active);
+          if (continuation?.action === "handoff") {
+            const accepted = active.onHandoff?.({
+              type: "handoff",
+              toolCallId: `continuation:${active.runId}`,
+              toAgentId: continuation.toAgentId,
+              task: continuation.task,
+              contextRefs: continuation.contextRefs,
+              visibility: continuation.visibility,
+            });
+            active.handoffEmitted = accepted !== false || active.handoffEmitted;
+          }
           this.finalizeAssistant(active, "completed");
           run = this.repository.transitionRuntimeRun(runId, "completed");
           this.emitRuntime(run);
@@ -475,6 +490,28 @@ export class RuntimeExecutor {
     if (active.assistantEntryId) this.flush(active, status);
   }
 
+  private async selectRoomContinuation(
+    provider: ModelProvider,
+    active: ActiveRun,
+  ): Promise<RoomContinuationDecision | null> {
+    const roster = active.providerContext.roomRoster;
+    const selector = provider.selectRoomContinuation;
+    if (
+      active.handoffEmitted ||
+      !active.onHandoff ||
+      !selector ||
+      !roster ||
+      !mentionsAnotherRoomPeer(active.body, active.providerContext.executorBotId, roster)
+    ) return null;
+    return selector.call(
+      provider,
+      active.body,
+      active.providerContext.executorBotId,
+      roster,
+      active.controller.signal,
+    );
+  }
+
   private createProvider(): ModelProvider {
     if (this.providerOverride) return this.providerOverride;
     if (this.fakeProvider) return this.fakeProvider;
@@ -507,6 +544,10 @@ export class RuntimeExecutor {
     active.flushTimer = null;
     active.staleTimer = null;
   }
+}
+
+function mentionsAnotherRoomPeer(body: string, executorBotId: string, roster: readonly RoomPeer[]): boolean {
+  return roster.some((peer) => peer.id !== executorBotId && peer.name.trim().length > 0 && body.includes(peer.name.trim()));
 }
 
 function closeIterator(iterator: AsyncIterator<ModelEvent> | null): void {

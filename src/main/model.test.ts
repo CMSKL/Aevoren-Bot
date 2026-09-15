@@ -273,12 +273,15 @@ describe("parseOpenAiStream", () => {
       },
     ));
     const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
-      tools?: Array<{ function: { description: string; parameters: { properties: { toAgentId: { enum: string[] } }; additionalProperties: boolean } } }>;
+      tools?: Array<{ function: { description: string; parameters: { properties: { toAgentId: { enum: string[] }; contextRefs: { maxItems: number } }; additionalProperties: boolean } } }>;
     };
     expect(request.tools).toHaveLength(1);
     expect(request.tools?.[0]).toMatchObject({
       function: {
-        parameters: { additionalProperties: false, properties: { toAgentId: { enum: [targetId] } } },
+        parameters: {
+          additionalProperties: false,
+          properties: { toAgentId: { enum: [targetId] }, contextRefs: { maxItems: 0 } },
+        },
       },
     });
     expect(request.tools?.[0]?.function.description).toContain(targetId);
@@ -493,5 +496,109 @@ describe("Room owner selector", () => {
     await expect(provider.selectRoomOwner("message", roster, new AbortController().signal)).rejects.toMatchObject({
       code: "MODEL_ROUTER_INVALID",
     });
+  });
+});
+
+describe("Room continuation selector", () => {
+  const executorBotId = crypto.randomUUID();
+  const target = { id: crypto.randomUUID(), name: "评审员", label: "质量复核", description: "负责复核交付物" };
+  const roster = [
+    { id: executorBotId, name: "总控", label: "任务编排", description: "负责分配任务" },
+    target,
+  ];
+
+  it("turns an explicit immediate assignment into one structured Handoff decision", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [{
+        type: "function",
+        function: {
+          name: "select_room_continuation",
+          arguments: JSON.stringify({
+            action: "handoff",
+            toAgentId: target.id,
+            task: "复核当前交付物。",
+            reason: "草稿明确要求评审员现在继续。",
+          }),
+        },
+      }] } }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://api.deepseek.com/v1", "test-model", "SECRET_API_KEY");
+
+    await expect(provider.selectRoomContinuation(
+      "ASSIGN：请评审员立即复核。",
+      executorBotId,
+      roster,
+      new AbortController().signal,
+    )).resolves.toEqual({
+      action: "handoff",
+      toAgentId: target.id,
+      task: "复核当前交付物。",
+      contextRefs: [],
+      visibility: "room",
+      reason: "草稿明确要求评审员现在继续。",
+    });
+
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
+      messages: Array<{ content: string }>;
+      tools: Array<{ function: { name: string } }>;
+      tool_choice: string;
+      thinking: unknown;
+    };
+    expect(request.tools.map((tool) => tool.function.name)).toEqual(["select_room_continuation"]);
+    expect(request.tool_choice).toBe("auto");
+    expect(request.thinking).toEqual({ type: "disabled" });
+    expect(request.messages[0]!.content).toContain("等待用户批准/输入");
+    expect(JSON.stringify(request)).not.toContain("SECRET_API_KEY");
+  });
+
+  it("keeps a human approval gate complete without creating a target", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [{
+        type: "function",
+        function: {
+          name: "select_room_continuation",
+          arguments: JSON.stringify({
+            action: "complete",
+            toAgentId: "__complete__",
+            task: "",
+            reason: "必须先等待用户批准。",
+          }),
+        },
+      }] } }],
+    }), { status: 200 })));
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "model", "key");
+
+    await expect(provider.selectRoomContinuation(
+      "用户批准后再交给评审员，当前先停止。",
+      executorBotId,
+      roster,
+      new AbortController().signal,
+    )).resolves.toEqual({ action: "complete", reason: "必须先等待用户批准。" });
+  });
+
+  it("fails closed when the selector returns a nonmember target", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [{
+        type: "function",
+        function: {
+          name: "select_room_continuation",
+          arguments: JSON.stringify({
+            action: "handoff",
+            toAgentId: crypto.randomUUID(),
+            task: "复核",
+            reason: "立即复核",
+          }),
+        },
+      }] } }],
+    }), { status: 200 })));
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "model", "key");
+
+    await expect(provider.selectRoomContinuation(
+      "请评审员立即复核。",
+      executorBotId,
+      roster,
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
   });
 });
