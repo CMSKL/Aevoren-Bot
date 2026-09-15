@@ -171,6 +171,7 @@ app.whenReady().then(() => {
   repository.recoverInterruptedSends();
   repository.recoverInterruptedRooms();
   repository.recoverInterruptedRuntimeRuns();
+  repository.recoverToolInvocations();
   const settings = new ModelSettingsService(repository, electronSecretCodec);
   mainWindow = createWindow();
   const forceFakeProvider = process.env.AEVOREN_BOT_FAKE_PROVIDER === "1";

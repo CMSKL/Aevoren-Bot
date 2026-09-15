@@ -79,7 +79,7 @@ describe("explicit Memory repository", () => {
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(logicalV7Hash(inspected)).toBe(beforeHash);
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual(
-      Array.from({ length: 8 }, (_, index) => ({ version: index + 1 })),
+      Array.from({ length: 9 }, (_, index) => ({ version: index + 1 })),
     );
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(inspected.prepare("PRAGMA table_info(memory_items)").all().map((column) => (

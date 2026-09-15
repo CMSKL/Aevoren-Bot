@@ -1,6 +1,7 @@
 import { clipboard, ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { IPC } from "@shared/channels";
 import {
+  approvalResolutionSchema,
   batchIdSchema,
   botHiddenSchema,
   botIdSchema,
@@ -23,6 +24,7 @@ import {
   runIdSchema,
   sendCommandSchema,
   sessionIdSchema,
+  toolSessionScopeSchema,
   turnIdSchema,
 } from "@shared/schemas";
 import { apiResult, AevorenBotError } from "./errors";
@@ -112,6 +114,20 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.memoriesRestore, (_event, input: unknown) => {
     const parsed = memoryMutationSchema.parse(input);
     return repository.restoreMemory(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.toolsList, (_event, input: unknown) => {
+    const parsed = toolSessionScopeSchema.parse(input);
+    return repository.listToolInvocations(parsed.sessionId);
+  });
+  handle(IPC.approvalsListPending, (_event, input: unknown) => {
+    const parsed = toolSessionScopeSchema.parse(input);
+    return repository.listPendingApprovalRequests(parsed.sessionId);
+  });
+  handle(IPC.approvalsResolve, (_event, input: unknown) => {
+    const parsed = approvalResolutionSchema.parse(input);
+    const approval = repository.getApprovalRequest(parsed.id);
+    if (approval.sessionId !== parsed.sessionId) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+    return repository.resolveToolApproval(parsed.id, parsed.expectedVersion, parsed.resolution);
   });
   handle(IPC.roomsList, (_event, input: unknown) => repository.listRooms(roomListSchema.parse(input)?.includeArchived ?? false));
   handle(IPC.roomsCreate, (_event, input: unknown) => repository.createRoom(roomCreateSchema.parse(input)));
