@@ -10,6 +10,20 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    files: ["build/*.cjs"],
+    languageOptions: {
+      sourceType: "commonjs",
+      globals: { __dirname: "readonly", module: "readonly", process: "readonly", require: "readonly", URL: "readonly" },
+    },
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
+  {
+    files: ["scripts/*.mjs"],
+    languageOptions: {
+      globals: { process: "readonly", URL: "readonly" },
+    },
+  },
+  {
     files: ["src/**/*.{ts,tsx}", "tests/**/*.ts", "*.ts"],
     plugins: {
       "react-hooks": reactHooks,

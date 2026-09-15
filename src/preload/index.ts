@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
-import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent } from "@shared/contracts";
+import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
 
 const api: AevorenBotApi = {
   bots: {
@@ -71,6 +71,12 @@ const api: AevorenBotApi = {
     saveModelConfiguration: (input) => ipcRenderer.invoke(IPC.settingsSaveModel, input),
     testModelConnection: () => ipcRenderer.invoke(IPC.settingsTestModel),
   },
+  updates: {
+    getState: () => ipcRenderer.invoke(IPC.updatesGetState),
+    check: () => ipcRenderer.invoke(IPC.updatesCheck),
+    retry: () => ipcRenderer.invoke(IPC.updatesRetry),
+    installAndRestart: () => ipcRenderer.invoke(IPC.updatesInstallAndRestart),
+  },
   events: {
     subscribeTranscript(listener) {
       const wrapped = (_event: Electron.IpcRendererEvent, value: TranscriptEvent): void => listener(value);
@@ -96,6 +102,11 @@ const api: AevorenBotApi = {
       const wrapped = (_event: Electron.IpcRendererEvent, value: ToolEvent): void => listener(value);
       ipcRenderer.on(IPC.toolEvent, wrapped);
       return () => ipcRenderer.removeListener(IPC.toolEvent, wrapped);
+    },
+    subscribeUpdate(listener) {
+      const wrapped = (_event: Electron.IpcRendererEvent, value: UpdateEvent): void => listener(value);
+      ipcRenderer.on(IPC.updateEvent, wrapped);
+      return () => ipcRenderer.removeListener(IPC.updateEvent, wrapped);
     },
   },
   app: {

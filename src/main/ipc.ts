@@ -36,6 +36,7 @@ import type { SendWorker } from "./send-worker";
 import type { RoomCoordinator } from "./room-coordinator";
 import type { WorkspaceService } from "./workspace-service";
 import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
+import type { UpdateService } from "./update-service";
 
 type IpcDependencies = {
   window: BrowserWindow;
@@ -45,10 +46,13 @@ type IpcDependencies = {
   roomCoordinator: RoomCoordinator;
   workspaceService: WorkspaceService;
   workspaceToolCoordinator: WorkspaceToolCoordinator;
+  updateService: UpdateService;
   pickWorkspaceRoot(): Promise<string | null>;
   forceFakeProvider: boolean;
   rendererReady(): void;
   confirmClose(canClose: boolean): void;
+  prepareUpdateInstall(): void;
+  cancelUpdateInstall(): void;
 };
 
 function isTrusted(event: IpcMainEvent | IpcMainInvokeEvent, window: BrowserWindow): boolean {
@@ -204,6 +208,18 @@ export function registerIpc(dependencies: IpcDependencies): void {
       throw error;
     } finally {
       clearTimeout(timer);
+    }
+  });
+  handle(IPC.updatesGetState, () => dependencies.updateService.getState());
+  handle(IPC.updatesCheck, () => dependencies.updateService.check());
+  handle(IPC.updatesRetry, () => dependencies.updateService.retry());
+  handle(IPC.updatesInstallAndRestart, () => {
+    dependencies.prepareUpdateInstall();
+    try {
+      return dependencies.updateService.installAndRestart();
+    } catch (error) {
+      dependencies.cancelUpdateInstall();
+      throw error;
     }
   });
 

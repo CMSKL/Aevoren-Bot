@@ -531,6 +531,27 @@ export type SaveModelConfigurationInput = {
   apiKey?: string;
 };
 
+export type UpdateChannel = "development" | "beta" | "stable";
+
+export type UpdateStatus =
+  | "disabled"
+  | "idle"
+  | "checking"
+  | "up-to-date"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "installing"
+  | "updated"
+  | "error";
+
+export type UpdateProgress = {
+  percent: number;
+  bytesPerSecond: number;
+  transferred: number;
+  total: number;
+};
+
 export type ErrorDomain =
   | "validation"
   | "bot"
@@ -545,6 +566,7 @@ export type ErrorDomain =
   | "provider"
   | "storage"
   | "security"
+  | "update"
   | "internal";
 
 export type AppError = {
@@ -580,6 +602,20 @@ export type ToolEvent = {
   sessionId: string;
   invocation: ToolInvocation;
   approval: ApprovalRequest;
+};
+
+export type UpdateState = {
+  channel: UpdateChannel;
+  status: UpdateStatus;
+  currentVersion: string;
+  availableVersion: string | null;
+  progress: UpdateProgress | null;
+  checkedAt: string | null;
+  error: AppError | null;
+};
+
+export type UpdateEvent = {
+  state: UpdateState;
 };
 
 export interface AevorenBotApi {
@@ -656,12 +692,19 @@ export interface AevorenBotApi {
     saveModelConfiguration(input: SaveModelConfigurationInput): Promise<ApiResult<ModelConfiguration>>;
     testModelConnection(): Promise<ApiResult<void>>;
   };
+  updates: {
+    getState(): Promise<ApiResult<UpdateState>>;
+    check(): Promise<ApiResult<UpdateState>>;
+    retry(): Promise<ApiResult<UpdateState>>;
+    installAndRestart(): Promise<ApiResult<UpdateState>>;
+  };
   events: {
     subscribeTranscript(listener: (event: TranscriptEvent) => void): () => void;
     subscribeSendState(listener: (event: SendStateEvent) => void): () => void;
     subscribeRuntime(listener: (event: RuntimeEvent) => void): () => void;
     subscribeRoomRuntime(listener: (event: RoomRuntimeEvent) => void): () => void;
     subscribeTool(listener: (event: ToolEvent) => void): () => void;
+    subscribeUpdate(listener: (event: UpdateEvent) => void): () => void;
   };
   app: {
     ready(): void;

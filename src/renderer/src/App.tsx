@@ -18,6 +18,7 @@ import type {
   ToolInvocation,
   TranscriptEntry,
   TranscriptEvent,
+  UpdateState,
 } from "@shared/contracts";
 import { Conversation } from "./components/Conversation";
 import { ModelSettingsDialog } from "./components/ModelSettingsDialog";
@@ -26,6 +27,7 @@ import { ProfileInspector, type ProfileInspectorHandle } from "./components/Prof
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
 import { Sidebar } from "./components/Sidebar";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
+import { UpdateStatusNotice } from "./components/UpdateStatusNotice";
 import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
 import { mergeRoomRuntimeEvents } from "./room-runtime-state";
 
@@ -77,6 +79,7 @@ export function App(): React.JSX.Element {
   const [mobilePanel, setMobilePanel] = useState<"bots" | "profile" | null>(null);
   const [creatingBot, setCreatingBot] = useState(false);
   const [createError, setCreateError] = useState<AppError | null>(null);
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   const newBotButtonRef = useRef<HTMLButtonElement>(null);
   const profileRef = useRef<ProfileInspectorHandle>(null);
   const roomRef = useRef<RoomInspectorHandle>(null);
@@ -141,6 +144,7 @@ export function App(): React.JSX.Element {
       setToolInvocations((current) => mergeToolInvocation(current, event.invocation));
       setApprovalRequests((current) => mergePendingApproval(current, event.approval));
     });
+    const unsubscribeUpdate = window.aevorenBot.events.subscribeUpdate((event) => setUpdateState(event.state));
     const unsubscribeClose = window.aevorenBot.app.subscribeBeforeClose(() => {
       void flushActive().then((saved) => window.aevorenBot.app.confirmClose(saved));
     });
@@ -148,12 +152,16 @@ export function App(): React.JSX.Element {
       setCloseNotice("关闭未完成：资料仍保留在当前窗口，请稍后重试关闭。");
     });
     window.aevorenBot.app.ready();
+    void window.aevorenBot.updates.getState().then((result) => {
+      if (result.ok) setUpdateState(result.data);
+    });
     return () => {
       unsubscribeTranscript();
       unsubscribeSend();
       unsubscribeRuntime();
       unsubscribeRoom();
       unsubscribeTool();
+      unsubscribeUpdate();
       unsubscribeClose();
       unsubscribeCloseBlocked();
     };
@@ -588,6 +596,8 @@ export function App(): React.JSX.Element {
   }
 
   const activeRoomBatch = roomBatches.some((batch) => batch.state === "queued" || batch.state === "running");
+  const activeDirectRun = liveState !== null && ["starting", "running", "composing", "retrying", "cancelling"].includes(liveState.state);
+  const updateRestartBlocked = submitting || activeRoomBatch || activeDirectRun;
 
   return (
     <div className="app-shell">
@@ -736,6 +746,21 @@ export function App(): React.JSX.Element {
           }}
         />
       ) : null}
+      <UpdateStatusNotice
+        state={updateState}
+        restartBlocked={updateRestartBlocked}
+        onRetry={() => void window.aevorenBot.updates.retry().then((result) => {
+          if (result.ok) setUpdateState(result.data);
+        })}
+        onInstall={() => {
+          void flushActive().then((saved) => {
+            if (!saved) return;
+            void window.aevorenBot.updates.installAndRestart().then((result) => {
+              if (result.ok) setUpdateState(result.data);
+            });
+          });
+        }}
+      />
     </div>
   );
 }

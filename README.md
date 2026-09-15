@@ -30,6 +30,7 @@ Aevoren Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在可
 - Room Renderer Reload、Main crash 中断恢复和禁止自动重发。
 - 每个 Bot 的显式、版本化 Memory，以及 Direct/Room executor 隔离注入；
 - 一次性 Approval、持久化 Tool Journal、用户显式授权的 Workspace Registry，以及由模型结构化请求、Renderer 明确确认、Main 受限执行的只读 List/Read/Search；不具备命令执行或文件写入能力。
+- macOS 自动更新状态机：启动/定期检查、Stable/Beta 渠道、SemVer 防降级、自动下载进度、失败重试、正常退出安装和新版本启动确认；Development 与无可信 feed 的本地包默认禁用更新。
 
 无界或并行 fan-out、Memory synthesis、Summary、Routine、Plugin/MCP、Local Exec、Computer Use 和 Cloud Computer 尚未实现。
 
@@ -67,6 +68,7 @@ pnpm lint
 pnpm test
 pnpm build
 pnpm test:smoke
+pnpm package:mac
 ```
 
 一次运行全部静态和单元验证：
@@ -120,6 +122,8 @@ pnpm validate
 - [P0-D2b 只读 Workspace 执行器验收标准](docs/validation/p0-d2b-readonly-workspace-executor-acceptance.md)
 - [P0-D2c Workspace 只读工具端到端接线](docs/plans/p0-d2c-workspace-tools-e2e.md)
 - [P0-D2c Workspace 只读工具端到端验收结果](docs/validation/p0-d2c-workspace-tools-e2e-acceptance.md)
+- [macOS 自动更新设计与发布门禁](docs/plans/automatic-updates.md)
+- [macOS 自动更新验收记录](docs/validation/automatic-updates-acceptance.md)
 - [试用反馈模板](docs/templates/pilot-feedback.md)
 
 ## 分支流程

@@ -1,8 +1,9 @@
 import "./identity";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { app, BrowserWindow, dialog, nativeTheme, safeStorage, shell } from "electron";
 import { IPC } from "@shared/channels";
-import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent } from "@shared/contracts";
+import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateState } from "@shared/contracts";
 import { AppRepository } from "./database";
 import { registerIpc } from "./ipc";
 import { SendWorker } from "./send-worker";
@@ -11,6 +12,8 @@ import { ModelSettingsService, type SecretCodec } from "./settings";
 import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
+import { ElectronUpdateAdapter } from "./electron-update-adapter";
+import { resolveUpdateChannel, UpdateService } from "./update-service";
 
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
@@ -20,6 +23,7 @@ let mainWindow: BrowserWindow | null = null;
 let repository: AppRepository | null = null;
 let runtimeCoordinator: SendWorker | null = null;
 let roomCoordinator: RoomCoordinator | null = null;
+let updateService: UpdateService | null = null;
 let allowClose = false;
 let closeRequested = false;
 let quitRequested = false;
@@ -61,6 +65,11 @@ function emitRoomRuntime(event: RoomRuntimeEvent): void {
 
 function emitTool(event: ToolEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.toolEvent, event);
+}
+
+function emitUpdate(state: UpdateState): void {
+  if (state.status === "error" && state.error?.code === "UPDATE_INSTALL_FAILED") allowClose = false;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.updateEvent, { state });
 }
 
 function clearCloseConfirmationTimer(): void {
@@ -202,6 +211,22 @@ app.whenReady().then(() => {
     transcript: emitTranscript,
     roomRuntime: emitRoomRuntime,
   });
+  const updateConfigurationPath = join(process.resourcesPath, "app-update.yml");
+  const updateChannel = resolveUpdateChannel({
+    isPackaged: app.isPackaged,
+    hasUpdateConfiguration: existsSync(updateConfigurationPath),
+    currentVersion: app.getVersion(),
+    disabled: process.env.AEVOREN_BOT_DISABLE_UPDATES === "1",
+  });
+  updateService = new UpdateService(new ElectronUpdateAdapter(), {
+    currentVersion: app.getVersion(),
+    channel: updateChannel,
+    receiptStore: {
+      getPendingVersion: () => repository?.getSetting("update.pendingVersion")?.value || null,
+      setPendingVersion: (version) => repository?.setSetting("update.pendingVersion", version ?? "", false),
+    },
+    emit: emitUpdate,
+  });
   registerIpc({
     window: mainWindow,
     repository,
@@ -210,6 +235,7 @@ app.whenReady().then(() => {
     roomCoordinator,
     workspaceService,
     workspaceToolCoordinator,
+    updateService,
     async pickWorkspaceRoot() {
       if (!mainWindow || mainWindow.isDestroyed()) return null;
       const result = await dialog.showOpenDialog(mainWindow, {
@@ -238,7 +264,14 @@ app.whenReady().then(() => {
       }
       void finishClose();
     },
+    prepareUpdateInstall() {
+      allowClose = true;
+    },
+    cancelUpdateInstall() {
+      allowClose = false;
+    },
   });
+  updateService.start();
 });
 
 app.on("window-all-closed", () => app.quit());
@@ -258,8 +291,10 @@ app.on("before-quit", (event) => {
 });
 app.on("quit", () => {
   clearCloseConfirmationTimer();
+  updateService?.stop();
   repository?.close();
   repository = null;
   runtimeCoordinator = null;
   roomCoordinator = null;
+  updateService = null;
 });
