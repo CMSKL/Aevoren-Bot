@@ -40,8 +40,8 @@ Beta/Stable 都使用构建时固化的公开 GitHub Provider，固定为 `CMSKL
 1. `package.json` SemVer 与 Git tag 完全一致；
 2. Beta tag 所在提交已进入 `beta`，Stable tag 所在提交已进入 `master`；
 3. 使用 `Developer ID Application` 签名并启用 Hardened Runtime；
-4. Apple 公证成功且 ticket 已 stapled；
-5. `codesign --verify`、Gatekeeper `spctl` 和 `stapler validate` 均通过；
+4. App 公证成功且 ticket 已 stapled；最终 DMG 在生成更新元数据前完成 Developer ID 签名，并以不改变文件字节的方式单独取得在线公证 ticket；
+5. App 的 `codesign --verify`、Gatekeeper `spctl` 和 `stapler validate` 均通过，DMG 的 `codesign --verify` 与 `spctl --type open` 均通过；
 6. Draft Release 同时包含 ZIP、DMG、blockmap、`beta-mac.yml` 或 `latest-mac.yml`、`SHASUMS256.txt`；
 7. Draft 资产重新下载后必须同时通过 SHA-256 清单和 manifest SHA-512 校验；
 8. 发布后 `gh release verify` 必须通过，仓库必须启用 Immutable Releases；

@@ -101,11 +101,34 @@ jobs:
         run: pnpm validate
       - name: Build, sign and notarize update artifacts
         run: pnpm release:mac
+      - name: Notarize signed disk image
+        shell: bash
+        env:
+          NOTARIZATION_MODE: ${{ steps.credentials.outputs.notarization_mode }}
+        run: |
+          dmg_files=(dist/*.dmg)
+          if [[ "${#dmg_files[@]}" -ne 1 || ! -f "${dmg_files[0]}" ]]; then
+            echo 'Expected exactly one signed DMG artifact' >&2
+            exit 1
+          fi
+          if [[ "$NOTARIZATION_MODE" == 'api-key' ]]; then
+            auth=(--key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER")
+          else
+            auth=(--apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID")
+          fi
+          xcrun notarytool submit "${dmg_files[0]}" "${auth[@]}" --wait --output-format json > "$RUNNER_TEMP/aevoren-dmg-notary.json"
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const result = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/aevoren-dmg-notary.json", "utf8"));
+            if (result.status !== "Accepted") throw new Error(`DMG notarization failed with status ${result.status ?? "<missing>"}`);
+          '
       - name: Verify signature, Gatekeeper and notarization ticket
         shell: bash
         run: |
           APP_PATH="$(find dist -maxdepth 2 -type d -name 'Aevoren Bot.app' -print -quit)"
+          DMG_PATH="$(find dist -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           test -n "$APP_PATH"
+          test -n "$DMG_PATH"
           SIGNATURE_INFO="$(codesign -dv --verbose=4 "$APP_PATH" 2>&1)"
           grep -q '^Authority=Developer ID Application:' <<<"$SIGNATURE_INFO"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
@@ -116,6 +139,8 @@ jobs:
           fi
           spctl --assess --type execute --verbose=2 "$APP_PATH"
           xcrun stapler validate "$APP_PATH"
+          codesign --verify --strict --verbose=2 "$DMG_PATH"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
       - name: Verify release assets and generate checksums
         run: pnpm release:prepare
       - name: Attest release assets
