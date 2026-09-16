@@ -50,9 +50,12 @@ Beta/Stable 都使用构建时固化的公开 GitHub Provider，固定为 `CMSKL
 CI 所需 Secrets：
 
 - `CSC_LINK`、`CSC_KEY_PASSWORD`
-- `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`
+- `APPLE_TEAM_ID`
+- 公证凭据二选一：
+  - 推荐：`APPLE_API_KEY_P8_BASE64`、`APPLE_API_KEY_ID`、`APPLE_API_ISSUER`
+  - 兼容：`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`
 
-任一签名或公证 Secret 缺失时发布任务 Fail Closed，不会创建或发布正式 Release。`GITHUB_TOKEN` 使用 GitHub Actions 自动提供的短期令牌，不写入客户端。
+API Key 模式优先；Key 只在 Runner 临时目录解码并设置为 `0600`，不会写入仓库或发布资产。任一所选凭据组不完整，或两组均未配置时，发布任务 Fail Closed，不会创建或发布正式 Release。`GITHUB_TOKEN` 使用 GitHub Actions 自动提供的短期令牌，不写入客户端。
 
 ## 本地命令
 
