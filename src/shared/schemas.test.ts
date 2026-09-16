@@ -4,17 +4,29 @@ import {
   botPinnedSchema,
   botUnreadSchema,
   approvalResolutionSchema,
+  generalSettingsSchema,
   memoryCreateSchema,
   memoryListSchema,
   memoryMutationSchema,
   memoryUpdateSchema,
   modelConfigurationSchema,
   roomCreateSchema,
+  roomHiddenSchema,
+  roomPinnedSchema,
   roomSendCommandSchema,
+  roomUnreadSchema,
   toolInvocationCommandSchema,
   toolSessionScopeSchema,
   workspaceRelativePathSchema,
 } from "./schemas";
+
+describe("General settings schema", () => {
+  it("accepts only declared appearance themes", () => {
+    expect(generalSettingsSchema.parse({ theme: "system" })).toEqual({ theme: "system" });
+    expect(generalSettingsSchema.safeParse({ theme: "sepia" }).success).toBe(false);
+    expect(generalSettingsSchema.safeParse({ theme: "dark", extra: true }).success).toBe(false);
+  });
+});
 
 describe("Bot sidebar action schemas", () => {
   const id = crypto.randomUUID();
@@ -158,6 +170,16 @@ describe("Room schemas", () => {
     expect(roomCreateSchema.safeParse({ memberBotIds: ids.slice(0, 1) }).success).toBe(false);
     expect(roomCreateSchema.safeParse({ memberBotIds: ids }).success).toBe(false);
     expect(roomCreateSchema.safeParse({ memberBotIds: [ids[0], ids[0]] }).success).toBe(false);
+  });
+
+  it("requires a Room UUID and explicit boolean for sidebar state changes", () => {
+    const id = crypto.randomUUID();
+    expect(roomPinnedSchema.safeParse({ id, pinned: true }).success).toBe(true);
+    expect(roomUnreadSchema.safeParse({ id, unread: false }).success).toBe(true);
+    expect(roomHiddenSchema.safeParse({ id, hidden: true }).success).toBe(true);
+    expect(roomPinnedSchema.safeParse({ id: "bad", pinned: true }).success).toBe(false);
+    expect(roomUnreadSchema.safeParse({ id, unread: "true" }).success).toBe(false);
+    expect(roomHiddenSchema.safeParse({ id, hidden: "true" }).success).toBe(false);
   });
 
   it("strictly separates automatic, explicit, and everyone routing", () => {

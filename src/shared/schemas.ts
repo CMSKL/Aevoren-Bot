@@ -128,6 +128,9 @@ export const roomUpdateSchema = z.object({
 });
 
 export const roomArchiveSchema = z.object({ id: roomIdSchema, archived: z.boolean() });
+export const roomPinnedSchema = z.object({ id: roomIdSchema, pinned: z.boolean() });
+export const roomUnreadSchema = z.object({ id: roomIdSchema, unread: z.boolean() });
+export const roomHiddenSchema = z.object({ id: roomIdSchema, hidden: z.boolean() });
 export const roomListSchema = z.object({ includeArchived: z.boolean().optional() }).optional();
 export const roomMembershipSchema = z.object({
   roomId: roomIdSchema,
@@ -169,3 +172,7 @@ export const modelConfigurationSchema = z.object({
   modelId: z.string().trim().min(1).max(200),
   apiKey: z.string().trim().min(1).max(8_192).optional(),
 });
+
+export const generalSettingsSchema = z.object({
+  theme: z.enum(["system", "light", "dark"]),
+}).strict();

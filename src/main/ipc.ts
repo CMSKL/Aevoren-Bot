@@ -8,6 +8,7 @@ import {
   botPinnedSchema,
   botUnreadSchema,
   botUpdateSchema,
+  generalSettingsSchema,
   modelConfigurationSchema,
   memoryCreateSchema,
   memoryListSchema,
@@ -16,10 +17,13 @@ import {
   nonceSchema,
   roomArchiveSchema,
   roomCreateSchema,
+  roomHiddenSchema,
   roomIdSchema,
   roomListSchema,
   roomMembershipSchema,
+  roomPinnedSchema,
   roomSendCommandSchema,
+  roomUnreadSchema,
   roomUpdateSchema,
   runIdSchema,
   sendCommandSchema,
@@ -31,7 +35,7 @@ import {
 import { apiResult, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 import { OpenAiCompatibleProvider } from "./model";
-import type { ModelSettingsService } from "./settings";
+import type { GeneralSettingsService, ModelSettingsService } from "./settings";
 import type { SendWorker } from "./send-worker";
 import type { RoomCoordinator } from "./room-coordinator";
 import type { WorkspaceService } from "./workspace-service";
@@ -42,6 +46,7 @@ type IpcDependencies = {
   window: BrowserWindow;
   repository: AppRepository;
   settings: ModelSettingsService;
+  generalSettings: GeneralSettingsService;
   sendWorker: SendWorker;
   roomCoordinator: RoomCoordinator;
   workspaceService: WorkspaceService;
@@ -66,7 +71,7 @@ function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
 }
 
 export function registerIpc(dependencies: IpcDependencies): void {
-  const { window, repository, settings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
+  const { window, repository, settings, generalSettings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
 
   const handle = <TArgs extends unknown[], TResult>(
     channel: string,
@@ -157,6 +162,24 @@ export function registerIpc(dependencies: IpcDependencies): void {
     const parsed = roomArchiveSchema.parse(input);
     return repository.archiveRoom(parsed.id, parsed.archived);
   });
+  handle(IPC.roomsSetPinned, (_event, input: unknown) => {
+    const parsed = roomPinnedSchema.parse(input);
+    return repository.setRoomPinned(parsed.id, parsed.pinned);
+  });
+  handle(IPC.roomsSetUnread, (_event, input: unknown) => {
+    const parsed = roomUnreadSchema.parse(input);
+    return repository.setRoomUnread(parsed.id, parsed.unread);
+  });
+  handle(IPC.roomsSetHidden, (_event, input: unknown) => {
+    const parsed = roomHiddenSchema.parse(input);
+    return repository.setRoomHidden(parsed.id, parsed.hidden);
+  });
+  handle(IPC.roomsCopyConversationId, (_event, id: unknown) => {
+    const parsed = roomIdSchema.parse(id);
+    repository.getRoom(parsed);
+    clipboard.writeText(parsed);
+  });
+  handle(IPC.roomsDelete, (_event, id: unknown) => repository.deleteRoom(roomIdSchema.parse(id)));
   handle(IPC.roomsAddMember, (_event, input: unknown) => {
     const parsed = roomMembershipSchema.parse(input);
     return repository.addRoomMember(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion);
@@ -184,6 +207,10 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.roomRuntimeContinue, (_event, batchId: unknown) => roomCoordinator.continue(batchIdSchema.parse(batchId)));
   handle(IPC.roomRuntimeRetryTurn, (_event, turnId: unknown) => roomCoordinator.retryTurn(turnIdSchema.parse(turnId)));
   handle(IPC.settingsGetModel, () => settings.getConfiguration());
+  handle(IPC.settingsGetGeneral, () => generalSettings.getConfiguration());
+  handle(IPC.settingsSaveGeneral, (_event, input: unknown) =>
+    generalSettings.saveConfiguration(generalSettingsSchema.parse(input)),
+  );
   handle(IPC.settingsSaveModel, (_event, input: unknown) => {
     const parsed = modelConfigurationSchema.parse(input);
     return settings.saveConfiguration(parsed);

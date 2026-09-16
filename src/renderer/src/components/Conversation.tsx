@@ -30,7 +30,7 @@ import {
   type RoomMention,
 } from "../room-mentions";
 import { AssistantMarkdown } from "./AssistantMarkdown";
-import { BotIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, SettingsIcon, StopIcon } from "./Icons";
+import { BotIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
@@ -325,7 +325,6 @@ type ConversationProps = {
   closeNotice: string | null;
   onOpenBots(): void;
   onOpenProfile(): void;
-  onOpenSettings(): void;
   onOpenWorkspaces(): void;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
   onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode): Promise<boolean>;
@@ -356,7 +355,6 @@ export function Conversation({
   closeNotice,
   onOpenBots,
   onOpenProfile,
-  onOpenSettings,
   onOpenWorkspaces,
   onResolveApproval,
   onSend,
@@ -586,10 +584,6 @@ export function Conversation({
           <button className="secondary-button model-settings-button" type="button" aria-label="工作区" title="工作区" onClick={onOpenWorkspaces}>
             <FolderIcon />
             <span>工作区</span>
-          </button>
-          <button className="secondary-button model-settings-button" type="button" aria-label="模型设置" title="模型设置" onClick={onOpenSettings}>
-            <SettingsIcon />
-            <span>模型设置</span>
           </button>
           <button className="mobile-panel-button" type="button" aria-label="打开 Bot 设置" onClick={onOpenProfile}>
             <PanelIcon />

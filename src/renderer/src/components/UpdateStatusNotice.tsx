@@ -53,10 +53,11 @@ export function UpdateStatusNotice({ state, restartBlocked, onRetry, onInstall }
     );
   }
 
+  const interrupted = state.status === "install-interrupted";
   return (
     <aside className="update-status-notice update-status-error" role="alert">
-      <div className="update-status-copy"><strong>自动更新失败</strong><span>{state.error?.safeMessage ?? "当前版本可继续使用。"}</span></div>
-      <button type="button" className="update-action" onClick={onRetry}>重试</button>
+      <div className="update-status-copy"><strong>{interrupted ? "上次更新未完成" : "自动更新失败"}</strong><span>{state.error?.safeMessage ?? "当前版本可继续使用。"}</span></div>
+      <button type="button" className="update-action" onClick={onRetry}>{interrupted ? "重新下载" : "重试"}</button>
     </aside>
   );
 }

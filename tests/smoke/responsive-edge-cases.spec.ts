@@ -133,23 +133,36 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
     await page.screenshot({ path: "/tmp/aevoren-bot-responsive-inspector-zoom-200-fixed.png" });
     await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
 
-    await page.getByRole("button", { name: "模型设置" }).click();
+    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.getByRole("button", { name: "模型配置", exact: true }).click();
     const settingsLayout = await page.locator(".settings-dialog").evaluate((dialog) => {
       const dialogRect = dialog.getBoundingClientRect();
-      const header = dialog.querySelector("header");
-      const paragraph = header?.querySelector("p");
-      if (!(dialog instanceof HTMLElement) || !(header instanceof HTMLElement) || !(paragraph instanceof HTMLElement)) {
+      const panel = dialog.querySelector('.settings-panel:not([hidden])');
+      const paragraph = panel?.querySelector("p");
+      if (!(dialog instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(paragraph instanceof HTMLElement)) {
         throw new Error("missing compact model settings");
       }
       const paragraphRect = paragraph.getBoundingClientRect();
+      const visibleControls = [...dialog.querySelectorAll("button, input, select")].filter(
+        (control): control is HTMLElement => control instanceof HTMLElement && control.offsetParent !== null,
+      );
       return {
         dialogContained: dialogRect.left >= 0 && dialogRect.right <= window.innerWidth,
         horizontalContentContained: dialog.scrollWidth <= dialog.clientWidth,
         descriptionContained: paragraphRect.left >= dialogRect.left && paragraphRect.right <= dialogRect.right,
-        controlsContained: [...dialog.querySelectorAll("button, input")].every((control) => {
+        controlsContained: visibleControls.every((control) => {
           const rect = control.getBoundingClientRect();
           return rect.left >= dialogRect.left && rect.right <= dialogRect.right;
         }),
+        outOfBounds: visibleControls.filter((control) => {
+          const rect = control.getBoundingClientRect();
+          return rect.left < dialogRect.left || rect.right > dialogRect.right;
+        }).map((control) => ({
+          label: control.getAttribute("aria-label") ?? control.textContent?.trim() ?? control.tagName,
+          left: control.getBoundingClientRect().left,
+          right: control.getBoundingClientRect().right,
+        })),
       };
     });
     expect(settingsLayout).toEqual({
@@ -157,6 +170,7 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
       horizontalContentContained: true,
       descriptionContained: true,
       controlsContained: true,
+      outOfBounds: [],
     });
     await page.screenshot({ path: "/tmp/aevoren-bot-responsive-settings-zoom-200-fixed.png" });
     expect(consoleErrors).toEqual([]);

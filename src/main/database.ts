@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
   AgentTurn,
@@ -777,6 +779,26 @@ export const MIGRATIONS = [
         ON workspaces(removed_at, created_at, id);
     `,
   },
+  {
+    version: 11,
+    sql: `
+      ALTER TABLE rooms ADD COLUMN pinned_at TEXT;
+      ALTER TABLE rooms ADD COLUMN has_unread INTEGER NOT NULL DEFAULT 0 CHECK (has_unread IN (0, 1));
+
+      CREATE INDEX rooms_sidebar_state
+        ON rooms(archived_at, pinned_at, created_at);
+    `,
+  },
+  {
+    version: 12,
+    sql: `
+      ALTER TABLE rooms ADD COLUMN hidden_at TEXT;
+
+      DROP INDEX rooms_sidebar_state;
+      CREATE INDEX rooms_sidebar_state
+        ON rooms(archived_at, hidden_at, pinned_at, created_at);
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -935,6 +957,9 @@ type RoomRow = {
   version: number;
   membership_version: number;
   archived_at: string | null;
+  pinned_at: string | null;
+  hidden_at: string | null;
+  has_unread: number;
   created_at: string;
   updated_at: string;
 };
@@ -1187,6 +1212,9 @@ function toRoom(row: RoomRow): Room {
     version: row.version,
     membershipVersion: row.membership_version,
     archivedAt: row.archived_at,
+    pinnedAt: row.pinned_at,
+    hiddenAt: row.hidden_at,
+    hasUnread: row.has_unread === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1388,6 +1416,11 @@ export function isRuntimeTerminal(state: RuntimeState): boolean {
   return TERMINAL_RUNTIME_STATES.includes(state);
 }
 
+export type AppRepositoryOptions = {
+  appVersion?: string;
+  backupDirectory?: string;
+};
+
 const ROOM_RUN_SELECT = `SELECT room_batches.*,
   (SELECT COUNT(DISTINCT room_turns.logical_turn_id) FROM room_turns
    WHERE room_turns.batch_id = room_batches.id) AS used_turns
@@ -1396,11 +1429,16 @@ const ROOM_RUN_SELECT = `SELECT room_batches.*,
 export class AppRepository {
   private readonly database: DatabaseSync;
 
-  constructor(filename: string) {
+  constructor(private readonly filename: string, private readonly options: AppRepositoryOptions = {}) {
     this.database = new DatabaseSync(filename);
-    this.database.exec("PRAGMA foreign_keys = ON;");
-    if (filename !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL;");
-    this.migrate();
+    try {
+      this.database.exec("PRAGMA foreign_keys = ON;");
+      if (filename !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL;");
+      this.migrate();
+    } catch (error) {
+      this.database.close();
+      throw error;
+    }
   }
 
   close(): void {
@@ -1408,6 +1446,16 @@ export class AppRepository {
   }
 
   private migrate(): void {
+    const hadMigrationTable = Boolean(this.database
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
+      .get());
+    const sourceSchemaVersion = hadMigrationTable
+      ? Number((this.database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as { version: number }).version)
+      : 0;
+    const targetSchemaVersion = MIGRATIONS.at(-1)?.version ?? 0;
+    if (this.filename !== ":memory:" && hadMigrationTable && sourceSchemaVersion < targetSchemaVersion) {
+      this.createMigrationBackup(sourceSchemaVersion, targetSchemaVersion);
+    }
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -1441,6 +1489,48 @@ export class AppRepository {
         }
       }
     }
+  }
+
+  private createMigrationBackup(sourceSchemaVersion: number, targetSchemaVersion: number): void {
+    const backupDirectory = this.options.backupDirectory ?? join(dirname(this.filename), "Backups");
+    mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
+    chmodSync(backupDirectory, 0o700);
+    const timestamp = now().replace(/[:.]/g, "-");
+    const suffix = randomUUID().slice(0, 8);
+    const baseName = `aevoren-bot-schema-v${sourceSchemaVersion}-to-v${targetSchemaVersion}-${timestamp}-${suffix}`;
+    const databaseBackupPath = join(backupDirectory, `${baseName}.sqlite`);
+    const metadataPath = join(backupDirectory, `${baseName}.json`);
+    const sourceAppVersion = this.readLastOpenedAppVersion();
+    this.database.exec(`VACUUM INTO '${databaseBackupPath.replaceAll("'", "''")}'`);
+    chmodSync(databaseBackupPath, 0o600);
+    const backup = new DatabaseSync(databaseBackupPath, { readOnly: true });
+    try {
+      const integrity = backup.prepare("PRAGMA integrity_check").get() as { integrity_check: string };
+      if (integrity.integrity_check !== "ok") throw new Error("Migration backup failed integrity check");
+    } finally {
+      backup.close();
+    }
+    writeFileSync(metadataPath, `${JSON.stringify({
+      createdAt: now(),
+      sourceDatabase: this.filename,
+      databaseBackup: databaseBackupPath,
+      sourceSchemaVersion,
+      targetSchemaVersion,
+      sourceAppVersion,
+      targetAppVersion: this.options.appVersion ?? null,
+    }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    chmodSync(metadataPath, 0o600);
+  }
+
+  private readLastOpenedAppVersion(): string | null {
+    const hasSettings = Boolean(this.database
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'")
+      .get());
+    if (!hasSettings) return null;
+    const row = this.database.prepare("SELECT value FROM app_settings WHERE key = 'app.lastOpenedVersion'").get() as
+      | { value: string }
+      | undefined;
+    return row?.value || null;
   }
 
   private transaction<T>(operation: () => T): T {
@@ -2373,6 +2463,46 @@ export class AppRepository {
       .run(archived ? timestamp : null, timestamp, id);
     if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
     return this.getRoom(id);
+  }
+
+  setRoomPinned(id: string, pinned: boolean): Room {
+    this.getRoom(id);
+    const timestamp = now();
+    const result = this.database
+      .prepare("UPDATE rooms SET pinned_at = ?, updated_at = ? WHERE id = ?")
+      .run(pinned ? timestamp : null, timestamp, id);
+    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
+    return this.getRoom(id);
+  }
+
+  setRoomUnread(id: string, unread: boolean): Room {
+    this.getRoom(id);
+    const result = this.database
+      .prepare("UPDATE rooms SET has_unread = ? WHERE id = ?")
+      .run(unread ? 1 : 0, id);
+    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
+    return this.getRoom(id);
+  }
+
+  setRoomHidden(id: string, hidden: boolean): Room {
+    this.getRoom(id);
+    const timestamp = now();
+    const result = this.database
+      .prepare("UPDATE rooms SET hidden_at = ?, pinned_at = CASE WHEN ? = 1 THEN NULL ELSE pinned_at END, updated_at = ? WHERE id = ?")
+      .run(hidden ? timestamp : null, hidden ? 1 : 0, timestamp, id);
+    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
+    return this.getRoom(id);
+  }
+
+  deleteRoom(id: string): { id: string } {
+    const room = this.getRoom(id);
+    const sessionId = this.getRoomMainSession(room.id).id;
+    if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) {
+      throw new AevorenBotError("ROOM_DELETE_BUSY");
+    }
+    const result = this.database.prepare("DELETE FROM rooms WHERE id = ?").run(id);
+    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
+    return { id };
   }
 
   addRoomMember(roomId: string, botId: string, expectedMembershipVersion: number): RoomDetail {

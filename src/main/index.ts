@@ -2,18 +2,19 @@ import "./identity";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { app, BrowserWindow, dialog, nativeTheme, safeStorage, shell } from "electron";
+import { valid } from "semver";
 import { IPC } from "@shared/channels";
 import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateState } from "@shared/contracts";
 import { AppRepository } from "./database";
 import { registerIpc } from "./ipc";
 import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
-import { ModelSettingsService, type SecretCodec } from "./settings";
+import { GeneralSettingsService, ModelSettingsService, type SecretCodec } from "./settings";
 import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { ElectronUpdateAdapter } from "./electron-update-adapter";
-import { resolveUpdateChannel, UpdateService } from "./update-service";
+import { parsePendingUpdateReceipt, resolveUpdateChannel, UpdateService } from "./update-service";
 
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
@@ -183,12 +184,17 @@ app.whenReady().then(() => {
     else app.dock?.setIcon(appIconPath());
   }
   const databasePath = process.env.AEVOREN_BOT_DB_PATH ?? join(app.getPath("userData"), "aevoren-bot.sqlite");
-  repository = new AppRepository(databasePath);
+  repository = new AppRepository(databasePath, {
+    appVersion: app.getVersion(),
+    backupDirectory: join(app.getPath("userData"), "Backups"),
+  });
+  repository.setSetting("app.lastOpenedVersion", app.getVersion(), false);
   repository.recoverInterruptedSends();
   repository.recoverInterruptedRooms();
   repository.recoverInterruptedRuntimeRuns();
   repository.recoverToolInvocations();
   const settings = new ModelSettingsService(repository, electronSecretCodec);
+  const generalSettings = new GeneralSettingsService(repository);
   const workspaceService = new WorkspaceService(repository);
   const workspaceToolCoordinator = new WorkspaceToolCoordinator(
     repository,
@@ -222,8 +228,23 @@ app.whenReady().then(() => {
     currentVersion: app.getVersion(),
     channel: updateChannel,
     receiptStore: {
-      getPendingVersion: () => repository?.getSetting("update.pendingVersion")?.value || null,
-      setPendingVersion: (version) => repository?.setSetting("update.pendingVersion", version ?? "", false),
+      getPendingReceipt: () => {
+        const receipt = parsePendingUpdateReceipt(repository?.getSetting("update.pendingReceipt")?.value);
+        if (receipt) return receipt;
+        const legacyVersion = repository?.getSetting("update.pendingVersion")?.value || null;
+        if (!legacyVersion || !valid(legacyVersion)) return null;
+        return {
+          version: legacyVersion,
+          previousVersion: app.getVersion(),
+          downloadedAt: new Date().toISOString(),
+          requestedAt: null,
+          attemptCount: 0,
+        };
+      },
+      setPendingReceipt: (receipt) => {
+        repository?.setSetting("update.pendingReceipt", receipt ? JSON.stringify(receipt) : "", false);
+        repository?.setSetting("update.pendingVersion", receipt?.version ?? "", false);
+      },
     },
     emit: emitUpdate,
   });
@@ -231,6 +252,7 @@ app.whenReady().then(() => {
     window: mainWindow,
     repository,
     settings,
+    generalSettings,
     sendWorker,
     roomCoordinator,
     workspaceService,

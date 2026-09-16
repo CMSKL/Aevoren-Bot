@@ -18,11 +18,12 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     const page = await application.firstWindow();
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
-    await page.getByRole("button", { name: "模型设置" }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.getByRole("button", { name: "模型配置", exact: true }).click();
     await page.getByLabel("Model ID").fill("bubble-smoke-model");
     await page.getByLabel("API Key").fill("bubble-smoke-key-not-a-real-secret");
     await page.getByRole("button", { name: "保存", exact: true }).click();
-    await page.getByRole("button", { name: "关闭" }).click();
+    await page.getByRole("button", { name: "关闭设置" }).click();
     await page.getByLabel("消息").fill("请用 Markdown 给出简短分析。");
     await page.getByRole("button", { name: "发送" }).click();
     await expect(page.locator("article.message-assistant")).toHaveAttribute("data-status", "completed");

@@ -24,12 +24,13 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
   await expect(page.getByText("产品需求分析助手")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "模型设置" }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "模型配置", exact: true }).click();
   await page.getByLabel("Model ID").fill("smoke-model");
   await page.getByLabel("API Key").fill("smoke-key-not-a-real-secret");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.getByText("设置已保存。")).toBeVisible();
-  await page.getByRole("button", { name: "关闭" }).click();
+  await page.getByRole("button", { name: "关闭设置" }).click();
 
   const description = page.getByLabel("描述");
   await description.fill("把模糊想法整理成可评审的产品需求。");

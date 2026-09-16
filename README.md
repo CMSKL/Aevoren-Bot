@@ -14,7 +14,7 @@ Aevoren Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在可
 - SQLite Transcript 与 Send Journal；
 - 稳定 Nonce、Body Digest、Duplicate/Conflict 和中断恢复；
 - Fake Provider 与 OpenAI 兼容流式 Provider；
-- 模型设置和 Electron `safeStorage` 加密；
+- 设置内的模型配置和 Electron `safeStorage` 加密；
 - 取消、失败和 Interrupted Unknown 状态；
 - Runtime Run、Provider Request ID、Prompt Manifest 和单调 Transcript Cursor；
 - Renderer 重载后的 Snapshot/事件版本合并；
@@ -58,7 +58,7 @@ AEVOREN_BOT_FAKE_PROVIDER=1 pnpm dev
 pnpm dev
 ```
 
-启动后进入“模型设置”，填写 Base URL、Model ID 和 API Key。API Key 只在 Renderer 输入期间短暂存在，保存后由 Main 使用系统安全存储加密；应用不会把明文 Key 返回给 Renderer。
+启动后从左侧栏左下角进入“设置 → 模型配置”，填写 Base URL、Model ID 和 API Key。API Key 只在 Renderer 输入期间短暂存在，保存后由 Main 使用系统安全存储加密；应用不会把明文 Key 返回给 Renderer。
 
 ## 验证命令
 

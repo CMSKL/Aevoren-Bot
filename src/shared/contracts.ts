@@ -296,11 +296,18 @@ export type Room = {
   version: number;
   membershipVersion: number;
   archivedAt: string | null;
+  pinnedAt: string | null;
+  hiddenAt: string | null;
+  hasUnread: boolean;
   createdAt: string;
   updatedAt: string;
 };
 
 export type RoomPatch = Partial<Pick<Room, "name" | "description">>;
+
+export type RoomDeleteResult = {
+  id: string;
+};
 
 export type RoomMember = {
   roomId: string;
@@ -531,6 +538,12 @@ export type SaveModelConfigurationInput = {
   apiKey?: string;
 };
 
+export type AppearanceTheme = "system" | "light" | "dark";
+
+export type GeneralSettings = {
+  theme: AppearanceTheme;
+};
+
 export type UpdateChannel = "development" | "beta" | "stable";
 
 export type UpdateStatus =
@@ -542,6 +555,7 @@ export type UpdateStatus =
   | "downloading"
   | "downloaded"
   | "installing"
+  | "install-interrupted"
   | "updated"
   | "error";
 
@@ -663,6 +677,11 @@ export interface AevorenBotApi {
     get(id: string): Promise<ApiResult<RoomDetail>>;
     update(input: { id: string; expectedVersion: number; patch: RoomPatch }): Promise<ApiResult<Room>>;
     archive(input: { id: string; archived: boolean }): Promise<ApiResult<Room>>;
+    setPinned(input: { id: string; pinned: boolean }): Promise<ApiResult<Room>>;
+    setUnread(input: { id: string; unread: boolean }): Promise<ApiResult<Room>>;
+    setHidden(input: { id: string; hidden: boolean }): Promise<ApiResult<Room>>;
+    copyConversationId(id: string): Promise<ApiResult<void>>;
+    delete(id: string): Promise<ApiResult<RoomDeleteResult>>;
     addMember(input: { roomId: string; botId: string; expectedMembershipVersion: number }): Promise<ApiResult<RoomDetail>>;
     removeMember(input: { roomId: string; botId: string; expectedMembershipVersion: number }): Promise<ApiResult<RoomDetail>>;
   };
@@ -688,6 +707,8 @@ export interface AevorenBotApi {
     retryTurn(turnId: string): Promise<ApiResult<RoomTurn>>;
   };
   settings: {
+    getGeneral(): Promise<ApiResult<GeneralSettings>>;
+    saveGeneral(input: GeneralSettings): Promise<ApiResult<GeneralSettings>>;
     getModelConfiguration(): Promise<ApiResult<ModelConfiguration>>;
     saveModelConfiguration(input: SaveModelConfigurationInput): Promise<ApiResult<ModelConfiguration>>;
     testModelConnection(): Promise<ApiResult<void>>;

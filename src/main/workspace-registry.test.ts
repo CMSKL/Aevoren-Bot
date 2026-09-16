@@ -114,7 +114,7 @@ afterEach(() => {
 });
 
 describe("Workspace Registry", () => {
-  it("migrates v9 to v10 atomically without changing existing logical data", () => {
+  it("migrates v9 through the latest schema atomically without changing existing logical data", () => {
     const directory = temporaryDirectory("aevoren-workspace-v10-");
     const filename = join(directory, "app.sqlite");
     migrateThroughV9(filename);
@@ -131,9 +131,14 @@ describe("Workspace Registry", () => {
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(logicalV9Hash(inspected)).toBe(beforeHash);
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual(
-      Array.from({ length: 10 }, (_, index) => ({ version: index + 1 })),
+      MIGRATIONS.map((migration) => ({ version: migration.version })),
     );
     expect(inspected.prepare("PRAGMA table_info(workspaces)").all()).not.toEqual([]);
+    expect(inspected.prepare("PRAGMA table_info(rooms)").all()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "pinned_at" }),
+      expect.objectContaining({ name: "hidden_at" }),
+      expect.objectContaining({ name: "has_unread" }),
+    ]));
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     inspected.close();
   });

@@ -343,7 +343,7 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     await launched.page.locator(".bot-row").filter({ hasText: room.room.name }).click();
     await expect(launched.page.getByRole("heading", { name: room.room.name })).toBeVisible();
 
-    const sidebarRows = launched.page.locator('.bot-row[aria-label]').filter({ hasText: "重复身份" });
+    const sidebarRows = launched.page.locator('.bot-row[aria-label*="#"]').filter({ hasText: "重复身份" });
     await expect(sidebarRows).toHaveCount(2);
     const sidebarDetails = await sidebarRows.locator(".bot-copy small").allTextContents();
     expect(new Set(sidebarDetails).size).toBe(2);

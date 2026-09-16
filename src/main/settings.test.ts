@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { AppRepository } from "./database";
-import { ModelSettingsService, type SecretCodec } from "./settings";
+import { GeneralSettingsService, ModelSettingsService, type SecretCodec } from "./settings";
 
 const repositories: AppRepository[] = [];
 
@@ -56,5 +56,24 @@ describe("ModelSettingsService", () => {
       decrypt: () => { throw new Error("native decryption failed"); },
     });
     expect(() => service.getApiKey()).toThrowError(expect.objectContaining({ code: "SECURE_STORAGE_UNAVAILABLE" }));
+  });
+});
+
+describe("GeneralSettingsService", () => {
+  it("defaults to the system theme and persists an explicit appearance choice", () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const service = new GeneralSettingsService(repository);
+    expect(service.getConfiguration()).toEqual({ theme: "system" });
+    expect(service.saveConfiguration({ theme: "dark" })).toEqual({ theme: "dark" });
+    expect(new GeneralSettingsService(repository).getConfiguration()).toEqual({ theme: "dark" });
+    expect(repository.getSetting("appearance.theme")).toMatchObject({ value: "dark", encrypted: false });
+  });
+
+  it("falls back safely when a stored theme is unknown", () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    repository.setSetting("appearance.theme", "future-theme", false);
+    expect(new GeneralSettingsService(repository).getConfiguration()).toEqual({ theme: "system" });
   });
 });

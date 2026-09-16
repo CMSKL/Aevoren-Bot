@@ -52,4 +52,16 @@ describe("UpdateStatusNotice", () => {
     expect(html).toContain("重试");
     expect(html).not.toContain("https://");
   });
+
+  it("explains an interrupted install without claiming the update succeeded", () => {
+    const html = render({
+      ...base,
+      status: "install-interrupted",
+      availableVersion: "1.1.0",
+      error: { code: "UPDATE_INSTALL_INTERRUPTED", domain: "update", retryable: true, safeMessage: "上次更新没有完成，当前版本仍可使用。" },
+    });
+    expect(html).toContain("上次更新未完成");
+    expect(html).toContain("重新下载");
+    expect(html).not.toContain("已更新至");
+  });
 });

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { UpdateProgress } from "@shared/contracts";
 import {
+  parsePendingUpdateReceipt,
   resolveUpdateChannel,
   UpdateService,
+  type PendingUpdateReceipt,
   type UpdateAdapter,
   type UpdateAdapterConfiguration,
   type UpdateCheckResultLike,
@@ -64,14 +66,27 @@ class FakeUpdateAdapter implements UpdateAdapter {
   }
 }
 
-function createStore(pending: string | null = null): { store: { getPendingVersion(): string | null; setPendingVersion(value: string | null): void }; values: Array<string | null> } {
+function receipt(version: string, previousVersion = "1.0.0", attemptCount = 0): PendingUpdateReceipt {
+  return {
+    version,
+    previousVersion,
+    downloadedAt: "2026-09-16T00:00:00.000Z",
+    requestedAt: null,
+    attemptCount,
+  };
+}
+
+function createStore(pending: PendingUpdateReceipt | null = null): {
+  store: { getPendingReceipt(): PendingUpdateReceipt | null; setPendingReceipt(value: PendingUpdateReceipt | null): void };
+  values: Array<PendingUpdateReceipt | null>;
+} {
   let current = pending;
-  const values: Array<string | null> = [];
+  const values: Array<PendingUpdateReceipt | null> = [];
   return {
     values,
     store: {
-      getPendingVersion: () => current,
-      setPendingVersion(value) {
+      getPendingReceipt: () => current,
+      setPendingReceipt(value) {
         current = value;
         values.push(value);
       },
@@ -142,7 +157,12 @@ describe("UpdateService", () => {
     service.start();
     expect(await service.check()).toMatchObject({ status: "downloaded", availableVersion: "1.1.0" });
     expect(events).toContain("downloading:51.5");
-    expect(receipt.values).toContain("1.1.0");
+    expect(receipt.values).toContainEqual(expect.objectContaining({
+      version: "1.1.0",
+      previousVersion: "1.0.0",
+      requestedAt: null,
+      attemptCount: 0,
+    }));
     expect(adapter.downloadCalls).toBe(1);
     await service.check();
     expect(adapter.checkCalls).toBe(1);
@@ -176,7 +196,8 @@ describe("UpdateService", () => {
 
   it("only installs a downloaded update and recovers from a synchronous install failure", async () => {
     const adapter = new FakeUpdateAdapter();
-    const service = new UpdateService(adapter, { currentVersion: "1.0.0", channel: "stable" });
+    const receiptStore = createStore();
+    const service = new UpdateService(adapter, { currentVersion: "1.0.0", channel: "stable", receiptStore: receiptStore.store });
     service.start();
     expect(() => service.installAndRestart()).toThrowError(expect.objectContaining({ code: "UPDATE_NOT_READY" }));
     adapter.result = { isUpdateAvailable: true, updateInfo: { version: "1.1.0" } };
@@ -185,28 +206,45 @@ describe("UpdateService", () => {
     expect(() => service.installAndRestart()).toThrowError(expect.objectContaining({ code: "UPDATE_INSTALL_FAILED" }));
     expect(service.getState()).toMatchObject({ status: "error", currentVersion: "1.0.0", error: { code: "UPDATE_INSTALL_FAILED" } });
     expect(adapter.installCalls).toBe(1);
+    expect(receiptStore.values.at(-1)).toMatchObject({ version: "1.1.0", requestedAt: expect.any(String), attemptCount: 1 });
   });
 
   it("confirms a successfully launched downloaded version and clears its receipt", () => {
-    const receipt = createStore("1.1.0");
+    const receiptStore = createStore(receipt("1.1.0"));
     const service = new UpdateService(new FakeUpdateAdapter(), {
       currentVersion: "1.1.0",
       channel: "stable",
-      receiptStore: receipt.store,
+      receiptStore: receiptStore.store,
     });
     expect(service.getState()).toMatchObject({ status: "updated", currentVersion: "1.1.0", availableVersion: "1.1.0" });
-    expect(receipt.values).toEqual([null]);
+    expect(receiptStore.values).toEqual([null]);
   });
 
-  it("does not falsely confirm a failed install when the old version launches again", () => {
-    const receipt = createStore("1.1.0");
-    const service = new UpdateService(new FakeUpdateAdapter(), {
+  it("reports an interrupted install when the old version launches again without retrying automatically", () => {
+    const receiptStore = createStore(receipt("1.1.0", "1.0.0", 1));
+    const adapter = new FakeUpdateAdapter();
+    adapter.result = { isUpdateAvailable: true, updateInfo: { version: "1.1.0" } };
+    const service = new UpdateService(adapter, {
       currentVersion: "1.0.0",
       channel: "stable",
-      receiptStore: receipt.store,
+      receiptStore: receiptStore.store,
     });
-    expect(service.getState()).toMatchObject({ status: "idle", currentVersion: "1.0.0" });
-    expect(receipt.values).toEqual([]);
+    expect(service.getState()).toMatchObject({
+      status: "install-interrupted",
+      currentVersion: "1.0.0",
+      availableVersion: "1.1.0",
+      error: { code: "UPDATE_INSTALL_INTERRUPTED", retryable: true },
+    });
+    expect(adapter.checkCalls).toBe(0);
+    expect(receiptStore.values).toEqual([]);
+  });
+
+  it("parses only complete, safe pending update receipts", () => {
+    const value = receipt("1.1.0");
+    expect(parsePendingUpdateReceipt(JSON.stringify(value))).toEqual(value);
+    expect(parsePendingUpdateReceipt("not-json")).toBeNull();
+    expect(parsePendingUpdateReceipt(JSON.stringify({ ...value, version: "next" }))).toBeNull();
+    expect(parsePendingUpdateReceipt(JSON.stringify({ ...value, attemptCount: -1 }))).toBeNull();
   });
 
   it("checks after startup and at the configured interval without overlap", async () => {

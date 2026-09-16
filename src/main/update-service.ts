@@ -31,9 +31,17 @@ export interface UpdateAdapter {
 }
 
 export interface UpdateReceiptStore {
-  getPendingVersion(): string | null;
-  setPendingVersion(version: string | null): void;
+  getPendingReceipt(): PendingUpdateReceipt | null;
+  setPendingReceipt(receipt: PendingUpdateReceipt | null): void;
 }
+
+export type PendingUpdateReceipt = {
+  version: string;
+  previousVersion: string;
+  downloadedAt: string;
+  requestedAt: string | null;
+  attemptCount: number;
+};
 
 export type UpdateServiceOptions = {
   currentVersion: string;
@@ -47,11 +55,12 @@ export type UpdateServiceOptions = {
 const DEFAULT_STARTUP_DELAY_MS = 15_000;
 const DEFAULT_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 
-function updateError(code: "UPDATE_CHECK_FAILED" | "UPDATE_DOWNLOAD_FAILED" | "UPDATE_INSTALL_FAILED"): AppError {
+function updateError(code: "UPDATE_CHECK_FAILED" | "UPDATE_DOWNLOAD_FAILED" | "UPDATE_INSTALL_FAILED" | "UPDATE_INSTALL_INTERRUPTED"): AppError {
   const messages = {
     UPDATE_CHECK_FAILED: "检查更新失败，当前版本可继续使用。",
     UPDATE_DOWNLOAD_FAILED: "更新下载失败，当前版本可继续使用。",
     UPDATE_INSTALL_FAILED: "更新安装未能启动，当前版本可继续使用。",
+    UPDATE_INSTALL_INTERRUPTED: "上次更新没有完成，当前版本仍可使用。",
   } as const;
   return {
     code,
@@ -71,13 +80,25 @@ function initialState(options: UpdateServiceOptions): UpdateState {
     checkedAt: null,
     error: null,
   };
-  const pending = options.receiptStore?.getPendingVersion() ?? null;
-  if (!pending || !valid(pending) || !valid(options.currentVersion) || !gte(options.currentVersion, pending)) return base;
-  options.receiptStore?.setPendingVersion(null);
+  const pending = options.receiptStore?.getPendingReceipt() ?? null;
+  if (!pending) return base;
+  if (!valid(pending.version) || !valid(options.currentVersion)) {
+    options.receiptStore?.setPendingReceipt(null);
+    return base;
+  }
+  if (gte(options.currentVersion, pending.version)) {
+    options.receiptStore?.setPendingReceipt(null);
+    return {
+      ...base,
+      status: "updated",
+      availableVersion: options.currentVersion,
+    };
+  }
   return {
     ...base,
-    status: "updated",
-    availableVersion: options.currentVersion,
+    status: "install-interrupted",
+    availableVersion: pending.version,
+    error: updateError("UPDATE_INSTALL_INTERRUPTED"),
   };
 }
 
@@ -122,7 +143,7 @@ export class UpdateService {
     });
     this.adapter.onUpdateDownloaded((info) => {
       if (!this.isNewer(info.version)) return;
-      this.options.receiptStore?.setPendingVersion(info.version);
+      this.writeDownloadedReceipt(info.version);
       this.replace({
         status: "downloaded",
         availableVersion: info.version,
@@ -183,6 +204,14 @@ export class UpdateService {
     if (this.state.status !== "downloaded") throw new AevorenBotError("UPDATE_NOT_READY");
     this.operation = "installing";
     this.replace({ status: "installing", error: null });
+    const pending = this.options.receiptStore?.getPendingReceipt();
+    if (pending && pending.version === this.state.availableVersion) {
+      this.options.receiptStore?.setPendingReceipt({
+        ...pending,
+        requestedAt: new Date().toISOString(),
+        attemptCount: pending.attemptCount + 1,
+      });
+    }
     try {
       this.adapter.quitAndInstall();
       return this.getState();
@@ -238,7 +267,7 @@ export class UpdateService {
       try {
         await this.adapter.downloadUpdate();
         if (this.state.status !== "downloaded") {
-          this.options.receiptStore?.setPendingVersion(version);
+          this.writeDownloadedReceipt(version);
           this.replace({
             status: "downloaded",
             availableVersion: version,
@@ -265,6 +294,18 @@ export class UpdateService {
     return valid(candidate) !== null && valid(this.state.currentVersion) !== null && gt(candidate, this.state.currentVersion);
   }
 
+  private writeDownloadedReceipt(version: string): void {
+    if (!this.options.receiptStore) return;
+    const existing = this.options.receiptStore.getPendingReceipt();
+    this.options.receiptStore.setPendingReceipt({
+      version,
+      previousVersion: this.options.currentVersion,
+      downloadedAt: new Date().toISOString(),
+      requestedAt: null,
+      attemptCount: existing?.version === version ? existing.attemptCount : 0,
+    });
+  }
+
   private fail(code: "UPDATE_CHECK_FAILED" | "UPDATE_DOWNLOAD_FAILED" | "UPDATE_INSTALL_FAILED"): void {
     this.operation = null;
     this.replace({ status: "error", progress: null, error: updateError(code) });
@@ -273,6 +314,24 @@ export class UpdateService {
   private replace(patch: Partial<UpdateState>): void {
     this.state = { ...this.state, ...patch };
     this.options.emit?.(this.getState());
+  }
+}
+
+export function parsePendingUpdateReceipt(value: string | null | undefined): PendingUpdateReceipt | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<PendingUpdateReceipt>;
+    if (
+      !valid(parsed.version) ||
+      !valid(parsed.previousVersion) ||
+      typeof parsed.downloadedAt !== "string" ||
+      (parsed.requestedAt !== null && typeof parsed.requestedAt !== "string") ||
+      !Number.isInteger(parsed.attemptCount) ||
+      (parsed.attemptCount ?? -1) < 0
+    ) return null;
+    return parsed as PendingUpdateReceipt;
+  } catch {
+    return null;
   }
 }
 

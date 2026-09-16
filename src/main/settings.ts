@@ -1,4 +1,4 @@
-import type { ModelConfiguration, SaveModelConfigurationInput } from "@shared/contracts";
+import type { GeneralSettings, ModelConfiguration, SaveModelConfigurationInput } from "@shared/contracts";
 import { AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 
@@ -6,6 +6,21 @@ const BASE_URL_KEY = "model.baseUrl";
 const MODEL_ID_KEY = "model.modelId";
 const API_KEY_KEY = "model.apiKey";
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
+const APPEARANCE_THEME_KEY = "appearance.theme";
+
+export class GeneralSettingsService {
+  constructor(private readonly repository: AppRepository) {}
+
+  getConfiguration(): GeneralSettings {
+    const theme = this.repository.getSetting(APPEARANCE_THEME_KEY)?.value;
+    return { theme: theme === "light" || theme === "dark" ? theme : "system" };
+  }
+
+  saveConfiguration(input: GeneralSettings): GeneralSettings {
+    this.repository.setSetting(APPEARANCE_THEME_KEY, input.theme, false);
+    return this.getConfiguration();
+  }
+}
 
 export interface SecretCodec {
   isAvailable(): boolean;
@@ -45,7 +60,7 @@ export class ModelSettingsService {
 
   getApiKey(): string {
     const setting = this.repository.getSetting(API_KEY_KEY);
-    if (!setting) throw new AevorenBotError("MODEL_NOT_CONFIGURED", "请先在模型设置中保存 API Key。", false);
+    if (!setting) throw new AevorenBotError("MODEL_NOT_CONFIGURED", "请先在设置 → 模型配置中保存 API Key。", false);
     if (!setting.encrypted || !this.secretCodec.isAvailable()) {
       throw new AevorenBotError("SECURE_STORAGE_UNAVAILABLE", "无法安全读取模型 API Key。", false);
     }

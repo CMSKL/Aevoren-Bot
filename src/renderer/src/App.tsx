@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  AppearanceTheme,
   AppError,
   ApprovalRequest,
   Bot,
@@ -21,7 +22,7 @@ import type {
   UpdateState,
 } from "@shared/contracts";
 import { Conversation } from "./components/Conversation";
-import { ModelSettingsDialog } from "./components/ModelSettingsDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { NewBotChooser } from "./components/NewBotChooser";
 import { ProfileInspector, type ProfileInspectorHandle } from "./components/ProfileInspector";
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
@@ -80,6 +81,7 @@ export function App(): React.JSX.Element {
   const [creatingBot, setCreatingBot] = useState(false);
   const [createError, setCreateError] = useState<AppError | null>(null);
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
+  const [appearanceTheme, setAppearanceTheme] = useState<AppearanceTheme>("system");
   const newBotButtonRef = useRef<HTMLButtonElement>(null);
   const profileRef = useRef<ProfileInspectorHandle>(null);
   const roomRef = useRef<RoomInspectorHandle>(null);
@@ -98,6 +100,7 @@ export function App(): React.JSX.Element {
     if (selectedRoomIdRef.current) return await roomRef.current?.flush() ?? true;
     return await profileRef.current?.flush() ?? true;
   }, []);
+  const closeSettings = useCallback((): void => setSettingsOpen(false), []);
 
   useEffect(() => {
     const unsubscribeTranscript = window.aevorenBot.events.subscribeTranscript((event) => {
@@ -155,6 +158,9 @@ export function App(): React.JSX.Element {
     void window.aevorenBot.updates.getState().then((result) => {
       if (result.ok) setUpdateState(result.data);
     });
+    void window.aevorenBot.settings.getGeneral().then((result) => {
+      if (result.ok) setAppearanceTheme(result.data.theme);
+    });
     return () => {
       unsubscribeTranscript();
       unsubscribeSend();
@@ -166,6 +172,19 @@ export function App(): React.JSX.Element {
       unsubscribeCloseBlocked();
     };
   }, [flushActive]);
+
+  useEffect(() => {
+    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = (): void => {
+      document.documentElement.dataset.theme = appearanceTheme === "system"
+        ? systemTheme.matches ? "dark" : "light"
+        : appearanceTheme;
+    };
+    applyTheme();
+    if (appearanceTheme !== "system") return;
+    systemTheme.addEventListener("change", applyTheme);
+    return () => systemTheme.removeEventListener("change", applyTheme);
+  }, [appearanceTheme]);
 
   const openBot = useCallback(async (bot: Bot, flushCurrent = true): Promise<void> => {
     const requestId = ++openRequestRef.current;
@@ -519,7 +538,7 @@ export function App(): React.JSX.Element {
       await openBot(nextBot, false);
       return;
     }
-    const nextRoom = nextRooms.find((room) => room.archivedAt === null);
+    const nextRoom = nextRooms.find((room) => room.archivedAt === null && room.hiddenAt === null);
     if (nextRoom) {
       await openRoom(nextRoom, false);
       return;
@@ -561,6 +580,98 @@ export function App(): React.JSX.Element {
   function updateRoom(detail: RoomDetail): void {
     setSelectedRoom(detail);
     setRooms((current) => current.map((item) => item.id === detail.room.id ? detail.room : item));
+  }
+
+  function updateRoomRecord(room: Room): void {
+    setRooms((current) => current.map((item) => item.id === room.id ? room : item));
+    setSelectedRoom((current) => current?.room.id === room.id ? { ...current, room } : current);
+  }
+
+  async function renameRoom(room: Room, name: string): Promise<boolean> {
+    if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
+    const latest = await window.aevorenBot.rooms.get(room.id);
+    if (!latest.ok) {
+      setError(latest.error);
+      return false;
+    }
+    const result = await window.aevorenBot.rooms.update({
+      id: room.id,
+      expectedVersion: latest.data.room.version,
+      patch: { name },
+    });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateRoomRecord(result.data);
+    return true;
+  }
+
+  async function copyRoomId(room: Room): Promise<boolean> {
+    const result = await window.aevorenBot.rooms.copyConversationId(room.id);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    return true;
+  }
+
+  async function setRoomPinned(room: Room, pinned: boolean): Promise<boolean> {
+    const result = await window.aevorenBot.rooms.setPinned({ id: room.id, pinned });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateRoomRecord(result.data);
+    return true;
+  }
+
+  async function setRoomUnread(room: Room, unread: boolean): Promise<boolean> {
+    const result = await window.aevorenBot.rooms.setUnread({ id: room.id, unread });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateRoomRecord(result.data);
+    return true;
+  }
+
+  async function setRoomHidden(room: Room, hidden: boolean): Promise<boolean> {
+    if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
+    const result = await window.aevorenBot.rooms.setHidden({ id: room.id, hidden });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    const nextRooms = rooms.map((item) => item.id === room.id ? result.data : item);
+    updateRoomRecord(result.data);
+    if (hidden && selectedRoom?.room.id === room.id) await openFallback(bots, nextRooms);
+    return true;
+  }
+
+  async function archiveRoom(room: Room): Promise<boolean> {
+    if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
+    const result = await window.aevorenBot.rooms.archive({ id: room.id, archived: true });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateRoomRecord(result.data);
+    if (selectedRoom?.room.id === room.id) handleArchived(result.data);
+    return true;
+  }
+
+  async function deleteRoom(room: Room): Promise<boolean> {
+    if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
+    const result = await window.aevorenBot.rooms.delete(room.id);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    const nextRooms = rooms.filter((item) => item.id !== room.id);
+    setRooms(nextRooms);
+    if (selectedRoom?.room.id === room.id) await openFallback(bots, nextRooms);
+    return true;
   }
 
   async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone"): Promise<boolean> {
@@ -615,9 +726,20 @@ export function App(): React.JSX.Element {
           setMobilePanel(null);
           setNewBotOpen(true);
         }}
+        onOpenSettings={() => {
+          setMobilePanel(null);
+          setSettingsOpen(true);
+        }}
         onMobileClose={() => setMobilePanel(null)}
         onSelectBot={(bot) => void openBot(bot)}
         onSelectRoom={(room) => void openRoom(room)}
+        onRenameRoom={renameRoom}
+        onCopyRoomId={copyRoomId}
+        onArchiveRoom={archiveRoom}
+        onPinRoom={setRoomPinned}
+        onMarkRoomUnread={setRoomUnread}
+        onHideRoom={setRoomHidden}
+        onDeleteRoom={deleteRoom}
         onPinBot={setBotPinned}
         onMarkBotUnread={setBotUnread}
         onRenameBot={renameBot}
@@ -658,7 +780,6 @@ export function App(): React.JSX.Element {
         closeNotice={closeNotice}
         onOpenBots={() => setMobilePanel("bots")}
         onOpenProfile={() => setMobilePanel("profile")}
-        onOpenSettings={() => setSettingsOpen(true)}
         onOpenWorkspaces={() => setWorkspacesOpen(true)}
         onResolveApproval={async (approval, resolution) => {
           const result = await window.aevorenBot.approvals.resolve({
@@ -724,7 +845,33 @@ export function App(): React.JSX.Element {
         />
       )}
       {mobilePanel ? <button className="drawer-backdrop" type="button" aria-label="关闭侧边面板" onClick={() => void closeMobilePanel()} /> : null}
-      <ModelSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDialog
+        open={settingsOpen}
+        theme={appearanceTheme}
+        updateState={updateState}
+        restartBlocked={updateRestartBlocked}
+        onClose={closeSettings}
+        onThemeChange={async (theme) => {
+          const result = await window.aevorenBot.settings.saveGeneral({ theme });
+          if (!result.ok) return result.error;
+          setAppearanceTheme(result.data.theme);
+          return null;
+        }}
+        onCheckUpdate={() => void window.aevorenBot.updates.check().then((result) => {
+          if (result.ok) setUpdateState(result.data);
+        })}
+        onRetryUpdate={() => void window.aevorenBot.updates.retry().then((result) => {
+          if (result.ok) setUpdateState(result.data);
+        })}
+        onInstallUpdate={() => {
+          void flushActive().then((saved) => {
+            if (!saved) return;
+            void window.aevorenBot.updates.installAndRestart().then((result) => {
+              if (result.ok) setUpdateState(result.data);
+            });
+          });
+        }}
+      />
       <WorkspaceDialog open={workspacesOpen} onClose={() => setWorkspacesOpen(false)} />
       {newBotOpen ? (
         <NewBotChooser
