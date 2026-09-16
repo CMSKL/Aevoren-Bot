@@ -881,7 +881,9 @@ export function App(): React.JSX.Element {
           onClose={() => {
             setCreateError(null);
             setNewBotOpen(false);
-            requestAnimationFrame(() => newBotButtonRef.current?.focus());
+            requestAnimationFrame(() => {
+              if (document.activeElement === document.body) newBotButtonRef.current?.focus();
+            });
           }}
           onCreate={() => void createBot()}
           onCreateRoom={(botIds) => void createRoom(botIds)}
