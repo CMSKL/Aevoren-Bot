@@ -140,6 +140,72 @@ describe("Room repository", () => {
     expect(value.getRoom(detail.room.id).description).toBe("new");
   });
 
+  it("persists Room pin and unread state without changing profile or membership versions", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-room-sidebar-state-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const first = new AppRepository(filename);
+    const bots = createBots(first, 2);
+    const detail = first.createRoom({ memberBotIds: bots.map(({ bot }) => bot.id) });
+    const pinned = first.setRoomPinned(detail.room.id, true);
+    const unread = first.setRoomUnread(detail.room.id, true);
+    expect(pinned.version).toBe(detail.room.version);
+    expect(unread.version).toBe(detail.room.version);
+    expect(unread.membershipVersion).toBe(detail.room.membershipVersion);
+    first.close();
+
+    const reopened = new AppRepository(filename);
+    repositories.push(reopened);
+    expect(reopened.getRoom(detail.room.id)).toMatchObject({ pinnedAt: expect.any(String), hasUnread: true });
+    expect(reopened.setRoomPinned(detail.room.id, false).pinnedAt).toBeNull();
+    expect(reopened.setRoomUnread(detail.room.id, false).hasUnread).toBe(false);
+  });
+
+  it("hides a Room recoverably without archiving or changing its conversation", () => {
+    const value = repository();
+    const bots = createBots(value, 2);
+    const detail = value.createRoom({ memberBotIds: bots.map(({ bot }) => bot.id), name: "Hidden later" });
+    value.setRoomPinned(detail.room.id, true);
+    const hidden = value.setRoomHidden(detail.room.id, true);
+    expect(hidden).toMatchObject({ hiddenAt: expect.any(String), pinnedAt: null, archivedAt: null });
+    expect(value.getRoomMainSession(detail.room.id).id).toBe(detail.session.id);
+    expect(value.listRoomMembers(detail.room.id)).toHaveLength(2);
+    expect(value.setRoomHidden(detail.room.id, false).hiddenAt).toBeNull();
+  });
+
+  it("permanently deletes one Room conversation while preserving every member Bot", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-room-delete-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const value = new AppRepository(filename);
+    repositories.push(value);
+    const bots = createBots(value, 2);
+    const detail = value.createRoom({ memberBotIds: bots.map(({ bot }) => bot.id), name: "Delete me" });
+    const prepared = value.prepareRoomMessage({
+      roomId: detail.room.id,
+      sessionId: detail.session.id,
+      clientNonce: crypto.randomUUID(),
+      text: "persisted history",
+      targetBotIds: [bots[0]!.bot.id],
+    });
+    expect(() => value.deleteRoom(detail.room.id)).toThrowError(expect.objectContaining({ code: "ROOM_DELETE_BUSY" }));
+    value.transitionRoomBatch(prepared.batch.id, "cancelled");
+    expect(value.deleteRoom(detail.room.id)).toEqual({ id: detail.room.id });
+    expect(() => value.getRoom(detail.room.id)).toThrowError(expect.objectContaining({ code: "ROOM_NOT_FOUND" }));
+    expect(value.listBots()).toHaveLength(2);
+
+    const inspected = new DatabaseSync(filename, { readOnly: true });
+    expect(inspected.prepare("SELECT COUNT(*) AS count FROM rooms").get()).toEqual({ count: 0 });
+    expect(inspected.prepare("SELECT COUNT(*) AS count FROM room_members").get()).toEqual({ count: 0 });
+    expect(inspected.prepare("SELECT COUNT(*) AS count FROM sessions WHERE room_id IS NOT NULL").get()).toEqual({ count: 0 });
+    expect(inspected.prepare("SELECT COUNT(*) AS count FROM transcript_entries").get()).toEqual({ count: 0 });
+    expect(inspected.prepare("SELECT COUNT(*) AS count FROM room_batches").get()).toEqual({ count: 0 });
+    expect(inspected.prepare("SELECT COUNT(*) AS count FROM room_turns").get()).toEqual({ count: 0 });
+    expect(inspected.prepare("SELECT COUNT(*) AS count FROM bots WHERE deleted_at IS NULL").get()).toEqual({ count: 2 });
+    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    inspected.close();
+  });
+
   it("canonicalizes targets for duplicate detection and rejects changed commands", () => {
     const value = repository();
     const bots = createBots(value, 3);

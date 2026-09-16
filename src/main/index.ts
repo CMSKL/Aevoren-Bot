@@ -1,13 +1,20 @@
 import "./identity";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { app, BrowserWindow, nativeTheme, safeStorage, shell } from "electron";
+import { app, BrowserWindow, dialog, nativeTheme, safeStorage, shell } from "electron";
+import { valid } from "semver";
 import { IPC } from "@shared/channels";
-import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateState } from "@shared/contracts";
 import { AppRepository } from "./database";
 import { registerIpc } from "./ipc";
 import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
-import { ModelSettingsService, type SecretCodec } from "./settings";
+import { GeneralSettingsService, ModelSettingsService, type SecretCodec } from "./settings";
+import { WorkspaceService } from "./workspace-service";
+import { WorkspaceToolExecutor } from "./workspace-tool-executor";
+import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
+import { ElectronUpdateAdapter } from "./electron-update-adapter";
+import { parsePendingUpdateReceipt, resolveUpdateChannel, UpdateService } from "./update-service";
 
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
@@ -17,6 +24,7 @@ let mainWindow: BrowserWindow | null = null;
 let repository: AppRepository | null = null;
 let runtimeCoordinator: SendWorker | null = null;
 let roomCoordinator: RoomCoordinator | null = null;
+let updateService: UpdateService | null = null;
 let allowClose = false;
 let closeRequested = false;
 let quitRequested = false;
@@ -54,6 +62,15 @@ function emitRuntime(event: RuntimeEvent): void {
 
 function emitRoomRuntime(event: RoomRuntimeEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.roomRuntimeEvent, event);
+}
+
+function emitTool(event: ToolEvent): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.toolEvent, event);
+}
+
+function emitUpdate(state: UpdateState): void {
+  if (state.status === "error" && state.error?.code === "UPDATE_INSTALL_FAILED") allowClose = false;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.updateEvent, { state });
 }
 
 function clearCloseConfirmationTimer(): void {
@@ -167,11 +184,23 @@ app.whenReady().then(() => {
     else app.dock?.setIcon(appIconPath());
   }
   const databasePath = process.env.AEVOREN_BOT_DB_PATH ?? join(app.getPath("userData"), "aevoren-bot.sqlite");
-  repository = new AppRepository(databasePath);
+  repository = new AppRepository(databasePath, {
+    appVersion: app.getVersion(),
+    backupDirectory: join(app.getPath("userData"), "Backups"),
+  });
+  repository.setSetting("app.lastOpenedVersion", app.getVersion(), false);
   repository.recoverInterruptedSends();
   repository.recoverInterruptedRooms();
   repository.recoverInterruptedRuntimeRuns();
+  repository.recoverToolInvocations();
   const settings = new ModelSettingsService(repository, electronSecretCodec);
+  const generalSettings = new GeneralSettingsService(repository);
+  const workspaceService = new WorkspaceService(repository);
+  const workspaceToolCoordinator = new WorkspaceToolCoordinator(
+    repository,
+    new WorkspaceToolExecutor(repository, workspaceService),
+    emitTool,
+  );
   mainWindow = createWindow();
   const forceFakeProvider = process.env.AEVOREN_BOT_FAKE_PROVIDER === "1";
   const sendWorker = new SendWorker(
@@ -179,18 +208,65 @@ app.whenReady().then(() => {
     settings,
     { transcript: emitTranscript, sendState: emitSendState, runtime: emitRuntime },
     forceFakeProvider,
+    undefined,
+    undefined,
+    workspaceToolCoordinator,
   );
   runtimeCoordinator = sendWorker;
   roomCoordinator = new RoomCoordinator(repository, sendWorker.executor, {
     transcript: emitTranscript,
     roomRuntime: emitRoomRuntime,
   });
+  const updateConfigurationPath = join(process.resourcesPath, "app-update.yml");
+  const updateChannel = resolveUpdateChannel({
+    isPackaged: app.isPackaged,
+    hasUpdateConfiguration: existsSync(updateConfigurationPath),
+    currentVersion: app.getVersion(),
+    disabled: process.env.AEVOREN_BOT_DISABLE_UPDATES === "1",
+  });
+  updateService = new UpdateService(new ElectronUpdateAdapter(), {
+    currentVersion: app.getVersion(),
+    channel: updateChannel,
+    receiptStore: {
+      getPendingReceipt: () => {
+        const receipt = parsePendingUpdateReceipt(repository?.getSetting("update.pendingReceipt")?.value);
+        if (receipt) return receipt;
+        const legacyVersion = repository?.getSetting("update.pendingVersion")?.value || null;
+        if (!legacyVersion || !valid(legacyVersion)) return null;
+        return {
+          version: legacyVersion,
+          previousVersion: app.getVersion(),
+          downloadedAt: new Date().toISOString(),
+          requestedAt: null,
+          attemptCount: 0,
+        };
+      },
+      setPendingReceipt: (receipt) => {
+        repository?.setSetting("update.pendingReceipt", receipt ? JSON.stringify(receipt) : "", false);
+        repository?.setSetting("update.pendingVersion", receipt?.version ?? "", false);
+      },
+    },
+    emit: emitUpdate,
+  });
   registerIpc({
     window: mainWindow,
     repository,
     settings,
+    generalSettings,
     sendWorker,
     roomCoordinator,
+    workspaceService,
+    workspaceToolCoordinator,
+    updateService,
+    async pickWorkspaceRoot() {
+      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: "选择工作区文件夹",
+        buttonLabel: "授权此文件夹",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      return result.canceled ? null : result.filePaths[0] ?? null;
+    },
     forceFakeProvider,
     rendererReady() {
       if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -210,7 +286,14 @@ app.whenReady().then(() => {
       }
       void finishClose();
     },
+    prepareUpdateInstall() {
+      allowClose = true;
+    },
+    cancelUpdateInstall() {
+      allowClose = false;
+    },
   });
+  updateService.start();
 });
 
 app.on("window-all-closed", () => app.quit());
@@ -230,8 +313,10 @@ app.on("before-quit", (event) => {
 });
 app.on("quit", () => {
   clearCloseConfirmationTimer();
+  updateService?.stop();
   repository?.close();
   repository = null;
   runtimeCoordinator = null;
   roomCoordinator = null;
+  updateService = null;
 });

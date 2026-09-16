@@ -163,7 +163,9 @@ function logicalV5Hash(database: DatabaseSync): string {
   const snapshot = Object.fromEntries(tables.map((table) => {
     const columns = table === "bots"
       ? "id, name, label, description, instructions, version, created_at, updated_at"
-      : "*";
+      : table === "rooms"
+        ? "id, name, description, version, membership_version, archived_at, created_at, updated_at"
+        : "*";
     return [table, database.prepare(`SELECT ${columns} FROM ${table} ORDER BY rowid`).all()];
   }));
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
@@ -195,9 +197,9 @@ describe("multi-agent RoomRun journal", () => {
 
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(logicalV5Hash(inspected)).toBe(beforeHash);
-    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 },
-    ]);
+    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual(
+      MIGRATIONS.map((migration) => ({ version: migration.version })),
+    );
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(inspected.prepare("PRAGMA table_info(handoff_rejections)").all().map((column) => (
       column as { name: string }
@@ -272,9 +274,9 @@ describe("multi-agent RoomRun journal", () => {
     const reopened = repository(filename);
     expect(reopened.getRoomRun("run").triggerMessageId).toBe("message");
     const inspected = new DatabaseSync(filename, { readOnly: true });
-    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 },
-    ]);
+    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual(
+      MIGRATIONS.map((migration) => ({ version: migration.version })),
+    );
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     inspected.close();
   });

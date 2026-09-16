@@ -1,0 +1,138 @@
+name: Release signed macOS update to GitHub
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aevoren-macos-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release-macos:
+    runs-on: macos-15
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      AEVOREN_RELEASE_BUILD: "1"
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Verify release credentials
+        shell: bash
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name}" ]]; then echo "Missing required release secret: $name" >&2; exit 1; fi
+          done
+      - name: Verify version, channel and target branch
+        id: release
+        run: node scripts/verify-release-version.mjs "$GITHUB_REF_NAME"
+      - name: Verify branch order
+        shell: bash
+        env:
+          EXPECTED_BRANCH: ${{ steps.release.outputs.expected_branch }}
+        run: |
+          git fetch origin "+refs/heads/${EXPECTED_BRANCH}:refs/remotes/origin/${EXPECTED_BRANCH}"
+          git merge-base --is-ancestor HEAD "origin/${EXPECTED_BRANCH}"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate application
+        run: pnpm validate
+      - name: Build, sign and notarize update artifacts
+        run: pnpm release:mac
+      - name: Verify signature, Gatekeeper and notarization ticket
+        shell: bash
+        run: |
+          APP_PATH="$(find dist -maxdepth 2 -type d -name 'Aevoren Bot.app' -print -quit)"
+          test -n "$APP_PATH"
+          SIGNATURE_INFO="$(codesign -dv --verbose=4 "$APP_PATH" 2>&1)"
+          grep -q '^Authority=Developer ID Application:' <<<"$SIGNATURE_INFO"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -d --entitlements :- "$APP_PATH" >"$RUNNER_TEMP/aevoren-release-entitlements.plist"
+          if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$RUNNER_TEMP/aevoren-release-entitlements.plist" 2>/dev/null | grep -q true; then
+            echo 'Release entitlement com.apple.security.get-task-allow must not be enabled' >&2
+            exit 1
+          fi
+          spctl --assess --type execute --verbose=2 "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+      - name: Verify release assets and generate checksums
+        run: pnpm release:prepare
+      - name: Attest release assets
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/*-mac.yml
+            dist/SHASUMS256.txt
+      - name: Create or resume draft release
+        shell: bash
+        env:
+          RELEASE_TYPE: ${{ steps.release.outputs.release_type }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft >/tmp/aevoren-release-draft.txt 2>/dev/null; then
+            test "$(cat /tmp/aevoren-release-draft.txt)" = "true"
+          else
+            args=(--draft --verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+            if [[ "$RELEASE_TYPE" == "prerelease" ]]; then args+=(--prerelease --latest=false); fi
+            gh release create "$GITHUB_REF_NAME" "${args[@]}"
+          fi
+      - name: Upload complete release asset set
+        shell: bash
+        run: |
+          assets=(dist/*.dmg dist/*.zip dist/*.blockmap dist/*-mac.yml dist/SHASUMS256.txt)
+          for asset in "${assets[@]}"; do test -f "$asset"; done
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+      - name: Download and verify draft release
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/aevoren-release-download"
+          gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/aevoren-release-download"
+          (cd "$RUNNER_TEMP/aevoren-release-download" && shasum -a 256 -c SHASUMS256.txt)
+          node scripts/verify-macos-release-assets.mjs "$RUNNER_TEMP/aevoren-release-download" "$RELEASE_VERSION" arm64
+      - name: Publish immutable release
+        shell: bash
+        env:
+          RELEASE_TYPE: ${{ steps.release.outputs.release_type }}
+        run: |
+          if [[ "$RELEASE_TYPE" == "prerelease" ]]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          fi
+          gh release verify "$GITHUB_REF_NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aevoren-bot-${{ github.ref_name }}-macos
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/*-mac.yml
+            dist/SHASUMS256.txt
+          if-no-files-found: error

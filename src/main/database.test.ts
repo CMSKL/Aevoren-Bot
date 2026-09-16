@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PromptManifest } from "@shared/contracts";
-import { AppRepository } from "./database";
+import { AppRepository, MIGRATIONS } from "./database";
 import { AevorenBotError } from "./errors";
 
 const repositories: AppRepository[] = [];
@@ -29,6 +29,21 @@ function manifest(sessionId: string, botId: string): PromptManifest {
   };
 }
 
+function createDatabaseAtVersion(filename: string, version: number, lastOpenedVersion = "0.1.0"): void {
+  const database = new DatabaseSync(filename);
+  database.exec("PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);");
+  for (const migration of MIGRATIONS.filter((candidate) => candidate.version <= version)) {
+    const foreignKeysOff = "foreignKeysOff" in migration && migration.foreignKeysOff;
+    if (foreignKeysOff) database.exec("PRAGMA foreign_keys = OFF;");
+    database.exec(migration.sql);
+    database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(migration.version, "2026-09-16T00:00:00.000Z");
+    if (foreignKeysOff) database.exec("PRAGMA foreign_keys = ON;");
+  }
+  database.prepare("INSERT INTO app_settings(key, value, encrypted, updated_at) VALUES (?, ?, 0, ?)")
+    .run("app.lastOpenedVersion", lastOpenedVersion, "2026-09-16T00:00:00.000Z");
+  database.close();
+}
+
 afterEach(() => {
   while (repositories.length > 0) repositories.pop()?.close();
   while (temporaryDirectories.length > 0) {
@@ -38,6 +53,63 @@ afterEach(() => {
 });
 
 describe("AppRepository", () => {
+  it("does not create a migration backup for a new database", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-new-database-backup-"));
+    temporaryDirectories.push(directory);
+    const backupDirectory = join(directory, "Backups");
+    const repository = new AppRepository(join(directory, "app.sqlite"), { appVersion: "0.2.0-beta.1", backupDirectory });
+    repository.close();
+    expect(existsSync(backupDirectory)).toBe(false);
+  });
+
+  it("creates and verifies a versioned backup before migrating an existing database", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-schema-backup-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const backupDirectory = join(directory, "Backups");
+    const sourceSchemaVersion = MIGRATIONS.at(-2)!.version;
+    const targetSchemaVersion = MIGRATIONS.at(-1)!.version;
+    createDatabaseAtVersion(filename, sourceSchemaVersion);
+
+    const repository = new AppRepository(filename, { appVersion: "0.2.0-beta.1", backupDirectory });
+    repository.close();
+
+    const backupFiles = readdirSync(backupDirectory);
+    expect(backupFiles.filter((name) => name.endsWith(".sqlite"))).toHaveLength(1);
+    expect(backupFiles.filter((name) => name.endsWith(".json"))).toHaveLength(1);
+    const metadata = JSON.parse(readFileSync(join(backupDirectory, backupFiles.find((name) => name.endsWith(".json"))!), "utf8")) as Record<string, unknown>;
+    expect(metadata).toMatchObject({
+      sourceSchemaVersion,
+      targetSchemaVersion,
+      sourceAppVersion: "0.1.0",
+      targetAppVersion: "0.2.0-beta.1",
+    });
+    expect(statSync(backupDirectory).mode & 0o777).toBe(0o700);
+    expect(statSync(String(metadata.databaseBackup)).mode & 0o777).toBe(0o600);
+    const backup = new DatabaseSync(String(metadata.databaseBackup), { readOnly: true });
+    expect(backup.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    expect(backup.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: sourceSchemaVersion });
+    backup.close();
+    const migrated = new DatabaseSync(filename, { readOnly: true });
+    expect(migrated.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: targetSchemaVersion });
+    migrated.close();
+  });
+
+  it("refuses to migrate when the safety backup cannot be created", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-schema-backup-failure-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const blockedBackupPath = join(directory, "not-a-directory");
+    const sourceSchemaVersion = MIGRATIONS.at(-2)!.version;
+    createDatabaseAtVersion(filename, sourceSchemaVersion);
+    writeFileSync(blockedBackupPath, "blocked", "utf8");
+
+    expect(() => new AppRepository(filename, { appVersion: "0.2.0-beta.1", backupDirectory: blockedBackupPath })).toThrow();
+    const database = new DatabaseSync(filename, { readOnly: true });
+    expect(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: sourceSchemaVersion });
+    database.close();
+  });
+
   it("creates a neutral Grok-shaped bot with one MAIN session", () => {
     const repository = memoryRepository();
     const created = repository.createBot();

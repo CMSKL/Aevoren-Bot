@@ -18,10 +18,12 @@ import {
   type ModelProvider,
   type ModelRunContext,
   type RoomPeer,
+  type RoomContinuationDecision,
   type RoomOwnerSelection,
 } from "./model";
 import { buildPrompt } from "./prompt";
 import type { ModelSettingsService } from "./settings";
+import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 
 export type RuntimeExecutorEvents = {
   transcript: (event: TranscriptEvent) => void;
@@ -49,7 +51,7 @@ export type RuntimeExecutionInput = {
   onRunCreated?(run: RuntimeRun): void;
   onDispatchStart?(): void;
   onProviderStarted?(requestId: string): void;
-  onHandoff?(event: Extract<ModelEvent, { type: "handoff" }>): void;
+  onHandoff?(event: Extract<ModelEvent, { type: "handoff" }>): boolean | void;
 };
 
 export type RuntimeExecutionResult = {
@@ -79,6 +81,7 @@ type ActiveRun = {
   staleTimer: ReturnType<typeof setTimeout> | null;
   abortReason: AbortReason | null;
   providerStarted: boolean;
+  handoffEmitted: boolean;
 };
 
 export const STALE_AFTER_MS = 30_000;
@@ -98,6 +101,7 @@ export class RuntimeExecutor {
     private readonly events: RuntimeExecutorEvents,
     private readonly forceFakeProvider = false,
     private readonly providerOverride?: ModelProvider,
+    private readonly workspaceTools?: WorkspaceToolCoordinator,
   ) {
     this.fakeProvider = forceFakeProvider && !providerOverride ? new FakeModelProvider() : null;
   }
@@ -125,6 +129,7 @@ export class RuntimeExecutor {
             ...(input.incomingHandoff ? { handoff: input.incomingHandoff } : {}),
           }
         : undefined,
+      this.repository.listMemories(bot.id),
     );
     const run = this.repository.createRuntimeRun(input.clientNonce, this.route(), prompt.manifest, {
       executorBotId: bot.id,
@@ -151,6 +156,7 @@ export class RuntimeExecutor {
         ...(input.room ? { roomId: input.room.id, sourceTurnId: input.room.sourceTurnId } : {}),
         ...(input.room?.roster ? { roomRoster: input.room.roster } : {}),
         ...(input.incomingHandoff ? { incomingHandoff: input.incomingHandoff } : {}),
+        workspaces: this.repository.listWorkspaces().map(({ id, name }) => ({ id, name })),
       },
       onDispatchStart: input.onDispatchStart,
       onProviderStarted: input.onProviderStarted,
@@ -163,6 +169,7 @@ export class RuntimeExecutor {
       staleTimer: null,
       abortReason: null,
       providerStarted: false,
+      handoffEmitted: false,
     };
     this.active.set(run.id, active);
     this.emitRuntime(run);
@@ -275,8 +282,15 @@ export class RuntimeExecutor {
     try {
       active.onDispatchStart?.();
       const provider = this.createProvider();
-      iterator = provider.run(active.messages, active.controller.signal, active.providerContext)[Symbol.asyncIterator]();
-      while (true) {
+      let toolRounds = 0;
+      let completed = false;
+      while (!completed) {
+        let workspaceContinuation = false;
+        let roundCompleted = false;
+        let roundProviderStarted = false;
+        const roundBodyStart = active.providerBody.length;
+        iterator = provider.run(active.messages, active.controller.signal, active.providerContext)[Symbol.asyncIterator]();
+        while (true) {
         const next = await nextModelEvent(
           iterator,
           active.controller.signal,
@@ -290,7 +304,14 @@ export class RuntimeExecutor {
           return { run: persistedRun, providerStarted: active.providerStarted };
         }
         if (event.type === "started") {
-          if (active.providerStarted) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          if (roundProviderStarted) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          roundProviderStarted = true;
+          if (active.providerStarted) {
+            run = this.repository.touchRuntimeRun(runId);
+            this.emitRuntime(run);
+            this.armStaleTimer(active);
+            continue;
+          }
           active.providerStarted = true;
           run = this.repository.transitionRuntimeRun(runId, "running", { providerRequestId: event.requestId });
           active.onProviderStarted?.(event.requestId);
@@ -325,18 +346,74 @@ export class RuntimeExecutor {
         }
         if (event.type === "handoff") {
           if (!active.providerStarted || !active.onHandoff) throw new AevorenBotError("RUNTIME_STATE_INVALID");
-          active.onHandoff(event);
+          active.handoffEmitted = active.onHandoff(event) !== false || active.handoffEmitted;
+          run = this.repository.touchRuntimeRun(runId);
+          this.emitRuntime(run);
+          this.armStaleTimer(active);
+          continue;
+        }
+        if (event.type === "workspace-tool") {
+          if (!active.providerStarted || !this.workspaceTools) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          if (workspaceContinuation) throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
+          if (toolRounds >= 4) throw new AevorenBotError("TOOL_ROUND_LIMIT_EXCEEDED");
+          toolRounds += 1;
+          const outcome = await this.workspaceTools.requestAndWait(
+            runId,
+            event.toolCallId,
+            event.tool,
+            active.controller.signal,
+          );
+          const functionName = event.tool.kind === "workspace-list"
+            ? "workspace_list"
+            : event.tool.kind === "workspace-read"
+              ? "workspace_read"
+              : "workspace_search";
+          const argumentsValue = event.tool.kind === "workspace-list"
+            ? { workspaceId: event.tool.workspaceId, path: event.tool.path, maxEntries: event.tool.maxEntries }
+            : event.tool.kind === "workspace-read"
+              ? { workspaceId: event.tool.workspaceId, path: event.tool.path, maxBytes: event.tool.maxBytes }
+              : { workspaceId: event.tool.workspaceId, path: event.tool.path, query: event.tool.query, maxMatches: event.tool.maxMatches };
+          active.messages.push({
+            role: "assistant",
+            content: active.providerBody.slice(roundBodyStart),
+            tool_calls: [{
+              id: event.toolCallId,
+              type: "function",
+              function: { name: functionName, arguments: JSON.stringify(argumentsValue) },
+            }],
+          });
+          active.messages.push({ role: "tool", tool_call_id: outcome.toolCallId, content: outcome.content });
+          workspaceContinuation = true;
           run = this.repository.touchRuntimeRun(runId);
           this.emitRuntime(run);
           this.armStaleTimer(active);
           continue;
         }
         if (event.type === "completed") {
+          roundCompleted = true;
+          if (workspaceContinuation) break;
+          const continuation = await this.selectRoomContinuation(provider, active);
+          if (continuation?.action === "handoff") {
+            const accepted = active.onHandoff?.({
+              type: "handoff",
+              toolCallId: `continuation:${active.runId}`,
+              toAgentId: continuation.toAgentId,
+              task: continuation.task,
+              contextRefs: continuation.contextRefs,
+              visibility: continuation.visibility,
+            });
+            active.handoffEmitted = accepted !== false || active.handoffEmitted;
+          }
           this.finalizeAssistant(active, "completed");
           run = this.repository.transitionRuntimeRun(runId, "completed");
           this.emitRuntime(run);
+          completed = true;
           break;
         }
+      }
+        closeIterator(iterator);
+        iterator = null;
+        if (!roundCompleted) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
       }
       const current = this.repository.getRuntimeRun(runId);
       if (!["completed", "failed", "cancelled", "interrupted"].includes(current.state)) {
@@ -413,6 +490,28 @@ export class RuntimeExecutor {
     if (active.assistantEntryId) this.flush(active, status);
   }
 
+  private async selectRoomContinuation(
+    provider: ModelProvider,
+    active: ActiveRun,
+  ): Promise<RoomContinuationDecision | null> {
+    const roster = active.providerContext.roomRoster;
+    const selector = provider.selectRoomContinuation;
+    if (
+      active.handoffEmitted ||
+      !active.onHandoff ||
+      !selector ||
+      !roster ||
+      !mentionsAnotherRoomPeer(active.body, active.providerContext.executorBotId, roster)
+    ) return null;
+    return selector.call(
+      provider,
+      active.body,
+      active.providerContext.executorBotId,
+      roster,
+      active.controller.signal,
+    );
+  }
+
   private createProvider(): ModelProvider {
     if (this.providerOverride) return this.providerOverride;
     if (this.fakeProvider) return this.fakeProvider;
@@ -445,6 +544,10 @@ export class RuntimeExecutor {
     active.flushTimer = null;
     active.staleTimer = null;
   }
+}
+
+function mentionsAnotherRoomPeer(body: string, executorBotId: string, roster: readonly RoomPeer[]): boolean {
+  return roster.some((peer) => peer.id !== executorBotId && peer.name.trim().length > 0 && body.includes(peer.name.trim()));
 }
 
 function closeIterator(iterator: AsyncIterator<ModelEvent> | null): void {

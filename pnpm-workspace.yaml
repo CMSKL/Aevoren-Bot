@@ -1,4 +1,5 @@
 allowBuilds:
+  electron-winstaller: false
   esbuild: true
 minimumReleaseAgeExclude:
   - '@types/node@22.20.2'

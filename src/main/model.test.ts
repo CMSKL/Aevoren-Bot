@@ -72,6 +72,49 @@ describe("parseOpenAiStream", () => {
     ]);
   });
 
+  it("parses one bounded workspace read for an explicitly registered workspace", async () => {
+    const workspaceId = crypto.randomUUID();
+    const args = JSON.stringify({ workspaceId, path: "docs/spec.md", maxBytes: 4096 });
+    const stream = streamFrom([
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "read-1", type: "function", function: { name: "workspace_read", arguments: args } }] }, finish_reason: "tool_calls" }] })}\n\n`,
+    ]);
+    expect(await collect(parseOpenAiStream(
+      stream,
+      new AbortController().signal,
+      DEFAULT_PROVIDER_TIMEOUTS,
+      undefined,
+      new Set([workspaceId]),
+    ))).toEqual([
+      { type: "workspace-tool", toolCallId: "read-1", tool: { kind: "workspace-read", workspaceId, path: "docs/spec.md", maxBytes: 4096 } },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
+  it("fails closed for out-of-scope and mixed workspace tool calls", async () => {
+    const allowedWorkspaceId = crypto.randomUUID();
+    const outsideWorkspaceId = crypto.randomUUID();
+    const target = crypto.randomUUID();
+    const cases = [
+      [{ index: 0, id: "read", type: "function", function: { name: "workspace_read", arguments: JSON.stringify({ workspaceId: outsideWorkspaceId, path: "secret", maxBytes: 10 }) } }],
+      [
+        { index: 0, id: "read", type: "function", function: { name: "workspace_read", arguments: JSON.stringify({ workspaceId: allowedWorkspaceId, path: "safe", maxBytes: 10 }) } },
+        { index: 1, id: "handoff", type: "function", function: { name: "handoff_to_agent", arguments: JSON.stringify({ toAgentId: target, task: "review", contextRefs: [], visibility: "room" }) } },
+      ],
+    ];
+    for (const toolCalls of cases) {
+      const stream = streamFrom([
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: toolCalls }, finish_reason: "tool_calls" }] })}\n\n`,
+      ]);
+      await expect(collect(parseOpenAiStream(
+        stream,
+        new AbortController().signal,
+        DEFAULT_PROVIDER_TIMEOUTS,
+        new Set([target]),
+        new Set([allowedWorkspaceId]),
+      ))).rejects.toMatchObject({ code: "MODEL_WORKSPACE_TOOL_INVALID" });
+    }
+  });
+
   it("ignores usage-only and nonzero-choice events", async () => {
     const stream = streamFrom([
       'data: {"choices":[],"usage":{"completion_tokens":1}}\n\n',
@@ -230,12 +273,15 @@ describe("parseOpenAiStream", () => {
       },
     ));
     const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
-      tools?: Array<{ function: { description: string; parameters: { properties: { toAgentId: { enum: string[] } }; additionalProperties: boolean } } }>;
+      tools?: Array<{ function: { description: string; parameters: { properties: { toAgentId: { enum: string[] }; contextRefs: { maxItems: number } }; additionalProperties: boolean } } }>;
     };
     expect(request.tools).toHaveLength(1);
     expect(request.tools?.[0]).toMatchObject({
       function: {
-        parameters: { additionalProperties: false, properties: { toAgentId: { enum: [targetId] } } },
+        parameters: {
+          additionalProperties: false,
+          properties: { toAgentId: { enum: [targetId] }, contextRefs: { maxItems: 0 } },
+        },
       },
     });
     expect(request.tools?.[0]?.function.description).toContain(targetId);
@@ -309,6 +355,30 @@ describe("parseOpenAiStream", () => {
     }));
     const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<string, unknown>;
     expect(request).not.toHaveProperty("tools");
+  });
+
+  it("advertises only bounded read-only workspace tools with stable workspace IDs", async () => {
+    const workspaceId = crypto.randomUUID();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      streamFrom(['data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n']),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "test-model", "test-key");
+    await collect(provider.run([{ role: "user", content: "inspect" }], new AbortController().signal, {
+      executorBotId: crypto.randomUUID(),
+      executionKey: "workspace-run",
+      workspaces: [{ id: workspaceId, name: "private-local-name" }],
+    }));
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
+      tools: Array<{ function: { name: string; parameters: unknown } }>;
+    };
+    expect(request.tools.map((tool) => tool.function.name)).toEqual(["workspace_list", "workspace_read", "workspace_search"]);
+    expect(JSON.stringify(request.tools)).toContain(workspaceId);
+    expect(JSON.stringify(request.tools)).not.toContain("private-local-name");
+    expect(JSON.stringify(request)).toContain("UNTRUSTED_WORKSPACE_LABEL_DATA");
+    expect(JSON.stringify(request)).toContain("private-local-name");
+    expect(JSON.stringify(request.tools)).not.toContain("workspace-write");
   });
 
   it("uses the locked P0-B timeout defaults", () => {
@@ -426,5 +496,109 @@ describe("Room owner selector", () => {
     await expect(provider.selectRoomOwner("message", roster, new AbortController().signal)).rejects.toMatchObject({
       code: "MODEL_ROUTER_INVALID",
     });
+  });
+});
+
+describe("Room continuation selector", () => {
+  const executorBotId = crypto.randomUUID();
+  const target = { id: crypto.randomUUID(), name: "评审员", label: "质量复核", description: "负责复核交付物" };
+  const roster = [
+    { id: executorBotId, name: "总控", label: "任务编排", description: "负责分配任务" },
+    target,
+  ];
+
+  it("turns an explicit immediate assignment into one structured Handoff decision", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [{
+        type: "function",
+        function: {
+          name: "select_room_continuation",
+          arguments: JSON.stringify({
+            action: "handoff",
+            toAgentId: target.id,
+            task: "复核当前交付物。",
+            reason: "草稿明确要求评审员现在继续。",
+          }),
+        },
+      }] } }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://api.deepseek.com/v1", "test-model", "SECRET_API_KEY");
+
+    await expect(provider.selectRoomContinuation(
+      "ASSIGN：请评审员立即复核。",
+      executorBotId,
+      roster,
+      new AbortController().signal,
+    )).resolves.toEqual({
+      action: "handoff",
+      toAgentId: target.id,
+      task: "复核当前交付物。",
+      contextRefs: [],
+      visibility: "room",
+      reason: "草稿明确要求评审员现在继续。",
+    });
+
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
+      messages: Array<{ content: string }>;
+      tools: Array<{ function: { name: string } }>;
+      tool_choice: string;
+      thinking: unknown;
+    };
+    expect(request.tools.map((tool) => tool.function.name)).toEqual(["select_room_continuation"]);
+    expect(request.tool_choice).toBe("auto");
+    expect(request.thinking).toEqual({ type: "disabled" });
+    expect(request.messages[0]!.content).toContain("等待用户批准/输入");
+    expect(JSON.stringify(request)).not.toContain("SECRET_API_KEY");
+  });
+
+  it("keeps a human approval gate complete without creating a target", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [{
+        type: "function",
+        function: {
+          name: "select_room_continuation",
+          arguments: JSON.stringify({
+            action: "complete",
+            toAgentId: "__complete__",
+            task: "",
+            reason: "必须先等待用户批准。",
+          }),
+        },
+      }] } }],
+    }), { status: 200 })));
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "model", "key");
+
+    await expect(provider.selectRoomContinuation(
+      "用户批准后再交给评审员，当前先停止。",
+      executorBotId,
+      roster,
+      new AbortController().signal,
+    )).resolves.toEqual({ action: "complete", reason: "必须先等待用户批准。" });
+  });
+
+  it("fails closed when the selector returns a nonmember target", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [{
+        type: "function",
+        function: {
+          name: "select_room_continuation",
+          arguments: JSON.stringify({
+            action: "handoff",
+            toAgentId: crypto.randomUUID(),
+            task: "复核",
+            reason: "立即复核",
+          }),
+        },
+      }] } }],
+    }), { status: 200 })));
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "model", "key");
+
+    await expect(provider.selectRoomContinuation(
+      "请评审员立即复核。",
+      executorBotId,
+      roster,
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
   });
 });

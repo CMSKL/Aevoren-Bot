@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
-import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, TranscriptEvent } from "@shared/contracts";
+import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
 
 const api: AevorenBotApi = {
   bots: {
@@ -14,12 +14,36 @@ const api: AevorenBotApi = {
     delete: (id) => ipcRenderer.invoke(IPC.botsDelete, id),
     copyConversationId: (id) => ipcRenderer.invoke(IPC.botsCopyConversationId, id),
   },
+  memories: {
+    list: (input) => ipcRenderer.invoke(IPC.memoriesList, input),
+    create: (input) => ipcRenderer.invoke(IPC.memoriesCreate, input),
+    update: (input) => ipcRenderer.invoke(IPC.memoriesUpdate, input),
+    delete: (input) => ipcRenderer.invoke(IPC.memoriesDelete, input),
+    restore: (input) => ipcRenderer.invoke(IPC.memoriesRestore, input),
+  },
+  workspaces: {
+    list: () => ipcRenderer.invoke(IPC.workspacesList),
+    add: () => ipcRenderer.invoke(IPC.workspacesAdd),
+    remove: (input) => ipcRenderer.invoke(IPC.workspacesRemove, input),
+  },
+  tools: {
+    list: (input) => ipcRenderer.invoke(IPC.toolsList, input),
+  },
+  approvals: {
+    listPending: (input) => ipcRenderer.invoke(IPC.approvalsListPending, input),
+    resolve: (input) => ipcRenderer.invoke(IPC.approvalsResolve, input),
+  },
   rooms: {
     list: (input) => ipcRenderer.invoke(IPC.roomsList, input),
     create: (input) => ipcRenderer.invoke(IPC.roomsCreate, input),
     get: (id) => ipcRenderer.invoke(IPC.roomsGet, id),
     update: (input) => ipcRenderer.invoke(IPC.roomsUpdate, input),
     archive: (input) => ipcRenderer.invoke(IPC.roomsArchive, input),
+    setPinned: (input) => ipcRenderer.invoke(IPC.roomsSetPinned, input),
+    setUnread: (input) => ipcRenderer.invoke(IPC.roomsSetUnread, input),
+    setHidden: (input) => ipcRenderer.invoke(IPC.roomsSetHidden, input),
+    copyConversationId: (id) => ipcRenderer.invoke(IPC.roomsCopyConversationId, id),
+    delete: (id) => ipcRenderer.invoke(IPC.roomsDelete, id),
     addMember: (input) => ipcRenderer.invoke(IPC.roomsAddMember, input),
     removeMember: (input) => ipcRenderer.invoke(IPC.roomsRemoveMember, input),
   },
@@ -48,9 +72,17 @@ const api: AevorenBotApi = {
     retryTurn: (turnId) => ipcRenderer.invoke(IPC.roomRuntimeRetryTurn, turnId),
   },
   settings: {
+    getGeneral: () => ipcRenderer.invoke(IPC.settingsGetGeneral),
+    saveGeneral: (input) => ipcRenderer.invoke(IPC.settingsSaveGeneral, input),
     getModelConfiguration: () => ipcRenderer.invoke(IPC.settingsGetModel),
     saveModelConfiguration: (input) => ipcRenderer.invoke(IPC.settingsSaveModel, input),
     testModelConnection: () => ipcRenderer.invoke(IPC.settingsTestModel),
+  },
+  updates: {
+    getState: () => ipcRenderer.invoke(IPC.updatesGetState),
+    check: () => ipcRenderer.invoke(IPC.updatesCheck),
+    retry: () => ipcRenderer.invoke(IPC.updatesRetry),
+    installAndRestart: () => ipcRenderer.invoke(IPC.updatesInstallAndRestart),
   },
   events: {
     subscribeTranscript(listener) {
@@ -72,6 +104,16 @@ const api: AevorenBotApi = {
       const wrapped = (_event: Electron.IpcRendererEvent, value: RoomRuntimeEvent): void => listener(value);
       ipcRenderer.on(IPC.roomRuntimeEvent, wrapped);
       return () => ipcRenderer.removeListener(IPC.roomRuntimeEvent, wrapped);
+    },
+    subscribeTool(listener) {
+      const wrapped = (_event: Electron.IpcRendererEvent, value: ToolEvent): void => listener(value);
+      ipcRenderer.on(IPC.toolEvent, wrapped);
+      return () => ipcRenderer.removeListener(IPC.toolEvent, wrapped);
+    },
+    subscribeUpdate(listener) {
+      const wrapped = (_event: Electron.IpcRendererEvent, value: UpdateEvent): void => listener(value);
+      ipcRenderer.on(IPC.updateEvent, wrapped);
+      return () => ipcRenderer.removeListener(IPC.updateEvent, wrapped);
     },
   },
   app: {

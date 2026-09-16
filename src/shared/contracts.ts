@@ -20,6 +20,34 @@ export type BotDeleteResult = {
   archivedRoomIds: string[];
 };
 
+export type MemorySource = "manual-user";
+
+export type MemoryItem = {
+  id: string;
+  botId: string;
+  content: string;
+  contentDigest: string;
+  source: MemorySource;
+  version: number;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Workspace = {
+  id: string;
+  name: string;
+  version: number;
+  removedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkspaceRegistrationResult = {
+  disposition: "registered" | "duplicate" | "restored";
+  workspace: Workspace;
+};
+
 export type Session = {
   id: string;
   botId: string | null;
@@ -100,7 +128,7 @@ export type RuntimeState =
   | "interrupted";
 
 export type RuntimeRoute = "fake" | "openai-compatible";
-export type PromptAuthority = "agent-profile" | "room-context" | "user" | "assistant";
+export type PromptAuthority = "agent-profile" | "memory" | "room-context" | "user" | "assistant";
 
 export type PromptManifestBlock = {
   authority: PromptAuthority;
@@ -113,7 +141,7 @@ export type PromptManifestBlock = {
 };
 
 export type PromptManifest = {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   botId: string;
   profileVersion: number;
   sessionId: string;
@@ -158,6 +186,109 @@ export type RuntimeRun = {
   finishedAt: string | null;
 };
 
+export type WorkspaceToolRequest =
+  | {
+      kind: "workspace-list";
+      workspaceId: string;
+      path: string;
+      maxEntries: number;
+    }
+  | {
+      kind: "workspace-read";
+      workspaceId: string;
+      path: string;
+      maxBytes: number;
+    }
+  | {
+      kind: "workspace-search";
+      workspaceId: string;
+      path: string;
+      query: string;
+      maxMatches: number;
+    };
+
+export type ToolInvocationCommand = {
+  runtimeRunId: string;
+  toolCallId: string;
+  idempotencyKey: string;
+  tool: WorkspaceToolRequest;
+};
+
+export type ToolInvocationState =
+  | "prepared"
+  | "awaiting-approval"
+  | "approved"
+  | "dispatching"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "denied"
+  | "expired"
+  | "cancelled"
+  | "failed-before-execution"
+  | "interrupted-unknown";
+
+export type ToolInvocation = {
+  id: string;
+  runtimeRunId: string;
+  sessionId: string;
+  executorBotId: string;
+  toolCallId: string;
+  idempotencyKey: string;
+  commandDigest: string;
+  toolKind: WorkspaceToolRequest["kind"];
+  workspaceId: string;
+  targetPath: string;
+  arguments: WorkspaceToolRequest;
+  state: ToolInvocationState;
+  attemptCount: number;
+  approvalRequestId: string;
+  resultDigest: string | null;
+  resultMetadata: Record<string, string | number | boolean | null> | null;
+  lastErrorCode: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+export type ApprovalState = "pending" | "allowed" | "denied" | "expired" | "cancelled";
+export type ApprovalResolution = "allow-once" | "deny";
+
+export type ApprovalRequest = {
+  id: string;
+  toolInvocationId: string;
+  runtimeRunId: string;
+  sessionId: string;
+  executorBotId: string;
+  actionKind: WorkspaceToolRequest["kind"];
+  workspaceId: string;
+  targetPath: string;
+  targetDigest: string;
+  argumentsDigest: string;
+  requestedScope: "once";
+  state: ApprovalState;
+  resolution: ApprovalResolution | null;
+  policyVersion: number;
+  version: number;
+  expiresAt: string;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ToolPrepareResult = {
+  disposition: "prepared" | "duplicate";
+  invocation: ToolInvocation;
+  approval: ApprovalRequest;
+};
+
+export type ToolApprovalResult = {
+  invocation: ToolInvocation;
+  approval: ApprovalRequest;
+};
+
 export type Room = {
   id: string;
   name: string;
@@ -165,11 +296,18 @@ export type Room = {
   version: number;
   membershipVersion: number;
   archivedAt: string | null;
+  pinnedAt: string | null;
+  hiddenAt: string | null;
+  hasUnread: boolean;
   createdAt: string;
   updatedAt: string;
 };
 
 export type RoomPatch = Partial<Pick<Room, "name" | "description">>;
+
+export type RoomDeleteResult = {
+  id: string;
+};
 
 export type RoomMember = {
   roomId: string;
@@ -400,16 +538,49 @@ export type SaveModelConfigurationInput = {
   apiKey?: string;
 };
 
+export type AppearanceTheme = "system" | "light" | "dark";
+
+export type GeneralSettings = {
+  theme: AppearanceTheme;
+};
+
+export type UpdateChannel = "development" | "beta" | "stable";
+
+export type UpdateStatus =
+  | "disabled"
+  | "idle"
+  | "checking"
+  | "up-to-date"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "installing"
+  | "install-interrupted"
+  | "updated"
+  | "error";
+
+export type UpdateProgress = {
+  percent: number;
+  bytesPerSecond: number;
+  transferred: number;
+  total: number;
+};
+
 export type ErrorDomain =
   | "validation"
   | "bot"
   | "session"
   | "room"
+  | "memory"
+  | "workspace"
   | "message"
   | "runtime"
+  | "tool"
+  | "approval"
   | "provider"
   | "storage"
   | "security"
+  | "update"
   | "internal";
 
 export type AppError = {
@@ -441,6 +612,26 @@ export type RuntimeEvent = {
   error?: AppError;
 };
 
+export type ToolEvent = {
+  sessionId: string;
+  invocation: ToolInvocation;
+  approval: ApprovalRequest;
+};
+
+export type UpdateState = {
+  channel: UpdateChannel;
+  status: UpdateStatus;
+  currentVersion: string;
+  availableVersion: string | null;
+  progress: UpdateProgress | null;
+  checkedAt: string | null;
+  error: AppError | null;
+};
+
+export type UpdateEvent = {
+  state: UpdateState;
+};
+
 export interface AevorenBotApi {
   bots: {
     list(): Promise<ApiResult<Bot[]>>;
@@ -453,6 +644,30 @@ export interface AevorenBotApi {
     delete(id: string): Promise<ApiResult<BotDeleteResult>>;
     copyConversationId(id: string): Promise<ApiResult<void>>;
   };
+  memories: {
+    list(input: { botId: string; includeDeleted?: boolean }): Promise<ApiResult<MemoryItem[]>>;
+    create(input: { botId: string; content: string }): Promise<ApiResult<MemoryItem>>;
+    update(input: { id: string; expectedVersion: number; content: string }): Promise<ApiResult<MemoryItem>>;
+    delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
+    restore(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
+  };
+  workspaces: {
+    list(): Promise<ApiResult<Workspace[]>>;
+    add(): Promise<ApiResult<WorkspaceRegistrationResult | null>>;
+    remove(input: { id: string; expectedVersion: number }): Promise<ApiResult<Workspace>>;
+  };
+  tools: {
+    list(input: { sessionId: string }): Promise<ApiResult<ToolInvocation[]>>;
+  };
+  approvals: {
+    listPending(input: { sessionId: string }): Promise<ApiResult<ApprovalRequest[]>>;
+    resolve(input: {
+      sessionId: string;
+      id: string;
+      expectedVersion: number;
+      resolution: ApprovalResolution;
+    }): Promise<ApiResult<ToolApprovalResult>>;
+  };
   sessions: {
     getMain(botId: string): Promise<ApiResult<Session>>;
   };
@@ -462,6 +677,11 @@ export interface AevorenBotApi {
     get(id: string): Promise<ApiResult<RoomDetail>>;
     update(input: { id: string; expectedVersion: number; patch: RoomPatch }): Promise<ApiResult<Room>>;
     archive(input: { id: string; archived: boolean }): Promise<ApiResult<Room>>;
+    setPinned(input: { id: string; pinned: boolean }): Promise<ApiResult<Room>>;
+    setUnread(input: { id: string; unread: boolean }): Promise<ApiResult<Room>>;
+    setHidden(input: { id: string; hidden: boolean }): Promise<ApiResult<Room>>;
+    copyConversationId(id: string): Promise<ApiResult<void>>;
+    delete(id: string): Promise<ApiResult<RoomDeleteResult>>;
     addMember(input: { roomId: string; botId: string; expectedMembershipVersion: number }): Promise<ApiResult<RoomDetail>>;
     removeMember(input: { roomId: string; botId: string; expectedMembershipVersion: number }): Promise<ApiResult<RoomDetail>>;
   };
@@ -487,15 +707,25 @@ export interface AevorenBotApi {
     retryTurn(turnId: string): Promise<ApiResult<RoomTurn>>;
   };
   settings: {
+    getGeneral(): Promise<ApiResult<GeneralSettings>>;
+    saveGeneral(input: GeneralSettings): Promise<ApiResult<GeneralSettings>>;
     getModelConfiguration(): Promise<ApiResult<ModelConfiguration>>;
     saveModelConfiguration(input: SaveModelConfigurationInput): Promise<ApiResult<ModelConfiguration>>;
     testModelConnection(): Promise<ApiResult<void>>;
+  };
+  updates: {
+    getState(): Promise<ApiResult<UpdateState>>;
+    check(): Promise<ApiResult<UpdateState>>;
+    retry(): Promise<ApiResult<UpdateState>>;
+    installAndRestart(): Promise<ApiResult<UpdateState>>;
   };
   events: {
     subscribeTranscript(listener: (event: TranscriptEvent) => void): () => void;
     subscribeSendState(listener: (event: SendStateEvent) => void): () => void;
     subscribeRuntime(listener: (event: RuntimeEvent) => void): () => void;
     subscribeRoomRuntime(listener: (event: RoomRuntimeEvent) => void): () => void;
+    subscribeTool(listener: (event: ToolEvent) => void): () => void;
+    subscribeUpdate(listener: (event: UpdateEvent) => void): () => void;
   };
   app: {
     ready(): void;

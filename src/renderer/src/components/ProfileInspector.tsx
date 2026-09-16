@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { AppError, Bot, BotPatch } from "@shared/contracts";
 import { CheckIcon, CloseIcon } from "./Icons";
+import { MemoryPanel, type MemoryPanelHandle } from "./MemoryPanel";
 
 type ProfileDraft = Pick<Bot, "name" | "label" | "description" | "instructions">;
 export type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
@@ -49,6 +50,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const memoryPanelRef = useRef<MemoryPanelHandle>(null);
 
   useEffect(() => {
     if (bot?.id === botIdRef.current) {
@@ -110,7 +112,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
     const saved = await saveCurrent();
     if (!saved) return false;
     if (draftRef.current && savedRef.current && !sameDraft(draftRef.current, savedRef.current)) return flush();
-    return true;
+    return await memoryPanelRef.current?.flush() ?? true;
   }
 
   useImperativeHandle(ref, () => ({
@@ -181,6 +183,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
         </label>
       ) : null}
       {status === "failed" ? <button className="secondary-button full-width" type="button" onClick={() => void flush()}>重试保存</button> : null}
+      <MemoryPanel ref={memoryPanelRef} botId={bot.id} onError={onError} />
     </aside>
   );
 });

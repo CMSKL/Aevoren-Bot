@@ -14,6 +14,7 @@ import type { AppRepository } from "./database";
 import type { ModelProvider } from "./model";
 import { RuntimeExecutor, type RuntimeExecutionResult } from "./runtime-executor";
 import type { ModelSettingsService } from "./settings";
+import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 
 export type WorkerEvents = {
   transcript: (event: TranscriptEvent) => void;
@@ -32,6 +33,7 @@ export class RuntimeCoordinator {
     forceFakeProvider = false,
     providerOverride?: ModelProvider,
     executorOverride?: RuntimeExecutor,
+    workspaceTools?: WorkspaceToolCoordinator,
   ) {
     this.executor = executorOverride ?? new RuntimeExecutor(
       repository,
@@ -39,6 +41,7 @@ export class RuntimeCoordinator {
       { transcript: events.transcript, runtime: events.runtime },
       forceFakeProvider,
       providerOverride,
+      workspaceTools,
     );
   }
 

@@ -42,7 +42,10 @@ function createV6Fixture(): string {
     INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at) VALUES
       ('${BOT_A}', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 1, '${timestamp}', '${timestamp}'),
       ('${BOT_B}', 'Agent B', '', '', '', 1, '${timestamp}', '${timestamp}');
-    INSERT INTO rooms VALUES('${ROOM_ID}', 'Room', '', 1, 1, NULL, '${timestamp}', '${timestamp}');
+    INSERT INTO rooms(
+      id, name, description, version, membership_version, archived_at,
+      pinned_at, has_unread, hidden_at, created_at, updated_at
+    ) VALUES('${ROOM_ID}', 'Room', '', 1, 1, NULL, NULL, 0, NULL, '${timestamp}', '${timestamp}');
     INSERT INTO room_members VALUES('${ROOM_ID}', '${BOT_A}', 0, '${timestamp}');
     INSERT INTO room_members VALUES('${ROOM_ID}', '${BOT_B}', 1, '${timestamp}');
     INSERT INTO sessions VALUES('${SESSION_ID}', NULL, '${ROOM_ID}', 'MAIN', 1, 1, '${timestamp}', '${timestamp}');
@@ -116,7 +119,7 @@ describe("room diagnostics CLI", () => {
     expect(result.stdout).not.toContain("instructions");
 
     expect(JSON.parse(result.stdout)).toEqual({
-      schemaVersion: 7,
+      schemaVersion: MIGRATIONS.at(-1)!.version,
       runId: RUN_ID,
       roomId: ROOM_ID,
       sessionId: SESSION_ID,
