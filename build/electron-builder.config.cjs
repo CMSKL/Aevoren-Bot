@@ -36,4 +36,7 @@ module.exports = {
       ? { hardenedRuntime: true, notarize: true }
       : { identity: null, hardenedRuntime: false, notarize: false }),
   },
+  dmg: {
+    sign: releaseBuild,
+  },
 };
