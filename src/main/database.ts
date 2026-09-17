@@ -2991,6 +2991,14 @@ export class AppRepository {
   }
 
   private deleteRoomRecord(id: string): RoomDeleteResult {
+    this.database
+      .prepare(
+        `UPDATE room_turns
+         SET parent_turn_id = NULL
+         WHERE batch_id IN (SELECT id FROM room_batches WHERE room_id = ?)
+           AND parent_turn_id IS NOT NULL`,
+      )
+      .run(id);
     const result = this.database.prepare("DELETE FROM rooms WHERE id = ?").run(id);
     if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
     return { id };
