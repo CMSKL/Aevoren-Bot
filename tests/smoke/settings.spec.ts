@@ -30,14 +30,22 @@ test("uses one sidebar settings entry and preserves general and model configurat
     await page.screenshot({ path: "/tmp/aevoren-settings-general-1182x804.png" });
     await page.locator(".settings-dialog").screenshot({ path: "/tmp/aevoren-settings-general-modal.png" });
 
-    await page.getByRole("button", { name: "模型配置", exact: true }).click();
+    await page.getByRole("button", { name: "模型与 CLI", exact: true }).click();
+    await expect(page.getByText("自动发现", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "重新扫描", exact: true })).toBeVisible();
+    await expect(page.getByText("Codex CLI", { exact: true })).toBeVisible();
+    await expect(page.getByText("Claude Code", { exact: true })).toBeVisible();
+    await expect(page.getByText("Ollama", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Codex CLI 手动 CLI 路径")).toBeHidden();
     await page.screenshot({ path: "/tmp/aevoren-settings-model-1182x804.png" });
     await page.locator(".settings-dialog").screenshot({ path: "/tmp/aevoren-settings-model-modal.png" });
     await page.getByLabel("Base URL").fill("https://example.com/v1/");
-    await page.getByLabel("Model ID").fill("settings-smoke-model");
     await page.getByLabel("API Key").fill("settings-smoke-secret");
-    await page.getByRole("button", { name: "保存", exact: true }).click();
-    await expect(page.getByText("设置已保存。")).toBeVisible();
+    await page.getByRole("button", { name: "保存兜底配置", exact: true }).click();
+    await expect(page.getByText("OpenAI-compatible 兜底配置已保存。")).toBeVisible();
+    const codexCard = page.locator(".provider-settings-card").filter({ hasText: "Codex CLI" });
+    await codexCard.getByText("高级：手动指定 CLI 路径", { exact: true }).click();
+    await expect(page.getByLabel("Codex CLI 手动 CLI 路径")).toHaveValue("codex");
 
     await page.getByRole("button", { name: "版本更新", exact: true }).click();
     await page.screenshot({ path: "/tmp/aevoren-settings-update-1182x804.png" });
@@ -53,7 +61,7 @@ test("uses one sidebar settings entry and preserves general and model configurat
       value: "dark",
       encrypted: 0,
     });
-    const storedKey = database.prepare("SELECT value, encrypted FROM app_settings WHERE key = 'model.apiKey'").get() as { value: string; encrypted: number };
+    const storedKey = database.prepare("SELECT value, encrypted FROM app_settings WHERE key = 'provider.openai-compatible.default.apiKey'").get() as { value: string; encrypted: number };
     expect(storedKey.encrypted).toBe(1);
     expect(storedKey.value).not.toContain("settings-smoke-secret");
     database.close();
@@ -64,9 +72,8 @@ test("uses one sidebar settings entry and preserves general and model configurat
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await expect(page.getByLabel("外观主题")).toHaveValue("dark");
-    await page.getByRole("button", { name: "模型配置", exact: true }).click();
+    await page.getByRole("button", { name: "模型与 CLI", exact: true }).click();
     await expect(page.getByLabel("Base URL")).toHaveValue("https://example.com/v1");
-    await expect(page.getByLabel("Model ID")).toHaveValue("settings-smoke-model");
     await expect(page.getByText("已安全保存；留空表示不替换")).toBeVisible();
     expect(consoleErrors).toEqual([]);
   } finally {

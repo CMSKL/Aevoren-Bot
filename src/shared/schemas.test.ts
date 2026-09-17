@@ -9,12 +9,14 @@ import {
   memoryListSchema,
   memoryMutationSchema,
   memoryUpdateSchema,
-  modelConfigurationSchema,
+  modelSelectionSchema,
   roomCreateSchema,
   roomHiddenSchema,
   roomPinnedSchema,
   roomSendCommandSchema,
   roomUnreadSchema,
+  saveCliProviderSchema,
+  saveOpenAiCompatibleProviderSchema,
   toolInvocationCommandSchema,
   toolSessionScopeSchema,
   workspaceRelativePathSchema,
@@ -129,8 +131,8 @@ describe("Approval and Tool Journal schemas", () => {
   });
 });
 
-describe("modelConfigurationSchema", () => {
-  const validModel = { modelId: "model" };
+describe("Provider configuration schemas", () => {
+  const providerBase = { instanceId: "openai-compatible.default", expectedVersion: 1 };
 
   it.each([
     "https://api.example.com/v1",
@@ -138,7 +140,7 @@ describe("modelConfigurationSchema", () => {
     "http://127.0.0.1:8080/v1",
     "http://[::1]:8080/v1",
   ])("accepts the allowed provider URL %s", (baseUrl) => {
-    expect(modelConfigurationSchema.safeParse({ ...validModel, baseUrl }).success).toBe(true);
+    expect(saveOpenAiCompatibleProviderSchema.safeParse({ ...providerBase, baseUrl }).success).toBe(true);
   });
 
   it.each([
@@ -147,16 +149,20 @@ describe("modelConfigurationSchema", () => {
     "https://user:password@api.example.com/v1",
     "http://user:password@localhost:8080/v1",
   ])("rejects the disallowed provider URL %s", (baseUrl) => {
-    expect(modelConfigurationSchema.safeParse({ ...validModel, baseUrl }).success).toBe(false);
+    expect(saveOpenAiCompatibleProviderSchema.safeParse({ ...providerBase, baseUrl }).success).toBe(false);
   });
 
-  it("enforces URL and Model ID length boundaries", () => {
+  it("enforces URL, model selection, and CLI path boundaries", () => {
     const prefix = "https://example.com/";
     const maximumUrl = prefix + "a".repeat(2_048 - prefix.length);
     expect(maximumUrl).toHaveLength(2_048);
-    expect(modelConfigurationSchema.safeParse({ baseUrl: maximumUrl, modelId: "m".repeat(200) }).success).toBe(true);
-    expect(modelConfigurationSchema.safeParse({ baseUrl: maximumUrl + "a", modelId: "model" }).success).toBe(false);
-    expect(modelConfigurationSchema.safeParse({ baseUrl: "https://example.com/v1", modelId: "m".repeat(201) }).success).toBe(false);
+    expect(saveOpenAiCompatibleProviderSchema.safeParse({ ...providerBase, baseUrl: maximumUrl }).success).toBe(true);
+    expect(saveOpenAiCompatibleProviderSchema.safeParse({ ...providerBase, baseUrl: maximumUrl + "a" }).success).toBe(false);
+    expect(modelSelectionSchema.safeParse({ providerInstanceId: "codex.default", modelId: "m".repeat(200) }).success).toBe(true);
+    expect(modelSelectionSchema.safeParse({ providerInstanceId: "bad id", modelId: "model" }).success).toBe(false);
+    expect(modelSelectionSchema.safeParse({ providerInstanceId: "codex.default", modelId: "m".repeat(201) }).success).toBe(false);
+    expect(saveCliProviderSchema.safeParse({ instanceId: "codex.default", expectedVersion: 1, cliPath: "/opt/homebrew/bin/codex" }).success).toBe(true);
+    expect(saveCliProviderSchema.safeParse({ instanceId: "codex.default", expectedVersion: 1, cliPath: "codex\nrm" }).success).toBe(false);
   });
 });
 

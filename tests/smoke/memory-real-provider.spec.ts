@@ -55,8 +55,12 @@ test("uses one Bot-owned explicit Memory in one real Provider call", async () =>
   try {
     const page = await application.firstWindow();
     const configured = await page.evaluate(async () => {
-      const result = await (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.settings.getModelConfiguration();
-      return result.ok && result.data.apiKeyConfigured && Boolean(result.data.modelId);
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      const [bots, providers] = await Promise.all([api.bots.list(), api.providers.list()]);
+      if (!bots.ok || !providers.ok) return false;
+      return bots.data.some((bot) => Boolean(bot.modelSelection.modelId) && providers.data.some(
+        (provider) => provider.id === bot.modelSelection.providerInstanceId && provider.status === "available",
+      ));
     });
     expect(configured).toBe(true);
 

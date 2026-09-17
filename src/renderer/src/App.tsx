@@ -781,6 +781,8 @@ export function App(): React.JSX.Element {
         onOpenBots={() => setMobilePanel("bots")}
         onOpenProfile={() => setMobilePanel("profile")}
         onOpenWorkspaces={() => setWorkspacesOpen(true)}
+        onBotUpdated={updateBot}
+        onError={setError}
         onResolveApproval={async (approval, resolution) => {
           const result = await window.aevorenBot.approvals.resolve({
             sessionId: approval.sessionId,

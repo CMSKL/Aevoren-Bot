@@ -9,7 +9,6 @@ import {
   botUnreadSchema,
   botUpdateSchema,
   generalSettingsSchema,
-  modelConfigurationSchema,
   memoryCreateSchema,
   memoryListSchema,
   memoryMutationSchema,
@@ -27,6 +26,9 @@ import {
   roomUpdateSchema,
   runIdSchema,
   sendCommandSchema,
+  providerInstanceIdInputSchema,
+  saveCliProviderSchema,
+  saveOpenAiCompatibleProviderSchema,
   sessionIdSchema,
   toolSessionScopeSchema,
   turnIdSchema,
@@ -34,8 +36,8 @@ import {
 } from "@shared/schemas";
 import { apiResult, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
-import { OpenAiCompatibleProvider } from "./model";
-import type { GeneralSettingsService, ModelSettingsService } from "./settings";
+import type { GeneralSettingsService } from "./settings";
+import type { ProviderService } from "./provider-service";
 import type { SendWorker } from "./send-worker";
 import type { RoomCoordinator } from "./room-coordinator";
 import type { WorkspaceService } from "./workspace-service";
@@ -45,7 +47,7 @@ import type { UpdateService } from "./update-service";
 type IpcDependencies = {
   window: BrowserWindow;
   repository: AppRepository;
-  settings: ModelSettingsService;
+  providers: ProviderService;
   generalSettings: GeneralSettingsService;
   sendWorker: SendWorker;
   roomCoordinator: RoomCoordinator;
@@ -71,7 +73,7 @@ function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
 }
 
 export function registerIpc(dependencies: IpcDependencies): void {
-  const { window, repository, settings, generalSettings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
+  const { window, repository, providers, generalSettings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
 
   const handle = <TArgs extends unknown[], TResult>(
     channel: string,
@@ -206,37 +208,29 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.roomRuntimeCancel, (_event, batchId: unknown) => roomCoordinator.cancel(batchIdSchema.parse(batchId)));
   handle(IPC.roomRuntimeContinue, (_event, batchId: unknown) => roomCoordinator.continue(batchIdSchema.parse(batchId)));
   handle(IPC.roomRuntimeRetryTurn, (_event, turnId: unknown) => roomCoordinator.retryTurn(turnIdSchema.parse(turnId)));
-  handle(IPC.settingsGetModel, () => settings.getConfiguration());
   handle(IPC.settingsGetGeneral, () => generalSettings.getConfiguration());
   handle(IPC.settingsSaveGeneral, (_event, input: unknown) =>
     generalSettings.saveConfiguration(generalSettingsSchema.parse(input)),
   );
-  handle(IPC.settingsSaveModel, (_event, input: unknown) => {
-    const parsed = modelConfigurationSchema.parse(input);
-    return settings.saveConfiguration(parsed);
+  handle(IPC.providersList, () => providers.list());
+  handle(IPC.providersScan, () => providers.scan());
+  handle(IPC.providersSaveOpenAiCompatible, async (_event, input: unknown) => {
+    const parsed = saveOpenAiCompatibleProviderSchema.parse(input);
+    if (repository.hasActiveRuntimeForProvider(parsed.instanceId)) throw new AevorenBotError("MODEL_PROVIDER_BUSY");
+    return providers.saveOpenAiCompatible(parsed);
   });
-  handle(IPC.settingsTestModel, async () => {
+  handle(IPC.providersSaveCli, async (_event, input: unknown) => {
+    const parsed = saveCliProviderSchema.parse(input);
+    if (repository.hasActiveRuntimeForProvider(parsed.instanceId)) throw new AevorenBotError("MODEL_PROVIDER_BUSY");
+    return providers.saveCli(parsed);
+  });
+  handle(IPC.providersTest, async (_event, instanceId: unknown) => {
     if (dependencies.forceFakeProvider) return;
-    const configuration = settings.getConfiguration();
-    if (!configuration.modelId || !configuration.apiKeyConfigured) {
-      throw new AevorenBotError("MODEL_NOT_CONFIGURED", "请先保存 Base URL、Model ID 和 API Key。", false);
-    }
-    const provider = new OpenAiCompatibleProvider(
-      configuration.baseUrl,
-      configuration.modelId,
-      settings.getApiKey(),
-    );
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10_000);
-    try {
-      await provider.testConnection(controller.signal);
-    } catch (error) {
-      if (controller.signal.aborted) throw new AevorenBotError("MODEL_CONNECTION_TIMEOUT");
-      throw error;
-    } finally {
-      clearTimeout(timer);
-    }
+    await providers.test(providerInstanceIdInputSchema.parse(instanceId));
   });
+  handle(IPC.providersRefresh, (_event, instanceId: unknown) =>
+    providers.refresh(providerInstanceIdInputSchema.parse(instanceId)),
+  );
   handle(IPC.updatesGetState, () => dependencies.updateService.getState());
   handle(IPC.updatesCheck, () => dependencies.updateService.check());
   handle(IPC.updatesRetry, () => dependencies.updateService.retry());

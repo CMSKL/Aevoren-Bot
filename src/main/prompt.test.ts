@@ -8,6 +8,7 @@ const bot: Bot = {
   label: "Label",
   description: "Description",
   instructions: "Profile instructions",
+  modelSelection: { providerInstanceId: "openai-compatible.default", modelId: "test-model" },
   pinnedAt: null,
   hiddenAt: null,
   hasUnread: false,

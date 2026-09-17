@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage, ModelProvider } from "./model";
 import { AppRepository } from "./database";
-import { ModelSettingsService, type SecretCodec } from "./settings";
 import { SendWorker } from "./send-worker";
 import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
@@ -12,7 +11,6 @@ import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 
 const repositories: AppRepository[] = [];
 const directories: string[] = [];
-const codec: SecretCodec = { isAvailable: () => true, encrypt: (value) => value, decrypt: (value) => value };
 
 function directory(): string {
   const value = mkdtempSync(join(tmpdir(), "aevoren-tool-runtime-"));
@@ -66,7 +64,7 @@ async function harness(resolution: "allow-once" | "deny") {
   );
   const worker = new SendWorker(
     repository,
-    new ModelSettingsService(repository, codec),
+    null,
     { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() },
     false,
     provider,
@@ -124,7 +122,7 @@ describe("Workspace tool Runtime wiring", () => {
       testConnection: async () => {},
     };
     const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), pending);
-    const worker = new SendWorker(repository, new ModelSettingsService(repository, codec), { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "取消" });
     await vi.waitFor(() => expect(repository.listPendingApprovalRequests(created.session.id)).toHaveLength(1));
     worker.cancelRun(sent.runId);
@@ -155,7 +153,7 @@ describe("Workspace tool Runtime wiring", () => {
         queueMicrotask(() => void coordinator.resolve(event.sessionId, event.approval.id, event.approval.version, "allow-once"));
       }
     });
-    const worker = new SendWorker(repository, new ModelSettingsService(repository, codec), { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "循环保护" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
     expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_ROUND_LIMIT_EXCEEDED");

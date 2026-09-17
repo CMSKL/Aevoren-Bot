@@ -4,6 +4,7 @@ export type Bot = {
   label: string;
   description: string;
   instructions: string;
+  modelSelection: ModelSelection;
   pinnedAt: string | null;
   hiddenAt: string | null;
   hasUnread: boolean;
@@ -12,7 +13,7 @@ export type Bot = {
   updatedAt: string;
 };
 
-export type BotPatch = Partial<Pick<Bot, "name" | "label" | "description" | "instructions">>;
+export type BotPatch = Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection">>;
 
 export type BotDeleteResult = {
   id: string;
@@ -127,7 +128,67 @@ export type RuntimeState =
   | "cancelled"
   | "interrupted";
 
-export type RuntimeRoute = "fake" | "openai-compatible";
+export type ProviderDriverKind = "openai-compatible" | "codex-cli" | "claude-cli" | "ollama-cli";
+export type ProviderDiscoveryMode = "automatic" | "manual" | "not-applicable";
+
+export type ModelSelection = {
+  providerInstanceId: string;
+  modelId: string;
+};
+
+export type ProviderCapabilities = {
+  roomOwnerSelection: boolean;
+  handoff: boolean;
+  workspaceTools: boolean;
+};
+
+export type ProviderModelOption = {
+  id: string;
+  label: string;
+  provider?: string;
+  custom?: boolean;
+  loaded?: boolean;
+};
+
+export type ProviderInstanceInfo = {
+  id: string;
+  driverKind: ProviderDriverKind;
+  displayName: string;
+  access: "cloud" | "local";
+  enabled: boolean;
+  version: number;
+  status: "available" | "unavailable";
+  reason: string | null;
+  authenticated: boolean;
+  runtimeVersion: string | null;
+  discoveryMode: ProviderDiscoveryMode;
+  lastScannedAt: string | null;
+  cliPath: string | null;
+  cliDefault: string | null;
+  manualCliPath: string | null;
+  apiKeyConfigured: boolean;
+  baseUrl: string | null;
+  models: {
+    default: string;
+    options: ProviderModelOption[];
+  };
+  capabilities: ProviderCapabilities;
+};
+
+export type SaveOpenAiCompatibleProviderInput = {
+  instanceId: string;
+  expectedVersion: number;
+  baseUrl: string;
+  apiKey?: string;
+};
+
+export type SaveCliProviderInput = {
+  instanceId: string;
+  expectedVersion: number;
+  cliPath: string;
+};
+
+export type RuntimeRoute = "fake" | ProviderDriverKind;
 export type PromptAuthority = "agent-profile" | "memory" | "room-context" | "user" | "assistant";
 
 export type PromptManifestBlock = {
@@ -172,6 +233,8 @@ export type RuntimeRun = {
   attemptNo: number;
   state: RuntimeState;
   route: RuntimeRoute;
+  providerInstanceId: string;
+  providerModelId: string;
   inputGeneration: number;
   inputSeq: number;
   promptCutoffSeq: number;
@@ -526,18 +589,6 @@ export type SessionRuntimeSnapshot = {
   liveState: SessionLiveState;
 };
 
-export type ModelConfiguration = {
-  baseUrl: string;
-  modelId: string;
-  apiKeyConfigured: boolean;
-};
-
-export type SaveModelConfigurationInput = {
-  baseUrl: string;
-  modelId: string;
-  apiKey?: string;
-};
-
 export type AppearanceTheme = "system" | "light" | "dark";
 
 export type GeneralSettings = {
@@ -709,9 +760,14 @@ export interface AevorenBotApi {
   settings: {
     getGeneral(): Promise<ApiResult<GeneralSettings>>;
     saveGeneral(input: GeneralSettings): Promise<ApiResult<GeneralSettings>>;
-    getModelConfiguration(): Promise<ApiResult<ModelConfiguration>>;
-    saveModelConfiguration(input: SaveModelConfigurationInput): Promise<ApiResult<ModelConfiguration>>;
-    testModelConnection(): Promise<ApiResult<void>>;
+  };
+  providers: {
+    list(): Promise<ApiResult<ProviderInstanceInfo[]>>;
+    scan(): Promise<ApiResult<ProviderInstanceInfo[]>>;
+    saveOpenAiCompatible(input: SaveOpenAiCompatibleProviderInput): Promise<ApiResult<ProviderInstanceInfo>>;
+    saveCli(input: SaveCliProviderInput): Promise<ApiResult<ProviderInstanceInfo>>;
+    test(instanceId: string): Promise<ApiResult<void>>;
+    refresh(instanceId: string): Promise<ApiResult<ProviderInstanceInfo>>;
   };
   updates: {
     getState(): Promise<ApiResult<UpdateState>>;

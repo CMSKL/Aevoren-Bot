@@ -41,10 +41,16 @@ function logicalV7Hash(database: DatabaseSync): string {
     "bots", "sessions", "transcript_entries", "send_journal", "app_settings", "runtime_runs",
     "rooms", "room_members", "room_batches", "room_turns", "agent_handoffs", "handoff_rejections",
   ];
-  const snapshot = Object.fromEntries(tables.map((table) => [
-    table,
-    database.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
-  ]));
+  const snapshot = Object.fromEntries(tables.map((table) => {
+    const query = table === "bots"
+      ? "SELECT id,name,label,description,instructions,pinned_at,hidden_at,has_unread,deleted_at,version,created_at,updated_at FROM bots ORDER BY rowid"
+      : table === "runtime_runs"
+        ? "SELECT id,session_id,client_nonce,execution_key,executor_bot_id,attempt_no,state,route,input_generation,input_seq,prompt_cutoff_seq,assistant_entry_id,provider_request_id,prompt_manifest_json,version,last_error_code,created_at,accepted_at,last_activity_at,finished_at FROM runtime_runs ORDER BY rowid"
+        : table === "app_settings"
+          ? "SELECT * FROM app_settings WHERE key NOT LIKE 'provider.%' ORDER BY rowid"
+          : `SELECT * FROM ${table} ORDER BY rowid`;
+    return [table, database.prepare(query).all()];
+  }));
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
 

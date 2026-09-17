@@ -15,7 +15,9 @@ import type {
   HandoffState,
   HandoffVisibility,
   MemoryItem,
+  ModelSelection,
   PromptManifest,
+  ProviderDriverKind,
   Room,
   RoomBatch,
   RoomBatchState,
@@ -799,6 +801,218 @@ export const MIGRATIONS = [
         ON rooms(archived_at, hidden_at, pinned_at, created_at);
     `,
   },
+  {
+    version: 13,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE provider_instances (
+        id TEXT PRIMARY KEY,
+        driver_kind TEXT NOT NULL CHECK (driver_kind IN ('openai-compatible', 'codex-cli')),
+        display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 120),
+        config_json TEXT NOT NULL CHECK (json_valid(config_json) AND json_type(config_json) = 'object'),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO provider_instances(id, driver_kind, display_name, config_json, enabled, version, created_at, updated_at)
+      VALUES (
+        'openai-compatible.default',
+        'openai-compatible',
+        'OpenAI-compatible',
+        json_object('baseUrl', COALESCE((SELECT value FROM app_settings WHERE key = 'model.baseUrl'), 'https://api.openai.com/v1')),
+        1,
+        1,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+      INSERT INTO provider_instances(id, driver_kind, display_name, config_json, enabled, version, created_at, updated_at)
+      VALUES (
+        'codex.default',
+        'codex-cli',
+        'Codex CLI',
+        json_object('cliPath', 'codex'),
+        1,
+        1,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+
+      ALTER TABLE bots ADD COLUMN provider_instance_id TEXT NOT NULL DEFAULT 'openai-compatible.default';
+      ALTER TABLE bots ADD COLUMN model_id TEXT NOT NULL DEFAULT '';
+      UPDATE bots
+      SET provider_instance_id = CASE
+            WHEN COALESCE((SELECT trim(value) FROM app_settings WHERE key = 'model.modelId'), '') <> ''
+              THEN 'openai-compatible.default'
+            ELSE 'codex.default'
+          END,
+          model_id = COALESCE((SELECT trim(value) FROM app_settings WHERE key = 'model.modelId'), '');
+
+      INSERT OR IGNORE INTO app_settings(key, value, encrypted, updated_at)
+      VALUES (
+        'provider.defaultInstanceId',
+        CASE
+          WHEN COALESCE((SELECT trim(value) FROM app_settings WHERE key = 'model.modelId'), '') <> ''
+            THEN 'openai-compatible.default'
+          ELSE 'codex.default'
+        END,
+        0,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+      INSERT OR IGNORE INTO app_settings(key, value, encrypted, updated_at)
+      VALUES (
+        'provider.defaultModelId',
+        COALESCE((SELECT trim(value) FROM app_settings WHERE key = 'model.modelId'), ''),
+        0,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+
+      CREATE TABLE runtime_runs_v13 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        execution_key TEXT NOT NULL,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE RESTRICT,
+        attempt_no INTEGER NOT NULL CHECK (attempt_no > 0),
+        state TEXT NOT NULL CHECK (state IN (
+          'created', 'dispatching', 'running', 'streaming', 'cancel-requested',
+          'completed', 'failed', 'cancelled', 'interrupted'
+        )),
+        route TEXT NOT NULL CHECK (route IN ('fake', 'openai-compatible', 'codex-cli')),
+        provider_instance_id TEXT NOT NULL,
+        provider_model_id TEXT NOT NULL,
+        input_generation INTEGER NOT NULL,
+        input_seq INTEGER NOT NULL,
+        prompt_cutoff_seq INTEGER NOT NULL,
+        assistant_entry_id TEXT REFERENCES transcript_entries(id) ON DELETE SET NULL,
+        provider_request_id TEXT,
+        prompt_manifest_json TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        last_error_code TEXT,
+        created_at TEXT NOT NULL,
+        accepted_at TEXT,
+        last_activity_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (execution_key, attempt_no)
+      );
+      INSERT INTO runtime_runs_v13(
+        id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route,
+        provider_instance_id, provider_model_id, input_generation, input_seq, prompt_cutoff_seq,
+        assistant_entry_id, provider_request_id, prompt_manifest_json, version, last_error_code,
+        created_at, accepted_at, last_activity_at, finished_at
+      )
+      SELECT id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route,
+             CASE WHEN route = 'fake' THEN 'fake' ELSE 'openai-compatible.default' END,
+             CASE WHEN route = 'fake' THEN '' ELSE COALESCE((SELECT trim(value) FROM app_settings WHERE key = 'model.modelId'), '') END,
+             input_generation, input_seq, prompt_cutoff_seq, assistant_entry_id, provider_request_id,
+             prompt_manifest_json, version, last_error_code, created_at, accepted_at, last_activity_at, finished_at
+      FROM runtime_runs;
+
+      DROP TABLE runtime_runs;
+      ALTER TABLE runtime_runs_v13 RENAME TO runtime_runs;
+      CREATE UNIQUE INDEX runtime_one_active_per_session
+        ON runtime_runs(session_id)
+        WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested');
+
+      INSERT OR IGNORE INTO app_settings(key, value, encrypted, updated_at)
+      SELECT 'provider.openai-compatible.default.apiKey', value, encrypted, updated_at
+      FROM app_settings WHERE key = 'model.apiKey';
+      DELETE FROM app_settings WHERE key IN ('model.baseUrl', 'model.modelId', 'model.apiKey');
+
+      CREATE INDEX provider_instances_by_driver ON provider_instances(driver_kind, enabled, created_at, id);
+    `,
+  },
+  {
+    version: 14,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE provider_instances_v14 (
+        id TEXT PRIMARY KEY,
+        driver_kind TEXT NOT NULL CHECK (driver_kind IN ('openai-compatible', 'codex-cli', 'claude-cli', 'ollama-cli')),
+        display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 120),
+        config_json TEXT NOT NULL CHECK (json_valid(config_json) AND json_type(config_json) = 'object'),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO provider_instances_v14
+      SELECT id, driver_kind, display_name, config_json, enabled, version, created_at, updated_at
+      FROM provider_instances;
+      DROP TABLE provider_instances;
+      ALTER TABLE provider_instances_v14 RENAME TO provider_instances;
+
+      INSERT INTO provider_instances(id, driver_kind, display_name, config_json, enabled, version, created_at, updated_at)
+      VALUES (
+        'claude.default',
+        'claude-cli',
+        'Claude Code',
+        json_object('cliPath', 'claude'),
+        1,
+        1,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+      INSERT INTO provider_instances(id, driver_kind, display_name, config_json, enabled, version, created_at, updated_at)
+      VALUES (
+        'ollama.default',
+        'ollama-cli',
+        'Ollama',
+        json_object('cliPath', 'ollama'),
+        1,
+        1,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+      CREATE INDEX provider_instances_by_driver ON provider_instances(driver_kind, enabled, created_at, id);
+
+      CREATE TABLE runtime_runs_v14 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        execution_key TEXT NOT NULL,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE RESTRICT,
+        attempt_no INTEGER NOT NULL CHECK (attempt_no > 0),
+        state TEXT NOT NULL CHECK (state IN (
+          'created', 'dispatching', 'running', 'streaming', 'cancel-requested',
+          'completed', 'failed', 'cancelled', 'interrupted'
+        )),
+        route TEXT NOT NULL CHECK (route IN ('fake', 'openai-compatible', 'codex-cli', 'claude-cli', 'ollama-cli')),
+        provider_instance_id TEXT NOT NULL,
+        provider_model_id TEXT NOT NULL,
+        input_generation INTEGER NOT NULL,
+        input_seq INTEGER NOT NULL,
+        prompt_cutoff_seq INTEGER NOT NULL,
+        assistant_entry_id TEXT REFERENCES transcript_entries(id) ON DELETE SET NULL,
+        provider_request_id TEXT,
+        prompt_manifest_json TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        last_error_code TEXT,
+        created_at TEXT NOT NULL,
+        accepted_at TEXT,
+        last_activity_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (execution_key, attempt_no)
+      );
+      INSERT INTO runtime_runs_v14(
+        id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route,
+        provider_instance_id, provider_model_id, input_generation, input_seq, prompt_cutoff_seq,
+        assistant_entry_id, provider_request_id, prompt_manifest_json, version, last_error_code,
+        created_at, accepted_at, last_activity_at, finished_at
+      )
+      SELECT id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route,
+             provider_instance_id, provider_model_id, input_generation, input_seq, prompt_cutoff_seq,
+             assistant_entry_id, provider_request_id, prompt_manifest_json, version, last_error_code,
+             created_at, accepted_at, last_activity_at, finished_at
+      FROM runtime_runs;
+      DROP TABLE runtime_runs;
+      ALTER TABLE runtime_runs_v14 RENAME TO runtime_runs;
+      CREATE UNIQUE INDEX runtime_one_active_per_session
+        ON runtime_runs(session_id)
+        WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested');
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -807,6 +1021,8 @@ type BotRow = {
   label: string;
   description: string;
   instructions: string;
+  provider_instance_id: string;
+  model_id: string;
   pinned_at: string | null;
   hidden_at: string | null;
   has_unread: number;
@@ -814,6 +1030,28 @@ type BotRow = {
   version: number;
   created_at: string;
   updated_at: string;
+};
+
+type ProviderInstanceRow = {
+  id: string;
+  driver_kind: ProviderDriverKind;
+  display_name: string;
+  config_json: string;
+  enabled: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ProviderInstanceConfig = {
+  id: string;
+  driverKind: ProviderDriverKind;
+  displayName: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type MemoryRow = {
@@ -878,6 +1116,8 @@ type RuntimeRow = {
   attempt_no: number;
   state: RuntimeState;
   route: RuntimeRoute;
+  provider_instance_id: string;
+  provider_model_id: string;
   input_generation: number;
   input_seq: number;
   prompt_cutoff_seq: number;
@@ -973,6 +1213,8 @@ type RoomMemberRow = {
   label: string;
   description: string;
   instructions: string;
+  provider_instance_id: string;
+  model_id: string;
   pinned_at: string | null;
   hidden_at: string | null;
   has_unread: number;
@@ -1071,9 +1313,33 @@ function toBot(row: BotRow): Bot {
     label: row.label,
     description: row.description,
     instructions: row.instructions,
+    modelSelection: {
+      providerInstanceId: row.provider_instance_id,
+      modelId: row.model_id,
+    },
     pinnedAt: row.pinned_at,
     hiddenAt: row.hidden_at,
     hasUnread: row.has_unread === 1,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toProviderInstanceConfig(row: ProviderInstanceRow): ProviderInstanceConfig {
+  let config: unknown;
+  try {
+    config = JSON.parse(row.config_json);
+  } catch {
+    throw new AevorenBotError("INTERNAL_ERROR");
+  }
+  if (!config || typeof config !== "object" || Array.isArray(config)) throw new AevorenBotError("INTERNAL_ERROR");
+  return {
+    id: row.id,
+    driverKind: row.driver_kind,
+    displayName: row.display_name,
+    config: config as Record<string, unknown>,
+    enabled: row.enabled === 1,
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1339,6 +1605,8 @@ function toRuntime(row: RuntimeRow): RuntimeRun {
     attemptNo: row.attempt_no,
     state: row.state,
     route: row.route,
+    providerInstanceId: row.provider_instance_id,
+    providerModelId: row.provider_model_id,
     inputGeneration: row.input_generation,
     inputSeq: row.input_seq,
     promptCutoffSeq: row.prompt_cutoff_seq,
@@ -1576,6 +1844,88 @@ export class AppRepository {
     return (this.database.prepare("SELECT * FROM bots WHERE deleted_at IS NULL ORDER BY created_at ASC").all() as BotRow[]).map(toBot);
   }
 
+  listProviderInstanceConfigs(): ProviderInstanceConfig[] {
+    return (this.database
+      .prepare("SELECT * FROM provider_instances ORDER BY created_at ASC, id ASC")
+      .all() as ProviderInstanceRow[]).map(toProviderInstanceConfig);
+  }
+
+  getProviderInstanceConfig(id: string): ProviderInstanceConfig {
+    const row = this.database.prepare("SELECT * FROM provider_instances WHERE id = ?").get(id) as ProviderInstanceRow | undefined;
+    if (!row) throw new AevorenBotError("MODEL_PROVIDER_NOT_FOUND");
+    return toProviderInstanceConfig(row);
+  }
+
+  updateProviderInstanceConfig(
+    id: string,
+    expectedVersion: number,
+    config: Record<string, unknown>,
+  ): ProviderInstanceConfig {
+    this.getProviderInstanceConfig(id);
+    const result = this.database
+      .prepare(
+        `UPDATE provider_instances
+         SET config_json = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND version = ?`,
+      )
+      .run(JSON.stringify(config), now(), id, expectedVersion);
+    if (Number(result.changes) === 0) {
+      const current = this.getProviderInstanceConfig(id);
+      throw new AevorenBotError("MODEL_PROVIDER_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+    }
+    return this.getProviderInstanceConfig(id);
+  }
+
+  getDefaultModelSelection(): ModelSelection {
+    return {
+      providerInstanceId: this.getSetting("provider.defaultInstanceId")?.value || "codex.default",
+      modelId: this.getSetting("provider.defaultModelId")?.value || "",
+    };
+  }
+
+  setDefaultModelSelection(selection: ModelSelection): ModelSelection {
+    this.getProviderInstanceConfig(selection.providerInstanceId);
+    this.transaction(() => {
+      this.setSetting("provider.defaultInstanceId", selection.providerInstanceId, false);
+      this.setSetting("provider.defaultModelId", selection.modelId, false);
+    });
+    return this.getDefaultModelSelection();
+  }
+
+  listModelIdsForProvider(providerInstanceId: string): string[] {
+    const rows = this.database
+      .prepare(
+        `SELECT DISTINCT model_id FROM bots
+         WHERE provider_instance_id = ? AND deleted_at IS NULL AND length(trim(model_id)) > 0
+         ORDER BY model_id ASC`,
+      )
+      .all(providerInstanceId) as Array<{ model_id: string }>;
+    return rows.map((row) => row.model_id);
+  }
+
+  hasActiveRuntimeForProvider(providerInstanceId: string): boolean {
+    return Boolean(this.database
+      .prepare(
+        `SELECT 1 FROM runtime_runs
+         WHERE provider_instance_id = ?
+           AND state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested')
+         LIMIT 1`,
+      )
+      .get(providerInstanceId));
+  }
+
+  applyDefaultSelectionToUnconfiguredBots(selection: ModelSelection): number {
+    this.getProviderInstanceConfig(selection.providerInstanceId);
+    const result = this.database
+      .prepare(
+        `UPDATE bots
+         SET provider_instance_id = ?, model_id = ?, version = version + 1, updated_at = ?
+         WHERE deleted_at IS NULL AND length(trim(model_id)) = 0`,
+      )
+      .run(selection.providerInstanceId, selection.modelId, now());
+    return Number(result.changes);
+  }
+
   getBot(id: string): Bot {
     const row = this.database.prepare("SELECT * FROM bots WHERE id = ? AND deleted_at IS NULL").get(id) as BotRow | undefined;
     if (!row) throw new AevorenBotError("BOT_NOT_FOUND");
@@ -1586,13 +1936,26 @@ export class AppRepository {
     const timestamp = now();
     const botId = randomUUID();
     const sessionId = randomUUID();
+    const modelSelection = this.getDefaultModelSelection();
     this.transaction(() => {
       this.database
         .prepare(
-          `INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+          `INSERT INTO bots(
+             id, name, label, description, instructions, provider_instance_id, model_id,
+             version, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
-        .run(botId, "新建 Bot", "", "", "", timestamp, timestamp);
+        .run(
+          botId,
+          "新建 Bot",
+          "",
+          "",
+          "",
+          modelSelection.providerInstanceId,
+          modelSelection.modelId,
+          timestamp,
+          timestamp,
+        );
       this.database
         .prepare(
           `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
@@ -1604,23 +1967,32 @@ export class AppRepository {
   }
 
   updateBot(id: string, expectedVersion: number, patch: BotPatch): Bot {
-    const fields = (Object.keys(patch) as Array<keyof BotPatch>)
-      .filter((field) => patch[field] !== undefined)
-      .map((field) => [field, patch[field] as string] as const);
-    if (fields.length === 0) return this.getBot(id);
-    const columns: Record<keyof BotPatch, string> = {
+    const columns: Record<Exclude<keyof BotPatch, "modelSelection">, string> = {
       name: "name",
       label: "label",
       description: "description",
       instructions: "instructions",
     };
-    const assignments = fields.map(([field]) => `${columns[field]} = ?`).join(", ");
+    const assignments: string[] = [];
+    const values: Array<string | number> = [];
+    for (const field of ["name", "label", "description", "instructions"] as const) {
+      const value = patch[field];
+      if (value === undefined) continue;
+      assignments.push(`${columns[field]} = ?`);
+      values.push(value);
+    }
+    if (patch.modelSelection) {
+      this.getProviderInstanceConfig(patch.modelSelection.providerInstanceId);
+      assignments.push("provider_instance_id = ?", "model_id = ?");
+      values.push(patch.modelSelection.providerInstanceId, patch.modelSelection.modelId);
+    }
+    if (assignments.length === 0) return this.getBot(id);
     const result = this.database
       .prepare(
-        `UPDATE bots SET ${assignments}, version = version + 1, updated_at = ?
+        `UPDATE bots SET ${assignments.join(", ")}, version = version + 1, updated_at = ?
          WHERE id = ? AND version = ?`,
       )
-      .run(...fields.map(([, value]) => value), now(), id, expectedVersion);
+      .run(...values, now(), id, expectedVersion);
     if (Number(result.changes) === 0) {
       const current = this.getBot(id);
       throw new AevorenBotError("BOT_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
@@ -2296,10 +2668,22 @@ export class AppRepository {
     this.transaction(() => {
       this.database
         .prepare(
-          `INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+          `INSERT INTO bots(
+             id, name, label, description, instructions, provider_instance_id, model_id,
+             version, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
-        .run(botId, name, source.label, source.description, source.instructions, timestamp, timestamp);
+        .run(
+          botId,
+          name,
+          source.label,
+          source.description,
+          source.instructions,
+          source.modelSelection.providerInstanceId,
+          source.modelSelection.modelId,
+          timestamp,
+          timestamp,
+        );
       this.database
         .prepare(
           `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
@@ -3777,12 +4161,22 @@ export class AppRepository {
     clientNonce: string,
     route: RuntimeRoute,
     promptManifest: PromptManifest,
-    options: { executorBotId?: string; executionKey?: string; inputSeq?: number; promptCutoffSeq?: number } = {},
+    options: {
+      executorBotId?: string;
+      executionKey?: string;
+      inputSeq?: number;
+      promptCutoffSeq?: number;
+      providerInstanceId?: string;
+      providerModelId?: string;
+    } = {},
   ): RuntimeRun {
     const journal = this.getSendOrThrow(clientNonce);
     const input = this.getUserMessage(clientNonce);
     if (this.getActiveRuntimeRun(journal.sessionId)) throw new AevorenBotError("SESSION_BUSY");
     const executorBotId = options.executorBotId ?? this.getBotForSession(journal.sessionId).id;
+    const executorBot = this.getBot(executorBotId);
+    const providerInstanceId = options.providerInstanceId ?? (route === "fake" ? "fake" : executorBot.modelSelection.providerInstanceId);
+    const providerModelId = options.providerModelId ?? (route === "fake" ? "" : executorBot.modelSelection.modelId);
     const executionKey = options.executionKey ?? clientNonce;
     const attempt = this.database
       .prepare("SELECT COALESCE(MAX(attempt_no), 0) AS current FROM runtime_runs WHERE execution_key = ?")
@@ -3794,10 +4188,11 @@ export class AppRepository {
         .prepare(
           `INSERT INTO runtime_runs(
              id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route,
+             provider_instance_id, provider_model_id,
              input_generation, input_seq, prompt_cutoff_seq,
              assistant_entry_id, provider_request_id, prompt_manifest_json, version, last_error_code,
              created_at, accepted_at, last_activity_at, finished_at
-           ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, NULL, NULL, ?, 1, NULL, ?, NULL, ?, NULL)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 1, NULL, ?, NULL, ?, NULL)`,
         )
         .run(
           id,
@@ -3807,6 +4202,8 @@ export class AppRepository {
           executorBotId,
           Number(attempt.current) + 1,
           route,
+          providerInstanceId,
+          providerModelId,
           input.generation,
           options.inputSeq ?? input.seq,
           options.promptCutoffSeq ?? input.seq,
