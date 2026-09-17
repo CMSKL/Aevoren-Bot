@@ -22,6 +22,18 @@ export const botUpdateSchema = z.object({
 });
 
 export const botIdSchema = z.string().uuid();
+export const conversationBatchDeleteSchema = z.object({
+  botIds: z.array(botIdSchema).max(200),
+  roomIds: z.array(z.string().uuid()).max(200),
+}).strict().superRefine((input, context) => {
+  const count = input.botIds.length + input.roomIds.length;
+  if (count < 2 || count > 200) {
+    context.addIssue({ code: "custom", message: "Batch delete requires between 2 and 200 conversations" });
+  }
+  if (new Set(input.botIds).size !== input.botIds.length || new Set(input.roomIds).size !== input.roomIds.length) {
+    context.addIssue({ code: "custom", message: "Batch delete ids must be unique" });
+  }
+});
 export const botPinnedSchema = z.object({ id: botIdSchema, pinned: z.boolean() });
 export const botUnreadSchema = z.object({ id: botIdSchema, unread: z.boolean() });
 export const botHiddenSchema = z.object({ id: botIdSchema, hidden: z.boolean() });

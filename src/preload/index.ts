@@ -3,6 +3,9 @@ import { IPC } from "@shared/channels";
 import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
 
 const api: AevorenBotApi = {
+  conversations: {
+    deleteBatch: (input) => ipcRenderer.invoke(IPC.conversationsDeleteBatch, input),
+  },
   bots: {
     list: () => ipcRenderer.invoke(IPC.botsList),
     create: () => ipcRenderer.invoke(IPC.botsCreate),

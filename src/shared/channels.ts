@@ -1,4 +1,5 @@
 export const IPC = {
+  conversationsDeleteBatch: "conversations:delete-batch",
   botsList: "bots:list",
   botsCreate: "bots:create",
   botsUpdate: "bots:update",

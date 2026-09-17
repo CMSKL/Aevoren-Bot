@@ -21,6 +21,16 @@ export type BotDeleteResult = {
   archivedRoomIds: string[];
 };
 
+export type ConversationBatchDeleteInput = {
+  botIds: string[];
+  roomIds: string[];
+};
+
+export type ConversationBatchDeleteResult = {
+  bots: BotDeleteResult[];
+  rooms: RoomDeleteResult[];
+};
+
 export type MemorySource = "manual-user";
 
 export type MemoryItem = {
@@ -684,6 +694,9 @@ export type UpdateEvent = {
 };
 
 export interface AevorenBotApi {
+  conversations: {
+    deleteBatch(input: ConversationBatchDeleteInput): Promise<ApiResult<ConversationBatchDeleteResult>>;
+  };
   bots: {
     list(): Promise<ApiResult<Bot[]>>;
     create(): Promise<ApiResult<{ bot: Bot; session: Session }>>;

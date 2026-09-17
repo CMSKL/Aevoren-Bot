@@ -9,7 +9,10 @@ import type {
   ApprovalRequest,
   ApprovalResolution,
   Bot,
+  BotDeleteResult,
   BotPatch,
+  ConversationBatchDeleteInput,
+  ConversationBatchDeleteResult,
   CreateHandoffInput,
   CreateRoomRunInput,
   HandoffState,
@@ -22,6 +25,7 @@ import type {
   RoomBatch,
   RoomBatchState,
   RoomDetail,
+  RoomDeleteResult,
   RoomMember,
   RoomPatch,
   RoomSendCommand,
@@ -2767,7 +2771,12 @@ export class AppRepository {
     return { bot: this.getBot(botId), session: this.getMainSession(botId) };
   }
 
-  deleteBot(id: string): { id: string; affectedRoomIds: string[]; archivedRoomIds: string[] } {
+  deleteBot(id: string): BotDeleteResult {
+    this.assertBotDeletable(id);
+    return this.transaction(() => this.deleteBotRecord(id));
+  }
+
+  private assertBotDeletable(id: string): void {
     this.getBot(id);
     const activeRuntime = this.database
       .prepare(
@@ -2785,51 +2794,51 @@ export class AppRepository {
       )
       .get(id);
     if (activeRuntime || activeRoom) throw new AevorenBotError("BOT_BUSY");
+  }
 
-    return this.transaction(() => {
-      const timestamp = now();
-      const memberships = this.database
-        .prepare("SELECT room_id FROM room_members WHERE bot_id = ? ORDER BY room_id")
-        .all(id) as Array<{ room_id: string }>;
-      const affectedRoomIds = memberships.map((membership) => membership.room_id);
-      const archivedRoomIds: string[] = [];
+  private deleteBotRecord(id: string): BotDeleteResult {
+    const timestamp = now();
+    const memberships = this.database
+      .prepare("SELECT room_id FROM room_members WHERE bot_id = ? ORDER BY room_id")
+      .all(id) as Array<{ room_id: string }>;
+    const affectedRoomIds = memberships.map((membership) => membership.room_id);
+    const archivedRoomIds: string[] = [];
 
-      this.database.prepare("DELETE FROM memory_items WHERE bot_id = ?").run(id);
-      this.database.prepare("DELETE FROM sessions WHERE bot_id = ?").run(id);
-      this.database.prepare("DELETE FROM room_members WHERE bot_id = ?").run(id);
+    this.database.prepare("DELETE FROM memory_items WHERE bot_id = ?").run(id);
+    this.database.prepare("DELETE FROM sessions WHERE bot_id = ?").run(id);
+    this.database.prepare("DELETE FROM room_members WHERE bot_id = ?").run(id);
 
-      for (const roomId of affectedRoomIds) {
-        const members = this.database
-          .prepare("SELECT bot_id FROM room_members WHERE room_id = ? ORDER BY position ASC")
-          .all(roomId) as Array<{ bot_id: string }>;
-        const updatePosition = this.database.prepare("UPDATE room_members SET position = ? WHERE room_id = ? AND bot_id = ?");
-        members.forEach((member, position) => updatePosition.run(position, roomId, member.bot_id));
-        const shouldArchive = members.length < 2;
-        if (shouldArchive) archivedRoomIds.push(roomId);
-        this.database
-          .prepare(
-            `UPDATE rooms
-             SET membership_version = membership_version + 1,
-                 version = version + 1,
-                 archived_at = CASE WHEN ? = 1 THEN COALESCE(archived_at, ?) ELSE archived_at END,
-                 updated_at = ?
-             WHERE id = ?`,
-          )
-          .run(shouldArchive ? 1 : 0, timestamp, timestamp, roomId);
-      }
-
+    for (const roomId of affectedRoomIds) {
+      const members = this.database
+        .prepare("SELECT bot_id FROM room_members WHERE room_id = ? ORDER BY position ASC")
+        .all(roomId) as Array<{ bot_id: string }>;
+      const updatePosition = this.database.prepare("UPDATE room_members SET position = ? WHERE room_id = ? AND bot_id = ?");
+      members.forEach((member, position) => updatePosition.run(position, roomId, member.bot_id));
+      const shouldArchive = members.length < 2;
+      if (shouldArchive) archivedRoomIds.push(roomId);
       this.database
         .prepare(
-          `UPDATE bots
-           SET name = '已删除 Bot', label = '', description = '', instructions = '',
-               pinned_at = NULL, hidden_at = NULL, has_unread = 0,
-               deleted_at = ?, version = version + 1, updated_at = ?
-           WHERE id = ? AND deleted_at IS NULL`,
+          `UPDATE rooms
+           SET membership_version = membership_version + 1,
+               version = version + 1,
+               archived_at = CASE WHEN ? = 1 THEN COALESCE(archived_at, ?) ELSE archived_at END,
+               updated_at = ?
+           WHERE id = ?`,
         )
-        .run(timestamp, timestamp, id);
+        .run(shouldArchive ? 1 : 0, timestamp, timestamp, roomId);
+    }
 
-      return { id, affectedRoomIds, archivedRoomIds };
-    });
+    this.database
+      .prepare(
+        `UPDATE bots
+         SET name = '已删除 Bot', label = '', description = '', instructions = '',
+             pinned_at = NULL, hidden_at = NULL, has_unread = 0,
+             deleted_at = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND deleted_at IS NULL`,
+      )
+      .run(timestamp, timestamp, id);
+
+    return { id, affectedRoomIds, archivedRoomIds };
   }
 
   listRooms(includeArchived = false): Room[] {
@@ -2951,12 +2960,37 @@ export class AppRepository {
     return this.getRoom(id);
   }
 
-  deleteRoom(id: string): { id: string } {
+  deleteRoom(id: string): RoomDeleteResult {
+    this.assertRoomDeletable(id);
+    return this.transaction(() => this.deleteRoomRecord(id));
+  }
+
+  deleteConversations(input: ConversationBatchDeleteInput): ConversationBatchDeleteResult {
+    const count = input.botIds.length + input.roomIds.length;
+    if (
+      count < 2 || count > 200 ||
+      new Set(input.botIds).size !== input.botIds.length ||
+      new Set(input.roomIds).size !== input.roomIds.length
+    ) {
+      throw new AevorenBotError("INVALID_REQUEST");
+    }
+    input.roomIds.forEach((id) => this.assertRoomDeletable(id));
+    input.botIds.forEach((id) => this.assertBotDeletable(id));
+    return this.transaction(() => ({
+      rooms: input.roomIds.map((id) => this.deleteRoomRecord(id)),
+      bots: input.botIds.map((id) => this.deleteBotRecord(id)),
+    }));
+  }
+
+  private assertRoomDeletable(id: string): void {
     const room = this.getRoom(id);
     const sessionId = this.getRoomMainSession(room.id).id;
     if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) {
       throw new AevorenBotError("ROOM_DELETE_BUSY");
     }
+  }
+
+  private deleteRoomRecord(id: string): RoomDeleteResult {
     const result = this.database.prepare("DELETE FROM rooms WHERE id = ?").run(id);
     if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
     return { id };

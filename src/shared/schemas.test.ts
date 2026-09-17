@@ -3,6 +3,7 @@ import {
   botHiddenSchema,
   botPinnedSchema,
   botUnreadSchema,
+  conversationBatchDeleteSchema,
   approvalResolutionSchema,
   generalSettingsSchema,
   memoryCreateSchema,
@@ -44,6 +45,22 @@ describe("Bot sidebar action schemas", () => {
       expect(schema.safeParse({ id, [key]: "true" }).success).toBe(false);
       expect(schema.safeParse({ id }).success).toBe(false);
     }
+  });
+});
+
+describe("Conversation batch delete schema", () => {
+  const first = crypto.randomUUID();
+  const second = crypto.randomUUID();
+
+  it("accepts unique mixed targets and rejects single, duplicate, malformed, or undeclared inputs", () => {
+    expect(conversationBatchDeleteSchema.parse({ botIds: [first], roomIds: [second] })).toEqual({
+      botIds: [first],
+      roomIds: [second],
+    });
+    expect(conversationBatchDeleteSchema.safeParse({ botIds: [first], roomIds: [] }).success).toBe(false);
+    expect(conversationBatchDeleteSchema.safeParse({ botIds: [first, first], roomIds: [] }).success).toBe(false);
+    expect(conversationBatchDeleteSchema.safeParse({ botIds: ["bad", second], roomIds: [] }).success).toBe(false);
+    expect(conversationBatchDeleteSchema.safeParse({ botIds: [first], roomIds: [second], force: true }).success).toBe(false);
   });
 });
 

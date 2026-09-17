@@ -4,6 +4,7 @@ import type {
   AppError,
   ApprovalRequest,
   Bot,
+  ConversationBatchDeleteInput,
   Room,
   RoomBatch,
   RoomDetail,
@@ -674,6 +675,42 @@ export function App(): React.JSX.Element {
     return true;
   }
 
+  async function deleteConversations(input: ConversationBatchDeleteInput): Promise<boolean> {
+    if (!(await flushActive())) return false;
+    const result = await window.aevorenBot.conversations.deleteBatch(input);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    const [botResult, roomResult] = await Promise.all([
+      window.aevorenBot.bots.list(),
+      window.aevorenBot.rooms.list({ includeArchived: true }),
+    ]);
+    if (!botResult.ok) {
+      setError(botResult.error);
+      return false;
+    }
+    if (!roomResult.ok) {
+      setError(roomResult.error);
+      return false;
+    }
+    setBots(botResult.data);
+    setRooms(roomResult.data);
+
+    const currentRoomId = selectedRoom?.room.id ?? null;
+    const currentRoomAffected = currentRoomId !== null && result.data.bots.some(
+      (bot) => bot.affectedRoomIds.includes(currentRoomId),
+    );
+    if (currentRoomId && (input.roomIds.includes(currentRoomId) || currentRoomAffected)) {
+      const currentRoom = roomResult.data.find((room) => room.id === currentRoomId && room.archivedAt === null);
+      if (currentRoom) await openRoom(currentRoom, false);
+      else await openFallback(botResult.data, roomResult.data);
+    } else if (selectedBot && input.botIds.includes(selectedBot.id)) {
+      await openFallback(botResult.data, roomResult.data);
+    }
+    return true;
+  }
+
   async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone"): Promise<boolean> {
     if (!session || submitting) return false;
     setSubmitting(true);
@@ -740,6 +777,7 @@ export function App(): React.JSX.Element {
         onMarkRoomUnread={setRoomUnread}
         onHideRoom={setRoomHidden}
         onDeleteRoom={deleteRoom}
+        onDeleteBatch={deleteConversations}
         onPinBot={setBotPinned}
         onMarkBotUnread={setBotUnread}
         onRenameBot={renameBot}
