@@ -65,7 +65,7 @@ test("routes one approved Room workspace read through the configured real Provid
   try {
     const page = await application.firstWindow();
     const connection = await page.evaluate(() =>
-      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.settings.testModelConnection(),
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.providers.test("openai-compatible.default"),
     );
     expect(connection.ok, connection.ok ? undefined : connection.error.code).toBe(true);
     await page.locator(".bot-row").filter({ hasText: "Room Workspace E2E" }).click();

@@ -10,6 +10,7 @@ import type {
   RoomTurn,
   RoomTurnState,
   RoomRoutingMode,
+  ModelSelection,
 } from "@shared/contracts";
 import { digestRoomCommand, type AppRepository } from "./database";
 import { asAppError, AevorenBotError } from "./errors";
@@ -311,6 +312,7 @@ export class RoomCoordinator {
       const promptCutoffSeq = pending.promptCutoffSeq
         ?? (pending.origin === "handoff" ? pending.inputSeq : this.repository.getTranscriptHighWater(batch.sessionId));
       const incomingBeforeDispatch = this.repository.getIncomingHandoff(pending.id);
+      const retryModelSelection = this.getRetryModelSelection(pending);
       let turn: RoomTurn;
       try {
         if (incomingBeforeDispatch?.state === "queued") {
@@ -331,6 +333,7 @@ export class RoomCoordinator {
           clientNonce: batch.clientNonce,
           executorBotId: turn.memberBotId,
           executionKey: `${batch.id}:${turn.logicalTurnId}`,
+          modelSelection: retryModelSelection,
           inputSeq: turn.inputSeq,
           promptCutoffSeq,
           attribution: {
@@ -400,6 +403,23 @@ export class RoomCoordinator {
       this.emit(this.repository.finishRoomBatchFromTurns(batchId));
     }
     if (!["queued", "running"].includes(this.repository.getRoomBatch(batchId).state)) this.clearDeadline(batchId);
+  }
+
+  private getRetryModelSelection(turn: RoomTurn): ModelSelection | undefined {
+    if (turn.attemptNo <= 1) return undefined;
+    const previous = this.repository.listRoomTurns(turn.batchId)
+      .filter((candidate) => (
+        candidate.logicalTurnId === turn.logicalTurnId &&
+        candidate.attemptNo < turn.attemptNo &&
+        candidate.runtimeRunId !== null
+      ))
+      .sort((left, right) => right.attemptNo - left.attemptNo)[0];
+    if (!previous?.runtimeRunId) return undefined;
+    const runtime = this.repository.getRuntimeRun(previous.runtimeRunId);
+    return {
+      providerInstanceId: runtime.providerInstanceId,
+      modelId: runtime.providerModelId,
+    };
   }
 
   private settleTurn(turnId: string, result: RuntimeExecutionResult): void {

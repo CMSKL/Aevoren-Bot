@@ -110,6 +110,90 @@ describe("AppRepository", () => {
     database.close();
   });
 
+  it("migrates the legacy global model configuration into one provider instance without decrypting the key", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-provider-migration-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    createDatabaseAtVersion(filename, 12);
+    const legacy = new DatabaseSync(filename);
+    legacy.prepare(
+      `INSERT INTO bots(
+         id, name, label, description, instructions, pinned_at, hidden_at, has_unread,
+         deleted_at, version, created_at, updated_at
+       ) VALUES('bot','Legacy','','','',NULL,NULL,0,NULL,1,'t','t')`,
+    ).run();
+    legacy.prepare("INSERT INTO app_settings VALUES('model.baseUrl','https://legacy.example/v1',0,'t')").run();
+    legacy.prepare("INSERT INTO app_settings VALUES('model.modelId','legacy-model',0,'t')").run();
+    legacy.prepare("INSERT INTO app_settings VALUES('model.apiKey','ciphertext-without-decryption',1,'t')").run();
+    legacy.close();
+
+    const repository = new AppRepository(filename);
+    repositories.push(repository);
+    expect(repository.getBot("bot").modelSelection).toEqual({
+      providerInstanceId: "openai-compatible.default",
+      modelId: "legacy-model",
+    });
+    expect(repository.getProviderInstanceConfig("openai-compatible.default").config).toEqual({
+      baseUrl: "https://legacy.example/v1",
+    });
+    expect(repository.getDefaultModelSelection()).toEqual({
+      providerInstanceId: "openai-compatible.default",
+      modelId: "legacy-model",
+    });
+    expect(repository.getSetting("provider.openai-compatible.default.apiKey")).toEqual({
+      value: "ciphertext-without-decryption",
+      encrypted: true,
+    });
+    expect(repository.getSetting("model.apiKey")).toBeNull();
+    expect(repository.getSetting("model.baseUrl")).toBeNull();
+    expect(repository.getSetting("model.modelId")).toBeNull();
+  });
+
+  it("adds the discovered Claude CLI instance in v14 without changing existing Provider configuration", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-provider-v14-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    createDatabaseAtVersion(filename, 13);
+    const before = new DatabaseSync(filename);
+    before.prepare(
+      "UPDATE provider_instances SET config_json = ?, version = 4 WHERE id = 'codex.default'",
+    ).run(JSON.stringify({ cliPath: "/custom/codex" }));
+    before.close();
+
+    const repository = new AppRepository(filename);
+    repositories.push(repository);
+
+    expect(repository.listProviderInstanceConfigs()).toHaveLength(4);
+    expect(repository.getProviderInstanceConfig("codex.default")).toMatchObject({
+      driverKind: "codex-cli",
+      config: { cliPath: "/custom/codex" },
+      version: 4,
+    });
+    expect(repository.getProviderInstanceConfig("claude.default")).toMatchObject({
+      driverKind: "claude-cli",
+      displayName: "Claude Code",
+      config: { cliPath: "claude" },
+      version: 1,
+    });
+    expect(repository.getProviderInstanceConfig("ollama.default")).toMatchObject({
+      driverKind: "ollama-cli",
+      displayName: "Ollama",
+      config: { cliPath: "ollama" },
+      version: 1,
+    });
+    const created = repository.createBot();
+    const bot = repository.updateBot(created.bot.id, created.bot.version, {
+      modelSelection: { providerInstanceId: "claude.default", modelId: "claude-sonnet-5" },
+    });
+    const clientNonce = crypto.randomUUID();
+    repository.prepareMessage({ sessionId: created.session.id, clientNonce, text: "v14 route" });
+    expect(repository.createRuntimeRun(clientNonce, "claude-cli", manifest(created.session.id, bot.id))).toMatchObject({
+      route: "claude-cli",
+      providerInstanceId: "claude.default",
+      providerModelId: "claude-sonnet-5",
+    });
+  });
+
   it("creates a neutral Grok-shaped bot with one MAIN session", () => {
     const repository = memoryRepository();
     const created = repository.createBot();
@@ -180,6 +264,27 @@ describe("AppRepository", () => {
       expect.objectContaining<Partial<AevorenBotError>>({ code: "BOT_VERSION_CONFLICT" }),
     );
     expect(repository.getBot(bot.id).description).toBe("新版描述");
+  });
+
+  it("persists one versioned model selection per Bot without changing the global default", () => {
+    const repository = memoryRepository();
+    const first = repository.createBot();
+    const second = repository.createBot();
+    const defaultSelection = repository.getDefaultModelSelection();
+
+    const updated = repository.updateBot(first.bot.id, first.bot.version, {
+      modelSelection: { providerInstanceId: "openai-compatible.default", modelId: "bot-specific-model" },
+    });
+
+    expect(updated.modelSelection).toEqual({
+      providerInstanceId: "openai-compatible.default",
+      modelId: "bot-specific-model",
+    });
+    expect(repository.getBot(second.bot.id).modelSelection).toEqual(defaultSelection);
+    expect(repository.getDefaultModelSelection()).toEqual(defaultSelection);
+    expect(() => repository.updateBot(first.bot.id, first.bot.version, {
+      modelSelection: { providerInstanceId: "codex.default", modelId: "stale-model" },
+    })).toThrowError(expect.objectContaining<Partial<AevorenBotError>>({ code: "BOT_VERSION_CONFLICT" }));
   });
 
   it("persists pin, unread and hidden sidebar state without conflicting with profile versions", () => {

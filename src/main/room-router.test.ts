@@ -4,10 +4,7 @@ import { AppRepository } from "./database";
 import { OpenAiCompatibleProvider, type ModelEvent, type ModelProvider, type RoomOwnerSelection } from "./model";
 import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
-import { ModelSettingsService, type SecretCodec } from "./settings";
-
 const repositories: AppRepository[] = [];
-const codec: SecretCodec = { isAvailable: () => true, encrypt: (value) => value, decrypt: (value) => value };
 
 afterEach(() => {
   vi.useRealTimers();
@@ -34,7 +31,7 @@ function setup(provider?: ModelProvider, memberCount = 3): {
   const detail = repository.createRoom({ memberBotIds: bots.map((bot) => bot.id), name: "Router Room" });
   const executor = new RuntimeExecutor(
     repository,
-    new ModelSettingsService(repository, codec),
+    null,
     { transcript: vi.fn(), runtime: vi.fn() },
     provider === undefined,
     provider,

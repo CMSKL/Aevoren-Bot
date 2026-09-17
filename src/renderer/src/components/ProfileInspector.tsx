@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { AppError, Bot, BotPatch } from "@shared/contracts";
+import type { AppError, Bot, BotPatch, ModelSelection, ProviderInstanceInfo } from "@shared/contracts";
 import { CheckIcon, CloseIcon } from "./Icons";
 import { MemoryPanel, type MemoryPanelHandle } from "./MemoryPanel";
 
@@ -43,6 +43,9 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
 ) {
   const [draft, setDraft] = useState<ProfileDraft | null>(bot ? toDraft(bot) : null);
   const [status, setStatus] = useState<SaveStatus>("idle");
+  const [providers, setProviders] = useState<ProviderInstanceInfo[]>([]);
+  const [modelSaving, setModelSaving] = useState(false);
+  const [modelDraft, setModelDraft] = useState(bot?.modelSelection.modelId ?? "");
   const draftRef = useRef(draft);
   const savedRef = useRef<ProfileDraft | null>(bot ? toDraft(bot) : null);
   const botIdRef = useRef(bot?.id ?? null);
@@ -66,6 +69,26 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
     setDraft(next);
     setStatus("idle");
   }, [bot]);
+
+  useEffect(() => {
+    setModelDraft(bot?.modelSelection.modelId ?? "");
+  }, [bot?.id, bot?.modelSelection.modelId]);
+
+  useEffect(() => {
+    if (!bot?.id) {
+      setProviders([]);
+      return;
+    }
+    const loadProviders = (): void => {
+      void window.aevorenBot.providers.list().then((result) => {
+        if (result.ok) setProviders(result.data);
+        else onError(result.error);
+      });
+    };
+    loadProviders();
+    window.addEventListener("aevoren:providers-changed", loadProviders);
+    return () => window.removeEventListener("aevoren:providers-changed", loadProviders);
+  }, [bot?.id, onError]);
 
   async function saveCurrent(): Promise<boolean> {
     if (!botIdRef.current || !draftRef.current || !savedRef.current) return true;
@@ -136,6 +159,27 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
     }, 400);
   }
 
+  async function updateModelSelection(selection: ModelSelection): Promise<void> {
+    if (!botIdRef.current || modelSaving) return;
+    if (!(await flush())) return;
+    setModelSaving(true);
+    onError(null);
+    const result = await window.aevorenBot.bots.update({
+      id: botIdRef.current,
+      expectedVersion: versionRef.current,
+      patch: { modelSelection: selection },
+    });
+    if (result.ok) {
+      versionRef.current = result.data.version;
+      onBotUpdated(result.data);
+      setStatus("saved");
+    } else {
+      onError(result.error);
+      setStatus("failed");
+    }
+    setModelSaving(false);
+  }
+
   if (!bot || !draft) {
     return (
       <aside className={`inspector inspector-empty${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
@@ -146,6 +190,8 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
       </aside>
     );
   }
+
+  const selectedProvider = providers.find((provider) => provider.id === bot.modelSelection.providerInstanceId) ?? null;
 
   return (
     <aside className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
@@ -167,6 +213,56 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
       <label className="field">
         <span>名称</span>
         <input ref={nameInputRef} value={draft.name} maxLength={80} placeholder="Bob" onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
+      </label>
+      <div className="field provider-selection-field">
+        <span>模型供应商</span>
+        <select
+          aria-label="模型供应商"
+          value={bot.modelSelection.providerInstanceId}
+          disabled={modelSaving || providers.length === 0}
+          onChange={(event) => {
+            const provider = providers.find((candidate) => candidate.id === event.target.value);
+            if (!provider) return;
+            setModelDraft(provider.models.default);
+            void updateModelSelection({
+              providerInstanceId: provider.id,
+              modelId: provider.models.default,
+            });
+          }}
+        >
+          {providers.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.displayName}{provider.status === "available" ? "" : "（不可用）"}
+            </option>
+          ))}
+        </select>
+        {selectedProvider?.reason ? <small>{selectedProvider.reason}</small> : null}
+      </div>
+      <label className="field provider-selection-field">
+        <span>模型</span>
+        <input
+          aria-label="Bot 模型"
+          list={`provider-models-${bot.id}`}
+          value={modelDraft}
+          disabled={modelSaving || !selectedProvider}
+          placeholder={selectedProvider?.models.default || "输入模型 ID"}
+          onChange={(event) => setModelDraft(event.target.value)}
+          onBlur={() => {
+            const modelId = modelDraft.trim();
+            if (!modelId) {
+              setModelDraft(bot.modelSelection.modelId);
+              return;
+            }
+            if (modelId === bot.modelSelection.modelId) return;
+            void updateModelSelection({ providerInstanceId: bot.modelSelection.providerInstanceId, modelId });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+        />
+        <datalist id={`provider-models-${bot.id}`}>
+          {selectedProvider?.models.options.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+        </datalist>
       </label>
       <label className="field">
         <span>标签（可选）</span>

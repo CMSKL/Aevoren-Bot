@@ -39,9 +39,9 @@ function createV6Fixture(): string {
   database.exec("PRAGMA foreign_keys = ON;");
   const timestamp = "2026-01-01T00:00:00.000Z";
   database.exec(`
-    INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at) VALUES
-      ('${BOT_A}', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 1, '${timestamp}', '${timestamp}'),
-      ('${BOT_B}', 'Agent B', '', '', '', 1, '${timestamp}', '${timestamp}');
+    INSERT INTO bots(id, name, label, description, instructions, provider_instance_id, model_id, version, created_at, updated_at) VALUES
+      ('${BOT_A}', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 'SECRET_BOT_PROFILE', 'openai-compatible.default', 'diagnostic-model', 1, '${timestamp}', '${timestamp}'),
+      ('${BOT_B}', 'Agent B', '', '', '', 'openai-compatible.default', 'diagnostic-model', 1, '${timestamp}', '${timestamp}');
     INSERT INTO rooms(
       id, name, description, version, membership_version, archived_at,
       pinned_at, has_unread, hidden_at, created_at, updated_at
@@ -61,12 +61,12 @@ function createV6Fixture(): string {
     );
     INSERT INTO runtime_runs VALUES(
       'runtime-a', '${SESSION_ID}', 'nonce', '${RUN_ID}:turn-a', '${BOT_A}', 1, 'completed', 'openai-compatible',
-      1, 1, 1, NULL, 'SECRET_PROVIDER_REQUEST_ID', '{"private":"SECRET_PROVIDER_RESPONSE"}', 1, NULL,
+      'openai-compatible.default', 'diagnostic-model', 1, 1, 1, NULL, 'SECRET_PROVIDER_REQUEST_ID', '{"private":"SECRET_PROVIDER_RESPONSE"}', 1, NULL,
       '${timestamp}', '2026-01-01T00:00:01.000Z', '2026-01-01T00:00:03.000Z', '2026-01-01T00:00:03.000Z'
     );
     INSERT INTO runtime_runs VALUES(
       'runtime-b', '${SESSION_ID}', 'nonce', '${RUN_ID}:turn-b', '${BOT_B}', 1, 'failed', 'openai-compatible',
-      1, 1, 1, NULL, 'SECRET_PROVIDER_REQUEST_ID', '{"private":"SECRET_PROVIDER_RESPONSE"}', 1, 'PROVIDER_ERROR',
+      'openai-compatible.default', 'diagnostic-model', 1, 1, 1, NULL, 'SECRET_PROVIDER_REQUEST_ID', '{"private":"SECRET_PROVIDER_RESPONSE"}', 1, 'PROVIDER_ERROR',
       '${timestamp}', '2026-01-01T00:00:01.000Z', '2026-01-01T00:00:05.000Z', '2026-01-01T00:00:05.000Z'
     );
     INSERT INTO room_turns VALUES(
@@ -87,7 +87,7 @@ function createV6Fixture(): string {
     INSERT INTO handoff_rejections VALUES(
       'rejection', '${RUN_ID}', 'turn-a', '${BOT_B}', '${"a".repeat(64)}', 'HANDOFF_CYCLE', '${timestamp}'
     );
-    INSERT INTO app_settings VALUES('model.apiKey', 'SECRET_API_KEY', 1, '${timestamp}');
+    INSERT OR REPLACE INTO app_settings VALUES('provider.openai-compatible.default.apiKey', 'SECRET_API_KEY', 1, '${timestamp}');
   `);
   database.close();
   return filename;

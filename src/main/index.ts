@@ -9,12 +9,13 @@ import { AppRepository } from "./database";
 import { registerIpc } from "./ipc";
 import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
-import { GeneralSettingsService, ModelSettingsService, type SecretCodec } from "./settings";
+import { GeneralSettingsService, type SecretCodec } from "./settings";
 import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { ElectronUpdateAdapter } from "./electron-update-adapter";
 import { parsePendingUpdateReceipt, resolveUpdateChannel, UpdateService } from "./update-service";
+import { ProviderService } from "./provider-service";
 
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
@@ -25,6 +26,7 @@ let repository: AppRepository | null = null;
 let runtimeCoordinator: SendWorker | null = null;
 let roomCoordinator: RoomCoordinator | null = null;
 let updateService: UpdateService | null = null;
+let providerService: ProviderService | null = null;
 let allowClose = false;
 let closeRequested = false;
 let quitRequested = false;
@@ -96,6 +98,7 @@ async function finishClose(): Promise<void> {
   shutdownPromise ??= (async () => {
     await runtimeCoordinator?.shutdown();
     await roomCoordinator?.shutdown();
+    await providerService?.dispose();
   })();
   try {
     await shutdownPromise;
@@ -178,7 +181,7 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (process.platform === "darwin") {
     if (hideTestWindow) app.dock?.hide();
     else app.dock?.setIcon(appIconPath());
@@ -193,7 +196,14 @@ app.whenReady().then(() => {
   repository.recoverInterruptedRooms();
   repository.recoverInterruptedRuntimeRuns();
   repository.recoverToolInvocations();
-  const settings = new ModelSettingsService(repository, electronSecretCodec);
+  const forceFakeProvider = process.env.AEVOREN_BOT_FAKE_PROVIDER === "1";
+  providerService = new ProviderService(
+    repository,
+    electronSecretCodec,
+    join(app.getPath("userData"), "ProviderWorkspaces"),
+    !forceFakeProvider,
+  );
+  await providerService.initialize();
   const generalSettings = new GeneralSettingsService(repository);
   const workspaceService = new WorkspaceService(repository);
   const workspaceToolCoordinator = new WorkspaceToolCoordinator(
@@ -202,10 +212,9 @@ app.whenReady().then(() => {
     emitTool,
   );
   mainWindow = createWindow();
-  const forceFakeProvider = process.env.AEVOREN_BOT_FAKE_PROVIDER === "1";
   const sendWorker = new SendWorker(
     repository,
-    settings,
+    providerService,
     { transcript: emitTranscript, sendState: emitSendState, runtime: emitRuntime },
     forceFakeProvider,
     undefined,
@@ -251,7 +260,7 @@ app.whenReady().then(() => {
   registerIpc({
     window: mainWindow,
     repository,
-    settings,
+    providers: providerService,
     generalSettings,
     sendWorker,
     roomCoordinator,
@@ -319,4 +328,5 @@ app.on("quit", () => {
   runtimeCoordinator = null;
   roomCoordinator = null;
   updateService = null;
+  providerService = null;
 });

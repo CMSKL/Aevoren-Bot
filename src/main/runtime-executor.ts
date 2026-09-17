@@ -1,5 +1,6 @@
 import type {
   AppError,
+  ModelSelection,
   RuntimeEvent,
   RuntimeRoute,
   RuntimeRun,
@@ -12,7 +13,7 @@ import { asAppError, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 import {
   FakeModelProvider,
-  OpenAiCompatibleProvider,
+  selectDeterministicRoomOwner,
   type ChatMessage,
   type ModelEvent,
   type ModelProvider,
@@ -22,7 +23,7 @@ import {
   type RoomOwnerSelection,
 } from "./model";
 import { buildPrompt } from "./prompt";
-import type { ModelSettingsService } from "./settings";
+import type { ProviderResolver } from "./providers/contracts";
 import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 
 export type RuntimeExecutorEvents = {
@@ -34,6 +35,7 @@ export type RuntimeExecutionInput = {
   clientNonce: string;
   executorBotId: string;
   executionKey: string;
+  modelSelection?: ModelSelection;
   inputSeq?: number;
   promptCutoffSeq?: number;
   attribution?: {
@@ -68,6 +70,7 @@ type ActiveRun = {
   clientNonce: string;
   sessionId: string;
   messages: ChatMessage[];
+  modelSelection: ModelSelection;
   attribution?: RuntimeExecutionInput["attribution"];
   providerContext: ModelRunContext;
   onDispatchStart?: RuntimeExecutionInput["onDispatchStart"];
@@ -97,7 +100,7 @@ export class RuntimeExecutor {
 
   constructor(
     private readonly repository: AppRepository,
-    private readonly settings: ModelSettingsService,
+    private readonly providers: ProviderResolver | null,
     private readonly events: RuntimeExecutorEvents,
     private readonly forceFakeProvider = false,
     private readonly providerOverride?: ModelProvider,
@@ -131,11 +134,15 @@ export class RuntimeExecutor {
         : undefined,
       this.repository.listMemories(bot.id),
     );
-    const run = this.repository.createRuntimeRun(input.clientNonce, this.route(), prompt.manifest, {
+    const modelSelection = input.modelSelection ?? bot.modelSelection;
+    const route = this.route(modelSelection);
+    const run = this.repository.createRuntimeRun(input.clientNonce, route, prompt.manifest, {
       executorBotId: bot.id,
       executionKey: input.executionKey,
       inputSeq,
       promptCutoffSeq,
+      providerInstanceId: route === "fake" ? "fake" : modelSelection.providerInstanceId,
+      providerModelId: route === "fake" ? "" : modelSelection.modelId,
     });
     try {
       input.onRunCreated?.(run);
@@ -149,6 +156,7 @@ export class RuntimeExecutor {
       clientNonce: input.clientNonce,
       sessionId: session.id,
       messages: prompt.messages,
+      modelSelection,
       attribution: input.attribution,
       providerContext: {
         executorBotId: bot.id,
@@ -231,9 +239,16 @@ export class RuntimeExecutor {
 
   async selectRoomOwner(text: string, roster: readonly RoomPeer[], signal: AbortSignal): Promise<RoomOwnerSelection> {
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
-    const provider = this.createProvider();
+    const selection = this.repository.getDefaultModelSelection();
+    const usesOverride = Boolean(this.providerOverride || this.fakeProvider);
+    const capabilities = usesOverride ? { roomOwnerSelection: true } : this.providers?.getCapabilities(selection);
+    if (!capabilities?.roomOwnerSelection) return selectDeterministicRoomOwner(text, roster);
+    const provider = this.createProvider(selection);
     const selector = provider.selectRoomOwner;
-    if (!selector) throw new AevorenBotError("MODEL_ROUTER_UNSUPPORTED");
+    if (!selector) {
+      if (usesOverride) throw new AevorenBotError("MODEL_ROUTER_UNSUPPORTED");
+      return selectDeterministicRoomOwner(text, roster);
+    }
     const result = await selector.call(provider, text, roster, signal);
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     return result;
@@ -269,8 +284,10 @@ export class RuntimeExecutor {
     }
   }
 
-  private route(): RuntimeRoute {
-    return this.forceFakeProvider || this.providerOverride ? "fake" : "openai-compatible";
+  private route(selection: ModelSelection): RuntimeRoute {
+    if (this.forceFakeProvider || this.providerOverride) return "fake";
+    if (!this.providers) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
+    return this.providers.getRoute(selection);
   }
 
   private async dispatch(runId: string): Promise<RuntimeExecutionResult> {
@@ -281,7 +298,7 @@ export class RuntimeExecutor {
     this.emitRuntime(run);
     try {
       active.onDispatchStart?.();
-      const provider = this.createProvider();
+      const provider = this.createProvider(active.modelSelection);
       let toolRounds = 0;
       let completed = false;
       while (!completed) {
@@ -512,12 +529,11 @@ export class RuntimeExecutor {
     );
   }
 
-  private createProvider(): ModelProvider {
+  private createProvider(selection: ModelSelection): ModelProvider {
     if (this.providerOverride) return this.providerOverride;
     if (this.fakeProvider) return this.fakeProvider;
-    const configuration = this.settings.getConfiguration();
-    if (!configuration.modelId || !configuration.apiKeyConfigured) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
-    return new OpenAiCompatibleProvider(configuration.baseUrl, configuration.modelId, this.settings.getApiKey());
+    if (!this.providers) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
+    return this.providers.createProvider(selection);
   }
 
   private emitRuntime(run: RuntimeRun, error?: AppError): void {

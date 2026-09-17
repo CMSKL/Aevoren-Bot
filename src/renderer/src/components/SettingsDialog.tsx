@@ -92,7 +92,7 @@ export function SettingsDialog({
           <div className="settings-nav-title" id="settings-title">设置</div>
           <nav>
             <button type="button" className={section === "general" ? "selected" : ""} aria-current={section === "general" ? "page" : undefined} onClick={() => setSection("general")}><SettingsIcon /><span>通用</span></button>
-            <button type="button" className={section === "model" ? "selected" : ""} aria-current={section === "model" ? "page" : undefined} onClick={() => setSection("model")}><BotIcon /><span>模型配置</span></button>
+            <button type="button" className={section === "model" ? "selected" : ""} aria-current={section === "model" ? "page" : undefined} onClick={() => setSection("model")}><BotIcon /><span>模型与 CLI</span></button>
             <button type="button" className={section === "updates" ? "selected" : ""} aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}><RefreshIcon /><span>版本更新</span></button>
           </nav>
         </aside>
@@ -117,7 +117,7 @@ export function SettingsDialog({
             {themeError ? <div className="dialog-error" role="alert">{themeError.safeMessage}</div> : null}
           </section>
 
-          <section className="settings-panel" hidden={section !== "model"} aria-label="模型配置">
+          <section className="settings-panel" hidden={section !== "model"} aria-label="模型与 CLI">
             <ModelSettingsPanel open={open} />
           </section>
 

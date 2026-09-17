@@ -74,9 +74,14 @@ const api: AevorenBotApi = {
   settings: {
     getGeneral: () => ipcRenderer.invoke(IPC.settingsGetGeneral),
     saveGeneral: (input) => ipcRenderer.invoke(IPC.settingsSaveGeneral, input),
-    getModelConfiguration: () => ipcRenderer.invoke(IPC.settingsGetModel),
-    saveModelConfiguration: (input) => ipcRenderer.invoke(IPC.settingsSaveModel, input),
-    testModelConnection: () => ipcRenderer.invoke(IPC.settingsTestModel),
+  },
+  providers: {
+    list: () => ipcRenderer.invoke(IPC.providersList),
+    scan: () => ipcRenderer.invoke(IPC.providersScan),
+    saveOpenAiCompatible: (input) => ipcRenderer.invoke(IPC.providersSaveOpenAiCompatible, input),
+    saveCli: (input) => ipcRenderer.invoke(IPC.providersSaveCli, input),
+    test: (instanceId) => ipcRenderer.invoke(IPC.providersTest, instanceId),
+    refresh: (instanceId) => ipcRenderer.invoke(IPC.providersRefresh, instanceId),
   },
   updates: {
     getState: () => ipcRenderer.invoke(IPC.updatesGetState),

@@ -42,9 +42,16 @@ test("decrypts ciphertext from the established Aevoren Bot safeStorage identity 
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Local test server did not bind to a TCP port");
     const repository = new AppRepository(databasePath);
-    repository.setSetting("model.baseUrl", `http://127.0.0.1:${address.port}/v1`, false);
-    repository.setSetting("model.modelId", "safe-storage-compatibility-model", false);
-    repository.setSetting("model.apiKey", readFileSync(ciphertextPath, "utf8"), true);
+    const provider = repository.getProviderInstanceConfig("openai-compatible.default");
+    repository.updateProviderInstanceConfig(provider.id, provider.version, {
+      ...provider.config,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    });
+    repository.setDefaultModelSelection({
+      providerInstanceId: provider.id,
+      modelId: "safe-storage-compatibility-model",
+    });
+    repository.setSetting("provider.openai-compatible.default.apiKey", readFileSync(ciphertextPath, "utf8"), true);
     repository.close();
 
     const environment = Object.fromEntries(
@@ -61,7 +68,7 @@ test("decrypts ciphertext from the established Aevoren Bot safeStorage identity 
     expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("use-mock-keychain"))).toBe(false);
     const page = await application.firstWindow();
     const connection = await page.evaluate(() =>
-      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.settings.testModelConnection(),
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.providers.test("openai-compatible.default"),
     );
     expect(connection).toEqual({ ok: true, data: undefined });
   } finally {

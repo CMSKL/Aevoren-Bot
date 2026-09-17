@@ -24,6 +24,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["tests/fixtures/*.mjs"],
+    languageOptions: {
+      globals: { process: "readonly", queueMicrotask: "readonly" },
+    },
+  },
+  {
     files: ["src/**/*.{ts,tsx}", "tests/**/*.ts", "*.ts"],
     plugins: {
       "react-hooks": reactHooks,

@@ -3,10 +3,8 @@ import { AppRepository } from "./database";
 import { OpenAiCompatibleProvider } from "./model";
 import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
-import { ModelSettingsService, type SecretCodec } from "./settings";
 
 const repositories: AppRepository[] = [];
-const codec: SecretCodec = { isAvailable: () => true, encrypt: (value) => value, decrypt: (value) => value };
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -65,8 +63,7 @@ describe("real Provider handoff integration", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const provider = new OpenAiCompatibleProvider("https://example.com/v1", "test-model", "test-key");
-    const settings = new ModelSettingsService(repository, codec);
-    const executor = new RuntimeExecutor(repository, settings, { transcript: vi.fn(), runtime: vi.fn() }, false, provider);
+    const executor = new RuntimeExecutor(repository, null, { transcript: vi.fn(), runtime: vi.fn() }, false, provider);
     const coordinator = new RoomCoordinator(repository, executor, { transcript: vi.fn(), roomRuntime: vi.fn() });
 
     const sent = coordinator.sendCoordinated({
@@ -165,7 +162,7 @@ describe("real Provider handoff integration", () => {
     const roomRuntime = vi.fn();
     const executor = new RuntimeExecutor(
       repository,
-      new ModelSettingsService(repository, codec),
+      null,
       { transcript: vi.fn(), runtime: vi.fn() },
       false,
       { async *run() {}, testConnection: async () => {} },

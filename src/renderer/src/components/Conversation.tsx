@@ -31,6 +31,7 @@ import {
 } from "../room-mentions";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { BotIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
+import { HeaderModelPicker } from "./HeaderModelPicker";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
@@ -326,6 +327,8 @@ type ConversationProps = {
   onOpenBots(): void;
   onOpenProfile(): void;
   onOpenWorkspaces(): void;
+  onBotUpdated(bot: Bot): void;
+  onError(error: AppError | null): void;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
   onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode): Promise<boolean>;
   onRetryMessage(clientNonce: string): void;
@@ -356,6 +359,8 @@ export function Conversation({
   onOpenBots,
   onOpenProfile,
   onOpenWorkspaces,
+  onBotUpdated,
+  onError,
   onResolveApproval,
   onSend,
   onRetryMessage,
@@ -581,6 +586,7 @@ export function Conversation({
           <p>{room?.room.description || bot?.description || (room ? `${room.members.length} 个 Bot 协作，未点名时自动选择。` : bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
         </div>
         <div className="conversation-actions">
+          {bot ? <HeaderModelPicker bot={bot} busy={busy} onBotUpdated={onBotUpdated} onError={onError} /> : null}
           <button className="secondary-button model-settings-button" type="button" aria-label="工作区" title="工作区" onClick={onOpenWorkspaces}>
             <FolderIcon />
             <span>工作区</span>

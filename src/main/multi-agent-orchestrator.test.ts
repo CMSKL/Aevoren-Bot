@@ -11,11 +11,9 @@ import type { ChatMessage, ModelEvent, ModelProvider, ModelRunContext } from "./
 import { ScriptedFakeModelProvider } from "./model";
 import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
-import { ModelSettingsService, type SecretCodec } from "./settings";
 
 const repositories: AppRepository[] = [];
 const temporaryDirectories: string[] = [];
-const codec: SecretCodec = { isAvailable: () => true, encrypt: (value) => value, decrypt: (value) => value };
 
 type Harness = {
   repository: AppRepository;
@@ -54,7 +52,7 @@ function harness(
   const roomEvents = vi.fn();
   const executor = new RuntimeExecutor(
     repository,
-    new ModelSettingsService(repository, codec),
+    null,
     { transcript: vi.fn(), runtime: vi.fn() },
     false,
     provider,
@@ -1304,7 +1302,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       });
       const executor = new RuntimeExecutor(
         reopened,
-        new ModelSettingsService(reopened, codec),
+        null,
         { transcript: vi.fn(), runtime: vi.fn() },
         false,
         provider,
@@ -1353,7 +1351,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     });
     const executor = new RuntimeExecutor(
       reopened,
-      new ModelSettingsService(reopened, codec),
+      null,
       { transcript: vi.fn(), runtime: vi.fn() },
       false,
       provider,
@@ -1402,7 +1400,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     ]);
     const executor = new RuntimeExecutor(
       reopened,
-      new ModelSettingsService(reopened, codec),
+      null,
       { transcript: vi.fn(), runtime: vi.fn() },
       false,
       provider,
@@ -1467,7 +1465,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     });
     const executor = new RuntimeExecutor(
       reopened,
-      new ModelSettingsService(reopened, codec),
+      null,
       { transcript: vi.fn(), runtime: vi.fn() },
       false,
       provider,
@@ -1537,7 +1535,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       });
       const executor = new RuntimeExecutor(
         reopened,
-        new ModelSettingsService(reopened, codec),
+        null,
         { transcript: vi.fn(), runtime: vi.fn() },
         false,
         provider,

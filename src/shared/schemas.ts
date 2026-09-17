@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 const nonEmptyText = z.string().trim().min(1).max(20_000);
+const providerInstanceIdSchema = z.string().trim().min(1).max(120).regex(/^[a-z0-9][a-z0-9._-]*$/i);
+export const modelSelectionSchema = z.object({
+  providerInstanceId: providerInstanceIdSchema,
+  modelId: z.string().trim().max(200),
+}).strict();
 
 export const botUpdateSchema = z.object({
   id: z.string().uuid(),
@@ -11,6 +16,7 @@ export const botUpdateSchema = z.object({
       label: z.string().trim().max(120).optional(),
       description: z.string().trim().max(2_000).optional(),
       instructions: z.string().trim().max(20_000).optional(),
+      modelSelection: modelSelectionSchema.optional(),
     })
     .refine((patch) => Object.keys(patch).length > 0, "At least one field is required"),
 });
@@ -156,8 +162,7 @@ export const roomSendCommandSchema = sendCommandSchema.extend({
   }
 });
 
-export const modelConfigurationSchema = z.object({
-  baseUrl: z
+export const providerBaseUrlSchema = z
     .string()
     .trim()
     .url()
@@ -168,10 +173,20 @@ export const modelConfigurationSchema = z.object({
       if (url.protocol === "https:") return true;
       const hostname = url.hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
       return url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(hostname);
-    }, "Use HTTPS, or HTTP only for a loopback address"),
-  modelId: z.string().trim().min(1).max(200),
+    }, "Use HTTPS, or HTTP only for a loopback address");
+
+export const providerInstanceIdInputSchema = providerInstanceIdSchema;
+export const saveOpenAiCompatibleProviderSchema = z.object({
+  instanceId: providerInstanceIdSchema,
+  expectedVersion: z.number().int().positive(),
+  baseUrl: providerBaseUrlSchema,
   apiKey: z.string().trim().min(1).max(8_192).optional(),
-});
+}).strict();
+export const saveCliProviderSchema = z.object({
+  instanceId: providerInstanceIdSchema,
+  expectedVersion: z.number().int().positive(),
+  cliPath: z.string().trim().min(1).max(2_048).refine((value) => !/[\r\n\0]/u.test(value), "CLI path contains an unsafe character"),
+}).strict();
 
 export const generalSettingsSchema = z.object({
   theme: z.enum(["system", "light", "dark"]),

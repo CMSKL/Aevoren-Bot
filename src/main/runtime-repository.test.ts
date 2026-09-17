@@ -16,7 +16,11 @@ function logicalV2Hash(database: DatabaseSync): string {
     transcript: database.prepare("SELECT id,session_id,generation,seq,client_nonce,role,body,status,updated_seq,created_at,updated_at FROM transcript_entries ORDER BY id").all(),
     journal: database.prepare("SELECT client_nonce,session_id,body_digest,state,attempt_count,provider_request_id,last_error_code,created_at,updated_at FROM send_journal ORDER BY client_nonce").all(),
     runs: database.prepare("SELECT id,session_id,client_nonce,attempt_no,state,route,input_generation,input_seq,assistant_entry_id,provider_request_id,prompt_manifest_json,version,last_error_code,created_at,accepted_at,last_activity_at,finished_at FROM runtime_runs ORDER BY id").all(),
-    settings: database.prepare("SELECT key,value,encrypted,updated_at FROM app_settings ORDER BY key").all(),
+    settings: database.prepare(
+      `SELECT 'model.apiKey' AS key, value, encrypted, updated_at FROM app_settings
+       WHERE key IN ('model.apiKey', 'provider.openai-compatible.default.apiKey')
+       ORDER BY key`,
+    ).all(),
   };
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
@@ -95,7 +99,7 @@ describe("P0-B repository and migration", () => {
     repositories.push(repository);
     expect(repository.listTranscript("s")[0]).toMatchObject({ id: "e", body: "original-body", updatedSeq: 1 });
     expect(repository.getTranscriptCursor("s")).toBe(1);
-    expect(repository.getSetting("model.apiKey")).toEqual({ value: "encrypted-value", encrypted: true });
+    expect(repository.getSetting("provider.openai-compatible.default.apiKey")).toEqual({ value: "encrypted-value", encrypted: true });
     repository.close();
     repositories.pop();
 
@@ -154,7 +158,7 @@ describe("P0-B repository and migration", () => {
       promptCutoffSeq: 1,
       state: "completed",
     });
-    expect(repository.getSetting("model.apiKey")).toEqual({ value: "ciphertext", encrypted: true });
+    expect(repository.getSetting("provider.openai-compatible.default.apiKey")).toEqual({ value: "ciphertext", encrypted: true });
     repository.close();
     repositories.pop();
     const inspected = new DatabaseSync(filename, { readOnly: true });

@@ -32,6 +32,8 @@ function run(version: number, state: RuntimeRun["state"]): RuntimeRun {
     attemptNo: 1,
     state,
     route: "fake",
+    providerInstanceId: "fake",
+    providerModelId: "",
     inputGeneration: 1,
     inputSeq: 1,
     promptCutoffSeq: 1,

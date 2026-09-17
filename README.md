@@ -13,8 +13,9 @@ Aevoren Bot 是一个本地 macOS Electron Bot 工作台。当前开发版在可
 - 每个 Bot 一个 MAIN Session；
 - SQLite Transcript 与 Send Journal；
 - 稳定 Nonce、Body Digest、Duplicate/Conflict 和中断恢复；
-- Fake Provider 与 OpenAI 兼容流式 Provider；
-- 设置内的模型配置和 Electron `safeStorage` 加密；
+- 统一 Provider Registry：自动发现 Codex CLI、Claude Code、Ollama，并与 OpenAI-compatible 流式 Provider 共用一套模型选择和调用合同；
+- 每个 Bot 可独立选择 Provider/模型，运行和重试持久化原选择快照；
+- 设置内的 CLI/Provider 配置和 Electron `safeStorage` 加密；
 - 取消、失败和 Interrupted Unknown 状态；
 - Runtime Run、Provider Request ID、Prompt Manifest 和单调 Transcript Cursor；
 - Renderer 重载后的 Snapshot/事件版本合并；
@@ -52,13 +53,21 @@ pnpm install
 AEVOREN_BOT_FAKE_PROVIDER=1 pnpm dev
 ```
 
-使用真实 OpenAI 兼容 Provider：
+使用真实 Provider：
 
 ```bash
 pnpm dev
 ```
 
-启动后从左侧栏左下角进入“设置 → 模型配置”，填写 Base URL、Model ID 和 API Key。API Key 只在 Renderer 输入期间短暂存在，保存后由 Main 使用系统安全存储加密；应用不会把明文 Key 返回给 Renderer。
+启动后会自动扫描常见安装目录和当前 PATH，并读取 CLI 自己报告的安装版本、登录状态和模型目录。可从左侧栏左下角进入“设置 → 模型与 CLI”查看或重新扫描：
+
+- Codex CLI：自动读取本机 `codex` 的登录、官方模型目录及可安全复用的自定义 Provider 默认模型。
+- Claude Code：自动读取本机 `claude` 的登录、模型别名和安全复用的 Provider/认证设置。
+- Ollama：自动读取本机 `ollama` 和已安装模型；服务未运行或没有模型时明确标记为不可用。
+- OpenAI-compatible：仅作为 CLI 无法覆盖时的手动兜底，配置 Base URL 和 API Key。
+- 手动 CLI 路径：仅位于每个 CLI 卡片的“高级”区域，用于自动扫描无法覆盖的自定义安装位置。
+
+API Key 只在 Renderer 输入期间短暂存在，保存后由 Main 使用系统安全存储加密；应用不会把明文 Key 返回给 Renderer。旧版全局 Base URL、Model ID 和加密 Key 会由数据库迁移自动转入默认 OpenAI-compatible Provider，并保留已有 Bot 的模型选择。
 
 ## 验证命令
 
@@ -80,7 +89,7 @@ pnpm validate
 ## 数据与安全
 
 - SQLite 数据库位于 Electron `userData` 目录；
-- 数据库当前为 v10：v3～v7 增加 Room、多 Agent Runtime/Handoff、自动路由、拒绝审计和 Bot 侧边栏状态，v8 增加显式 Memory，v9 增加 Approval 与 Tool Journal，v10 增加 Workspace Registry 和工具失败终态；全部迁移按版本顺序执行并保留旧逻辑记录；
+- 数据库当前为 v14：v3～v7 增加 Room、多 Agent Runtime/Handoff、自动路由、拒绝审计和 Bot 侧边栏状态，v8 增加显式 Memory，v9 增加 Approval 与 Tool Journal，v10 增加 Workspace Registry 和工具失败终态，v11～v12 增加 Room 侧边栏状态，v13 增加 Provider Registry、Bot 模型选择和 Runtime Provider 快照，v14 增加 Claude/Ollama CLI 实例与 Runtime 路由；全部迁移按版本顺序执行并保留旧逻辑记录；
 - P0-A beta 与 P0-B 并行验证时必须使用不同的 `AEVOREN_BOT_USER_DATA_DIR`；不支持用旧代码继续写入已升级的 v2 数据库；
 - 可用 `AEVOREN_BOT_USER_DATA_DIR` 为测试指定隔离目录；
 - 可用 `AEVOREN_BOT_DB_PATH` 单独覆盖数据库路径；
@@ -98,6 +107,8 @@ pnpm validate
 - [P0-A beta 基线验证](docs/validation/p0-a-beta-validation.md)
 - [P0-B Runtime 实施计划](docs/plans/p0-b-runtime-recovery.md)
 - [P0-B Runtime 验收标准单](docs/validation/p0-b-acceptance-checklist.md)
+- [Provider Registry 与 CLI 模型配置迁移验收](docs/validation/provider-cli-migration.md)
+- [OpenMausBot 模型 CLI 对齐分析](docs/analysis/openmaus-model-cli-alignment.md)
 - [P0-B Runtime 验收结果](docs/validation/p0-b-acceptance-results.md)
 - [P0-B 脱敏验收证据](docs/validation/evidence/p0-b/acceptance-evidence.md)
 - [P1-A1 确定性 Room 计划](docs/plans/p1-a-deterministic-room-collaboration.md)

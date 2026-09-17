@@ -135,7 +135,7 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
 
     await page.getByRole("button", { name: "打开 Bot 列表" }).click();
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await page.getByRole("button", { name: "模型配置", exact: true }).click();
+    await page.getByRole("button", { name: "模型与 CLI", exact: true }).click();
     const settingsLayout = await page.locator(".settings-dialog").evaluate((dialog) => {
       const dialogRect = dialog.getBoundingClientRect();
       const panel = dialog.querySelector('.settings-panel:not([hidden])');

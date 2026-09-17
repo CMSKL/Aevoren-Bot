@@ -47,7 +47,7 @@ test("runs one approved workspace read through the configured real Provider", as
   try {
     const page = await application.firstWindow();
     const connection = await page.evaluate(() =>
-      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.settings.testModelConnection(),
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.providers.test("openai-compatible.default"),
     );
     expect(connection.ok, connection.ok ? undefined : connection.error.code).toBe(true);
     await page.locator(".bot-row").filter({ hasText: botName }).click();
