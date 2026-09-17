@@ -727,6 +727,35 @@ describe("multi-agent RoomRun journal", () => {
     expect(value.listHandoffs(fixture.run.id)).toHaveLength(1);
   });
 
+  it("deletes a completed Handoff Room alone or inside a Room batch without violating the parent-turn foreign key", () => {
+    const value = repository();
+    const fixture = createRunFixture(value);
+    const ordinary = value.createRoom({
+      memberBotIds: fixture.bots.slice(0, 2).map((bot) => bot.id),
+      name: "Ordinary room",
+    });
+    startSourceTurn(value, fixture.run.id, fixture.turns[0]!.id);
+    const handoff = value.createHandoff(handoffInput(
+      fixture.run.id,
+      fixture.turns[0]!.id,
+      fixture.bots[1]!.id,
+      fixture.run.triggerMessageId,
+    ));
+    value.transitionAgentTurn(fixture.turns[0]!.id, "completed", { outcome: { kind: "sent" } });
+    value.transitionAgentTurn(handoff.targetTurn.id, "cancelled", { outcome: { kind: "cancelled" } });
+    value.transitionRoomRun(fixture.run.id, "completed");
+
+    expect(value.deleteConversations({
+      botIds: [],
+      roomIds: [ordinary.room.id, fixture.detail.room.id],
+    })).toEqual({
+      bots: [],
+      rooms: [{ id: ordinary.room.id }, { id: fixture.detail.room.id }],
+    });
+    expect(value.listRooms(true)).toEqual([]);
+    expect(() => value.getRoom(fixture.detail.room.id)).toThrowError(expect.objectContaining({ code: "ROOM_NOT_FOUND" }));
+  });
+
   it("rejects self Handoffs and same-digest cycles across retry and visibility changes", () => {
     const value = repository();
     const fixture = createRunFixture(value);
