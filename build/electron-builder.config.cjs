@@ -14,7 +14,7 @@ module.exports = {
   electronLanguages: ["en", "zh_CN"],
   afterPack: "build/after-pack.cjs",
   directories: {
-    output: "dist",
+    output: process.env.AEVOREN_DIST_DIR || "dist",
     buildResources: "resources",
   },
   files: ["out/**/*", "package.json"],

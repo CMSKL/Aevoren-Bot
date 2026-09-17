@@ -62,7 +62,7 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await application.close();
 
   const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
-  expect(database.prepare("SELECT COUNT(*) AS count FROM provider_instances").get()).toEqual({ count: 4 });
+  expect(database.prepare("SELECT COUNT(*) AS count FROM provider_instances").get()).toEqual({ count: 12 });
   expect(database.prepare("SELECT provider_instance_id, model_id FROM bots LIMIT 1").get()).toEqual({
     provider_instance_id: "openai-compatible.default",
     model_id: "smoke-model",

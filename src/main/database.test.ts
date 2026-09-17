@@ -149,7 +149,7 @@ describe("AppRepository", () => {
     expect(repository.getSetting("model.modelId")).toBeNull();
   });
 
-  it("adds the discovered Claude CLI instance in v14 without changing existing Provider configuration", () => {
+  it("adds discovered CLI instances through v15 without changing existing Provider configuration", () => {
     const directory = mkdtempSync(join(tmpdir(), "aevoren-provider-v14-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
@@ -163,7 +163,7 @@ describe("AppRepository", () => {
     const repository = new AppRepository(filename);
     repositories.push(repository);
 
-    expect(repository.listProviderInstanceConfigs()).toHaveLength(4);
+    expect(repository.listProviderInstanceConfigs()).toHaveLength(12);
     expect(repository.getProviderInstanceConfig("codex.default")).toMatchObject({
       driverKind: "codex-cli",
       config: { cliPath: "/custom/codex" },
@@ -181,6 +181,12 @@ describe("AppRepository", () => {
       config: { cliPath: "ollama" },
       version: 1,
     });
+    expect(repository.getProviderInstanceConfig("gemini.default")).toMatchObject({
+      driverKind: "acp-cli",
+      displayName: "Gemini CLI",
+      config: { adapter: "gemini", cliPath: "gemini" },
+      version: 1,
+    });
     const created = repository.createBot();
     const bot = repository.updateBot(created.bot.id, created.bot.version, {
       modelSelection: { providerInstanceId: "claude.default", modelId: "claude-sonnet-5" },
@@ -191,6 +197,18 @@ describe("AppRepository", () => {
       route: "claude-cli",
       providerInstanceId: "claude.default",
       providerModelId: "claude-sonnet-5",
+    });
+    repository.transitionRuntimeRun(repository.getLatestRuntimeRun(clientNonce)!.id, "failed");
+    const acpCreated = repository.createBot();
+    const acpBot = repository.updateBot(acpCreated.bot.id, acpCreated.bot.version, {
+      modelSelection: { providerInstanceId: "gemini.default", modelId: "gemini-2.5-pro" },
+    });
+    const acpNonce = crypto.randomUUID();
+    repository.prepareMessage({ sessionId: acpCreated.session.id, clientNonce: acpNonce, text: "v15 ACP route" });
+    expect(repository.createRuntimeRun(acpNonce, "acp-cli", manifest(acpCreated.session.id, acpBot.id))).toMatchObject({
+      route: "acp-cli",
+      providerInstanceId: "gemini.default",
+      providerModelId: "gemini-2.5-pro",
     });
   });
 

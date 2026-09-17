@@ -56,7 +56,7 @@ export class OllamaCliProvider implements ModelProvider {
     const path = resolveCliPath(this.cliCommand, cliEnvironment());
     if (!path || !this.modelId) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
     mkdirSync(this.cwd, { recursive: true, mode: 0o700 });
-    const child = spawn(path, ["run", this.modelId], {
+    const child = spawn(path, ["run", this.modelId, "--think=false", "--nowordwrap"], {
       cwd: this.cwd,
       env: cliEnvironment(),
       stdio: ["pipe", "pipe", "pipe"],

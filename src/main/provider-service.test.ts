@@ -8,6 +8,7 @@ import type { SecretCodec } from "./settings";
 import { CodexCliProvider, inspectCodexCli } from "./providers/codex-cli";
 import { ClaudeCliProvider, inspectClaudeCli } from "./providers/claude-cli";
 import { OllamaCliProvider, inspectOllamaCli } from "./providers/ollama-cli";
+import { AcpCliProvider, acpSpec, inspectAcpCli } from "./providers/acp-cli";
 import { isolatedCodexEnvironment } from "./providers/cli-utils";
 
 const repositories: AppRepository[] = [];
@@ -20,6 +21,7 @@ const codec: SecretCodec = {
 const fixtureCli = join(process.cwd(), "tests/fixtures/fake-codex-cli.mjs");
 const fixtureClaudeCli = join(process.cwd(), "tests/fixtures/fake-claude-cli.mjs");
 const fixtureOllamaCli = join(process.cwd(), "tests/fixtures/fake-ollama-cli.mjs");
+const fixtureAcpCli = join(process.cwd(), "tests/fixtures/fake-acp-cli.mjs");
 
 function providerWorkspace(): string {
   const directory = mkdtempSync(join(tmpdir(), "aevoren-provider-test-"));
@@ -28,6 +30,7 @@ function providerWorkspace(): string {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   while (repositories.length > 0) repositories.pop()?.close();
@@ -41,6 +44,7 @@ describe("ProviderService", () => {
     symlinkSync(fixtureCli, join(binaryDirectory, "codex"));
     symlinkSync(fixtureClaudeCli, join(binaryDirectory, "claude"));
     symlinkSync(fixtureOllamaCli, join(binaryDirectory, "ollama"));
+    symlinkSync(fixtureAcpCli, join(binaryDirectory, "gemini"));
     vi.stubEnv("PATH", binaryDirectory);
     vi.stubEnv("CODEX_HOME", providerWorkspace());
     const repository = new AppRepository(":memory:");
@@ -77,6 +81,14 @@ describe("ProviderService", () => {
         cliPath: join(binaryDirectory, "ollama"),
         models: { default: "fixture-ollama", options: [{ id: "fixture-ollama", label: "fixture-ollama", loaded: true }] },
       }),
+      expect.objectContaining({
+        id: "gemini.default",
+        driverKind: "acp-cli",
+        status: "available",
+        authenticated: true,
+        cliPath: join(binaryDirectory, "gemini"),
+        models: { default: "fixture-acp", options: [{ id: "fixture-acp", label: "Fixture ACP" }] },
+      }),
     ]));
     expect(repository.getDefaultModelSelection()).toEqual({ providerInstanceId: "codex.default", modelId: "fixture-model" });
     await service.dispose();
@@ -90,6 +102,13 @@ describe("ProviderService", () => {
     vi.stubEnv("PATH", binaryDirectory);
     const repository = new AppRepository(":memory:");
     repositories.push(repository);
+    for (const instance of repository.listProviderInstanceConfigs()) {
+      if (instance.id === "claude.default" || instance.driverKind === "openai-compatible") continue;
+      repository.updateProviderInstanceConfig(instance.id, instance.version, {
+        ...instance.config,
+        cliPath: join(binaryDirectory, `missing-${instance.id}`),
+      });
+    }
     const claude = repository.getProviderInstanceConfig("claude.default");
     repository.updateProviderInstanceConfig(claude.id, claude.version, { cliPath: claudePath });
     const service = new ProviderService(repository, codec, providerWorkspace());
@@ -172,6 +191,26 @@ describe("ProviderService", () => {
     });
     await service.dispose();
   });
+
+  it("maps an OpenAI-compatible connection timeout to a stable Provider error", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    repository.setSetting("provider.openai-compatible.default.apiKey", codec.encrypt("timeout-key"), true);
+    const service = new ProviderService(repository, codec, providerWorkspace(), false);
+    await service.initialize();
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    })));
+
+    const pending = expect(service.test("openai-compatible.default")).rejects.toMatchObject({
+      code: "MODEL_CONNECTION_TIMEOUT",
+    });
+    await vi.advanceTimersByTimeAsync(10_001);
+
+    await pending;
+    await service.dispose();
+  });
 });
 
 describe("Codex CLI Provider", () => {
@@ -230,6 +269,24 @@ describe("Codex CLI Provider", () => {
       { type: "completed", finishReason: "stop" },
     ]);
   });
+
+  it("falls back to codex exec before acceptance when app-server is unavailable", async () => {
+    const sourceHome = providerWorkspace();
+    writeFileSync(join(sourceHome, "auth.json"), "fixture-auth", { encoding: "utf8", mode: 0o600 });
+    vi.stubEnv("CODEX_HOME", sourceHome);
+    vi.stubEnv("FAKE_CODEX_APP_SERVER_FAIL", "1");
+    const provider = new CodexCliProvider(fixtureCli, "fixture-model", join(providerWorkspace(), "fallback-runtime"));
+    const events = [];
+    for await (const event of provider.run([
+      { role: "system", content: "Stay concise." },
+      { role: "user", content: "Hello" },
+    ], new AbortController().signal)) events.push(event);
+    expect(events).toEqual([
+      { type: "started", requestId: "fixture-exec-thread" },
+      { type: "delta", text: "Exec reply" },
+      { type: "completed", finishReason: "stop" },
+    ]);
+  });
 });
 
 describe("Claude CLI Provider", () => {
@@ -283,5 +340,46 @@ describe("Ollama CLI Provider", () => {
       { type: "delta", text: "Ollama reply" },
       { type: "completed", finishReason: "stop" },
     ]);
+  });
+});
+
+describe("ACP CLI Provider", () => {
+  it("probes one installed ACP session and reads its native model catalog", async () => {
+    const spec = acpSpec("gemini")!;
+    await expect(inspectAcpCli(fixtureAcpCli, spec, join(providerWorkspace(), "acp-probe"))).resolves.toMatchObject({
+      authenticated: true,
+      version: "fake-acp 1.0.0",
+      models: { default: "fixture-acp", options: [{ id: "fixture-acp", label: "Fixture ACP" }] },
+    });
+  });
+
+  it("confirms the model, rejects native permissions and streams one ACP reply", async () => {
+    const spec = acpSpec("opencode")!;
+    const provider = new AcpCliProvider(fixtureAcpCli, "fixture-acp", spec, join(providerWorkspace(), "acp-runtime"));
+    const events = [];
+    for await (const event of provider.run([
+      { role: "system", content: "Stay concise." },
+      { role: "user", content: "Hello" },
+    ], new AbortController().signal)) events.push(event);
+    expect(events).toEqual([
+      { type: "started", requestId: "fixture-acp-session" },
+      { type: "delta", text: "ACP reply" },
+      { type: "completed", finishReason: "end_turn" },
+    ]);
+  });
+
+  it("fails before prompting when an ACP CLI does not confirm the selected model", async () => {
+    vi.stubEnv("FAKE_ACP_MODEL_MISMATCH", "1");
+    const spec = acpSpec("grok")!;
+    const provider = new AcpCliProvider(fixtureAcpCli, "grok-4.6", spec, join(providerWorkspace(), "acp-model-mismatch"));
+    const consume = async (): Promise<void> => {
+      for await (const event of provider.run([
+        { role: "user", content: "Must not be sent" },
+      ], new AbortController().signal)) {
+        // Consume the stream until the Provider rejects the mismatched model.
+        void event;
+      }
+    };
+    await expect(consume()).rejects.toMatchObject({ code: "MODEL_REQUEST_REFUSED" });
   });
 });

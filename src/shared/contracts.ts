@@ -128,7 +128,7 @@ export type RuntimeState =
   | "cancelled"
   | "interrupted";
 
-export type ProviderDriverKind = "openai-compatible" | "codex-cli" | "claude-cli" | "ollama-cli";
+export type ProviderDriverKind = "openai-compatible" | "codex-cli" | "claude-cli" | "ollama-cli" | "acp-cli";
 export type ProviderDiscoveryMode = "automatic" | "manual" | "not-applicable";
 
 export type ModelSelection = {

@@ -11,9 +11,10 @@ import type { AppRepository, ProviderInstanceConfig } from "./database";
 import { AevorenBotError } from "./errors";
 import { OpenAiCompatibleProvider, type ModelProvider } from "./model";
 import type { SecretCodec } from "./settings";
-import { CodexCliProvider, inspectCodexCli, type CodexCliInspection } from "./providers/codex-cli";
+import { CodexCliProvider, inspectCodexCli, inspectCodexCliFallback, type CodexCliInspection } from "./providers/codex-cli";
 import { ClaudeCliProvider, inspectClaudeCli, type ClaudeCliInspection } from "./providers/claude-cli";
 import { OllamaCliProvider, inspectOllamaCli, type OllamaCliInspection } from "./providers/ollama-cli";
+import { AcpCliProvider, acpSpec, inspectAcpCli, type AcpCliInspection, type AcpCliSpec } from "./providers/acp-cli";
 import { findCliCandidates, resolveCliPath } from "./providers/cli-utils";
 import type { ProviderResolver, RuntimeProviderInstance } from "./providers/contracts";
 
@@ -122,16 +123,25 @@ class OpenAiCompatibleRuntime implements RuntimeProviderInstance {
         this.catalog.default || "connection-test",
         this.getApiKey(),
       ).testConnection(controller.signal);
+    } catch (error) {
+      if (controller.signal.aborted) throw new AevorenBotError("MODEL_CONNECTION_TIMEOUT");
+      throw error;
     } finally {
       clearTimeout(timer);
     }
   }
 
   async refresh(): Promise<void> {
-    const response = await fetch(`${text(this.configuration.config.baseUrl) ?? "https://api.openai.com/v1"}/models`, {
-      headers: { authorization: `Bearer ${this.getApiKey()}` },
-      signal: AbortSignal.timeout(10_000),
-    });
+    const signal = AbortSignal.timeout(10_000);
+    let response: Response;
+    try {
+      response = await fetch(`${text(this.configuration.config.baseUrl) ?? "https://api.openai.com/v1"}/models`, {
+        headers: { authorization: `Bearer ${this.getApiKey()}` },
+        signal,
+      });
+    } catch {
+      throw new AevorenBotError(signal.aborted ? "MODEL_CONNECTION_TIMEOUT" : "MODEL_CONNECTION_FAILED");
+    }
     if (!response.ok) throw new AevorenBotError("MODEL_CONNECTION_FAILED", undefined, response.status >= 500, { status: response.status });
     const body = await response.json() as { data?: Array<{ id?: unknown; name?: unknown }> };
     const options = (Array.isArray(body.data) ? body.data : []).flatMap((row) => {
@@ -247,10 +257,15 @@ class CodexCliRuntime implements RuntimeProviderInstance {
       );
       this.inspectionError = null;
     } catch {
-      this.inspection = null;
-      this.inspectionError = findCliCandidates(configured).length === 0
-        ? "未检测到 Codex CLI。"
-        : "Codex CLI 已检测到，但无法启动或协议不兼容。";
+      try {
+        this.inspection = await inspectCodexCliFallback(configured);
+        this.inspectionError = null;
+      } catch {
+        this.inspection = null;
+        this.inspectionError = findCliCandidates(configured).length === 0
+          ? "未检测到 Codex CLI。"
+          : "Codex CLI 已检测到，但无法启动或协议不兼容。";
+      }
     }
   }
 }
@@ -433,6 +448,96 @@ class OllamaCliRuntime implements RuntimeProviderInstance {
   }
 }
 
+class AcpCliRuntime implements RuntimeProviderInstance {
+  readonly driverKind = "acp-cli" as const;
+  readonly capabilities = { roomOwnerSelection: false, handoff: false, workspaceTools: false } as const;
+  readonly route = "acp-cli" as const;
+  private inspection: AcpCliInspection | null = null;
+  private inspectionError: string | null = null;
+  private lastScannedAt: string | null = null;
+
+  constructor(
+    private readonly configuration: ProviderInstanceConfig,
+    private readonly spec: AcpCliSpec,
+    private readonly workspaceDirectory: string,
+    private readonly inspectOnDescribe: boolean,
+  ) {}
+
+  get id(): string {
+    return this.configuration.id;
+  }
+
+  async describe(): Promise<ProviderInstanceInfo> {
+    if (this.inspectOnDescribe && !this.inspection && !this.inspectionError) await this.inspect();
+    const configured = text(this.configuration.config.cliPath) ?? this.spec.defaultCommand;
+    const manual = configured !== this.spec.defaultCommand;
+    const detectedPath = this.inspection?.path ?? resolveCliPath(configured);
+    const available = this.configuration.enabled && Boolean(this.inspection?.authenticated && this.inspection.models.default);
+    return {
+      id: this.id,
+      driverKind: this.driverKind,
+      displayName: this.configuration.displayName,
+      access: this.spec.access,
+      enabled: this.configuration.enabled,
+      version: this.configuration.version,
+      status: available ? "available" : "unavailable",
+      reason: !this.configuration.enabled
+        ? "该供应商已停用。"
+        : this.inspectionError ?? (detectedPath
+          ? `${this.spec.displayName} 已检测到，但登录、模型目录或 ACP 会话不可用。`
+          : this.inspectOnDescribe ? `未检测到 ${this.spec.displayName} CLI。` : `测试环境未探测 ${this.spec.displayName}。`),
+      authenticated: this.inspection?.authenticated ?? false,
+      runtimeVersion: this.inspection?.version ?? null,
+      discoveryMode: manual ? "manual" : "automatic",
+      lastScannedAt: this.lastScannedAt,
+      cliPath: detectedPath,
+      cliDefault: this.spec.defaultCommand,
+      manualCliPath: manual ? configured : null,
+      apiKeyConfigured: false,
+      baseUrl: null,
+      models: this.inspection?.models ?? { default: "", options: [] },
+      capabilities: this.capabilities,
+    };
+  }
+
+  createProvider(modelId: string): ModelProvider {
+    if (!modelId) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
+    const configured = text(this.configuration.config.cliPath) ?? this.spec.defaultCommand;
+    const path = this.inspection?.path ?? resolveCliPath(configured);
+    if (!path || (this.inspectOnDescribe && !this.inspection?.authenticated)) {
+      throw new AevorenBotError("MODEL_PROVIDER_UNAVAILABLE", undefined, false, { reason: "authentication" });
+    }
+    return new AcpCliProvider(path, modelId, this.spec, join(this.workspaceDirectory, this.id));
+  }
+
+  async testConnection(): Promise<void> {
+    await this.inspect();
+    if (!this.inspection?.authenticated || !this.inspection.models.default) {
+      throw new AevorenBotError("MODEL_PROVIDER_UNAVAILABLE", undefined, false, { reason: "authentication" });
+    }
+  }
+
+  async refresh(): Promise<void> {
+    await this.inspect();
+  }
+
+  async dispose(): Promise<void> {}
+
+  private async inspect(): Promise<void> {
+    this.lastScannedAt = new Date().toISOString();
+    const configured = text(this.configuration.config.cliPath) ?? this.spec.defaultCommand;
+    try {
+      this.inspection = await inspectAcpCli(configured, this.spec, join(this.workspaceDirectory, this.id));
+      this.inspectionError = null;
+    } catch {
+      this.inspection = null;
+      this.inspectionError = findCliCandidates(configured).length === 0
+        ? `未检测到 ${this.spec.displayName} CLI。`
+        : `${this.spec.displayName} CLI 已检测到，但登录、模型目录或 ACP 协议不可用。`;
+    }
+  }
+}
+
 export class ProviderService implements ProviderResolver {
   private instances = new Map<string, RuntimeProviderInstance>();
 
@@ -546,6 +651,11 @@ export class ProviderService implements ProviderResolver {
     }
     if (configuration.driverKind === "ollama-cli") {
       return new OllamaCliRuntime(configuration, this.workspaceDirectory, this.inspectCliOnInitialize);
+    }
+    if (configuration.driverKind === "acp-cli") {
+      const spec = acpSpec(text(configuration.config.adapter) ?? "");
+      if (!spec) throw new AevorenBotError("MODEL_PROVIDER_NOT_FOUND");
+      return new AcpCliRuntime(configuration, spec, this.workspaceDirectory, this.inspectCliOnInitialize);
     }
     throw new AevorenBotError("MODEL_PROVIDER_NOT_FOUND");
   }

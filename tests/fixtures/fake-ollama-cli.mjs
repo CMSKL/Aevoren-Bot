@@ -18,6 +18,7 @@ if (process.argv[2] === "ps") {
 }
 
 if (process.argv[2] !== "run" || process.argv[3] !== "fixture-ollama") process.exit(2);
+if (!process.argv.includes("--think=false") || !process.argv.includes("--nowordwrap")) process.exit(4);
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { input += chunk; });
