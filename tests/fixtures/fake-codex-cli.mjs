@@ -6,7 +6,21 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 
+if (process.argv.includes("exec")) {
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) input += chunk;
+  if (!input.includes("[user]")) process.exit(3);
+  const sendExec = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
+  sendExec({ type: "thread.started", thread_id: "fixture-exec-thread" });
+  sendExec({ type: "turn.started" });
+  sendExec({ type: "item.completed", item: { type: "agent_message", text: "Exec reply" } });
+  sendExec({ type: "turn.completed" });
+  process.exit(0);
+}
+
 if (!process.argv.includes("app-server")) process.exit(2);
+if (process.env.FAKE_CODEX_APP_SERVER_FAIL === "1") process.exit(4);
 
 const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 const lines = createInterface({ input: process.stdin });

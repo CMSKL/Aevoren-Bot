@@ -122,6 +122,8 @@ jobs:
             const result = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/aevoren-dmg-notary.json", "utf8"));
             if (result.status !== "Accepted") throw new Error(`DMG notarization failed with status ${result.status ?? "<missing>"}`);
           '
+      - name: Staple disk image and refresh update metadata
+        run: pnpm release:finalize:mac
       - name: Verify signature, Gatekeeper and notarization ticket
         shell: bash
         run: |

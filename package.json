@@ -1,7 +1,7 @@
 {
   "name": "aevoren-bot",
   "productName": "Aevoren Bot",
-  "version": "0.2.0-beta.3",
+  "version": "0.2.0-beta.4",
   "private": true,
   "description": "Aevoren Bot is a reliable local desktop workspace for persistent AI bots.",
   "repository": {
@@ -21,6 +21,7 @@
     "test:smoke": "pnpm build && playwright test",
     "package:mac": "pnpm build && electron-builder --config build/electron-builder.config.cjs --mac --arm64 --dir --publish never",
     "release:mac": "pnpm build && electron-builder --config build/electron-builder.config.cjs --mac --arm64 --publish never",
+    "release:finalize:mac": "node scripts/finalize-notarized-macos-release.mjs dist",
     "release:prepare": "node scripts/verify-macos-release-assets.mjs dist",
     "release:verify": "node scripts/verify-release-version.mjs",
     "diagnostics:room": "node scripts/room-diagnostics.ts",
@@ -41,6 +42,7 @@
     "@types/node": "22.20.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "app-builder-lib": "26.15.3",
     "@types/semver": "7.7.1",
     "@vitejs/plugin-react": "5.2.0",
     "electron": "44.3.0",

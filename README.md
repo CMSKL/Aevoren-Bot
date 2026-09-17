@@ -89,7 +89,7 @@ pnpm validate
 ## 数据与安全
 
 - SQLite 数据库位于 Electron `userData` 目录；
-- 数据库当前为 v14：v3～v7 增加 Room、多 Agent Runtime/Handoff、自动路由、拒绝审计和 Bot 侧边栏状态，v8 增加显式 Memory，v9 增加 Approval 与 Tool Journal，v10 增加 Workspace Registry 和工具失败终态，v11～v12 增加 Room 侧边栏状态，v13 增加 Provider Registry、Bot 模型选择和 Runtime Provider 快照，v14 增加 Claude/Ollama CLI 实例与 Runtime 路由；全部迁移按版本顺序执行并保留旧逻辑记录；
+- 数据库当前为 v15：v3～v7 增加 Room、多 Agent Runtime/Handoff、自动路由、拒绝审计和 Bot 侧边栏状态，v8 增加显式 Memory，v9 增加 Approval 与 Tool Journal，v10 增加 Workspace Registry 和工具失败终态，v11～v12 增加 Room 侧边栏状态，v13 增加 Provider Registry、Bot 模型选择和 Runtime Provider 快照，v14 增加 Claude/Ollama CLI 实例与 Runtime 路由，v15 增加有界 ACP CLI 实例与 Runtime 路由；全部迁移按版本顺序执行并保留旧逻辑记录；
 - P0-A beta 与 P0-B 并行验证时必须使用不同的 `AEVOREN_BOT_USER_DATA_DIR`；不支持用旧代码继续写入已升级的 v2 数据库；
 - 可用 `AEVOREN_BOT_USER_DATA_DIR` 为测试指定隔离目录；
 - 可用 `AEVOREN_BOT_DB_PATH` 单独覆盖数据库路径；

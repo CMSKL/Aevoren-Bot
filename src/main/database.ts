@@ -1013,6 +1013,79 @@ export const MIGRATIONS = [
         WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested');
     `,
   },
+  {
+    version: 15,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE provider_instances_v15 (
+        id TEXT PRIMARY KEY,
+        driver_kind TEXT NOT NULL CHECK (driver_kind IN ('openai-compatible', 'codex-cli', 'claude-cli', 'ollama-cli', 'acp-cli')),
+        display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 120),
+        config_json TEXT NOT NULL CHECK (json_valid(config_json) AND json_type(config_json) = 'object'),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO provider_instances_v15
+      SELECT id, driver_kind, display_name, config_json, enabled, version, created_at, updated_at
+      FROM provider_instances;
+      DROP TABLE provider_instances;
+      ALTER TABLE provider_instances_v15 RENAME TO provider_instances;
+
+      INSERT INTO provider_instances(id, driver_kind, display_name, config_json, enabled, version, created_at, updated_at)
+      VALUES
+        ('grok.default', 'acp-cli', 'Grok Build', json_object('adapter', 'grok', 'cliPath', 'grok'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('kimi.default', 'acp-cli', 'Kimi Code', json_object('adapter', 'kimi', 'cliPath', 'kimi'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('droid.default', 'acp-cli', 'Factory Droid', json_object('adapter', 'droid', 'cliPath', 'droid'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('cursor.default', 'acp-cli', 'Cursor Agent', json_object('adapter', 'cursor', 'cliPath', 'cursor-agent'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('opencode.default', 'acp-cli', 'OpenCode', json_object('adapter', 'opencode', 'cliPath', 'opencode'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('qwen.default', 'acp-cli', 'Qwen Code', json_object('adapter', 'qwen', 'cliPath', 'qwen'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('hermes.default', 'acp-cli', 'Hermes', json_object('adapter', 'hermes', 'cliPath', 'hermes'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('gemini.default', 'acp-cli', 'Gemini CLI', json_object('adapter', 'gemini', 'cliPath', 'gemini'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      CREATE INDEX provider_instances_by_driver ON provider_instances(driver_kind, enabled, created_at, id);
+
+      CREATE TABLE runtime_runs_v15 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        execution_key TEXT NOT NULL,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE RESTRICT,
+        attempt_no INTEGER NOT NULL CHECK (attempt_no > 0),
+        state TEXT NOT NULL CHECK (state IN (
+          'created', 'dispatching', 'running', 'streaming', 'cancel-requested',
+          'completed', 'failed', 'cancelled', 'interrupted'
+        )),
+        route TEXT NOT NULL CHECK (route IN ('fake', 'openai-compatible', 'codex-cli', 'claude-cli', 'ollama-cli', 'acp-cli')),
+        provider_instance_id TEXT NOT NULL,
+        provider_model_id TEXT NOT NULL,
+        input_generation INTEGER NOT NULL,
+        input_seq INTEGER NOT NULL,
+        prompt_cutoff_seq INTEGER NOT NULL,
+        assistant_entry_id TEXT REFERENCES transcript_entries(id) ON DELETE SET NULL,
+        provider_request_id TEXT,
+        prompt_manifest_json TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        last_error_code TEXT,
+        created_at TEXT NOT NULL,
+        accepted_at TEXT,
+        last_activity_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (execution_key, attempt_no)
+      );
+      INSERT INTO runtime_runs_v15
+      SELECT id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route,
+             provider_instance_id, provider_model_id, input_generation, input_seq, prompt_cutoff_seq,
+             assistant_entry_id, provider_request_id, prompt_manifest_json, version, last_error_code,
+             created_at, accepted_at, last_activity_at, finished_at
+      FROM runtime_runs;
+      DROP TABLE runtime_runs;
+      ALTER TABLE runtime_runs_v15 RENAME TO runtime_runs;
+      CREATE UNIQUE INDEX runtime_one_active_per_session
+        ON runtime_runs(session_id)
+        WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested');
+    `,
+  },
 ] as const;
 
 type BotRow = {

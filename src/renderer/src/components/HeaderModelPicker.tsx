@@ -19,6 +19,7 @@ function providerMark(provider: ProviderInstanceInfo): string {
   if (provider.driverKind === "codex-cli") return "C";
   if (provider.driverKind === "claude-cli") return "Cl";
   if (provider.driverKind === "ollama-cli") return "O";
+  if (provider.driverKind === "acp-cli") return provider.displayName.split(/\s+/u).map((part) => part[0]).join("").slice(0, 2);
   return "API";
 }
 

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -37,6 +38,17 @@ export type CodexCliInspection = {
   authenticated: boolean;
   accountLabel: string | null;
   models: CodexModelCatalog;
+};
+
+const FALLBACK_CODEX_MODELS: CodexModelCatalog = {
+  default: "gpt-6-astra",
+  options: [
+    { id: "gpt-6-astra", label: "GPT-6 Astra" },
+    { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+    { id: "gpt-5.5", label: "GPT-5.5" },
+  ],
 };
 
 type PendingRequest = {
@@ -308,6 +320,118 @@ export async function inspectCodexCli(cliCommand: string, cwd: string): Promise<
   }
 }
 
+export async function inspectCodexCliFallback(cliCommand: string): Promise<CodexCliInspection> {
+  const probe = await probeCliVersion(cliCommand);
+  const sourceHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex");
+  const configured = readCodexConfiguredSelection();
+  const options = FALLBACK_CODEX_MODELS.options.map((model) => ({ ...model }));
+  let defaultModel = FALLBACK_CODEX_MODELS.default;
+  if (configured) {
+    const id = configured.provider === "openai" ? configured.model : `${configured.provider}::${configured.model}`;
+    if (!options.some((model) => model.id === id)) {
+      options.push({ id, label: configured.model, ...(configured.provider !== "openai" ? { provider: configured.provider, custom: true } : {}) });
+    }
+    defaultModel = id;
+  }
+  return {
+    path: probe.path,
+    version: probe.version,
+    authenticated: existsSync(join(sourceHome, "auth.json")),
+    accountLabel: null,
+    models: { default: defaultModel, options },
+  };
+}
+
+class CodexExecProvider implements ModelProvider {
+  constructor(
+    private readonly cliCommand: string,
+    private readonly modelId: string,
+    private readonly cwd: string,
+  ) {}
+
+  async *run(messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
+    const path = resolveCliPath(this.cliCommand, cliEnvironment());
+    if (!path || !this.modelId) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
+    mkdirSync(this.cwd, { recursive: true, mode: 0o700 });
+    const selection = codexSelection(this.modelId);
+    const prompt = promptParts(messages);
+    const child = spawn(path, [
+      "exec",
+      "--json",
+      "--sandbox", "read-only",
+      "--skip-git-repo-check",
+      "--ephemeral",
+      "--ignore-rules",
+      "--color", "never",
+      "--model", selection.model,
+      "-c", `model_provider=${JSON.stringify(selection.modelProvider)}`,
+      ...DISABLED_CODEX_FEATURES.flatMap((feature) => ["--disable", feature]),
+      "-",
+    ], {
+      cwd: this.cwd,
+      env: isolatedCodexEnvironment(join(this.cwd, ".codex-home")),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let processError = false;
+    let started = false;
+    let completed = false;
+    let requestId: string = randomUUID();
+    child.once("error", () => { processError = true; });
+    child.stderr.resume();
+    const abort = (): void => { child.kill("SIGTERM"); };
+    signal.addEventListener("abort", abort, { once: true });
+    child.stdin.end(`${prompt.developerInstructions}\n\n${prompt.input}`);
+    const lines = createInterface({ input: child.stdout });
+    try {
+      for await (const line of lines) {
+        if (!line.trim()) continue;
+        let event: JsonObject;
+        try {
+          event = JSON.parse(line) as JsonObject;
+        } catch {
+          continue;
+        }
+        if (event.type === "thread.started" && typeof event.thread_id === "string") requestId = event.thread_id;
+        if ((event.type === "thread.started" || event.type === "turn.started") && !started) {
+          started = true;
+          yield { type: "started", requestId };
+          continue;
+        }
+        if (event.type === "item.completed") {
+          const item = object(event.item);
+          if (["agent_message", "agentMessage"].includes(String(item?.type)) && typeof item?.text === "string" && item.text) {
+            if (!started) {
+              started = true;
+              yield { type: "started", requestId };
+            }
+            yield { type: "delta", text: item.text };
+          }
+          continue;
+        }
+        if (event.type === "turn.completed") {
+          if (!started) yield { type: "started", requestId };
+          completed = true;
+          yield { type: "completed", finishReason: "stop" };
+          return;
+        }
+        if (event.type === "turn.failed" || event.type === "error") throw new AevorenBotError("MODEL_REQUEST_REFUSED");
+      }
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+      if (processError) throw new AevorenBotError("MODEL_CLI_INVALID");
+      if (!completed) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
+    } finally {
+      signal.removeEventListener("abort", abort);
+      lines.close();
+      if (child.exitCode === null) child.kill("SIGTERM");
+    }
+  }
+
+  async testConnection(_signal: AbortSignal): Promise<void> {
+    const inspection = await inspectCodexCliFallback(this.cliCommand);
+    if (!inspection.authenticated) throw new AevorenBotError("MODEL_PROVIDER_UNAVAILABLE", undefined, false, { reason: "authentication" });
+  }
+}
+
 export class CodexCliProvider implements ModelProvider {
   constructor(
     private readonly cliCommand: string,
@@ -316,6 +440,19 @@ export class CodexCliProvider implements ModelProvider {
   ) {}
 
   async *run(messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
+    let accepted = false;
+    try {
+      for await (const event of this.runAppServer(messages, signal)) {
+        if (event.type === "started") accepted = true;
+        yield event;
+      }
+    } catch (error) {
+      if (accepted || signal.aborted) throw error;
+      yield* new CodexExecProvider(this.cliCommand, this.modelId, this.cwd).run(messages, signal);
+    }
+  }
+
+  private async *runAppServer(messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
     const path = resolveCliPath(this.cliCommand, cliEnvironment());
     if (!path || !this.modelId) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
     const client = new CodexRpcClient(path, this.cwd);
@@ -423,7 +560,7 @@ export class CodexCliProvider implements ModelProvider {
   }
 
   async testConnection(_signal: AbortSignal): Promise<void> {
-    const inspected = await inspectCodexCli(this.cliCommand, this.cwd);
+    const inspected = await inspectCodexCli(this.cliCommand, this.cwd).catch(() => inspectCodexCliFallback(this.cliCommand));
     if (!inspected.authenticated) throw new AevorenBotError("MODEL_PROVIDER_UNAVAILABLE", undefined, false, { reason: "authentication" });
   }
 }

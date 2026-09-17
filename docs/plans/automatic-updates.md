@@ -40,8 +40,8 @@ Beta/Stable 都使用构建时固化的公开 GitHub Provider，固定为 `CMSKL
 1. `package.json` SemVer 与 Git tag 完全一致；
 2. Beta tag 所在提交已进入 `beta`，Stable tag 所在提交已进入 `master`；
 3. 使用 `Developer ID Application` 签名并启用 Hardened Runtime；
-4. App 公证成功且 ticket 已 stapled；最终 DMG 在生成更新元数据前完成 Developer ID 签名，并以不改变文件字节的方式单独取得在线公证 ticket；
-5. App 的 `codesign --verify`、Gatekeeper `spctl` 和 `stapler validate` 均通过，DMG 的 `codesign --verify` 与 `spctl --type open` 均通过；
+4. App 公证成功且 ticket 已 stapled；DMG 单独公证后执行 `release:finalize:mac`，装订 ticket、重建 DMG blockmap 并刷新频道 manifest 的 SHA-512/size；
+5. App 的 `codesign --verify`、Gatekeeper `spctl` 和 `stapler validate` 均通过，DMG 的 `codesign --verify`、`stapler validate` 与 `spctl --type open` 均通过；
 6. Draft Release 同时包含 ZIP、DMG、blockmap、`beta-mac.yml` 或 `latest-mac.yml`、`SHASUMS256.txt`；
 7. Draft 资产重新下载后必须同时通过 SHA-256 清单和 manifest SHA-512 校验；
 8. 发布后 `gh release verify` 必须通过，仓库必须启用 Immutable Releases；
@@ -70,5 +70,7 @@ pnpm package:mac
 ```bash
 pnpm release:prepare
 ```
+
+当项目目录位于 iCloud/File Provider 管理路径时，构建目录可能在签名前被重新附加 FinderInfo 或 File Provider 扩展属性。发布构建应将 `AEVOREN_DIST_DIR` 指向 `/tmp` 等非 File Provider 目录；CI 未设置时仍默认使用仓库 `dist`。DMG 获得 Apple Accepted 状态后，必须先执行 `release:finalize:mac`，再执行 `release:prepare`，不得发布 manifest 与已 stapled DMG 字节不一致的资产。
 
 正式 Release 由 `v*` Tag 触发 GitHub Actions。Release 构建必须提供签名和公证环境变量；本地 Development 不需要、也不应伪装成已公证发布包。
