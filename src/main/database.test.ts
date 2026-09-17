@@ -414,6 +414,46 @@ describe("AppRepository", () => {
     expect(repository.listRoomMembers(detail.room.id)).toHaveLength(3);
   });
 
+  it("deletes mixed Bot and Room selections atomically", () => {
+    const repository = memoryRepository();
+    const first = repository.createBot();
+    const second = repository.createBot();
+    const third = repository.createBot();
+    const selectedRoom = repository.createRoom({ memberBotIds: [second.bot.id, third.bot.id], name: "批量删除群聊" });
+    const affectedRoom = repository.createRoom({ memberBotIds: [first.bot.id, second.bot.id, third.bot.id], name: "保留群聊" });
+
+    const result = repository.deleteConversations({ botIds: [first.bot.id], roomIds: [selectedRoom.room.id] });
+
+    expect(result.rooms).toEqual([{ id: selectedRoom.room.id }]);
+    expect(result.bots).toEqual([{
+      id: first.bot.id,
+      affectedRoomIds: [affectedRoom.room.id],
+      archivedRoomIds: [],
+    }]);
+    expect(repository.listBots().map((bot) => bot.id)).toEqual([second.bot.id, third.bot.id]);
+    expect(() => repository.getRoom(selectedRoom.room.id)).toThrowError(expect.objectContaining({ code: "ROOM_NOT_FOUND" }));
+    expect(repository.listRoomMembers(affectedRoom.room.id).map((member) => member.botId)).toEqual([second.bot.id, third.bot.id]);
+    expect(repository.getRoom(affectedRoom.room.id)).toMatchObject({ archivedAt: null, membershipVersion: 2 });
+  });
+
+  it("preflights every batch target and leaves all conversations unchanged when one Bot is busy", () => {
+    const repository = memoryRepository();
+    const first = repository.createBot();
+    const busy = repository.createBot();
+    const room = repository.createRoom({ memberBotIds: [first.bot.id, busy.bot.id], name: "不得部分删除" });
+    const nonce = crypto.randomUUID();
+    repository.prepareMessage({ sessionId: busy.session.id, clientNonce: nonce, text: "正在运行" });
+    repository.createRuntimeRun(nonce, "fake", manifest(busy.session.id, busy.bot.id));
+
+    expect(() => repository.deleteConversations({
+      botIds: [first.bot.id, busy.bot.id],
+      roomIds: [room.room.id],
+    })).toThrowError(expect.objectContaining({ code: "BOT_BUSY" }));
+    expect(repository.listBots().map((bot) => bot.id)).toEqual([first.bot.id, busy.bot.id]);
+    expect(repository.getRoom(room.room.id).name).toBe("不得部分删除");
+    expect(repository.listRoomMembers(room.room.id)).toHaveLength(2);
+  });
+
   it("deduplicates the same nonce and rejects a different body", () => {
     const repository = memoryRepository();
     const { session } = repository.createBot();

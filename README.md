@@ -109,6 +109,8 @@ pnpm validate
 - [P0-B Runtime 验收标准单](docs/validation/p0-b-acceptance-checklist.md)
 - [Provider Registry 与 CLI 模型配置迁移验收](docs/validation/provider-cli-migration.md)
 - [OpenMausBot 模型 CLI 对齐分析](docs/analysis/openmaus-model-cli-alignment.md)
+- [Grok Bot 0.55 侧边栏 Shift 多选逆向分析](docs/reverse-engineering/grok-bot/18-sidebar-shift-multiselect-batch-delete-055.md)
+- [侧边栏 Shift 多选与批量删除验收](docs/validation/sidebar-multiselect-acceptance.md)
 - [P0-B Runtime 验收结果](docs/validation/p0-b-acceptance-results.md)
 - [P0-B 脱敏验收证据](docs/validation/evidence/p0-b/acceptance-evidence.md)
 - [P1-A1 确定性 Room 计划](docs/plans/p1-a-deterministic-room-collaboration.md)

@@ -112,6 +112,49 @@ textarea:focus-visible {
   letter-spacing: -0.25px;
 }
 
+.sidebar-selection-count {
+  color: var(--text);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.sidebar-selection-actions {
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-selection-action {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.sidebar-selection-action:hover,
+.sidebar-selection-action:focus-visible {
+  color: var(--text);
+  background: var(--surface-soft);
+}
+
+.sidebar-selection-action.danger {
+  color: var(--danger);
+}
+
+.sidebar-selection-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.sidebar-selection-action svg {
+  width: 16px;
+  height: 16px;
+}
+
 .new-bot-button,
 .primary-button {
   border: 0;
@@ -278,6 +321,17 @@ textarea:focus-visible {
   border-color: var(--border-strong);
 }
 
+.bot-row.multi-selected {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-selected) 76%, var(--accent) 24%);
+  border-color: color-mix(in srgb, var(--border-strong) 60%, var(--accent) 40%);
+}
+
+.bot-row.multi-selected .bot-icon {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
 .bot-row svg {
   width: 16px;
   height: 16px;
@@ -367,6 +421,10 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--panel-bg) 96%, transparent);
   box-shadow: var(--shadow-dialog);
   backdrop-filter: blur(18px);
+}
+
+.batch-context-menu {
+  width: 210px;
 }
 
 .bot-context-section {
@@ -2941,6 +2999,11 @@ textarea:focus-visible {
 :root[data-theme="dark"] .bot-row.selected {
   color: var(--text);
   border-color: #383838;
+}
+
+:root[data-theme="dark"] .bot-row.multi-selected {
+  border-color: #606060;
+  background: #303030;
 }
 
 :root[data-theme="dark"] .message-meta time,

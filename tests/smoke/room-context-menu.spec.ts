@@ -284,6 +284,6 @@ test("requires confirmation and permanently deletes only the selected Room", asy
     database.close();
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 });

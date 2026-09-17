@@ -8,6 +8,7 @@ import {
   botPinnedSchema,
   botUnreadSchema,
   botUpdateSchema,
+  conversationBatchDeleteSchema,
   generalSettingsSchema,
   memoryCreateSchema,
   memoryListSchema,
@@ -87,6 +88,9 @@ export function registerIpc(dependencies: IpcDependencies): void {
     );
   };
 
+  handle(IPC.conversationsDeleteBatch, (_event, input: unknown) =>
+    repository.deleteConversations(conversationBatchDeleteSchema.parse(input)),
+  );
   handle(IPC.botsList, () => repository.listBots());
   handle(IPC.botsCreate, () => repository.createBot());
   handle(IPC.botsUpdate, (_event, input: unknown) => {
