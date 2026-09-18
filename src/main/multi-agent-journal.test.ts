@@ -163,8 +163,13 @@ function logicalV5Hash(database: DatabaseSync): string {
   const snapshot = Object.fromEntries(tables.map((table) => {
     const columns = table === "bots"
       ? "id, name, label, description, instructions, version, created_at, updated_at"
-      : "*";
-    return [table, database.prepare(`SELECT ${columns} FROM ${table} ORDER BY rowid`).all()];
+      : table === "runtime_runs"
+        ? "id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route, input_generation, input_seq, prompt_cutoff_seq, assistant_entry_id, provider_request_id, prompt_manifest_json, version, last_error_code, created_at, accepted_at, last_activity_at, finished_at"
+      : table === "rooms"
+        ? "id, name, description, version, membership_version, archived_at, created_at, updated_at"
+        : "*";
+    const where = table === "app_settings" ? " WHERE key NOT LIKE 'provider.%'" : "";
+    return [table, database.prepare(`SELECT ${columns} FROM ${table}${where} ORDER BY rowid`).all()];
   }));
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
@@ -195,9 +200,9 @@ describe("multi-agent RoomRun journal", () => {
 
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(logicalV5Hash(inspected)).toBe(beforeHash);
-    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 },
-    ]);
+    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual(
+      MIGRATIONS.map((migration) => ({ version: migration.version })),
+    );
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(inspected.prepare("PRAGMA table_info(handoff_rejections)").all().map((column) => (
       column as { name: string }
@@ -272,9 +277,9 @@ describe("multi-agent RoomRun journal", () => {
     const reopened = repository(filename);
     expect(reopened.getRoomRun("run").triggerMessageId).toBe("message");
     const inspected = new DatabaseSync(filename, { readOnly: true });
-    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 },
-    ]);
+    expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual(
+      MIGRATIONS.map((migration) => ({ version: migration.version })),
+    );
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     inspected.close();
   });
@@ -720,6 +725,35 @@ describe("multi-agent RoomRun journal", () => {
       targetTurnNonce: randomUUID(),
     })).toThrowError(expect.objectContaining({ code: "RUNTIME_STATE_INVALID" }));
     expect(value.listHandoffs(fixture.run.id)).toHaveLength(1);
+  });
+
+  it("deletes a completed Handoff Room alone or inside a Room batch without violating the parent-turn foreign key", () => {
+    const value = repository();
+    const fixture = createRunFixture(value);
+    const ordinary = value.createRoom({
+      memberBotIds: fixture.bots.slice(0, 2).map((bot) => bot.id),
+      name: "Ordinary room",
+    });
+    startSourceTurn(value, fixture.run.id, fixture.turns[0]!.id);
+    const handoff = value.createHandoff(handoffInput(
+      fixture.run.id,
+      fixture.turns[0]!.id,
+      fixture.bots[1]!.id,
+      fixture.run.triggerMessageId,
+    ));
+    value.transitionAgentTurn(fixture.turns[0]!.id, "completed", { outcome: { kind: "sent" } });
+    value.transitionAgentTurn(handoff.targetTurn.id, "cancelled", { outcome: { kind: "cancelled" } });
+    value.transitionRoomRun(fixture.run.id, "completed");
+
+    expect(value.deleteConversations({
+      botIds: [],
+      roomIds: [ordinary.room.id, fixture.detail.room.id],
+    })).toEqual({
+      bots: [],
+      rooms: [{ id: ordinary.room.id }, { id: fixture.detail.room.id }],
+    });
+    expect(value.listRooms(true)).toEqual([]);
+    expect(() => value.getRoom(fixture.detail.room.id)).toThrowError(expect.objectContaining({ code: "ROOM_NOT_FOUND" }));
   });
 
   it("rejects self Handoffs and same-digest cycles across retry and visibility changes", () => {

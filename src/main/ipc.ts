@@ -1,42 +1,82 @@
 import { clipboard, ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { IPC } from "@shared/channels";
 import {
+  approvalResolutionSchema,
   batchIdSchema,
   botHiddenSchema,
   botIdSchema,
   botPinnedSchema,
   botUnreadSchema,
   botUpdateSchema,
-  modelConfigurationSchema,
+  capabilitySnapshotInputSchema,
+  conversationBatchDeleteSchema,
+  generalSettingsSchema,
+  memoryCreateSchema,
+  memoryListSchema,
+  memoryMutationSchema,
+  memoryUpdateSchema,
+  mcpServerEnabledSchema,
+  mcpServerIdSchema,
+  mcpServerMutationIdSchema,
+  mcpServerMutationSchema,
   nonceSchema,
   roomArchiveSchema,
   roomCreateSchema,
+  roomHiddenSchema,
   roomIdSchema,
   roomListSchema,
   roomMembershipSchema,
+  roomPinnedSchema,
   roomSendCommandSchema,
+  roomUnreadSchema,
   roomUpdateSchema,
+  routineCreateSchema,
+  routineEnabledSchema,
+  routineIdSchema,
+  routineMutationSchema,
+  routineUpdateSchema,
   runIdSchema,
   sendCommandSchema,
+  providerInstanceIdInputSchema,
+  saveCliProviderSchema,
+  saveOpenAiCompatibleProviderSchema,
   sessionIdSchema,
+  toolSessionScopeSchema,
   turnIdSchema,
+  workspaceMutationSchema,
 } from "@shared/schemas";
 import { apiResult, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
-import { OpenAiCompatibleProvider } from "./model";
-import type { ModelSettingsService } from "./settings";
+import type { GeneralSettingsService } from "./settings";
+import type { ProviderService } from "./provider-service";
 import type { SendWorker } from "./send-worker";
 import type { RoomCoordinator } from "./room-coordinator";
+import type { WorkspaceService } from "./workspace-service";
+import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
+import type { UpdateService } from "./update-service";
+import type { CapabilityRegistry } from "./capability-registry";
+import type { McpService } from "./mcp-service";
+import type { RoutineService } from "./routine-service";
 
 type IpcDependencies = {
   window: BrowserWindow;
   repository: AppRepository;
-  settings: ModelSettingsService;
+  providers: ProviderService;
+  generalSettings: GeneralSettingsService;
   sendWorker: SendWorker;
   roomCoordinator: RoomCoordinator;
+  workspaceService: WorkspaceService;
+  workspaceToolCoordinator: WorkspaceToolCoordinator;
+  capabilityRegistry: CapabilityRegistry;
+  mcpService: McpService;
+  routineService: RoutineService;
+  updateService: UpdateService;
+  pickWorkspaceRoot(): Promise<string | null>;
   forceFakeProvider: boolean;
   rendererReady(): void;
   confirmClose(canClose: boolean): void;
+  prepareUpdateInstall(): void;
+  cancelUpdateInstall(): void;
 };
 
 function isTrusted(event: IpcMainEvent | IpcMainInvokeEvent, window: BrowserWindow): boolean {
@@ -50,7 +90,7 @@ function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
 }
 
 export function registerIpc(dependencies: IpcDependencies): void {
-  const { window, repository, settings, sendWorker, roomCoordinator } = dependencies;
+  const { window, repository, providers, generalSettings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
 
   const handle = <TArgs extends unknown[], TResult>(
     channel: string,
@@ -64,6 +104,47 @@ export function registerIpc(dependencies: IpcDependencies): void {
     );
   };
 
+  handle(IPC.capabilitiesGetSnapshot, (_event, input: unknown) =>
+    dependencies.capabilityRegistry.getSnapshot(capabilitySnapshotInputSchema.parse(input)),
+  );
+  handle(IPC.mcpList, () => dependencies.mcpService.list());
+  handle(IPC.mcpSave, (_event, input: unknown) => dependencies.mcpService.save(mcpServerMutationSchema.parse(input)));
+  handle(IPC.mcpSetEnabled, (_event, input: unknown) => {
+    const parsed = mcpServerEnabledSchema.parse(input);
+    return dependencies.mcpService.setEnabled(parsed.id, parsed.expectedVersion, parsed.enabled);
+  });
+  handle(IPC.mcpProbe, (_event, id: unknown) => dependencies.mcpService.probe(mcpServerIdSchema.parse(id)));
+  handle(IPC.mcpAuthorize, (_event, id: unknown) => dependencies.mcpService.authorize(mcpServerIdSchema.parse(id)));
+  handle(IPC.mcpCancelAuthorization, (_event, id: unknown) => dependencies.mcpService.cancelAuthorization(mcpServerIdSchema.parse(id)));
+  handle(IPC.mcpClearAuthorization, (_event, input: unknown) => {
+    const parsed = mcpServerMutationIdSchema.parse(input);
+    return dependencies.mcpService.clearAuthorization(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.mcpDelete, (_event, input: unknown) => {
+    const parsed = mcpServerMutationIdSchema.parse(input);
+    return dependencies.mcpService.delete(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.routinesList, () => dependencies.routineService.list());
+  handle(IPC.routinesListRuns, (_event, routineId: unknown) =>
+    dependencies.routineService.listRuns(routineId === undefined ? undefined : routineIdSchema.parse(routineId)),
+  );
+  handle(IPC.routinesCreate, (_event, input: unknown) => dependencies.routineService.create(routineCreateSchema.parse(input)));
+  handle(IPC.routinesUpdate, (_event, input: unknown) => {
+    const parsed = routineUpdateSchema.parse(input);
+    return dependencies.routineService.update(parsed.id, parsed.expectedVersion, parsed.patch);
+  });
+  handle(IPC.routinesSetEnabled, (_event, input: unknown) => {
+    const parsed = routineEnabledSchema.parse(input);
+    return dependencies.routineService.setEnabled(parsed.id, parsed.expectedVersion, parsed.enabled);
+  });
+  handle(IPC.routinesRunNow, (_event, id: unknown) => dependencies.routineService.runNow(routineIdSchema.parse(id)));
+  handle(IPC.routinesDelete, (_event, input: unknown) => {
+    const parsed = routineMutationSchema.parse(input);
+    return dependencies.routineService.delete(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.conversationsDeleteBatch, (_event, input: unknown) =>
+    repository.deleteConversations(conversationBatchDeleteSchema.parse(input)),
+  );
   handle(IPC.botsList, () => repository.listBots());
   handle(IPC.botsCreate, () => repository.createBot());
   handle(IPC.botsUpdate, (_event, input: unknown) => {
@@ -89,6 +170,51 @@ export function registerIpc(dependencies: IpcDependencies): void {
     repository.getBot(parsed);
     clipboard.writeText(parsed);
   });
+  handle(IPC.memoriesList, (_event, input: unknown) => {
+    const parsed = memoryListSchema.parse(input);
+    return "botId" in parsed
+      ? repository.listMemories(parsed.botId, parsed.includeDeleted ?? false)
+      : repository.listScopedMemories({ scope: parsed.scope, scopeKey: parsed.scopeKey }, parsed.includeDeleted ?? false);
+  });
+  handle(IPC.memoriesCreate, (_event, input: unknown) => {
+    const parsed = memoryCreateSchema.parse(input);
+    return "botId" in parsed
+      ? repository.createMemory(parsed.botId, parsed.content)
+      : repository.createScopedMemory({ scope: parsed.scope, scopeKey: parsed.scopeKey }, parsed.content);
+  });
+  handle(IPC.memoriesUpdate, (_event, input: unknown) => {
+    const parsed = memoryUpdateSchema.parse(input);
+    return repository.updateMemory(parsed.id, parsed.expectedVersion, parsed.content);
+  });
+  handle(IPC.memoriesDelete, (_event, input: unknown) => {
+    const parsed = memoryMutationSchema.parse(input);
+    return repository.deleteMemory(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.memoriesRestore, (_event, input: unknown) => {
+    const parsed = memoryMutationSchema.parse(input);
+    return repository.restoreMemory(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.workspacesList, () => repository.listWorkspaces());
+  handle(IPC.workspacesAdd, async () => {
+    const rootPath = await dependencies.pickWorkspaceRoot();
+    return rootPath ? workspaceService.registerRoot(rootPath) : null;
+  });
+  handle(IPC.workspacesRemove, (_event, input: unknown) => {
+    const parsed = workspaceMutationSchema.parse(input);
+    return repository.removeWorkspace(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.toolsList, (_event, input: unknown) => {
+    const parsed = toolSessionScopeSchema.parse(input);
+    return repository.listToolInvocations(parsed.sessionId);
+  });
+  handle(IPC.approvalsListPending, (_event, input: unknown) => {
+    const parsed = toolSessionScopeSchema.parse(input);
+    return repository.listPendingApprovalRequests(parsed.sessionId);
+  });
+  handle(IPC.approvalsResolve, async (_event, input: unknown) => {
+    const parsed = approvalResolutionSchema.parse(input);
+    return workspaceToolCoordinator.resolve(parsed.sessionId, parsed.id, parsed.expectedVersion, parsed.resolution);
+  });
   handle(IPC.roomsList, (_event, input: unknown) => repository.listRooms(roomListSchema.parse(input)?.includeArchived ?? false));
   handle(IPC.roomsCreate, (_event, input: unknown) => repository.createRoom(roomCreateSchema.parse(input)));
   handle(IPC.roomsGet, (_event, id: unknown) => repository.getRoomDetail(roomIdSchema.parse(id)));
@@ -100,6 +226,24 @@ export function registerIpc(dependencies: IpcDependencies): void {
     const parsed = roomArchiveSchema.parse(input);
     return repository.archiveRoom(parsed.id, parsed.archived);
   });
+  handle(IPC.roomsSetPinned, (_event, input: unknown) => {
+    const parsed = roomPinnedSchema.parse(input);
+    return repository.setRoomPinned(parsed.id, parsed.pinned);
+  });
+  handle(IPC.roomsSetUnread, (_event, input: unknown) => {
+    const parsed = roomUnreadSchema.parse(input);
+    return repository.setRoomUnread(parsed.id, parsed.unread);
+  });
+  handle(IPC.roomsSetHidden, (_event, input: unknown) => {
+    const parsed = roomHiddenSchema.parse(input);
+    return repository.setRoomHidden(parsed.id, parsed.hidden);
+  });
+  handle(IPC.roomsCopyConversationId, (_event, id: unknown) => {
+    const parsed = roomIdSchema.parse(id);
+    repository.getRoom(parsed);
+    clipboard.writeText(parsed);
+  });
+  handle(IPC.roomsDelete, (_event, id: unknown) => repository.deleteRoom(roomIdSchema.parse(id)));
   handle(IPC.roomsAddMember, (_event, input: unknown) => {
     const parsed = roomMembershipSchema.parse(input);
     return repository.addRoomMember(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion);
@@ -126,31 +270,39 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.roomRuntimeCancel, (_event, batchId: unknown) => roomCoordinator.cancel(batchIdSchema.parse(batchId)));
   handle(IPC.roomRuntimeContinue, (_event, batchId: unknown) => roomCoordinator.continue(batchIdSchema.parse(batchId)));
   handle(IPC.roomRuntimeRetryTurn, (_event, turnId: unknown) => roomCoordinator.retryTurn(turnIdSchema.parse(turnId)));
-  handle(IPC.settingsGetModel, () => settings.getConfiguration());
-  handle(IPC.settingsSaveModel, (_event, input: unknown) => {
-    const parsed = modelConfigurationSchema.parse(input);
-    return settings.saveConfiguration(parsed);
+  handle(IPC.settingsGetGeneral, () => generalSettings.getConfiguration());
+  handle(IPC.settingsSaveGeneral, (_event, input: unknown) =>
+    generalSettings.saveConfiguration(generalSettingsSchema.parse(input)),
+  );
+  handle(IPC.providersList, () => providers.list());
+  handle(IPC.providersScan, () => providers.scan());
+  handle(IPC.providersSaveOpenAiCompatible, async (_event, input: unknown) => {
+    const parsed = saveOpenAiCompatibleProviderSchema.parse(input);
+    if (repository.hasActiveRuntimeForProvider(parsed.instanceId)) throw new AevorenBotError("MODEL_PROVIDER_BUSY");
+    return providers.saveOpenAiCompatible(parsed);
   });
-  handle(IPC.settingsTestModel, async () => {
+  handle(IPC.providersSaveCli, async (_event, input: unknown) => {
+    const parsed = saveCliProviderSchema.parse(input);
+    if (repository.hasActiveRuntimeForProvider(parsed.instanceId)) throw new AevorenBotError("MODEL_PROVIDER_BUSY");
+    return providers.saveCli(parsed);
+  });
+  handle(IPC.providersTest, async (_event, instanceId: unknown) => {
     if (dependencies.forceFakeProvider) return;
-    const configuration = settings.getConfiguration();
-    if (!configuration.modelId || !configuration.apiKeyConfigured) {
-      throw new AevorenBotError("MODEL_NOT_CONFIGURED", "请先保存 Base URL、Model ID 和 API Key。", false);
-    }
-    const provider = new OpenAiCompatibleProvider(
-      configuration.baseUrl,
-      configuration.modelId,
-      settings.getApiKey(),
-    );
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10_000);
+    await providers.test(providerInstanceIdInputSchema.parse(instanceId));
+  });
+  handle(IPC.providersRefresh, (_event, instanceId: unknown) =>
+    providers.refresh(providerInstanceIdInputSchema.parse(instanceId)),
+  );
+  handle(IPC.updatesGetState, () => dependencies.updateService.getState());
+  handle(IPC.updatesCheck, () => dependencies.updateService.check());
+  handle(IPC.updatesRetry, () => dependencies.updateService.retry());
+  handle(IPC.updatesInstallAndRestart, () => {
+    dependencies.prepareUpdateInstall();
     try {
-      await provider.testConnection(controller.signal);
+      return dependencies.updateService.installAndRestart();
     } catch (error) {
-      if (controller.signal.aborted) throw new AevorenBotError("MODEL_CONNECTION_TIMEOUT");
+      dependencies.cancelUpdateInstall();
       throw error;
-    } finally {
-      clearTimeout(timer);
     }
   });
 

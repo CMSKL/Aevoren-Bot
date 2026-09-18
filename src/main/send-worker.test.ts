@@ -2,16 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRepository } from "./database";
 import { AevorenBotError } from "./errors";
 import type { ChatMessage, ModelEvent, ModelProvider } from "./model";
+import type { ProviderResolver } from "./providers/contracts";
 import { RuntimeCoordinator } from "./send-worker";
-import { ModelSettingsService, type SecretCodec } from "./settings";
 
 const repositories: AppRepository[] = [];
-const codec: SecretCodec = {
-  isAvailable: () => true,
-  encrypt: (value) => value,
-  decrypt: (value) => value,
-};
-
 afterEach(() => {
   while (repositories.length > 0) repositories.pop()?.close();
 });
@@ -36,12 +30,11 @@ function createWorker(provider: ModelProvider = new TestProvider()): {
 } {
   const repository = new AppRepository(":memory:");
   repositories.push(repository);
-  const settings = new ModelSettingsService(repository, codec);
   const runtimeEvents = vi.fn();
   const sendStateEvents = vi.fn();
   const worker = new RuntimeCoordinator(
     repository,
-    settings,
+    null,
     { transcript: vi.fn(), sendState: sendStateEvents, runtime: runtimeEvents },
     false,
     provider,
@@ -50,6 +43,34 @@ function createWorker(provider: ModelProvider = new TestProvider()): {
 }
 
 describe("RuntimeCoordinator", () => {
+  it("injects only the executor Bot active Memory into a Direct run", async () => {
+    const captured: ChatMessage[][] = [];
+    const provider: ModelProvider = {
+      async *run(messages) {
+        captured.push(messages);
+        yield { type: "started", requestId: "memory-direct" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, worker } = createWorker(provider);
+    const first = repository.createBot();
+    const second = repository.createBot();
+    repository.createMemory(first.bot.id, "DIRECT_MEMORY_A");
+    repository.createMemory(second.bot.id, "DIRECT_MEMORY_B");
+    const deleted = repository.createMemory(first.bot.id, "DELETED_MEMORY");
+    repository.deleteMemory(deleted.id, deleted.version);
+
+    const sent = worker.send({ sessionId: first.session.id, clientNonce: crypto.randomUUID(), text: "当前问题" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    const serialized = JSON.stringify(captured);
+    expect(serialized).toContain("DIRECT_MEMORY_A");
+    expect(serialized).not.toContain("DIRECT_MEMORY_B");
+    expect(serialized).not.toContain("DELETED_MEMORY");
+    expect(repository.getRuntimeRun(sent.runId).promptManifest).toMatchObject({ schemaVersion: 3 });
+    expect(JSON.stringify(repository.getRuntimeRun(sent.runId).promptManifest)).not.toContain("DIRECT_MEMORY_A");
+  });
+
   it("persists Direct dispatching before the Provider request starts", async () => {
     const dispatchContext: { repository?: AppRepository; nonce: string } = { nonce: "" };
     let journalStateAtDispatch: string | undefined;
@@ -209,6 +230,58 @@ describe("RuntimeCoordinator", () => {
     expect(repository.listRuntimeRuns(session.id).map((run) => run.attemptNo)).toEqual([1, 2]);
     expect(repository.listTranscript(session.id).at(-1)).toMatchObject({ body: "recovered", status: "completed" });
     expect(repository.getSendOrThrow(first.clientNonce).providerRequestId).toBe("request-1");
+  });
+
+  it("keeps the original Provider and model snapshot when a failed run is retried", async () => {
+    const selections: Array<{ providerInstanceId: string; modelId: string }> = [];
+    let originalCalls = 0;
+    const resolver: ProviderResolver = {
+      getRoute: (selection) => selection.providerInstanceId === "codex.default" ? "codex-cli" : "openai-compatible",
+      getCapabilities: () => ({ roomOwnerSelection: false, handoff: false, workspaceTools: false }),
+      createProvider: (selection) => {
+        selections.push(selection);
+        return {
+          async *run() {
+            yield { type: "started", requestId: `snapshot-${selections.length}` };
+            if (selection.providerInstanceId === "openai-compatible.default" && originalCalls++ === 0) {
+              throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
+            }
+            yield { type: "delta", text: selection.modelId };
+            yield { type: "completed", finishReason: "stop" };
+          },
+          testConnection: async () => {},
+        };
+      },
+    };
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const worker = new RuntimeCoordinator(
+      repository,
+      resolver,
+      { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() },
+    );
+    const created = repository.createBot();
+    const original = repository.updateBot(created.bot.id, created.bot.version, {
+      modelSelection: { providerInstanceId: "openai-compatible.default", modelId: "model-a" },
+    });
+    const first = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "retry snapshot" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(first.runId).state).toBe("failed"));
+    repository.updateBot(original.id, original.version, {
+      modelSelection: { providerInstanceId: "codex.default", modelId: "model-b" },
+    });
+
+    const retried = worker.retryRun(first.runId);
+    await vi.waitFor(() => expect(repository.getRuntimeRun(retried.runId).state).toBe("completed"));
+
+    expect(selections).toEqual([
+      { providerInstanceId: "openai-compatible.default", modelId: "model-a" },
+      { providerInstanceId: "openai-compatible.default", modelId: "model-a" },
+    ]);
+    expect(repository.getRuntimeRun(retried.runId)).toMatchObject({
+      providerInstanceId: "openai-compatible.default",
+      providerModelId: "model-a",
+    });
+    expect(repository.listTranscript(created.session.id).at(-1)).toMatchObject({ body: "model-a", status: "completed" });
   });
 
   it("rejects a second active send before adding another user entry", async () => {

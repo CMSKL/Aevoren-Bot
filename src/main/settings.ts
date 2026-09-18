@@ -1,58 +1,56 @@
-import type { ModelConfiguration, SaveModelConfigurationInput } from "@shared/contracts";
-import { AevorenBotError } from "./errors";
+import type { GeneralSettings, LoginItemStatus, SaveGeneralSettings } from "@shared/contracts";
 import type { AppRepository } from "./database";
+import { AevorenBotError } from "./errors";
 
-const BASE_URL_KEY = "model.baseUrl";
-const MODEL_ID_KEY = "model.modelId";
-const API_KEY_KEY = "model.apiKey";
-const DEFAULT_BASE_URL = "https://api.openai.com/v1";
+const APPEARANCE_THEME_KEY = "appearance.theme";
+
+export type LoginItemController = {
+  supported: boolean;
+  get(): { openAtLogin: boolean; status: Exclude<LoginItemStatus, "unsupported"> };
+  set(openAtLogin: boolean): void;
+};
+
+export class GeneralSettingsService {
+  constructor(
+    private readonly repository: AppRepository,
+    private readonly loginItem?: LoginItemController,
+  ) {}
+
+  getConfiguration(): GeneralSettings {
+    const theme = this.repository.getSetting(APPEARANCE_THEME_KEY)?.value;
+    const appearance = theme === "light" || theme === "dark" ? theme : "system";
+    if (!this.loginItem?.supported) {
+      return { theme: appearance, launchAtLogin: false, launchAtLoginSupported: false, launchAtLoginStatus: "unsupported" };
+    }
+    try {
+      const current = this.loginItem.get();
+      return {
+        theme: appearance,
+        launchAtLogin: current.openAtLogin,
+        launchAtLoginSupported: true,
+        launchAtLoginStatus: current.status,
+      };
+    } catch {
+      return { theme: appearance, launchAtLogin: false, launchAtLoginSupported: true, launchAtLoginStatus: "not-found" };
+    }
+  }
+
+  saveConfiguration(input: SaveGeneralSettings): GeneralSettings {
+    if (input.theme !== undefined) this.repository.setSetting(APPEARANCE_THEME_KEY, input.theme, false);
+    if (input.launchAtLogin !== undefined) {
+      if (!this.loginItem?.supported) throw new AevorenBotError("SYSTEM_SETTING_UNAVAILABLE");
+      try {
+        this.loginItem.set(input.launchAtLogin);
+      } catch {
+        throw new AevorenBotError("SYSTEM_SETTING_FAILED");
+      }
+    }
+    return this.getConfiguration();
+  }
+}
 
 export interface SecretCodec {
   isAvailable(): boolean;
   encrypt(value: string): string;
   decrypt(value: string): string;
-}
-
-export class ModelSettingsService {
-  constructor(
-    private readonly repository: AppRepository,
-    private readonly secretCodec: SecretCodec,
-  ) {}
-
-  getConfiguration(): ModelConfiguration {
-    return {
-      baseUrl: this.repository.getSetting(BASE_URL_KEY)?.value ?? DEFAULT_BASE_URL,
-      modelId: this.repository.getSetting(MODEL_ID_KEY)?.value ?? "",
-      apiKeyConfigured: this.repository.getSetting(API_KEY_KEY) !== null,
-    };
-  }
-
-  saveConfiguration(input: SaveModelConfigurationInput): ModelConfiguration {
-    this.repository.setSetting(BASE_URL_KEY, input.baseUrl.replace(/\/$/, ""), false);
-    this.repository.setSetting(MODEL_ID_KEY, input.modelId, false);
-    if (input.apiKey) {
-      if (!this.secretCodec.isAvailable()) {
-        throw new AevorenBotError(
-          "SECURE_STORAGE_UNAVAILABLE",
-          "系统安全存储当前不可用，API Key 未保存。",
-          false,
-        );
-      }
-      this.repository.setSetting(API_KEY_KEY, this.secretCodec.encrypt(input.apiKey), true);
-    }
-    return this.getConfiguration();
-  }
-
-  getApiKey(): string {
-    const setting = this.repository.getSetting(API_KEY_KEY);
-    if (!setting) throw new AevorenBotError("MODEL_NOT_CONFIGURED", "请先在模型设置中保存 API Key。", false);
-    if (!setting.encrypted || !this.secretCodec.isAvailable()) {
-      throw new AevorenBotError("SECURE_STORAGE_UNAVAILABLE", "无法安全读取模型 API Key。", false);
-    }
-    try {
-      return this.secretCodec.decrypt(setting.value);
-    } catch {
-      throw new AevorenBotError("SECURE_STORAGE_UNAVAILABLE", "无法安全读取模型 API Key。", false);
-    }
-  }
 }

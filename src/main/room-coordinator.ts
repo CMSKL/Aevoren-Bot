@@ -10,6 +10,7 @@ import type {
   RoomTurn,
   RoomTurnState,
   RoomRoutingMode,
+  ModelSelection,
 } from "@shared/contracts";
 import { digestRoomCommand, type AppRepository } from "./database";
 import { asAppError, AevorenBotError } from "./errors";
@@ -27,6 +28,11 @@ const DEFAULT_MAX_HOPS = 6;
 const DEFAULT_MAX_TARGETS_PER_TURN = 2;
 const DEFAULT_ROOT_DEADLINE_MS = 5 * 60_000;
 const ROOM_ROUTER_TIMEOUT_MS = 30_000;
+const INTERNAL_HANDOFF_TOOL_NAME = /\bhandoff_to_agent\b/giu;
+
+function publicHandoffTask(task: string): string {
+  return task.replace(INTERNAL_HANDOFF_TOOL_NAME, "结构化转交");
+}
 
 export type CoordinatedRoomPolicy = {
   maxTurns?: number;
@@ -306,6 +312,7 @@ export class RoomCoordinator {
       const promptCutoffSeq = pending.promptCutoffSeq
         ?? (pending.origin === "handoff" ? pending.inputSeq : this.repository.getTranscriptHighWater(batch.sessionId));
       const incomingBeforeDispatch = this.repository.getIncomingHandoff(pending.id);
+      const retryModelSelection = this.getRetryModelSelection(pending);
       let turn: RoomTurn;
       try {
         if (incomingBeforeDispatch?.state === "queued") {
@@ -326,6 +333,7 @@ export class RoomCoordinator {
           clientNonce: batch.clientNonce,
           executorBotId: turn.memberBotId,
           executionKey: `${batch.id}:${turn.logicalTurnId}`,
+          modelSelection: retryModelSelection,
           inputSeq: turn.inputSeq,
           promptCutoffSeq,
           attribution: {
@@ -395,6 +403,23 @@ export class RoomCoordinator {
       this.emit(this.repository.finishRoomBatchFromTurns(batchId));
     }
     if (!["queued", "running"].includes(this.repository.getRoomBatch(batchId).state)) this.clearDeadline(batchId);
+  }
+
+  private getRetryModelSelection(turn: RoomTurn): ModelSelection | undefined {
+    if (turn.attemptNo <= 1) return undefined;
+    const previous = this.repository.listRoomTurns(turn.batchId)
+      .filter((candidate) => (
+        candidate.logicalTurnId === turn.logicalTurnId &&
+        candidate.attemptNo < turn.attemptNo &&
+        candidate.runtimeRunId !== null
+      ))
+      .sort((left, right) => right.attemptNo - left.attemptNo)[0];
+    if (!previous?.runtimeRunId) return undefined;
+    const runtime = this.repository.getRuntimeRun(previous.runtimeRunId);
+    return {
+      providerInstanceId: runtime.providerInstanceId,
+      modelId: runtime.providerModelId,
+    };
   }
 
   private settleTurn(turnId: string, result: RuntimeExecutionResult): void {
@@ -568,7 +593,7 @@ export class RoomCoordinator {
     runId: string,
     fromTurnId: string,
     event: Extract<ModelEvent, { type: "handoff" }>,
-  ): void {
+  ): boolean {
     try {
       if (
         typeof event.toolCallId !== "string" ||
@@ -586,15 +611,16 @@ export class RoomCoordinator {
         runId,
         fromTurnId,
         toAgentId: event.toAgentId,
-        task: event.task,
+        task: publicHandoffTask(event.task),
         contextRefs: event.contextRefs,
         visibility: event.visibility,
         targetTurnNonce: event.toolCallId,
         inputGeneration: source.inputGeneration,
         inputSeq: source.promptCutoffSeq ?? source.inputSeq,
       });
-      if (created.disposition === "duplicate") return;
+      if (created.disposition === "duplicate") return true;
       this.emit(this.repository.getRoomRun(runId));
+      return true;
     } catch (error) {
       if (error instanceof AevorenBotError && EXPECTED_HANDOFF_REJECTIONS.has(error.code)) {
         this.repository.recordHandoffRejection({
@@ -605,7 +631,7 @@ export class RoomCoordinator {
           errorCode: error.code,
         });
         this.emit(this.repository.getRoomRun(runId), error.toAppError());
-        return;
+        return false;
       }
       throw error;
     }

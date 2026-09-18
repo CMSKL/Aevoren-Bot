@@ -1,0 +1,10 @@
+changelog:
+  categories:
+    - title: 新功能
+      labels: [feature, enhancement]
+    - title: 修复
+      labels: [bug, fix]
+    - title: 安全与依赖
+      labels: [security, dependencies]
+    - title: 其他变更
+      labels: ["*"]

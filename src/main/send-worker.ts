@@ -1,5 +1,6 @@
 import type {
   AppError,
+  ModelSelection,
   RuntimeEvent,
   RuntimeRun,
   SendCommand,
@@ -12,8 +13,10 @@ import type {
 import { asAppError, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 import type { ModelProvider } from "./model";
-import { RuntimeExecutor, type RuntimeExecutionResult } from "./runtime-executor";
-import type { ModelSettingsService } from "./settings";
+import type { ProviderResolver } from "./providers/contracts";
+import { RuntimeExecutor, type CapabilitySnapshotSource, type RuntimeExecutionResult } from "./runtime-executor";
+import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
+import type { McpService } from "./mcp-service";
 
 export type WorkerEvents = {
   transcript: (event: TranscriptEvent) => void;
@@ -27,18 +30,24 @@ export class RuntimeCoordinator {
 
   constructor(
     private readonly repository: AppRepository,
-    settings: ModelSettingsService,
+    providers: ProviderResolver | null,
     private readonly events: WorkerEvents,
     forceFakeProvider = false,
     providerOverride?: ModelProvider,
     executorOverride?: RuntimeExecutor,
+    workspaceTools?: WorkspaceToolCoordinator,
+    capabilitySnapshots?: CapabilitySnapshotSource,
+    mcpTools?: Pick<McpService, "availableTools">,
   ) {
     this.executor = executorOverride ?? new RuntimeExecutor(
       repository,
-      settings,
+      providers,
       { transcript: events.transcript, runtime: events.runtime },
       forceFakeProvider,
       providerOverride,
+      workspaceTools,
+      capabilitySnapshots,
+      mcpTools,
     );
   }
 
@@ -69,7 +78,11 @@ export class RuntimeCoordinator {
     const session = this.repository.getSession(journal.sessionId);
     if (!session.botId || session.roomId) throw new AevorenBotError("MESSAGE_RETRY_UNSAFE");
     this.emitSendState(journal.sessionId, clientNonce, "queued");
-    return this.startDirect(clientNonce);
+    const previous = this.repository.getLatestRuntimeRun(clientNonce);
+    return this.startDirect(clientNonce, undefined, previous ? {
+      providerInstanceId: previous.providerInstanceId,
+      modelId: previous.providerModelId,
+    } : undefined);
   }
 
   retryRun(runId: string): SendResult {
@@ -79,7 +92,10 @@ export class RuntimeCoordinator {
     if (!session.botId || session.roomId) {
       throw new AevorenBotError("RUNTIME_RETRY_UNSAFE", undefined, undefined, { reason: "room-run" });
     }
-    const result = this.startDirect(previous.clientNonce, previous.inputSeq);
+    const result = this.startDirect(previous.clientNonce, previous.inputSeq, {
+      providerInstanceId: previous.providerInstanceId,
+      modelId: previous.providerModelId,
+    });
     return { ...result, state: this.repository.getSendOrThrow(previous.clientNonce).state };
   }
 
@@ -118,7 +134,7 @@ export class RuntimeCoordinator {
     await this.executor.shutdown();
   }
 
-  private startDirect(clientNonce: string, inputSeq?: number): SendResult {
+  private startDirect(clientNonce: string, inputSeq?: number, modelSelection?: ModelSelection): SendResult {
     const journal = this.repository.getSendOrThrow(clientNonce);
     const session = this.repository.getSession(journal.sessionId);
     if (!session.botId) throw new AevorenBotError("SESSION_NOT_FOUND");
@@ -128,6 +144,7 @@ export class RuntimeCoordinator {
         clientNonce,
         executorBotId: session.botId,
         executionKey: clientNonce,
+        modelSelection,
         inputSeq,
         onDispatchStart: () => this.markDirectDispatching(clientNonce),
         onProviderStarted: (requestId) => this.acknowledgeDirect(clientNonce, requestId),

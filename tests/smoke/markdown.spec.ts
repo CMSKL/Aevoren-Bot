@@ -49,12 +49,6 @@ test("renders Markdown during streaming and keeps the same semantic structure wh
     const page = await application.firstWindow();
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
-    await page.getByRole("button", { name: "模型设置" }).click();
-    await page.getByLabel("Model ID").fill("markdown-smoke-model");
-    await page.getByLabel("API Key").fill("markdown-smoke-key-not-a-real-secret");
-    await page.getByRole("button", { name: "保存", exact: true }).click();
-    await page.getByRole("button", { name: "关闭" }).click();
-
     await page.getByLabel("消息").fill("请使用 Markdown 回复。");
     await page.getByRole("button", { name: "发送" }).click();
 

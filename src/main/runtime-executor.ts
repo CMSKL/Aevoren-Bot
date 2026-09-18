@@ -1,5 +1,7 @@
 import type {
   AppError,
+  CapabilityPromptSnapshot,
+  ModelSelection,
   RuntimeEvent,
   RuntimeRoute,
   RuntimeRun,
@@ -12,16 +14,19 @@ import { asAppError, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 import {
   FakeModelProvider,
-  OpenAiCompatibleProvider,
+  selectDeterministicRoomOwner,
   type ChatMessage,
   type ModelEvent,
   type ModelProvider,
   type ModelRunContext,
   type RoomPeer,
+  type RoomContinuationDecision,
   type RoomOwnerSelection,
 } from "./model";
 import { buildPrompt } from "./prompt";
-import type { ModelSettingsService } from "./settings";
+import type { ProviderResolver } from "./providers/contracts";
+import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
+import type { McpService } from "./mcp-service";
 
 export type RuntimeExecutorEvents = {
   transcript: (event: TranscriptEvent) => void;
@@ -32,6 +37,7 @@ export type RuntimeExecutionInput = {
   clientNonce: string;
   executorBotId: string;
   executionKey: string;
+  modelSelection?: ModelSelection;
   inputSeq?: number;
   promptCutoffSeq?: number;
   attribution?: {
@@ -49,13 +55,17 @@ export type RuntimeExecutionInput = {
   onRunCreated?(run: RuntimeRun): void;
   onDispatchStart?(): void;
   onProviderStarted?(requestId: string): void;
-  onHandoff?(event: Extract<ModelEvent, { type: "handoff" }>): void;
+  onHandoff?(event: Extract<ModelEvent, { type: "handoff" }>): boolean | void;
 };
 
 export type RuntimeExecutionResult = {
   run: RuntimeRun;
   error?: AppError;
   providerStarted: boolean;
+};
+
+export type CapabilitySnapshotSource = {
+  forPrompt(botId: string, selection: ModelSelection, room: boolean): CapabilityPromptSnapshot;
 };
 
 type AbortReason = "user" | "deadline" | "app-shutdown";
@@ -66,6 +76,7 @@ type ActiveRun = {
   clientNonce: string;
   sessionId: string;
   messages: ChatMessage[];
+  modelSelection: ModelSelection;
   attribution?: RuntimeExecutionInput["attribution"];
   providerContext: ModelRunContext;
   onDispatchStart?: RuntimeExecutionInput["onDispatchStart"];
@@ -79,6 +90,7 @@ type ActiveRun = {
   staleTimer: ReturnType<typeof setTimeout> | null;
   abortReason: AbortReason | null;
   providerStarted: boolean;
+  handoffEmitted: boolean;
 };
 
 export const STALE_AFTER_MS = 30_000;
@@ -94,10 +106,13 @@ export class RuntimeExecutor {
 
   constructor(
     private readonly repository: AppRepository,
-    private readonly settings: ModelSettingsService,
+    private readonly providers: ProviderResolver | null,
     private readonly events: RuntimeExecutorEvents,
     private readonly forceFakeProvider = false,
     private readonly providerOverride?: ModelProvider,
+    private readonly workspaceTools?: WorkspaceToolCoordinator,
+    private readonly capabilitySnapshots?: CapabilitySnapshotSource,
+    private readonly mcpTools?: Pick<McpService, "availableTools">,
   ) {
     this.fakeProvider = forceFakeProvider && !providerOverride ? new FakeModelProvider() : null;
   }
@@ -110,6 +125,8 @@ export class RuntimeExecutor {
     const user = this.repository.getUserMessage(input.clientNonce);
     const inputSeq = input.inputSeq ?? user.seq;
     const promptCutoffSeq = input.promptCutoffSeq ?? inputSeq;
+    const modelSelection = input.modelSelection ?? bot.modelSelection;
+    const capabilitySnapshot = this.capabilitySnapshots?.forPrompt(bot.id, modelSelection, Boolean(input.room));
     const prompt = buildPrompt(
       bot,
       session,
@@ -125,12 +142,22 @@ export class RuntimeExecutor {
             ...(input.incomingHandoff ? { handoff: input.incomingHandoff } : {}),
           }
         : undefined,
+      this.repository.listRuntimeMemories(bot.id),
+      capabilitySnapshot,
     );
-    const run = this.repository.createRuntimeRun(input.clientNonce, this.route(), prompt.manifest, {
+    const route = this.route(modelSelection);
+    const providerCapabilities = this.forceFakeProvider
+      ? { roomOwnerSelection: true, handoff: true, workspaceTools: true, networkTools: true }
+      : this.providerOverride
+        ? { roomOwnerSelection: true, handoff: true, workspaceTools: true, networkTools: false }
+        : this.providers?.getCapabilities(modelSelection);
+    const run = this.repository.createRuntimeRun(input.clientNonce, route, prompt.manifest, {
       executorBotId: bot.id,
       executionKey: input.executionKey,
       inputSeq,
       promptCutoffSeq,
+      providerInstanceId: route === "fake" ? "fake" : modelSelection.providerInstanceId,
+      providerModelId: route === "fake" ? "" : modelSelection.modelId,
     });
     try {
       input.onRunCreated?.(run);
@@ -144,6 +171,7 @@ export class RuntimeExecutor {
       clientNonce: input.clientNonce,
       sessionId: session.id,
       messages: prompt.messages,
+      modelSelection,
       attribution: input.attribution,
       providerContext: {
         executorBotId: bot.id,
@@ -151,6 +179,12 @@ export class RuntimeExecutor {
         ...(input.room ? { roomId: input.room.id, sourceTurnId: input.room.sourceTurnId } : {}),
         ...(input.room?.roster ? { roomRoster: input.room.roster } : {}),
         ...(input.incomingHandoff ? { incomingHandoff: input.incomingHandoff } : {}),
+        workspaces: providerCapabilities?.workspaceTools === true
+          ? this.repository.listWorkspaces().map(({ id, name }) => ({ id, name }))
+          : [],
+        networkTools: providerCapabilities?.networkTools === true,
+        mcpTools: providerCapabilities?.networkTools === true ? this.mcpTools?.availableTools(bot.id) ?? [] : [],
+        deviceTools: providerCapabilities?.networkTools === true,
       },
       onDispatchStart: input.onDispatchStart,
       onProviderStarted: input.onProviderStarted,
@@ -163,6 +197,7 @@ export class RuntimeExecutor {
       staleTimer: null,
       abortReason: null,
       providerStarted: false,
+      handoffEmitted: false,
     };
     this.active.set(run.id, active);
     this.emitRuntime(run);
@@ -224,9 +259,16 @@ export class RuntimeExecutor {
 
   async selectRoomOwner(text: string, roster: readonly RoomPeer[], signal: AbortSignal): Promise<RoomOwnerSelection> {
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
-    const provider = this.createProvider();
+    const selection = this.repository.getDefaultModelSelection();
+    const usesOverride = Boolean(this.providerOverride || this.fakeProvider);
+    const capabilities = usesOverride ? { roomOwnerSelection: true } : this.providers?.getCapabilities(selection);
+    if (!capabilities?.roomOwnerSelection) return selectDeterministicRoomOwner(text, roster);
+    const provider = this.createProvider(selection);
     const selector = provider.selectRoomOwner;
-    if (!selector) throw new AevorenBotError("MODEL_ROUTER_UNSUPPORTED");
+    if (!selector) {
+      if (usesOverride) throw new AevorenBotError("MODEL_ROUTER_UNSUPPORTED");
+      return selectDeterministicRoomOwner(text, roster);
+    }
     const result = await selector.call(provider, text, roster, signal);
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     return result;
@@ -262,8 +304,10 @@ export class RuntimeExecutor {
     }
   }
 
-  private route(): RuntimeRoute {
-    return this.forceFakeProvider || this.providerOverride ? "fake" : "openai-compatible";
+  private route(selection: ModelSelection): RuntimeRoute {
+    if (this.forceFakeProvider || this.providerOverride) return "fake";
+    if (!this.providers) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
+    return this.providers.getRoute(selection);
   }
 
   private async dispatch(runId: string): Promise<RuntimeExecutionResult> {
@@ -274,9 +318,16 @@ export class RuntimeExecutor {
     this.emitRuntime(run);
     try {
       active.onDispatchStart?.();
-      const provider = this.createProvider();
-      iterator = provider.run(active.messages, active.controller.signal, active.providerContext)[Symbol.asyncIterator]();
-      while (true) {
+      const provider = this.createProvider(active.modelSelection);
+      let toolRounds = 0;
+      let completed = false;
+      while (!completed) {
+        let workspaceContinuation = false;
+        let roundCompleted = false;
+        let roundProviderStarted = false;
+        const roundBodyStart = active.providerBody.length;
+        iterator = provider.run(active.messages, active.controller.signal, active.providerContext)[Symbol.asyncIterator]();
+        while (true) {
         const next = await nextModelEvent(
           iterator,
           active.controller.signal,
@@ -290,7 +341,14 @@ export class RuntimeExecutor {
           return { run: persistedRun, providerStarted: active.providerStarted };
         }
         if (event.type === "started") {
-          if (active.providerStarted) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          if (roundProviderStarted) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          roundProviderStarted = true;
+          if (active.providerStarted) {
+            run = this.repository.touchRuntimeRun(runId);
+            this.emitRuntime(run);
+            this.armStaleTimer(active);
+            continue;
+          }
           active.providerStarted = true;
           run = this.repository.transitionRuntimeRun(runId, "running", { providerRequestId: event.requestId });
           active.onProviderStarted?.(event.requestId);
@@ -325,18 +383,73 @@ export class RuntimeExecutor {
         }
         if (event.type === "handoff") {
           if (!active.providerStarted || !active.onHandoff) throw new AevorenBotError("RUNTIME_STATE_INVALID");
-          active.onHandoff(event);
+          active.handoffEmitted = active.onHandoff(event) !== false || active.handoffEmitted;
+          run = this.repository.touchRuntimeRun(runId);
+          this.emitRuntime(run);
+          this.armStaleTimer(active);
+          continue;
+        }
+        if (event.type === "workspace-tool" || event.type === "network-tool" || event.type === "mcp-tool" || event.type === "device-tool") {
+          if (!active.providerStarted || !this.workspaceTools) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          if (workspaceContinuation) throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
+          if (toolRounds >= 4) throw new AevorenBotError("TOOL_ROUND_LIMIT_EXCEEDED");
+          toolRounds += 1;
+          const outcome = await this.workspaceTools.requestAndWait(
+            runId,
+            event.toolCallId,
+            event.tool,
+            active.controller.signal,
+          );
+          if (event.respond) {
+            await event.respond(outcome.content);
+            run = this.repository.touchRuntimeRun(runId);
+            this.emitRuntime(run);
+            this.armStaleTimer(active);
+            continue;
+          }
+          const functionName = event.providerToolName ?? event.tool.kind.replaceAll("-", "_");
+          const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
+          active.messages.push({
+            role: "assistant",
+            content: active.providerBody.slice(roundBodyStart),
+            tool_calls: [{
+              id: event.toolCallId,
+              type: "function",
+              function: { name: functionName, arguments: JSON.stringify(argumentsValue) },
+            }],
+          });
+          active.messages.push({ role: "tool", tool_call_id: outcome.toolCallId, content: outcome.content });
+          workspaceContinuation = true;
           run = this.repository.touchRuntimeRun(runId);
           this.emitRuntime(run);
           this.armStaleTimer(active);
           continue;
         }
         if (event.type === "completed") {
+          roundCompleted = true;
+          if (workspaceContinuation) break;
+          const continuation = await this.selectRoomContinuation(provider, active);
+          if (continuation?.action === "handoff") {
+            const accepted = active.onHandoff?.({
+              type: "handoff",
+              toolCallId: `continuation:${active.runId}`,
+              toAgentId: continuation.toAgentId,
+              task: continuation.task,
+              contextRefs: continuation.contextRefs,
+              visibility: continuation.visibility,
+            });
+            active.handoffEmitted = accepted !== false || active.handoffEmitted;
+          }
           this.finalizeAssistant(active, "completed");
           run = this.repository.transitionRuntimeRun(runId, "completed");
           this.emitRuntime(run);
+          completed = true;
           break;
         }
+      }
+        closeIterator(iterator);
+        iterator = null;
+        if (!roundCompleted) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
       }
       const current = this.repository.getRuntimeRun(runId);
       if (!["completed", "failed", "cancelled", "interrupted"].includes(current.state)) {
@@ -413,12 +526,33 @@ export class RuntimeExecutor {
     if (active.assistantEntryId) this.flush(active, status);
   }
 
-  private createProvider(): ModelProvider {
+  private async selectRoomContinuation(
+    provider: ModelProvider,
+    active: ActiveRun,
+  ): Promise<RoomContinuationDecision | null> {
+    const roster = active.providerContext.roomRoster;
+    const selector = provider.selectRoomContinuation;
+    if (
+      active.handoffEmitted ||
+      !active.onHandoff ||
+      !selector ||
+      !roster ||
+      !mentionsAnotherRoomPeer(active.body, active.providerContext.executorBotId, roster)
+    ) return null;
+    return selector.call(
+      provider,
+      active.body,
+      active.providerContext.executorBotId,
+      roster,
+      active.controller.signal,
+    );
+  }
+
+  private createProvider(selection: ModelSelection): ModelProvider {
     if (this.providerOverride) return this.providerOverride;
     if (this.fakeProvider) return this.fakeProvider;
-    const configuration = this.settings.getConfiguration();
-    if (!configuration.modelId || !configuration.apiKeyConfigured) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
-    return new OpenAiCompatibleProvider(configuration.baseUrl, configuration.modelId, this.settings.getApiKey());
+    if (!this.providers) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
+    return this.providers.createProvider(selection);
   }
 
   private emitRuntime(run: RuntimeRun, error?: AppError): void {
@@ -445,6 +579,10 @@ export class RuntimeExecutor {
     active.flushTimer = null;
     active.staleTimer = null;
   }
+}
+
+function mentionsAnotherRoomPeer(body: string, executorBotId: string, roster: readonly RoomPeer[]): boolean {
+  return roster.some((peer) => peer.id !== executorBotId && peer.name.trim().length > 0 && body.includes(peer.name.trim()));
 }
 
 function closeIterator(iterator: AsyncIterator<ModelEvent> | null): void {

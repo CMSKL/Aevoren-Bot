@@ -3,10 +3,8 @@ import { AppRepository } from "./database";
 import { OpenAiCompatibleProvider } from "./model";
 import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
-import { ModelSettingsService, type SecretCodec } from "./settings";
 
 const repositories: AppRepository[] = [];
-const codec: SecretCodec = { isAvailable: () => true, encrypt: (value) => value, decrypt: (value) => value };
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -65,8 +63,7 @@ describe("real Provider handoff integration", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const provider = new OpenAiCompatibleProvider("https://example.com/v1", "test-model", "test-key");
-    const settings = new ModelSettingsService(repository, codec);
-    const executor = new RuntimeExecutor(repository, settings, { transcript: vi.fn(), runtime: vi.fn() }, false, provider);
+    const executor = new RuntimeExecutor(repository, null, { transcript: vi.fn(), runtime: vi.fn() }, false, provider);
     const coordinator = new RoomCoordinator(repository, executor, { transcript: vi.fn(), roomRuntime: vi.fn() });
 
     const sent = coordinator.sendCoordinated({
@@ -115,6 +112,12 @@ describe("real Provider handoff integration", () => {
     const rosterMessage = (requestBodies[0]?.messages as Array<{ role: string; content: string }>).find((message) =>
       message.role === "system" && message.content.includes("UNTRUSTED_ROOM_PEER_DATA")
     );
+    const handoffContractMessage = (requestBodies[0]?.messages as Array<{ role: string; content: string }>).find((message) =>
+      message.role === "system" && message.content.includes("ROOM_HANDOFF_EXECUTION_CONTRACT")
+    );
+    expect(handoffContractMessage?.content).toContain("Only a successful handoff_to_agent function call");
+    expect(handoffContractMessage?.content).toContain("@Agent, HANDOFF, ASSIGN, or next_owner");
+    expect(handoffContractMessage?.content).toContain("wait for user approval or input");
     expect(rosterMessage?.content).toContain(`"id":"${botB.id}"`);
     expect(rosterMessage?.content).toContain('"label":"评审角色"');
     expect(rosterMessage?.content).toContain(`"id":"${botC.id}"`);
@@ -159,7 +162,7 @@ describe("real Provider handoff integration", () => {
     const roomRuntime = vi.fn();
     const executor = new RuntimeExecutor(
       repository,
-      new ModelSettingsService(repository, codec),
+      null,
       { transcript: vi.fn(), runtime: vi.fn() },
       false,
       { async *run() {}, testConnection: async () => {} },

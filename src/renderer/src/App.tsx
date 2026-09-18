@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  AppearanceTheme,
   AppError,
+  ApprovalRequest,
   Bot,
+  ConversationBatchDeleteInput,
+  LoginItemStatus,
   Room,
   RoomBatch,
   RoomDetail,
@@ -13,17 +17,45 @@ import type {
   RuntimeRun,
   Session,
   SessionLiveState,
+  ToolEvent,
+  ToolInvocation,
   TranscriptEntry,
   TranscriptEvent,
+  UpdateState,
 } from "@shared/contracts";
 import { Conversation } from "./components/Conversation";
-import { ModelSettingsDialog } from "./components/ModelSettingsDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { NewBotChooser } from "./components/NewBotChooser";
 import { ProfileInspector, type ProfileInspectorHandle } from "./components/ProfileInspector";
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
 import { Sidebar } from "./components/Sidebar";
+import { WorkspaceDialog } from "./components/WorkspaceDialog";
+import { UpdateStatusNotice } from "./components/UpdateStatusNotice";
 import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
 import { mergeRoomRuntimeEvents } from "./room-runtime-state";
+
+function mergeToolInvocation(current: ToolInvocation[], next: ToolInvocation): ToolInvocation[] {
+  const existing = current.find((item) => item.id === next.id);
+  if (existing && existing.version >= next.version) return current;
+  return [...current.filter((item) => item.id !== next.id), next]
+    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+}
+
+function mergePendingApproval(current: ApprovalRequest[], next: ApprovalRequest): ApprovalRequest[] {
+  const without = current.filter((item) => item.id !== next.id);
+  return next.state === "pending" ? [...without, next] : without;
+}
+
+function mergeToolEvents(
+  invocations: ToolInvocation[],
+  approvals: ApprovalRequest[],
+  events: readonly ToolEvent[],
+): { invocations: ToolInvocation[]; approvals: ApprovalRequest[] } {
+  return events.reduce((current, event) => ({
+    invocations: mergeToolInvocation(current.invocations, event.invocation),
+    approvals: mergePendingApproval(current.approvals, event.approval),
+  }), { invocations, approvals });
+}
 
 export function App(): React.JSX.Element {
   const [bots, setBots] = useState<Bot[]>([]);
@@ -33,6 +65,8 @@ export function App(): React.JSX.Element {
   const [session, setSession] = useState<Session | null>(null);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [runs, setRuns] = useState<RuntimeRun[]>([]);
+  const [toolInvocations, setToolInvocations] = useState<ToolInvocation[]>([]);
+  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
   const [roomBatches, setRoomBatches] = useState<RoomBatch[]>([]);
   const [roomTurns, setRoomTurns] = useState<RoomTurn[]>([]);
   const [roomHandoffs, setRoomHandoffs] = useState<RoomHandoffView[]>([]);
@@ -43,10 +77,16 @@ export function App(): React.JSX.Element {
   const [error, setError] = useState<AppError | null>(null);
   const [closeNotice, setCloseNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"bots" | "profile" | null>(null);
   const [creatingBot, setCreatingBot] = useState(false);
   const [createError, setCreateError] = useState<AppError | null>(null);
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null);
+  const [appearanceTheme, setAppearanceTheme] = useState<AppearanceTheme>("system");
+  const [launchAtLogin, setLaunchAtLogin] = useState(false);
+  const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
+  const [launchAtLoginStatus, setLaunchAtLoginStatus] = useState<LoginItemStatus>("unsupported");
   const newBotButtonRef = useRef<HTMLButtonElement>(null);
   const profileRef = useRef<ProfileInspectorHandle>(null);
   const roomRef = useRef<RoomInspectorHandle>(null);
@@ -56,6 +96,7 @@ export function App(): React.JSX.Element {
   const bufferedTranscriptRef = useRef<TranscriptEvent[]>([]);
   const bufferedRuntimeRef = useRef<RuntimeEvent[]>([]);
   const bufferedRoomRef = useRef<RoomRuntimeEvent[]>([]);
+  const bufferedToolRef = useRef<ToolEvent[]>([]);
   const runtimeVersionsRef = useRef(new Map<string, number>());
   const openRequestRef = useRef(0);
   const chooserActionRef = useRef<"create" | "select" | null>(null);
@@ -64,6 +105,7 @@ export function App(): React.JSX.Element {
     if (selectedRoomIdRef.current) return await roomRef.current?.flush() ?? true;
     return await profileRef.current?.flush() ?? true;
   }, []);
+  const closeSettings = useCallback((): void => setSettingsOpen(false), []);
 
   useEffect(() => {
     const unsubscribeTranscript = window.aevorenBot.events.subscribeTranscript((event) => {
@@ -101,6 +143,16 @@ export function App(): React.JSX.Element {
       setRoomHandoffRejections((current) => mergeRoomRuntimeEvents([], [], [], current, [event]).rejections);
       if (event.error) setError(event.error);
     });
+    const unsubscribeTool = window.aevorenBot.events.subscribeTool((event) => {
+      if (event.sessionId === loadingSessionIdRef.current) {
+        bufferedToolRef.current.push(event);
+        return;
+      }
+      if (event.sessionId !== sessionIdRef.current) return;
+      setToolInvocations((current) => mergeToolInvocation(current, event.invocation));
+      setApprovalRequests((current) => mergePendingApproval(current, event.approval));
+    });
+    const unsubscribeUpdate = window.aevorenBot.events.subscribeUpdate((event) => setUpdateState(event.state));
     const unsubscribeClose = window.aevorenBot.app.subscribeBeforeClose(() => {
       void flushActive().then((saved) => window.aevorenBot.app.confirmClose(saved));
     });
@@ -108,15 +160,41 @@ export function App(): React.JSX.Element {
       setCloseNotice("关闭未完成：资料仍保留在当前窗口，请稍后重试关闭。");
     });
     window.aevorenBot.app.ready();
+    void window.aevorenBot.updates.getState().then((result) => {
+      if (result.ok) setUpdateState(result.data);
+    });
+    void window.aevorenBot.settings.getGeneral().then((result) => {
+      if (result.ok) {
+        setAppearanceTheme(result.data.theme);
+        setLaunchAtLogin(result.data.launchAtLogin);
+        setLaunchAtLoginSupported(result.data.launchAtLoginSupported);
+        setLaunchAtLoginStatus(result.data.launchAtLoginStatus);
+      }
+    });
     return () => {
       unsubscribeTranscript();
       unsubscribeSend();
       unsubscribeRuntime();
       unsubscribeRoom();
+      unsubscribeTool();
+      unsubscribeUpdate();
       unsubscribeClose();
       unsubscribeCloseBlocked();
     };
   }, [flushActive]);
+
+  useEffect(() => {
+    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = (): void => {
+      document.documentElement.dataset.theme = appearanceTheme === "system"
+        ? systemTheme.matches ? "dark" : "light"
+        : appearanceTheme;
+    };
+    applyTheme();
+    if (appearanceTheme !== "system") return;
+    systemTheme.addEventListener("change", applyTheme);
+    return () => systemTheme.removeEventListener("change", applyTheme);
+  }, [appearanceTheme]);
 
   const openBot = useCallback(async (bot: Bot, flushCurrent = true): Promise<void> => {
     const requestId = ++openRequestRef.current;
@@ -136,11 +214,28 @@ export function App(): React.JSX.Element {
     bufferedTranscriptRef.current = [];
     bufferedRuntimeRef.current = [];
     bufferedRoomRef.current = [];
-    const snapshotResult = await window.aevorenBot.runtime.getSessionSnapshot(nextSession.id);
+    bufferedToolRef.current = [];
+    const [snapshotResult, toolsResult, approvalsResult] = await Promise.all([
+      window.aevorenBot.runtime.getSessionSnapshot(nextSession.id),
+      window.aevorenBot.tools.list({ sessionId: nextSession.id }),
+      window.aevorenBot.approvals.listPending({ sessionId: nextSession.id }),
+    ]);
     if (requestId !== openRequestRef.current) return;
     if (!snapshotResult.ok) {
       loadingSessionIdRef.current = null;
       setError(snapshotResult.error);
+      setLoading(false);
+      return;
+    }
+    if (!toolsResult.ok) {
+      loadingSessionIdRef.current = null;
+      setError(toolsResult.error);
+      setLoading(false);
+      return;
+    }
+    if (!approvalsResult.ok) {
+      loadingSessionIdRef.current = null;
+      setError(approvalsResult.error);
       setLoading(false);
       return;
     }
@@ -150,6 +245,7 @@ export function App(): React.JSX.Element {
       bufferedTranscriptRef.current,
       bufferedRuntimeRef.current,
     );
+    const toolState = mergeToolEvents(toolsResult.data, approvalsResult.data, bufferedToolRef.current);
     sessionIdRef.current = nextSession.id;
     selectedRoomIdRef.current = null;
     sessionStorage.setItem("aevoren-bot:selected", `bot:${bot.id}`);
@@ -159,6 +255,8 @@ export function App(): React.JSX.Element {
     setSession(nextSession);
     setEntries(buffered.entries);
     setRuns(buffered.runs);
+    setToolInvocations(toolState.invocations);
+    setApprovalRequests(toolState.approvals);
     setRoomBatches([]);
     setRoomTurns([]);
     setRoomHandoffs([]);
@@ -189,11 +287,28 @@ export function App(): React.JSX.Element {
     bufferedTranscriptRef.current = [];
     bufferedRuntimeRef.current = [];
     bufferedRoomRef.current = [];
-    const snapshotResult = await window.aevorenBot.roomRuntime.getSnapshot(room.id);
+    bufferedToolRef.current = [];
+    const [snapshotResult, toolsResult, approvalsResult] = await Promise.all([
+      window.aevorenBot.roomRuntime.getSnapshot(room.id),
+      window.aevorenBot.tools.list({ sessionId: nextSession.id }),
+      window.aevorenBot.approvals.listPending({ sessionId: nextSession.id }),
+    ]);
     if (requestId !== openRequestRef.current) return;
     if (!snapshotResult.ok) {
       loadingSessionIdRef.current = null;
       setError(snapshotResult.error);
+      setLoading(false);
+      return;
+    }
+    if (!toolsResult.ok) {
+      loadingSessionIdRef.current = null;
+      setError(toolsResult.error);
+      setLoading(false);
+      return;
+    }
+    if (!approvalsResult.ok) {
+      loadingSessionIdRef.current = null;
+      setError(approvalsResult.error);
       setLoading(false);
       return;
     }
@@ -210,6 +325,7 @@ export function App(): React.JSX.Element {
       snapshotResult.data.rejections ?? [],
       bufferedRoomRef.current,
     );
+    const toolState = mergeToolEvents(toolsResult.data, approvalsResult.data, bufferedToolRef.current);
     sessionIdRef.current = nextSession.id;
     selectedRoomIdRef.current = room.id;
     sessionStorage.setItem("aevoren-bot:selected", `room:${room.id}`);
@@ -219,6 +335,8 @@ export function App(): React.JSX.Element {
     setSession(nextSession);
     setEntries(buffered.entries);
     setRuns(buffered.runs);
+    setToolInvocations(toolState.invocations);
+    setApprovalRequests(toolState.approvals);
     setRoomBatches(roomState.batches);
     setRoomTurns(roomState.turns);
     setRoomHandoffs(roomState.handoffs);
@@ -415,6 +533,8 @@ export function App(): React.JSX.Element {
     setSession(null);
     setEntries([]);
     setRuns([]);
+    setToolInvocations([]);
+    setApprovalRequests([]);
     setRoomBatches([]);
     setRoomTurns([]);
     setRoomHandoffs([]);
@@ -428,7 +548,7 @@ export function App(): React.JSX.Element {
       await openBot(nextBot, false);
       return;
     }
-    const nextRoom = nextRooms.find((room) => room.archivedAt === null);
+    const nextRoom = nextRooms.find((room) => room.archivedAt === null && room.hiddenAt === null);
     if (nextRoom) {
       await openRoom(nextRoom, false);
       return;
@@ -472,6 +592,134 @@ export function App(): React.JSX.Element {
     setRooms((current) => current.map((item) => item.id === detail.room.id ? detail.room : item));
   }
 
+  function updateRoomRecord(room: Room): void {
+    setRooms((current) => current.map((item) => item.id === room.id ? room : item));
+    setSelectedRoom((current) => current?.room.id === room.id ? { ...current, room } : current);
+  }
+
+  async function renameRoom(room: Room, name: string): Promise<boolean> {
+    if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
+    const latest = await window.aevorenBot.rooms.get(room.id);
+    if (!latest.ok) {
+      setError(latest.error);
+      return false;
+    }
+    const result = await window.aevorenBot.rooms.update({
+      id: room.id,
+      expectedVersion: latest.data.room.version,
+      patch: { name },
+    });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateRoomRecord(result.data);
+    return true;
+  }
+
+  async function copyRoomId(room: Room): Promise<boolean> {
+    const result = await window.aevorenBot.rooms.copyConversationId(room.id);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    return true;
+  }
+
+  async function setRoomPinned(room: Room, pinned: boolean): Promise<boolean> {
+    const result = await window.aevorenBot.rooms.setPinned({ id: room.id, pinned });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateRoomRecord(result.data);
+    return true;
+  }
+
+  async function setRoomUnread(room: Room, unread: boolean): Promise<boolean> {
+    const result = await window.aevorenBot.rooms.setUnread({ id: room.id, unread });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateRoomRecord(result.data);
+    return true;
+  }
+
+  async function setRoomHidden(room: Room, hidden: boolean): Promise<boolean> {
+    if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
+    const result = await window.aevorenBot.rooms.setHidden({ id: room.id, hidden });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    const nextRooms = rooms.map((item) => item.id === room.id ? result.data : item);
+    updateRoomRecord(result.data);
+    if (hidden && selectedRoom?.room.id === room.id) await openFallback(bots, nextRooms);
+    return true;
+  }
+
+  async function archiveRoom(room: Room): Promise<boolean> {
+    if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
+    const result = await window.aevorenBot.rooms.archive({ id: room.id, archived: true });
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    updateRoomRecord(result.data);
+    if (selectedRoom?.room.id === room.id) handleArchived(result.data);
+    return true;
+  }
+
+  async function deleteRoom(room: Room): Promise<boolean> {
+    if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
+    const result = await window.aevorenBot.rooms.delete(room.id);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    const nextRooms = rooms.filter((item) => item.id !== room.id);
+    setRooms(nextRooms);
+    if (selectedRoom?.room.id === room.id) await openFallback(bots, nextRooms);
+    return true;
+  }
+
+  async function deleteConversations(input: ConversationBatchDeleteInput): Promise<boolean> {
+    if (!(await flushActive())) return false;
+    const result = await window.aevorenBot.conversations.deleteBatch(input);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    const [botResult, roomResult] = await Promise.all([
+      window.aevorenBot.bots.list(),
+      window.aevorenBot.rooms.list({ includeArchived: true }),
+    ]);
+    if (!botResult.ok) {
+      setError(botResult.error);
+      return false;
+    }
+    if (!roomResult.ok) {
+      setError(roomResult.error);
+      return false;
+    }
+    setBots(botResult.data);
+    setRooms(roomResult.data);
+
+    const currentRoomId = selectedRoom?.room.id ?? null;
+    const currentRoomAffected = currentRoomId !== null && result.data.bots.some(
+      (bot) => bot.affectedRoomIds.includes(currentRoomId),
+    );
+    if (currentRoomId && (input.roomIds.includes(currentRoomId) || currentRoomAffected)) {
+      const currentRoom = roomResult.data.find((room) => room.id === currentRoomId && room.archivedAt === null);
+      if (currentRoom) await openRoom(currentRoom, false);
+      else await openFallback(botResult.data, roomResult.data);
+    } else if (selectedBot && input.botIds.includes(selectedBot.id)) {
+      await openFallback(botResult.data, roomResult.data);
+    }
+    return true;
+  }
+
   async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone"): Promise<boolean> {
     if (!session || submitting) return false;
     setSubmitting(true);
@@ -505,6 +753,8 @@ export function App(): React.JSX.Element {
   }
 
   const activeRoomBatch = roomBatches.some((batch) => batch.state === "queued" || batch.state === "running");
+  const activeDirectRun = liveState !== null && ["starting", "running", "composing", "retrying", "cancelling"].includes(liveState.state);
+  const updateRestartBlocked = submitting || activeRoomBatch || activeDirectRun;
 
   return (
     <div className="app-shell">
@@ -522,9 +772,21 @@ export function App(): React.JSX.Element {
           setMobilePanel(null);
           setNewBotOpen(true);
         }}
+        onOpenSettings={() => {
+          setMobilePanel(null);
+          setSettingsOpen(true);
+        }}
         onMobileClose={() => setMobilePanel(null)}
         onSelectBot={(bot) => void openBot(bot)}
         onSelectRoom={(room) => void openRoom(room)}
+        onRenameRoom={renameRoom}
+        onCopyRoomId={copyRoomId}
+        onArchiveRoom={archiveRoom}
+        onPinRoom={setRoomPinned}
+        onMarkRoomUnread={setRoomUnread}
+        onHideRoom={setRoomHidden}
+        onDeleteRoom={deleteRoom}
+        onDeleteBatch={deleteConversations}
         onPinBot={setBotPinned}
         onMarkBotUnread={setBotUnread}
         onRenameBot={renameBot}
@@ -556,6 +818,8 @@ export function App(): React.JSX.Element {
         roomHandoffRejections={roomHandoffRejections}
         entries={entries}
         runs={runs}
+        toolInvocations={toolInvocations}
+        approvalRequests={approvalRequests}
         liveState={liveState}
         loading={loading}
         submitting={submitting}
@@ -563,7 +827,24 @@ export function App(): React.JSX.Element {
         closeNotice={closeNotice}
         onOpenBots={() => setMobilePanel("bots")}
         onOpenProfile={() => setMobilePanel("profile")}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenWorkspaces={() => setWorkspacesOpen(true)}
+        onBotUpdated={updateBot}
+        onError={setError}
+        onResolveApproval={async (approval, resolution) => {
+          const result = await window.aevorenBot.approvals.resolve({
+            sessionId: approval.sessionId,
+            id: approval.id,
+            expectedVersion: approval.version,
+            resolution,
+          });
+          if (!result.ok) {
+            setError(result.error);
+            return false;
+          }
+          setToolInvocations((current) => mergeToolInvocation(current, result.data.invocation));
+          setApprovalRequests((current) => mergePendingApproval(current, result.data.approval));
+          return true;
+        }}
         onSend={sendMessage}
         onRetryMessage={(clientNonce) => {
           setSubmitting(true);
@@ -613,7 +894,46 @@ export function App(): React.JSX.Element {
         />
       )}
       {mobilePanel ? <button className="drawer-backdrop" type="button" aria-label="关闭侧边面板" onClick={() => void closeMobilePanel()} /> : null}
-      <ModelSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDialog
+        open={settingsOpen}
+        theme={appearanceTheme}
+        launchAtLogin={launchAtLogin}
+        launchAtLoginSupported={launchAtLoginSupported}
+        launchAtLoginStatus={launchAtLoginStatus}
+        updateState={updateState}
+        restartBlocked={updateRestartBlocked}
+        activeBotId={selectedBot?.id ?? null}
+        onClose={closeSettings}
+        onThemeChange={async (theme) => {
+          const result = await window.aevorenBot.settings.saveGeneral({ theme });
+          if (!result.ok) return result.error;
+          setAppearanceTheme(result.data.theme);
+          return null;
+        }}
+        onLaunchAtLoginChange={async (enabled) => {
+          const result = await window.aevorenBot.settings.saveGeneral({ launchAtLogin: enabled });
+          if (!result.ok) return result.error;
+          setLaunchAtLogin(result.data.launchAtLogin);
+          setLaunchAtLoginSupported(result.data.launchAtLoginSupported);
+          setLaunchAtLoginStatus(result.data.launchAtLoginStatus);
+          return null;
+        }}
+        onCheckUpdate={() => void window.aevorenBot.updates.check().then((result) => {
+          if (result.ok) setUpdateState(result.data);
+        })}
+        onRetryUpdate={() => void window.aevorenBot.updates.retry().then((result) => {
+          if (result.ok) setUpdateState(result.data);
+        })}
+        onInstallUpdate={() => {
+          void flushActive().then((saved) => {
+            if (!saved) return;
+            void window.aevorenBot.updates.installAndRestart().then((result) => {
+              if (result.ok) setUpdateState(result.data);
+            });
+          });
+        }}
+      />
+      <WorkspaceDialog open={workspacesOpen} onClose={() => setWorkspacesOpen(false)} />
       {newBotOpen ? (
         <NewBotChooser
           bots={bots}
@@ -622,7 +942,9 @@ export function App(): React.JSX.Element {
           onClose={() => {
             setCreateError(null);
             setNewBotOpen(false);
-            requestAnimationFrame(() => newBotButtonRef.current?.focus());
+            requestAnimationFrame(() => {
+              if (document.activeElement === document.body) newBotButtonRef.current?.focus();
+            });
           }}
           onCreate={() => void createBot()}
           onCreateRoom={(botIds) => void createRoom(botIds)}
@@ -634,6 +956,21 @@ export function App(): React.JSX.Element {
           }}
         />
       ) : null}
+      <UpdateStatusNotice
+        state={updateState}
+        restartBlocked={updateRestartBlocked}
+        onRetry={() => void window.aevorenBot.updates.retry().then((result) => {
+          if (result.ok) setUpdateState(result.data);
+        })}
+        onInstall={() => {
+          void flushActive().then((saved) => {
+            if (!saved) return;
+            void window.aevorenBot.updates.installAndRestart().then((result) => {
+              if (result.ok) setUpdateState(result.data);
+            });
+          });
+        }}
+      />
     </div>
   );
 }

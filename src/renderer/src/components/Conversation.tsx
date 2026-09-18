@@ -1,6 +1,8 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AppError,
+  ApprovalRequest,
+  ApprovalResolution,
   Bot,
   RoomBatch,
   RoomDetail,
@@ -10,6 +12,7 @@ import type {
   RuntimeRun,
   SessionLiveState,
   SessionLiveStateName,
+  ToolInvocation,
   TranscriptEntry,
   UserRoomRoutingMode,
 } from "@shared/contracts";
@@ -27,7 +30,8 @@ import {
   type RoomMention,
 } from "../room-mentions";
 import { AssistantMarkdown } from "./AssistantMarkdown";
-import { BotIcon, MenuIcon, PanelIcon, SendIcon, SettingsIcon, StopIcon } from "./Icons";
+import { BotIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
+import { HeaderModelPicker } from "./HeaderModelPicker";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
@@ -84,11 +88,114 @@ type TranscriptItemProps = {
   routeReason: string | null;
   handoffs: HandoffDisplay[];
   handoffRejections: HandoffRejectionDisplay[];
+  toolInvocations: ToolInvocation[];
+  approvalsByInvocation: ReadonlyMap<string, ApprovalRequest>;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onRetryRoomTurn(turnId: string): void;
   onOpenSpeaker(botId: string): void;
+  onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
 };
+
+const toolStateLabels: Record<ToolInvocation["state"], string> = {
+  prepared: "正在准备",
+  "awaiting-approval": "等待你的确认",
+  approved: "已允许，准备执行",
+  dispatching: "正在执行",
+  running: "正在执行",
+  succeeded: "执行完成",
+  failed: "执行失败",
+  denied: "已拒绝",
+  expired: "确认已过期",
+  cancelled: "已取消",
+  "failed-before-execution": "执行前失败",
+  "interrupted-unknown": "执行被中断",
+};
+
+function toolActionLabel(invocation: ToolInvocation): string {
+  if (invocation.toolKind === "workspace-list") return "查看目录";
+  if (invocation.toolKind === "workspace-read") return "读取文件";
+  if (invocation.toolKind === "workspace-search") return "搜索文件";
+  if (invocation.toolKind === "web-search") return "联网搜索";
+  if (invocation.toolKind === "web-fetch") return "读取网页";
+  if (invocation.toolKind === "weather-current") return "查询当前天气";
+  if (invocation.toolKind === "mcp-call") return `MCP · ${invocation.arguments.kind === "mcp-call" ? invocation.arguments.toolName : "Tool"}`;
+  if (invocation.toolKind === "clipboard-read") return "读取剪贴板";
+  return "查询当前时间";
+}
+
+const ToolActivity = memo(function ToolActivity({
+  invocation,
+  approval,
+  onResolve,
+}: {
+  invocation: ToolInvocation;
+  approval?: ApprovalRequest;
+  onResolve(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
+}): React.JSX.Element {
+  const [resolving, setResolving] = useState<ApprovalResolution | null>(null);
+  const query = invocation.arguments.kind === "workspace-search" ? invocation.arguments.query : null;
+  const remote = invocation.effectClass === "read-remote";
+  const pure = invocation.effectClass === "pure";
+  const clipboardRead = invocation.toolKind === "clipboard-read";
+  const targetLabel = invocation.arguments.kind === "mcp-call"
+    ? `Server ${invocation.arguments.serverId.slice(0, 8)}…`
+    : invocation.targetPath || "工作区根目录";
+  const resultProvider = typeof invocation.resultMetadata?.provider === "string"
+    ? invocation.resultMetadata.provider
+    : typeof invocation.resultMetadata?.server === "string"
+      ? invocation.resultMetadata.server
+      : null;
+  const resultTime = typeof invocation.resultMetadata?.observedAt === "string"
+    ? invocation.resultMetadata.observedAt
+    : typeof invocation.resultMetadata?.retrievedAt === "string"
+      ? invocation.resultMetadata.retrievedAt
+      : null;
+
+  async function resolve(resolution: ApprovalResolution): Promise<void> {
+    if (!approval || resolving) return;
+    setResolving(resolution);
+    try {
+      await onResolve(approval, resolution);
+    } finally {
+      setResolving(null);
+    }
+  }
+
+  return (
+    <div className={`tool-activity tool-${invocation.state}`} data-testid="workspace-tool-activity">
+      <div className="tool-activity-heading">
+        <span className="tool-activity-icon"><FolderIcon /></span>
+        <span className="tool-activity-copy">
+          <strong>{toolActionLabel(invocation)}</strong>
+          <span>{targetLabel}{query ? ` · “${query}”` : ""}</span>
+        </span>
+        <span className="tool-activity-state">{toolStateLabels[invocation.state]}</span>
+      </div>
+      {invocation.state === "succeeded" && (resultProvider || resultTime) ? (
+        <div className="tool-provenance">
+          {resultProvider ? <span>来源：{resultProvider}</span> : null}
+          {resultTime ? <span>时间：{resultTime}</span> : null}
+        </div>
+      ) : null}
+      {approval?.state === "pending" ? (
+        <div className="tool-approval-actions" aria-label={remote ? "联网查询确认" : pure ? "系统信息确认" : clipboardRead ? "剪贴板读取确认" : "本地工具确认"}>
+          <p>{remote
+            ? "仅本次允许 Aevoren Bot 将上方查询内容发送给标明的外部只读数据服务。"
+            : pure
+              ? "仅本次允许 Aevoren Bot 读取本机系统时间；不会访问外部网络。"
+              : clipboardRead
+                ? "仅本次允许 Aevoren Bot 读取当前纯文本剪贴板内容；结果不会写入 Memory。"
+                : "仅本次允许 Aevoren Bot 访问这个已登记工作区目标。"}</p>
+          <div>
+            <button type="button" className="secondary-button" disabled={resolving !== null} onClick={() => void resolve("deny")}>{resolving === "deny" ? "正在拒绝…" : "拒绝"}</button>
+            <button type="button" className="primary-button" disabled={resolving !== null} onClick={() => void resolve("allow-once")}>{resolving === "allow-once" ? "正在执行…" : "仅允许一次"}</button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+});
 
 const TranscriptItem = memo(function TranscriptItem({
   entry,
@@ -103,10 +210,13 @@ const TranscriptItem = memo(function TranscriptItem({
   routeReason,
   handoffs,
   handoffRejections,
+  toolInvocations,
+  approvalsByInvocation,
   onRetryMessage,
   onRetryRun,
   onRetryRoomTurn,
   onOpenSpeaker,
+  onResolveApproval,
 }: TranscriptItemProps): React.JSX.Element {
   const failedBeforeAcceptance = entry.sendState === "failed-before-acceptance";
   const interrupted = run?.state === "interrupted";
@@ -175,6 +285,18 @@ const TranscriptItem = memo(function TranscriptItem({
               ))}
             </div>
           ) : null}
+          {toolInvocations.length > 0 ? (
+            <div className="message-tools" aria-label="工作区工具活动">
+              {toolInvocations.map((invocation) => (
+                <ToolActivity
+                  key={invocation.id}
+                  invocation={invocation}
+                  approval={approvalsByInvocation.get(invocation.id)}
+                  onResolve={onResolveApproval}
+                />
+              ))}
+            </div>
+          ) : null}
           {entry.status === "streaming"
             ? <div className="streaming-indicator">正在生成<span /></div>
             : null}
@@ -229,6 +351,8 @@ type ConversationProps = {
   roomHandoffRejections: RoomHandoffRejectionView[];
   entries: TranscriptEntry[];
   runs: RuntimeRun[];
+  toolInvocations: ToolInvocation[];
+  approvalRequests: ApprovalRequest[];
   liveState: SessionLiveState | null;
   loading: boolean;
   submitting: boolean;
@@ -236,7 +360,10 @@ type ConversationProps = {
   closeNotice: string | null;
   onOpenBots(): void;
   onOpenProfile(): void;
-  onOpenSettings(): void;
+  onOpenWorkspaces(): void;
+  onBotUpdated(bot: Bot): void;
+  onError(error: AppError | null): void;
+  onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
   onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode): Promise<boolean>;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
@@ -256,6 +383,8 @@ export function Conversation({
   roomHandoffRejections,
   entries,
   runs,
+  toolInvocations,
+  approvalRequests,
   liveState,
   loading,
   submitting,
@@ -263,7 +392,10 @@ export function Conversation({
   closeNotice,
   onOpenBots,
   onOpenProfile,
-  onOpenSettings,
+  onOpenWorkspaces,
+  onBotUpdated,
+  onError,
+  onResolveApproval,
   onSend,
   onRetryMessage,
   onRetryRun,
@@ -280,7 +412,7 @@ export function Conversation({
   const transcriptRef = useRef<HTMLElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const pendingComposerCaretRef = useRef<number | null>(null);
-  const dismissedMentionStartRef = useRef<number | null>(null);
+  const dismissedMentionRef = useRef<{ start: number; text: string } | null>(null);
   const followTranscriptTailRef = useRef(true);
   const activeRunId = liveState?.activeRunId ?? null;
   const activeBatch = roomBatches.toReversed().find((batch) => batch.state === "queued" || batch.state === "running") ?? null;
@@ -299,6 +431,20 @@ export function Conversation({
   const runsByAssistant = useMemo(
     () => new Map(runs.filter((run) => run.assistantEntryId).map((run) => [run.assistantEntryId, run])),
     [runs],
+  );
+  const toolsByAssistant = useMemo(() => {
+    const runsById = new Map(runs.map((run) => [run.id, run]));
+    const result = new Map<string, ToolInvocation[]>();
+    for (const invocation of toolInvocations) {
+      const assistantEntryId = runsById.get(invocation.runtimeRunId)?.assistantEntryId;
+      if (!assistantEntryId) continue;
+      result.set(assistantEntryId, [...(result.get(assistantEntryId) ?? []), invocation]);
+    }
+    return result;
+  }, [runs, toolInvocations]);
+  const approvalsByInvocation = useMemo(
+    () => new Map(approvalRequests.map((approval) => [approval.toolInvocationId, approval])),
+    [approvalRequests],
   );
   const latestTurns = useMemo(() => {
     if (!latestBatch) return [];
@@ -399,7 +545,7 @@ export function Conversation({
   useLayoutEffect(() => {
     const transcript = transcriptRef.current;
     if (transcript && followTranscriptTailRef.current) transcript.scrollTop = transcript.scrollHeight;
-  }, [entries]);
+  }, [entries, toolInvocations]);
 
   useLayoutEffect(() => {
     const caret = pendingComposerCaretRef.current;
@@ -425,7 +571,7 @@ export function Conversation({
       setDraft("");
       setRoomMentions([]);
       setMentionQuery(null);
-      dismissedMentionStartRef.current = null;
+      dismissedMentionRef.current = null;
     }
   }
 
@@ -433,15 +579,15 @@ export function Conversation({
     if (!room) return;
     const next = findActiveMentionQuery(text, caret);
     if (!next) {
-      dismissedMentionStartRef.current = null;
+      dismissedMentionRef.current = null;
       setMentionQuery(null);
       return;
     }
-    if (dismissedMentionStartRef.current === next.start) {
+    if (dismissedMentionRef.current?.start === next.start && dismissedMentionRef.current.text === text) {
       setMentionQuery(null);
       return;
     }
-    dismissedMentionStartRef.current = null;
+    dismissedMentionRef.current = null;
     setActiveMentionIndex(0);
     setMentionQuery(next);
   }
@@ -460,7 +606,7 @@ export function Conversation({
     pendingComposerCaretRef.current = nextDraft.caret;
     setDraft(nextDraft.text);
     setMentionQuery(null);
-    dismissedMentionStartRef.current = null;
+    dismissedMentionRef.current = null;
   }
 
   return (
@@ -474,9 +620,10 @@ export function Conversation({
           <p>{room?.room.description || bot?.description || (room ? `${room.members.length} 个 Bot 协作，未点名时自动选择。` : bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
         </div>
         <div className="conversation-actions">
-          <button className="secondary-button model-settings-button" type="button" aria-label="模型设置" title="模型设置" onClick={onOpenSettings}>
-            <SettingsIcon />
-            <span>模型设置</span>
+          {bot ? <HeaderModelPicker bot={bot} busy={busy} onBotUpdated={onBotUpdated} onError={onError} /> : null}
+          <button className="secondary-button model-settings-button" type="button" aria-label="工作区" title="工作区" onClick={onOpenWorkspaces}>
+            <FolderIcon />
+            <span>工作区</span>
           </button>
           <button className="mobile-panel-button" type="button" aria-label="打开 Bot 设置" onClick={onOpenProfile}>
             <PanelIcon />
@@ -546,10 +693,13 @@ export function Conversation({
                 : null}
               handoffs={handoffsByAssistantEntry.get(entry.id) ?? []}
               handoffRejections={handoffRejectionsByAssistantEntry.get(entry.id) ?? []}
+              toolInvocations={toolsByAssistant.get(entry.id) ?? []}
+              approvalsByInvocation={approvalsByInvocation}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
               onRetryRoomTurn={onRetryRoomTurn}
               onOpenSpeaker={onOpenSpeaker}
+              onResolveApproval={onResolveApproval}
             />
           );
         })}
@@ -671,7 +821,7 @@ export function Conversation({
                   }
                   if (event.key === "Escape") {
                     event.preventDefault();
-                    dismissedMentionStartRef.current = mentionQuery.start;
+                    dismissedMentionRef.current = { start: mentionQuery.start, text: draft };
                     setMentionQuery(null);
                     return;
                   }

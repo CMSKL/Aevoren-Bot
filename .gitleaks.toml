@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated and ignored build/test output"
+paths = [
+  '''(^|/)(node_modules|out|dist|coverage|playwright-report|test-results)/''',
+  '''(^|/)\.node_modules-backup-[^/]+/''',
+  '''(^|/)\.dist-backup-[^/]+/''',
+]

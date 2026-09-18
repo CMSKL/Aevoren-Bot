@@ -5,10 +5,9 @@ import { AevorenBotError } from "./errors";
 import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
 import { RuntimeCoordinator } from "./send-worker";
-import { ModelSettingsService, type SecretCodec } from "./settings";
+import type { ProviderResolver } from "./providers/contracts";
 
 const repositories: AppRepository[] = [];
-const codec: SecretCodec = { isAvailable: () => true, encrypt: (value) => value, decrypt: (value) => value };
 
 afterEach(() => {
   while (repositories.length > 0) repositories.pop()?.close();
@@ -26,11 +25,10 @@ function setup(provider: ModelProvider, memberCount = 3) {
     return { ...created, bot };
   });
   const detail = repository.createRoom({ memberBotIds: bots.map(({ bot }) => bot.id), name: "Test Room" });
-  const settings = new ModelSettingsService(repository, codec);
   const transcriptEvents = vi.fn();
   const executor = new RuntimeExecutor(
     repository,
-    settings,
+    null,
     { transcript: transcriptEvents, runtime: vi.fn() },
     false,
     provider,
@@ -51,6 +49,29 @@ function command(detail: ReturnType<AppRepository["createRoom"]>, targetBotIds: 
 }
 
 describe("RoomCoordinator", () => {
+  it("injects each Room executor's own Memory without leaking peer Memory", async () => {
+    const captured: ChatMessage[][] = [];
+    const provider: ModelProvider = {
+      async *run(messages) {
+        captured.push(messages);
+        yield { type: "started", requestId: `memory-room-${captured.length}` };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, bots, detail, coordinator } = setup(provider, 2);
+    repository.createMemory(bots[0]!.bot.id, "ROOM_MEMORY_A");
+    repository.createMemory(bots[1]!.bot.id, "ROOM_MEMORY_B");
+
+    const sent = coordinator.send(command(detail, bots.map(({ bot }) => bot.id)));
+    await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
+    expect(JSON.stringify(captured[0])).toContain("ROOM_MEMORY_A");
+    expect(JSON.stringify(captured[0])).not.toContain("ROOM_MEMORY_B");
+    expect(JSON.stringify(captured[1])).toContain("ROOM_MEMORY_B");
+    expect(JSON.stringify(captured[1])).not.toContain("ROOM_MEMORY_A");
+    expect(repository.listRuntimeRuns(detail.session.id).every((run) => run.promptManifest.schemaVersion === 3)).toBe(true);
+  });
+
   it("deduplicates the same command and rejects a changed command before another provider call", async () => {
     let calls = 0;
     const provider: ModelProvider = {
@@ -136,7 +157,7 @@ describe("RoomCoordinator", () => {
       async *run(messages) {
         captured.push(messages);
         yield { type: "started", requestId: `request-${captured.length}` };
-        const reply = captured.length === 1 ? `intro\n${leakedMarker} first answer` : "second answer";
+        const reply = captured.length === 1 ? `intro\n${leakedMarker} first answer\n[/room-speaker]` : "second answer";
         yield { type: "delta", text: reply.slice(0, 18) };
         yield { type: "delta", text: reply.slice(18) };
         yield { type: "completed", finishReason: "stop" };
@@ -225,7 +246,7 @@ describe("RoomCoordinator", () => {
     const runId = repository.listRoomTurns(sent.batchId)[0]!.runtimeRunId!;
     const direct = new RuntimeCoordinator(
       repository,
-      new ModelSettingsService(repository, codec),
+      null,
       { transcript: vi.fn(), runtime: vi.fn(), sendState: vi.fn() },
       false,
       undefined,
@@ -260,6 +281,62 @@ describe("RoomCoordinator", () => {
     expect(repository.listTranscript(detail.session.id).filter((entry) => entry.role === "user")).toHaveLength(1);
     expect(repository.listRoomTurns(sent.batchId).filter((turn) => turn.memberBotId === failed.memberBotId)).toHaveLength(2);
     expect(repository.listRuntimeRuns(detail.session.id).filter((run) => run.executorBotId === failed.memberBotId).map((run) => run.attemptNo)).toEqual([1, 2]);
+  });
+
+  it("keeps a Room turn retry on the original Provider and model snapshot", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const firstCreated = repository.createBot();
+    const firstBot = repository.updateBot(firstCreated.bot.id, firstCreated.bot.version, {
+      name: "Snapshot member",
+      modelSelection: { providerInstanceId: "openai-compatible.default", modelId: "room-model-a" },
+    });
+    const secondCreated = repository.createBot();
+    const detail = repository.createRoom({
+      name: "Snapshot room",
+      memberBotIds: [firstBot.id, secondCreated.bot.id],
+    });
+    const selections: Array<{ providerInstanceId: string; modelId: string }> = [];
+    let originalCalls = 0;
+    const resolver: ProviderResolver = {
+      getRoute: (selection) => selection.providerInstanceId === "codex.default" ? "codex-cli" : "openai-compatible",
+      getCapabilities: () => ({ roomOwnerSelection: false, handoff: false, workspaceTools: false }),
+      createProvider: (selection) => {
+        selections.push(selection);
+        return {
+          async *run() {
+            yield { type: "started", requestId: `room-snapshot-${selections.length}` };
+            if (selection.providerInstanceId === "openai-compatible.default" && originalCalls++ === 0) {
+              throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
+            }
+            yield { type: "delta", text: selection.modelId };
+            yield { type: "completed", finishReason: "stop" };
+          },
+          testConnection: async () => {},
+        };
+      },
+    };
+    const executor = new RuntimeExecutor(repository, resolver, { transcript: vi.fn(), runtime: vi.fn() });
+    const coordinator = new RoomCoordinator(repository, executor, { roomRuntime: vi.fn(), transcript: vi.fn() });
+    const sent = coordinator.send(command(detail, [firstBot.id]));
+    await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("partial"));
+    const failed = repository.listRoomTurns(sent.batchId)[0]!;
+    const latestBot = repository.getBot(firstBot.id);
+    repository.updateBot(latestBot.id, latestBot.version, {
+      modelSelection: { providerInstanceId: "codex.default", modelId: "room-model-b" },
+    });
+
+    const retry = coordinator.retryTurn(failed.id);
+    await vi.waitFor(() => expect(repository.getRoomTurn(retry.id).state).toBe("completed"));
+
+    expect(selections).toEqual([
+      { providerInstanceId: "openai-compatible.default", modelId: "room-model-a" },
+      { providerInstanceId: "openai-compatible.default", modelId: "room-model-a" },
+    ]);
+    expect(repository.getRuntimeRun(repository.getRoomTurn(retry.id).runtimeRunId!)).toMatchObject({
+      providerInstanceId: "openai-compatible.default",
+      providerModelId: "room-model-a",
+    });
   });
 
   it("refuses to append a retry from an older Room batch after a newer user message", async () => {
@@ -318,7 +395,7 @@ describe("RoomCoordinator", () => {
     };
     const resumedExecutor = new RuntimeExecutor(
       repository,
-      new ModelSettingsService(repository, codec),
+      null,
       { transcript: vi.fn(), runtime: vi.fn() },
       false,
       resumedProvider,

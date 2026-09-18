@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PromptManifest } from "@shared/contracts";
-import { AppRepository } from "./database";
+import { AppRepository, MIGRATIONS } from "./database";
 import { AevorenBotError } from "./errors";
 
 const repositories: AppRepository[] = [];
@@ -29,6 +29,21 @@ function manifest(sessionId: string, botId: string): PromptManifest {
   };
 }
 
+function createDatabaseAtVersion(filename: string, version: number, lastOpenedVersion = "0.1.0"): void {
+  const database = new DatabaseSync(filename);
+  database.exec("PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);");
+  for (const migration of MIGRATIONS.filter((candidate) => candidate.version <= version)) {
+    const foreignKeysOff = "foreignKeysOff" in migration && migration.foreignKeysOff;
+    if (foreignKeysOff) database.exec("PRAGMA foreign_keys = OFF;");
+    database.exec(migration.sql);
+    database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(migration.version, "2026-09-16T00:00:00.000Z");
+    if (foreignKeysOff) database.exec("PRAGMA foreign_keys = ON;");
+  }
+  database.prepare("INSERT INTO app_settings(key, value, encrypted, updated_at) VALUES (?, ?, 0, ?)")
+    .run("app.lastOpenedVersion", lastOpenedVersion, "2026-09-16T00:00:00.000Z");
+  database.close();
+}
+
 afterEach(() => {
   while (repositories.length > 0) repositories.pop()?.close();
   while (temporaryDirectories.length > 0) {
@@ -38,6 +53,165 @@ afterEach(() => {
 });
 
 describe("AppRepository", () => {
+  it("does not create a migration backup for a new database", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-new-database-backup-"));
+    temporaryDirectories.push(directory);
+    const backupDirectory = join(directory, "Backups");
+    const repository = new AppRepository(join(directory, "app.sqlite"), { appVersion: "0.2.0-beta.1", backupDirectory });
+    repository.close();
+    expect(existsSync(backupDirectory)).toBe(false);
+  });
+
+  it("creates and verifies a versioned backup before migrating an existing database", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-schema-backup-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const backupDirectory = join(directory, "Backups");
+    const sourceSchemaVersion = MIGRATIONS.at(-2)!.version;
+    const targetSchemaVersion = MIGRATIONS.at(-1)!.version;
+    createDatabaseAtVersion(filename, sourceSchemaVersion);
+
+    const repository = new AppRepository(filename, { appVersion: "0.2.0-beta.1", backupDirectory });
+    repository.close();
+
+    const backupFiles = readdirSync(backupDirectory);
+    expect(backupFiles.filter((name) => name.endsWith(".sqlite"))).toHaveLength(1);
+    expect(backupFiles.filter((name) => name.endsWith(".json"))).toHaveLength(1);
+    const metadata = JSON.parse(readFileSync(join(backupDirectory, backupFiles.find((name) => name.endsWith(".json"))!), "utf8")) as Record<string, unknown>;
+    expect(metadata).toMatchObject({
+      sourceSchemaVersion,
+      targetSchemaVersion,
+      sourceAppVersion: "0.1.0",
+      targetAppVersion: "0.2.0-beta.1",
+    });
+    expect(statSync(backupDirectory).mode & 0o777).toBe(0o700);
+    expect(statSync(String(metadata.databaseBackup)).mode & 0o777).toBe(0o600);
+    const backup = new DatabaseSync(String(metadata.databaseBackup), { readOnly: true });
+    expect(backup.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    expect(backup.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: sourceSchemaVersion });
+    backup.close();
+    const migrated = new DatabaseSync(filename, { readOnly: true });
+    expect(migrated.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: targetSchemaVersion });
+    migrated.close();
+  });
+
+  it("refuses to migrate when the safety backup cannot be created", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-schema-backup-failure-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const blockedBackupPath = join(directory, "not-a-directory");
+    const sourceSchemaVersion = MIGRATIONS.at(-2)!.version;
+    createDatabaseAtVersion(filename, sourceSchemaVersion);
+    writeFileSync(blockedBackupPath, "blocked", "utf8");
+
+    expect(() => new AppRepository(filename, { appVersion: "0.2.0-beta.1", backupDirectory: blockedBackupPath })).toThrow();
+    const database = new DatabaseSync(filename, { readOnly: true });
+    expect(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: sourceSchemaVersion });
+    database.close();
+  });
+
+  it("migrates the legacy global model configuration into one provider instance without decrypting the key", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-provider-migration-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    createDatabaseAtVersion(filename, 12);
+    const legacy = new DatabaseSync(filename);
+    legacy.prepare(
+      `INSERT INTO bots(
+         id, name, label, description, instructions, pinned_at, hidden_at, has_unread,
+         deleted_at, version, created_at, updated_at
+       ) VALUES('bot','Legacy','','','',NULL,NULL,0,NULL,1,'t','t')`,
+    ).run();
+    legacy.prepare("INSERT INTO app_settings VALUES('model.baseUrl','https://legacy.example/v1',0,'t')").run();
+    legacy.prepare("INSERT INTO app_settings VALUES('model.modelId','legacy-model',0,'t')").run();
+    legacy.prepare("INSERT INTO app_settings VALUES('model.apiKey','ciphertext-without-decryption',1,'t')").run();
+    legacy.close();
+
+    const repository = new AppRepository(filename);
+    repositories.push(repository);
+    expect(repository.getBot("bot").modelSelection).toEqual({
+      providerInstanceId: "openai-compatible.default",
+      modelId: "legacy-model",
+    });
+    expect(repository.getProviderInstanceConfig("openai-compatible.default").config).toEqual({
+      baseUrl: "https://legacy.example/v1",
+    });
+    expect(repository.getDefaultModelSelection()).toEqual({
+      providerInstanceId: "openai-compatible.default",
+      modelId: "legacy-model",
+    });
+    expect(repository.getSetting("provider.openai-compatible.default.apiKey")).toEqual({
+      value: "ciphertext-without-decryption",
+      encrypted: true,
+    });
+    expect(repository.getSetting("model.apiKey")).toBeNull();
+    expect(repository.getSetting("model.baseUrl")).toBeNull();
+    expect(repository.getSetting("model.modelId")).toBeNull();
+  });
+
+  it("adds discovered CLI instances through v15 without changing existing Provider configuration", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-provider-v14-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    createDatabaseAtVersion(filename, 13);
+    const before = new DatabaseSync(filename);
+    before.prepare(
+      "UPDATE provider_instances SET config_json = ?, version = 4 WHERE id = 'codex.default'",
+    ).run(JSON.stringify({ cliPath: "/custom/codex" }));
+    before.close();
+
+    const repository = new AppRepository(filename);
+    repositories.push(repository);
+
+    expect(repository.listProviderInstanceConfigs()).toHaveLength(12);
+    expect(repository.getProviderInstanceConfig("codex.default")).toMatchObject({
+      driverKind: "codex-cli",
+      config: { cliPath: "/custom/codex" },
+      version: 4,
+    });
+    expect(repository.getProviderInstanceConfig("claude.default")).toMatchObject({
+      driverKind: "claude-cli",
+      displayName: "Claude Code",
+      config: { cliPath: "claude" },
+      version: 1,
+    });
+    expect(repository.getProviderInstanceConfig("ollama.default")).toMatchObject({
+      driverKind: "ollama-cli",
+      displayName: "Ollama",
+      config: { cliPath: "ollama" },
+      version: 1,
+    });
+    expect(repository.getProviderInstanceConfig("gemini.default")).toMatchObject({
+      driverKind: "acp-cli",
+      displayName: "Gemini CLI",
+      config: { adapter: "gemini", cliPath: "gemini" },
+      version: 1,
+    });
+    const created = repository.createBot();
+    const bot = repository.updateBot(created.bot.id, created.bot.version, {
+      modelSelection: { providerInstanceId: "claude.default", modelId: "claude-sonnet-5" },
+    });
+    const clientNonce = crypto.randomUUID();
+    repository.prepareMessage({ sessionId: created.session.id, clientNonce, text: "v14 route" });
+    expect(repository.createRuntimeRun(clientNonce, "claude-cli", manifest(created.session.id, bot.id))).toMatchObject({
+      route: "claude-cli",
+      providerInstanceId: "claude.default",
+      providerModelId: "claude-sonnet-5",
+    });
+    repository.transitionRuntimeRun(repository.getLatestRuntimeRun(clientNonce)!.id, "failed");
+    const acpCreated = repository.createBot();
+    const acpBot = repository.updateBot(acpCreated.bot.id, acpCreated.bot.version, {
+      modelSelection: { providerInstanceId: "gemini.default", modelId: "gemini-2.5-pro" },
+    });
+    const acpNonce = crypto.randomUUID();
+    repository.prepareMessage({ sessionId: acpCreated.session.id, clientNonce: acpNonce, text: "v15 ACP route" });
+    expect(repository.createRuntimeRun(acpNonce, "acp-cli", manifest(acpCreated.session.id, acpBot.id))).toMatchObject({
+      route: "acp-cli",
+      providerInstanceId: "gemini.default",
+      providerModelId: "gemini-2.5-pro",
+    });
+  });
+
   it("creates a neutral Grok-shaped bot with one MAIN session", () => {
     const repository = memoryRepository();
     const created = repository.createBot();
@@ -108,6 +282,27 @@ describe("AppRepository", () => {
       expect.objectContaining<Partial<AevorenBotError>>({ code: "BOT_VERSION_CONFLICT" }),
     );
     expect(repository.getBot(bot.id).description).toBe("新版描述");
+  });
+
+  it("persists one versioned model selection per Bot without changing the global default", () => {
+    const repository = memoryRepository();
+    const first = repository.createBot();
+    const second = repository.createBot();
+    const defaultSelection = repository.getDefaultModelSelection();
+
+    const updated = repository.updateBot(first.bot.id, first.bot.version, {
+      modelSelection: { providerInstanceId: "openai-compatible.default", modelId: "bot-specific-model" },
+    });
+
+    expect(updated.modelSelection).toEqual({
+      providerInstanceId: "openai-compatible.default",
+      modelId: "bot-specific-model",
+    });
+    expect(repository.getBot(second.bot.id).modelSelection).toEqual(defaultSelection);
+    expect(repository.getDefaultModelSelection()).toEqual(defaultSelection);
+    expect(() => repository.updateBot(first.bot.id, first.bot.version, {
+      modelSelection: { providerInstanceId: "codex.default", modelId: "stale-model" },
+    })).toThrowError(expect.objectContaining<Partial<AevorenBotError>>({ code: "BOT_VERSION_CONFLICT" }));
   });
 
   it("persists pin, unread and hidden sidebar state without conflicting with profile versions", () => {
@@ -217,6 +412,46 @@ describe("AppRepository", () => {
 
     expect(() => repository.deleteBot(untargeted.bot.id)).toThrowError(expect.objectContaining({ code: "BOT_BUSY" }));
     expect(repository.listRoomMembers(detail.room.id)).toHaveLength(3);
+  });
+
+  it("deletes mixed Bot and Room selections atomically", () => {
+    const repository = memoryRepository();
+    const first = repository.createBot();
+    const second = repository.createBot();
+    const third = repository.createBot();
+    const selectedRoom = repository.createRoom({ memberBotIds: [second.bot.id, third.bot.id], name: "批量删除群聊" });
+    const affectedRoom = repository.createRoom({ memberBotIds: [first.bot.id, second.bot.id, third.bot.id], name: "保留群聊" });
+
+    const result = repository.deleteConversations({ botIds: [first.bot.id], roomIds: [selectedRoom.room.id] });
+
+    expect(result.rooms).toEqual([{ id: selectedRoom.room.id }]);
+    expect(result.bots).toEqual([{
+      id: first.bot.id,
+      affectedRoomIds: [affectedRoom.room.id],
+      archivedRoomIds: [],
+    }]);
+    expect(repository.listBots().map((bot) => bot.id)).toEqual([second.bot.id, third.bot.id]);
+    expect(() => repository.getRoom(selectedRoom.room.id)).toThrowError(expect.objectContaining({ code: "ROOM_NOT_FOUND" }));
+    expect(repository.listRoomMembers(affectedRoom.room.id).map((member) => member.botId)).toEqual([second.bot.id, third.bot.id]);
+    expect(repository.getRoom(affectedRoom.room.id)).toMatchObject({ archivedAt: null, membershipVersion: 2 });
+  });
+
+  it("preflights every batch target and leaves all conversations unchanged when one Bot is busy", () => {
+    const repository = memoryRepository();
+    const first = repository.createBot();
+    const busy = repository.createBot();
+    const room = repository.createRoom({ memberBotIds: [first.bot.id, busy.bot.id], name: "不得部分删除" });
+    const nonce = crypto.randomUUID();
+    repository.prepareMessage({ sessionId: busy.session.id, clientNonce: nonce, text: "正在运行" });
+    repository.createRuntimeRun(nonce, "fake", manifest(busy.session.id, busy.bot.id));
+
+    expect(() => repository.deleteConversations({
+      botIds: [first.bot.id, busy.bot.id],
+      roomIds: [room.room.id],
+    })).toThrowError(expect.objectContaining({ code: "BOT_BUSY" }));
+    expect(repository.listBots().map((bot) => bot.id)).toEqual([first.bot.id, busy.bot.id]);
+    expect(repository.getRoom(room.room.id).name).toBe("不得部分删除");
+    expect(repository.listRoomMembers(room.room.id)).toHaveLength(2);
   });
 
   it("deduplicates the same nonce and rejects a different body", () => {

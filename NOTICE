@@ -1,0 +1,11 @@
+Aevoren Bot
+Copyright 2026 Aevoren Bot contributors
+
+The model CLI provider and adapter work was informed by the open-source edition
+of OpenMausBot, Copyright 2026 Milind Soni and OpenMausBot contributors, made
+available under the Apache License, Version 2.0. No code from OpenMausBot's
+separately licensed enterprise directory is intended to be included.
+
+Third-party package inventory is recorded in THIRD_PARTY_NOTICES.md. Product and
+service names used for interoperability remain the property of their respective
+owners; see TRADEMARKS.md.

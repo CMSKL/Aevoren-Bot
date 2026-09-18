@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a reproducible Aevoren Bot defect
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include API keys, OAuth tokens, private transcripts, databases, or unredacted personal paths. Security issues must use private vulnerability reporting.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: 0.2.0-beta.7 or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: macOS version, Apple silicon model, Node/pnpm for source builds
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Model source
+      options:
+        - Fake Provider
+        - Codex CLI
+        - Claude Code
+        - Ollama
+        - OpenAI-compatible
+        - Other / not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic data and list the smallest reliable sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include only safe error codes or logs after removing secrets, account data, transcript content, and absolute personal paths.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I confirmed this report contains no secrets or private user data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
