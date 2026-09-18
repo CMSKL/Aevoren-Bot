@@ -1,5 +1,7 @@
 # Aevoren Bot
 
+[简体中文](README.zh-CN.md) | English
+
 [![CI](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml)
 
 <p><img src="resources/icon.png" alt="Aevoren Bot logo" width="128"></p>
