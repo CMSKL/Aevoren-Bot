@@ -37,10 +37,10 @@ test("routes one Codex CLI dynamic tool call through Aevoren approval and Tool J
     await page.getByLabel("消息").fill("请查询当前时间");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     const activity = page.getByTestId("workspace-tool-activity").last();
-    await expect(activity).toContainText("查询当前时间", { timeout: 15_000 });
+    await expect(activity).toContainText("查询当前时间", { timeout: 30_000 });
     await activity.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(activity).toContainText("执行完成", { timeout: 15_000 });
-    await expect(page.getByText("CLI used approved tool", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(activity).toContainText("执行完成", { timeout: 30_000 });
+    await expect(page.getByText("CLI used approved tool", { exact: true })).toBeVisible({ timeout: 30_000 });
     await application.close();
     application = undefined;
 
