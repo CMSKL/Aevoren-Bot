@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   release-macos:
+    if: github.repository == 'CMSKL/Aevoren-Bot'
     runs-on: macos-15
     environment: release
     permissions:

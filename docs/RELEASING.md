@@ -2,6 +2,8 @@
 
 Aevoren Bot is not released directly from a developer workstation. The GitHub Actions release workflow is the authority for signed public artifacts.
 
+The private source repository is the source of truth. The `mirror-master.yml` workflow pushes only the validated `master` branch and explicit `v*` tags to `CMSKL/Aevoren-Bot-public`; it never pushes `dev`, beta, or other refs. The mirror is distribution-only and does not receive development PRs.
+
 ## Branch promotion
 
 1. Develop and validate on `dev`.
