@@ -97,47 +97,9 @@ pnpm validate
 - Preload 不暴露原始 `ipcRenderer`、文件系统、Shell 或数据库；
 - 当前版本不能读取用户未授权的 Workspace 或 Workspace 外路径，也不具备运行命令、写入文件或控制桌面的能力。
 
-## 文档
+## 开源许可
 
-- [P0-A 垂直切片计划](docs/plans/p0-a-vertical-slice.md)
-- [P0-A 完整验收标准单](docs/validation/p0-a-acceptance-checklist.md)
-- [P0-A 完整验收结果](docs/validation/p0-a-acceptance-results.md)
-- [P0-A 缺陷修复与复验报告](docs/validation/p0-a-fix-verification.md)
-- [P0-A 验收记录](docs/validation/p0-a-validation.md)
-- [P0-A beta 基线验证](docs/validation/p0-a-beta-validation.md)
-- [P0-B Runtime 实施计划](docs/plans/p0-b-runtime-recovery.md)
-- [P0-B Runtime 验收标准单](docs/validation/p0-b-acceptance-checklist.md)
-- [Provider Registry 与 CLI 模型配置迁移验收](docs/validation/provider-cli-migration.md)
-- [OpenMausBot 模型 CLI 对齐分析](docs/analysis/openmaus-model-cli-alignment.md)
-- [Grok Bot 0.55 侧边栏 Shift 多选逆向分析](docs/reverse-engineering/grok-bot/18-sidebar-shift-multiselect-batch-delete-055.md)
-- [侧边栏 Shift 多选与批量删除验收](docs/validation/sidebar-multiselect-acceptance.md)
-- [P0-B Runtime 验收结果](docs/validation/p0-b-acceptance-results.md)
-- [P0-B 脱敏验收证据](docs/validation/evidence/p0-b/acceptance-evidence.md)
-- [P1-A1 确定性 Room 计划](docs/plans/p1-a-deterministic-room-collaboration.md)
-- [P1-A1 Room 验收标准单](docs/validation/p1-a-room-acceptance-checklist.md)
-- [P1-A1 Room 验收结果](docs/validation/p1-a-room-acceptance-results.md)
-- [P1-A1 Room 验收证据](docs/validation/evidence/p1-a-room/acceptance-evidence.md)
-- [P1-A1 Room 演示与真实 Provider 验收脚本](docs/validation/p1-a-room-demo-script.md)
-- [P1-A1.1 真实使用验证与 Beta 准入结果](docs/validation/p1-a1-beta-readiness-results.md)
-- [新建 Bot 与 Grok Bot 差异矩阵](docs/plans/grok-new-bot-parity.md)
-- [新建 Bot 对齐实施说明](docs/plans/grok-new-bot-parity-implementation.md)
-- [新建 Bot 对齐验收清单](docs/validation/grok-new-bot-parity-checklist.md)
-- [新建 Bot 对齐验收结果](docs/validation/grok-new-bot-parity-results.md)
-- [新建 Bot 对齐脱敏证据](docs/validation/evidence/grok-new-bot-parity/2026-09-11/README.md)
-- [Grok Bot 逆向规格包](docs/reverse-engineering/grok-bot/README.md)
-- [P0-C 显式 Memory 与 Context 计划](docs/plans/p0-c-explicit-memory-context.md)
-- [P0-C 显式 Memory 验收标准](docs/validation/p0-c-explicit-memory-acceptance-checklist.md)
-- [P0-D1 Approval 与 Tool Journal 基础合同](docs/plans/p0-d1-approval-tool-journal-foundation.md)
-- [P0-D1 Approval 与 Tool Journal 验收标准](docs/validation/p0-d1-approval-tool-journal-acceptance.md)
-- [P0-D2a Workspace Registry 与根目录边界](docs/plans/p0-d2a-workspace-registry.md)
-- [P0-D2a Workspace Registry 验收标准](docs/validation/p0-d2a-workspace-registry-acceptance.md)
-- [P0-D2b 经批准的只读 Workspace 执行器](docs/plans/p0-d2b-readonly-workspace-executor.md)
-- [P0-D2b 只读 Workspace 执行器验收标准](docs/validation/p0-d2b-readonly-workspace-executor-acceptance.md)
-- [P0-D2c Workspace 只读工具端到端接线](docs/plans/p0-d2c-workspace-tools-e2e.md)
-- [P0-D2c Workspace 只读工具端到端验收结果](docs/validation/p0-d2c-workspace-tools-e2e-acceptance.md)
-- [macOS 自动更新设计与发布门禁](docs/plans/automatic-updates.md)
-- [macOS 自动更新验收记录](docs/validation/automatic-updates-acceptance.md)
-- [试用反馈模板](docs/templates/pilot-feedback.md)
+Aevoren Bot 使用 [Apache License 2.0](LICENSE)。项目名称和图标另受 [商标说明](TRADEMARKS.md) 约束；资产来源记录见 [Asset Provenance](docs/ASSET_PROVENANCE.md)。
 
 ## 分支流程
 
