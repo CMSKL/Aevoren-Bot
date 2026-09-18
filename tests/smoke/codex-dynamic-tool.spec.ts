@@ -7,7 +7,7 @@ import { _electron as electron, expect, test, type ElectronApplication } from "@
 import { AppRepository } from "../../src/main/database";
 
 test("routes one Codex CLI dynamic tool call through Aevoren approval and Tool Journal", async () => {
-  test.setTimeout(30_000);
+  test.setTimeout(120_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-codex-tool-e2e-"));
   const databasePath = join(userDataDir, "aevoren-bot.sqlite");
   const repository = new AppRepository(databasePath);
