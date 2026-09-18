@@ -83,31 +83,9 @@ pnpm validate
 - Preload 不暴露原始 `ipcRenderer`、文件系统、Shell 或数据库；
 - P0-A 不具备读取任意本地文件、运行命令或控制桌面的能力。
 
-## 文档
+## 开源许可
 
-- [P0-A 垂直切片计划](docs/plans/p0-a-vertical-slice.md)
-- [P0-A 完整验收标准单](docs/validation/p0-a-acceptance-checklist.md)
-- [P0-A 完整验收结果](docs/validation/p0-a-acceptance-results.md)
-- [P0-A 缺陷修复与复验报告](docs/validation/p0-a-fix-verification.md)
-- [P0-A 验收记录](docs/validation/p0-a-validation.md)
-- [P0-A beta 基线验证](docs/validation/p0-a-beta-validation.md)
-- [P0-B Runtime 实施计划](docs/plans/p0-b-runtime-recovery.md)
-- [P0-B Runtime 验收标准单](docs/validation/p0-b-acceptance-checklist.md)
-- [P0-B Runtime 验收结果](docs/validation/p0-b-acceptance-results.md)
-- [P0-B 脱敏验收证据](docs/validation/evidence/p0-b/acceptance-evidence.md)
-- [P1-A1 确定性 Room 计划](docs/plans/p1-a-deterministic-room-collaboration.md)
-- [P1-A1 Room 验收标准单](docs/validation/p1-a-room-acceptance-checklist.md)
-- [P1-A1 Room 验收结果](docs/validation/p1-a-room-acceptance-results.md)
-- [P1-A1 Room 验收证据](docs/validation/evidence/p1-a-room/acceptance-evidence.md)
-- [P1-A1 Room 演示与真实 Provider 验收脚本](docs/validation/p1-a-room-demo-script.md)
-- [P1-A1.1 真实使用验证与 Beta 准入结果](docs/validation/p1-a1-beta-readiness-results.md)
-- [新建 Bot 与 Grok Bot 差异矩阵](docs/plans/grok-new-bot-parity.md)
-- [新建 Bot 对齐实施说明](docs/plans/grok-new-bot-parity-implementation.md)
-- [新建 Bot 对齐验收清单](docs/validation/grok-new-bot-parity-checklist.md)
-- [新建 Bot 对齐验收结果](docs/validation/grok-new-bot-parity-results.md)
-- [新建 Bot 对齐脱敏证据](docs/validation/evidence/grok-new-bot-parity/2026-09-11/README.md)
-- [Grok Bot 逆向规格包](docs/reverse-engineering/grok-bot/README.md)
-- [试用反馈模板](docs/templates/pilot-feedback.md)
+Aevoren Bot 使用 [Apache License 2.0](LICENSE)。项目名称和图标另受 [商标说明](TRADEMARKS.md) 约束；资产来源记录见 [Asset Provenance](docs/ASSET_PROVENANCE.md)。
 
 ## 分支流程
 
