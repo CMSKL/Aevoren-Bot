@@ -6,18 +6,18 @@ Last reviewed: 2026-09-18. This is a readiness record, not authorization to publ
 
 | Item | Status | Evidence / required action |
 | --- | --- | --- |
-| Current tree secret scan | Passed | Gitleaks directory scan found no tracked source leak; ignored local `dist` fixtures are not publication inputs |
-| Full Git history secret scan | Passed | Gitleaks scanned 70 commits with 0 findings |
+| Current tree secret scan | Passed | Local Gitleaks directory scan and the remote CI secret-scan job found 0 findings; ignored local `dist` fixtures are not publication inputs |
+| Full Git history secret scan | Passed | Independent post-rewrite clones of `dev`, `beta`, and `master` were scanned with 0 findings |
 | Main project license | Passed | Root `LICENSE` contains Apache-2.0 and `package.json` uses the `Apache-2.0` SPDX identifier |
 | Third-party dependency license inventory | Passed | `pnpm licenses:check`; generated `THIRD_PARTY_NOTICES.md`; production graph has no GPL/AGPL/LGPL/SSPL/BUSL/unknown group |
 | Vulnerability audit | Passed | `pnpm audit --audit-level high`: 0 high/critical findings at review time |
-| Reverse-engineering and third-party evidence | In progress | Private archive created and verified; public-tree deletion and all-branch history rewrite must complete before changing repository visibility |
-| Icon and visual asset provenance | In progress | Original replacement asset generated and documented; distributable icon derivatives must be regenerated after history rewrite |
+| Reverse-engineering and third-party evidence | Passed | A verified private Git bundle and checksummed material archive were created; 99 internal/evidence paths and the superseded visual assets were removed from the reachable history of `dev`, `beta`, and `master` |
+| Icon and visual asset provenance | Passed | The previous icon is unreachable from the rewritten branch histories; an original Aevoren asset and its PNG/ICNS derivatives are documented in `docs/ASSET_PROVENANCE.md` |
 | README and public setup docs | Passed | Public README plus Installation, Configuration, Release, Support, Security, Contribution, Code of Conduct, Changelog, Notice, and trademark docs added |
-| Reproducible dependency install | Passed locally | Fresh `pnpm install --frozen-lockfile` and offline reinstall succeeded; remote CI must pass after commit |
-| Build and macOS package | Passed locally | Current `0.2.0-beta.7` arm64 directory package built; packaged hidden startup smoke passed |
+| Reproducible dependency install | Passed | Fresh local `pnpm install --frozen-lockfile`, offline reinstall, and remote Ubuntu/macOS CI installs succeeded |
+| Build and macOS package | Passed | Current `0.2.0-beta.7` arm64 directory package built locally and in remote CI; packaged hidden startup smoke passed |
 | Privacy declarations and ATS | Passed | Unused camera/microphone/Bluetooth descriptions removed during `afterPack`; arbitrary network loads disabled; local networking retained |
-| PR CI | Prepared, not remotely verified | Pinned GitHub Actions workflow runs secret scan, Node 24 validation/build, dependency audit/license gate, macOS smoke, and unsigned package |
+| PR CI | Passed on `dev` | Pinned GitHub Actions workflow completed secret scan, Node 24 validation/build, dependency audit/license gate, macOS smoke, and unsigned package for the rewritten `dev` head |
 | Signed/notarized release | **Blocked for first public version** | Create a new version only after the above blockers are resolved; run the protected tag workflow and verify Developer ID, Hardened Runtime, notarization, Gatekeeper, checksums, attestation, and update metadata |
 | Real update from an older public build | **Blocked until two public test versions exist** | Complete Beta N → Beta N+1 download/install/relaunch validation before claiming production auto-update readiness |
 | Repository settings | **Blocked** | Repository remains private, default branch is `dev`, branch protection is unavailable in current private-plan state; before public launch set the intended default branch, enable private vulnerability reporting/secret scanning, and require CI reviews |
