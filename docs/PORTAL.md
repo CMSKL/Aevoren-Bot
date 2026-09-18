@@ -1,5 +1,7 @@
 # Aevoren Bot project portal
 
+<p><img src="../resources/icon.png" alt="Aevoren Bot logo" width="128"></p>
+
 ![Aevoren Bot overview](assets/aevoren-bot-overview.png)
 
 Aevoren Bot is an open-source, local-first macOS workspace for persistent AI Bots and deterministic multi-Bot collaboration. Conversations, explicit Memory, approvals, tool journal data, and runtime recovery stay on the user's computer.

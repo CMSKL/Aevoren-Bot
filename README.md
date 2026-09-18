@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml)
 
+<p><img src="resources/icon.png" alt="Aevoren Bot logo" width="128"></p>
+
 ![Aevoren Bot](docs/assets/aevoren-bot-overview.png)
 
 Start with the [project portal](docs/PORTAL.md), [installation guide](docs/INSTALLATION.md), or [user guide](docs/USER_GUIDE.md).
