@@ -20,6 +20,7 @@ pnpm test:smoke
 pnpm security:audit
 pnpm licenses:generate
 git diff --exit-code -- THIRD_PARTY_NOTICES.md
+pnpm sbom:generate
 ```
 
 Also confirm:
@@ -50,7 +51,7 @@ Never store these values in repository variables, workflow files, Issues, Action
 
 ## Workflow output
 
-The tag workflow builds macOS arm64 ZIP and DMG artifacts, signs the app with Developer ID, enables Hardened Runtime, notarizes and staples the app and DMG, creates blockmaps and update metadata, generates SHA-256 checksums, attaches GitHub provenance, verifies the draft assets, and only then publishes the immutable Release.
+The tag workflow builds macOS arm64 ZIP and DMG artifacts, signs the app with Developer ID, enables Hardened Runtime, notarizes and staples the app and DMG, creates blockmaps and update metadata, generates SHA-256 checksums and a CycloneDX SBOM, attaches GitHub provenance, verifies the draft assets, and only then publishes the immutable Release.
 
 The update channel is derived from SemVer:
 

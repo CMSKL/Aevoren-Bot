@@ -28,7 +28,7 @@ The tag workflow invokes `pnpm open-source:check` before building, so an acciden
 
 | Item | Status / action |
 | --- | --- |
-| SBOM | Add CycloneDX or SPDX SBOM generation to the release workflow and attach it to Release attestations |
+| SBOM | Passed locally | `pnpm sbom:generate` creates a deterministic CycloneDX 1.5 SBOM; the release workflow attests and uploads it with the immutable asset set |
 | Intel macOS / Windows / Linux | Either add CI/package support or keep them explicitly unsupported; do not imply cross-platform availability |
 | Accessibility and localization | Run public-release accessibility review and decide whether an English/Chinese documentation split is needed |
 | Dependency update automation | Dependabot configuration added; verify grouped PR behavior after the repository is public |

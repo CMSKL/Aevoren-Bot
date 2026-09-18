@@ -155,6 +155,8 @@ jobs:
           spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
       - name: Verify release assets and generate checksums
         run: pnpm release:prepare
+      - name: Generate SBOM
+        run: pnpm sbom:generate
       - name: Attest release assets
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
@@ -164,6 +166,7 @@ jobs:
             dist/*.blockmap
             dist/*-mac.yml
             dist/SHASUMS256.txt
+            dist/aevoren-bot-sbom.cdx.json
       - name: Create or resume draft release
         shell: bash
         env:
@@ -179,7 +182,7 @@ jobs:
       - name: Upload complete release asset set
         shell: bash
         run: |
-          assets=(dist/*.dmg dist/*.zip dist/*.blockmap dist/*-mac.yml dist/SHASUMS256.txt)
+          assets=(dist/*.dmg dist/*.zip dist/*.blockmap dist/*-mac.yml dist/SHASUMS256.txt dist/aevoren-bot-sbom.cdx.json)
           for asset in "${assets[@]}"; do test -f "$asset"; done
           gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
       - name: Download and verify draft release
