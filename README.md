@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md) | English
 
-[![CI](https://github.com/CMSKL/Aevoren-Bot-public/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/CMSKL/Aevoren-Bot-public/actions/workflows/ci.yml)
+[![CI](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml)
 
 <p><img src="resources/icon.png" alt="Aevoren Bot logo" width="128"></p>
 
@@ -46,8 +46,8 @@ Requirements:
 - macOS 13 or newer on Apple silicon.
 
 ```bash
-git clone https://github.com/CMSKL/Aevoren-Bot-public.git
-cd Aevoren-Bot-public
+git clone https://github.com/CMSKL/Aevoren-Bot.git
+cd Aevoren-Bot
 pnpm install --frozen-lockfile
 AEVOREN_BOT_FAKE_PROVIDER=1 pnpm dev
 ```
