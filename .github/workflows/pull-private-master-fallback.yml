@@ -39,14 +39,29 @@ jobs:
             mirror_sha="$(git rev-parse HEAD)"
             if [[ "$source_sha" == "$mirror_sha" ]]; then
               echo "Public master already matches private source ($source_sha)."
-              exit 0
+              break
             fi
             if git push origin refs/remotes/private-source/master:refs/heads/master; then
               echo "Pulled private master $source_sha into the public mirror."
-              exit 0
+              break
             fi
             echo "Mirror push raced with another publisher; retrying ($attempt/3)." >&2
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "Unable to publish the private master after three attempts." >&2
+              exit 1
+            fi
             sleep 3
           done
-          echo "Unable to publish the private master after three attempts." >&2
-          exit 1
+
+          # Release tags are explicit public metadata, not development branches.
+          # Copy only v* tags and never use a force push or a wildcard branch ref.
+          tag_refs="$(git ls-remote --refs private-source 'refs/tags/v*' | awk '{print $2}')"
+          if [[ -n "$tag_refs" ]]; then
+            while IFS= read -r tag_ref; do
+              tag_name="${tag_ref##*/}"
+              git fetch --no-tags private-source "$tag_ref:refs/remotes/private-source/tags/$tag_name"
+              git push origin "refs/remotes/private-source/tags/$tag_name:refs/tags/$tag_name"
+            done <<< "$tag_refs"
+          else
+            echo "No v* release tags found in the private source."
+          fi
