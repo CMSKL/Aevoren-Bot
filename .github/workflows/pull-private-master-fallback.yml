@@ -1,0 +1,52 @@
+name: Pull private master fallback mirror
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: private-master-fallback
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    if: github.repository == 'CMSKL/Aevoren-Bot-public'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Pull only the private master ref
+        env:
+          SOURCE_REPO_READ_KEY: ${{ secrets.SOURCE_REPO_READ_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SOURCE_REPO_READ_KEY"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SOURCE_REPO_READ_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -H github.com >> "$HOME/.ssh/known_hosts"
+          git remote add private-source git@github.com:CMSKL/Aevoren-Bot.git
+
+          for attempt in 1 2 3; do
+            git fetch --no-tags private-source refs/heads/master:refs/remotes/private-source/master
+            source_sha="$(git rev-parse refs/remotes/private-source/master)"
+            mirror_sha="$(git rev-parse HEAD)"
+            if [[ "$source_sha" == "$mirror_sha" ]]; then
+              echo "Public master already matches private source ($source_sha)."
+              exit 0
+            fi
+            if git push origin refs/remotes/private-source/master:refs/heads/master; then
+              echo "Pulled private master $source_sha into the public mirror."
+              exit 0
+            fi
+            echo "Mirror push raced with another publisher; retrying ($attempt/3)." >&2
+            sleep 3
+          done
+          echo "Unable to publish the private master after three attempts." >&2
+          exit 1
