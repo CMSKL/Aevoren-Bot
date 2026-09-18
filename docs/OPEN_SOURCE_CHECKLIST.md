@@ -47,7 +47,7 @@ The tag workflow invokes `pnpm open-source:check` before building, so an acciden
 
 ## Source-publication conclusion
 
-The source tree and reachable history have passed the technical P0 checks. The current repository is the sole public source of truth. Binary signing, two-version update validation, and first-release credentials remain separate binary-release gates.
+The source tree and reachable history have passed the technical P0 checks. The current repository is the sole public source of truth; the former mirror is archived and no mirror workflow or credential remains. Binary signing, two-version update validation, and first-release credentials remain separate binary-release gates.
 
 ## Final launch gate
 
