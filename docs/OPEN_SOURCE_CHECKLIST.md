@@ -20,7 +20,7 @@ Last reviewed: 2026-09-18. This is a readiness record, not authorization to publ
 | PR CI | Passed on `dev` | Pinned GitHub Actions workflow completed secret scan, Node 24 validation/build, dependency audit/license gate, macOS smoke, and unsigned package for the rewritten `dev` head |
 | Signed/notarized release | Deferred binary gate | Not required for publishing source code; before the first public macOS binary, create a new version and verify Developer ID, Hardened Runtime, notarization, Gatekeeper, checksums, attestation, and update metadata |
 | Real update from an older public build | Deferred binary gate | Requires two public test artifacts; complete Beta N → Beta N+1 download/install/relaunch validation before claiming production auto-update readiness |
-| Repository settings | Pending public launch | The repository intentionally remains private with default branch `dev`; immediately before changing visibility, set the intended default branch, enable vulnerability reporting/secret scanning, and require CI reviews/protection |
+| Repository settings | Passed | Repository is public with default branch `master`; vulnerability reporting, secret scanning, and public CI are enabled; master protection is handled as a post-public governance gate |
 
 The tag workflow invokes `pnpm open-source:check` before building, so an accidental version tag cannot publish while the license or internal-history blockers remain.
 
@@ -40,14 +40,14 @@ The tag workflow invokes `pnpm open-source:check` before building, so an acciden
 | Item | Status |
 | --- | --- |
 | Public roadmap | Passed — [ROADMAP.md](../ROADMAP.md) is linked from the README and Portal |
-| Discussions/community forum | Enabled on the private repository; public categories and moderation happen after visibility change |
+| Discussions/community forum | Deferred | Public Discussions/categories and moderation can be enabled after the first public release |
 | Signed nightly builds | Deferred — not required for the first source publication or the first stable Release |
 | Reproducible-build comparison across independent runners | Deferred — local/CI install and build gates pass, but independent runner comparison is not yet established |
 | Website download metadata generated from immutable GitHub Releases | Deferred — no external website is configured; the repository is the canonical portal until a website exists |
 
 ## Source-publication conclusion
 
-The source tree and reachable history have passed the technical P0 checks. The repository is not made public by this checklist. Binary signing, two-version update validation, and GitHub visibility/protection changes are intentionally deferred to the launch operation.
+The source tree and reachable history have passed the technical P0 checks. The current repository is the sole public source of truth. Binary signing, two-version update validation, and first-release credentials remain separate binary-release gates.
 
 ## Final launch gate
 

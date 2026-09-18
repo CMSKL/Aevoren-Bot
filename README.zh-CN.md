@@ -2,7 +2,7 @@
 
 简体中文 | [English](README.md)
 
-[![CI](https://github.com/CMSKL/Aevoren-Bot-public/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/CMSKL/Aevoren-Bot-public/actions/workflows/ci.yml)
+[![CI](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml)
 
 <p><img src="resources/icon.png" alt="Aevoren Bot Logo" width="128"></p>
 
@@ -46,8 +46,8 @@ Aevoren Bot 是一个本地优先的 macOS AI Bot 工作台，用于持久化 Bo
 - macOS 13 或更高版本，Apple silicon。
 
 ```bash
-git clone https://github.com/CMSKL/Aevoren-Bot-public.git
-cd Aevoren-Bot-public
+git clone https://github.com/CMSKL/Aevoren-Bot.git
+cd Aevoren-Bot
 pnpm install --frozen-lockfile
 AEVOREN_BOT_FAKE_PROVIDER=1 pnpm dev
 ```
