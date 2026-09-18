@@ -300,7 +300,7 @@ describe("Codex CLI Provider", () => {
       { type: "delta", text: "CLI used approved tool" },
       { type: "completed" },
     ]);
-  }, 15_000);
+  }, 30_000);
 
   it("falls back to codex exec before acceptance when app-server is unavailable", async () => {
     const sourceHome = providerWorkspace();

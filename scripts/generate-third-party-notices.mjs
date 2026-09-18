@@ -28,7 +28,6 @@ const lines = [
   "| Package | Version | License | Project |",
   "| --- | --- | --- | --- |",
   ...rows.map((row) => `| ${escapeCell(row.name)} | ${escapeCell(row.version)} | ${escapeCell(row.license)} | ${row.homepage ? `[link](${row.homepage})` : "—"} |`),
-  "",
 ];
 const target = resolve("THIRD_PARTY_NOTICES.md");
 writeFileSync(target, `${lines.join("\n")}\n`, "utf8");

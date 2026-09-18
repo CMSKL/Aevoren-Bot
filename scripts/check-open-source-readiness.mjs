@@ -29,10 +29,11 @@ const internal = tracked.filter((path) => (
 ));
 if (internal.length > 0) findings.push(`internal planning, reverse-engineering, or third-party evidence remains tracked: ${internal.length} files`);
 
+const macUserPrefix = ["", "Users", ""].join("/");
 const personalPathFiles = tracked.filter((path) => {
   if (!existsSync(path)) return false;
   try {
-    return readFileSync(path, "utf8").includes("/Users/");
+    return readFileSync(path, "utf8").includes(macUserPrefix);
   } catch {
     return false;
   }
