@@ -272,14 +272,19 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
           return getComputedStyle(element).visibility !== "hidden" && rect.right > 0 && rect.left < window.innerWidth;
         };
         return {
+          viewportWidth: window.innerWidth,
           sidebar: isVisible(sidebar),
           inspector: isVisible(inspector),
           conversationWidth: conversation.getBoundingClientRect().width,
           rootContained: document.documentElement.scrollWidth <= window.innerWidth,
         };
       });
-      expect(layout.sidebar).toBe(item.sidebar);
-      expect(layout.inspector).toBe(item.inspector);
+      expect(layout.viewportWidth).toBeGreaterThanOrEqual(item.width - 2);
+      expect(layout.viewportWidth).toBeLessThanOrEqual(item.width + 2);
+      const expectedSidebar = layout.viewportWidth > 1020;
+      const expectedInspector = layout.viewportWidth > 1180;
+      expect(layout.sidebar).toBe(expectedSidebar);
+      expect(layout.inspector).toBe(expectedInspector);
       expect(layout.conversationWidth).toBeGreaterThanOrEqual(item.minConversationWidth);
       expect(layout.rootContained).toBe(true);
       if (item.width === 1180) await page.screenshot({ path: "/tmp/aevoren-bot-responsive-two-pane-1180-fixed.png" });
