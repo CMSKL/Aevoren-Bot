@@ -29,19 +29,21 @@ The tag workflow invokes `pnpm open-source:check` before building, so an acciden
 | Item | Status / action |
 | --- | --- |
 | SBOM | Passed locally | `pnpm sbom:generate` creates a deterministic CycloneDX 1.5 SBOM; the release workflow attests and uploads it with the immutable asset set |
-| Intel macOS / Windows / Linux | Either add CI/package support or keep them explicitly unsupported; do not imply cross-platform availability |
-| Accessibility and localization | Run public-release accessibility review and decide whether an English/Chinese documentation split is needed |
-| Dependency update automation | Dependabot configuration added; verify grouped PR behavior after the repository is public |
-| Support operations | Define maintainer response targets, triage labels, and release/security ownership |
-| Trademark clearance | Perform an official trademark search and legal review for “Aevoren Bot”; a web search alone is not clearance |
+| Intel macOS / Windows / Linux | Documented unsupported | README, Installation, Support, and Portal explicitly scope the current release line to macOS 13+ Apple silicon |
+| Accessibility and localization | Pending public review | Core UI tests and user-facing English/Chinese strings exist, but a dedicated accessibility audit and documentation-language decision remain |
+| Dependency update automation | Prepared | Dependabot grouping is active and grouped PRs have been observed; upgrades remain subject to compatibility and license gates |
+| Support operations | Passed | SUPPORT.md defines private security reporting, issue triage guidance, and maintainer response targets |
+| Trademark clearance | Deferred by instruction | Formal trademark search/filing is intentionally not part of this preparation pass; the remaining legal risk is documented in the asset and trademark notices |
 
 ## P2 — later improvements
 
-- Public roadmap and governance model.
-- Discussions/community forum.
-- Signed nightly builds.
-- Reproducible-build comparison across independent runners.
-- Website download metadata generated from immutable GitHub Releases.
+| Item | Status |
+| --- | --- |
+| Public roadmap | Passed — [ROADMAP.md](../ROADMAP.md) is linked from the README and Portal |
+| Discussions/community forum | Enabled on the private repository; public categories and moderation happen after visibility change |
+| Signed nightly builds | Deferred — not required for the first source publication or the first stable Release |
+| Reproducible-build comparison across independent runners | Deferred — local/CI install and build gates pass, but independent runner comparison is not yet established |
+| Website download metadata generated from immutable GitHub Releases | Deferred — no external website is configured; the repository is the canonical portal until a website exists |
 
 ## Source-publication conclusion
 
