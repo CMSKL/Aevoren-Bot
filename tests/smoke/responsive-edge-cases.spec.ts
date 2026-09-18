@@ -261,7 +261,21 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
 
     for (const item of expected) {
       await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]?.setContentSize(width, 700), item.width);
-      await page.waitForTimeout(220);
+      await expect.poll(
+        () => page.evaluate((expectedWidth) => {
+          const sidebar = document.querySelector<HTMLElement>(".sidebar");
+          const inspector = document.querySelector<HTMLElement>(".inspector");
+          if (!sidebar || !inspector) return false;
+          const isVisible = (element: HTMLElement): boolean => {
+            const rect = element.getBoundingClientRect();
+            return getComputedStyle(element).visibility !== "hidden" && rect.right > 0 && rect.left < window.innerWidth;
+          };
+          return Math.abs(window.innerWidth - expectedWidth) <= 1
+            && isVisible(sidebar) === (window.innerWidth > 1020)
+            && isVisible(inspector) === (window.innerWidth > 1180);
+        }, item.width),
+        { timeout: 2_000 },
+      ).toBe(true);
       const layout = await page.evaluate(() => {
         const sidebar = document.querySelector<HTMLElement>(".sidebar");
         const inspector = document.querySelector<HTMLElement>(".inspector");
