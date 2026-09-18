@@ -18,7 +18,11 @@ module.exports = {
     buildResources: "resources",
   },
   files: ["out/**/*", "package.json"],
-  extraResources: [{ from: "resources/icon.png", to: "icon.png" }],
+  extraResources: [
+    { from: "resources/icon.png", to: "icon.png" },
+    { from: "THIRD_PARTY_NOTICES.md", to: "THIRD_PARTY_NOTICES.md" },
+    { from: "NOTICE", to: "NOTICE" },
+  ],
   artifactName: "Aevoren-Bot-${version}-${arch}.${ext}",
   ...(publishConfiguration
     ? {

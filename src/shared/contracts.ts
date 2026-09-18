@@ -5,6 +5,8 @@ export type Bot = {
   description: string;
   instructions: string;
   modelSelection: ModelSelection;
+  mcpServerIds?: string[] | null;
+  memoryWorkspaceIds?: string[];
   pinnedAt: string | null;
   hiddenAt: string | null;
   hasUnread: boolean;
@@ -13,7 +15,7 @@ export type Bot = {
   updatedAt: string;
 };
 
-export type BotPatch = Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection">>;
+export type BotPatch = Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection" | "mcpServerIds" | "memoryWorkspaceIds">>;
 
 export type BotDeleteResult = {
   id: string;
@@ -32,10 +34,19 @@ export type ConversationBatchDeleteResult = {
 };
 
 export type MemorySource = "manual-user";
+export type MemoryScope = "user" | "bot" | "workspace";
+
+export type MemoryScopeSelector = {
+  scope: MemoryScope;
+  scopeKey: string;
+};
 
 export type MemoryItem = {
   id: string;
-  botId: string;
+  scope?: MemoryScope;
+  scopeKey?: string;
+  botId: string | null;
+  workspaceId?: string | null;
   content: string;
   contentDigest: string;
   source: MemorySource;
@@ -150,6 +161,7 @@ export type ProviderCapabilities = {
   roomOwnerSelection: boolean;
   handoff: boolean;
   workspaceTools: boolean;
+  networkTools?: boolean;
 };
 
 export type ProviderModelOption = {
@@ -199,7 +211,7 @@ export type SaveCliProviderInput = {
 };
 
 export type RuntimeRoute = "fake" | ProviderDriverKind;
-export type PromptAuthority = "agent-profile" | "memory" | "room-context" | "user" | "assistant";
+export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "user" | "assistant";
 
 export type PromptManifestBlock = {
   authority: PromptAuthority;
@@ -212,7 +224,7 @@ export type PromptManifestBlock = {
 };
 
 export type PromptManifest = {
-  schemaVersion: 1 | 2 | 3;
+  schemaVersion: 1 | 2 | 3 | 4;
   botId: string;
   profileVersion: number;
   sessionId: string;
@@ -280,11 +292,101 @@ export type WorkspaceToolRequest =
       maxMatches: number;
     };
 
+export type NetworkToolRequest =
+  | {
+      kind: "web-search";
+      query: string;
+      maxResults: number;
+    }
+  | {
+      kind: "web-fetch";
+      url: string;
+      maxCharacters: number;
+    }
+  | {
+      kind: "weather-current";
+      location: string;
+    }
+  | {
+      kind: "time-now";
+      timezone?: string;
+    };
+
+export type McpToolRequest = {
+  kind: "mcp-call";
+  serverId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+  readOnly: true;
+};
+
+export type DeviceToolRequest = {
+  kind: "clipboard-read";
+  maxCharacters: number;
+};
+
+export type ToolRequest = WorkspaceToolRequest | NetworkToolRequest | McpToolRequest | DeviceToolRequest;
+
+export type McpTransportKind = "stdio" | "streamable-http";
+export type McpServerStatus = "disabled" | "connecting" | "available" | "unavailable" | "needs-auth";
+
+export type McpToolInfo = {
+  serverId: string;
+  serverName: string;
+  name: string;
+  namespacedName: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  claimedReadOnly: boolean;
+  readOnly: boolean;
+};
+
+export type McpServerInfo = {
+  id: string;
+  name: string;
+  transport: McpTransportKind;
+  command: string | null;
+  args: string[];
+  url: string | null;
+  secretKeys: string[];
+  oauthConfigured: boolean;
+  authenticating: boolean;
+  trustedReadOnlyTools: string[];
+  enabled: boolean;
+  status: McpServerStatus;
+  lastErrorCode: string | null;
+  lastConnectedAt: string | null;
+  version: number;
+  tools: McpToolInfo[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type McpServerMutation = {
+  id?: string;
+  expectedVersion?: number;
+  name: string;
+  enabled?: boolean;
+  trustedReadOnlyTools?: string[];
+  config:
+    | {
+        transport: "stdio";
+        command: string;
+        args: string[];
+        env: Record<string, string | true>;
+      }
+    | {
+        transport: "streamable-http";
+        url: string;
+        headers: Record<string, string | true>;
+      };
+};
+
 export type ToolInvocationCommand = {
   runtimeRunId: string;
   toolCallId: string;
   idempotencyKey: string;
-  tool: WorkspaceToolRequest;
+  tool: ToolRequest;
 };
 
 export type ToolInvocationState =
@@ -309,10 +411,11 @@ export type ToolInvocation = {
   toolCallId: string;
   idempotencyKey: string;
   commandDigest: string;
-  toolKind: WorkspaceToolRequest["kind"];
-  workspaceId: string;
+  toolKind: ToolRequest["kind"];
+  effectClass: CapabilityEffectClass;
+  workspaceId: string | null;
   targetPath: string;
-  arguments: WorkspaceToolRequest;
+  arguments: ToolRequest;
   state: ToolInvocationState;
   attemptCount: number;
   approvalRequestId: string;
@@ -335,8 +438,9 @@ export type ApprovalRequest = {
   runtimeRunId: string;
   sessionId: string;
   executorBotId: string;
-  actionKind: WorkspaceToolRequest["kind"];
-  workspaceId: string;
+  actionKind: ToolRequest["kind"];
+  effectClass: CapabilityEffectClass;
+  workspaceId: string | null;
   targetPath: string;
   targetDigest: string;
   argumentsDigest: string;
@@ -600,9 +704,94 @@ export type SessionRuntimeSnapshot = {
 };
 
 export type AppearanceTheme = "system" | "light" | "dark";
+export type LoginItemStatus = "unsupported" | "not-registered" | "enabled" | "requires-approval" | "not-found";
 
 export type GeneralSettings = {
   theme: AppearanceTheme;
+  launchAtLogin: boolean;
+  launchAtLoginSupported: boolean;
+  launchAtLoginStatus: LoginItemStatus;
+};
+
+export type SaveGeneralSettings = {
+  theme?: AppearanceTheme;
+  launchAtLogin?: boolean;
+};
+
+export type CapabilityEffectClass =
+  | "pure"
+  | "read-local"
+  | "read-remote"
+  | "write-reversible"
+  | "write-external"
+  | "irreversible"
+  | "computer-control";
+
+export type CapabilityAdapterKind = "core" | "local" | "native" | "mcp" | "connector" | "none";
+export type CapabilityAvailability = "available" | "unavailable" | "permission-required" | "not-supported";
+export type CapabilityPermissionState = "not-required" | "granted" | "not-granted" | "unsupported";
+
+export type CapabilityDescriptor = {
+  id: string;
+  name: string;
+  category: "conversation" | "memory" | "workspace" | "network" | "device" | "automation" | "multimodal" | "external";
+  description: string;
+  effectClass: CapabilityEffectClass;
+  adapterKind: CapabilityAdapterKind;
+  availability: CapabilityAvailability;
+  reason: string | null;
+  permissionState: CapabilityPermissionState;
+  toolNames: string[];
+};
+
+export type CapabilityPermission = {
+  id: string;
+  name: string;
+  state: CapabilityPermissionState;
+  scopeSummary: string;
+  revocable: boolean;
+};
+
+export type CapabilityConnection = {
+  id: string;
+  name: string;
+  kind: "model-provider" | "mcp" | "connector";
+  status: "available" | "unavailable";
+  access: "cloud" | "local";
+  authenticated: boolean;
+  modelCount: number;
+};
+
+export type CapabilityModelState = {
+  providerInstanceId: string;
+  providerName: string;
+  providerStatus: "available" | "unavailable" | "unknown";
+  modelId: string;
+};
+
+export type CapabilityPromptSnapshot = {
+  schemaVersion: 1;
+  generatedAt: string;
+  timezone: string;
+  utcOffsetMinutes: number;
+  app: {
+    name: "Aevoren Bot";
+    version: string;
+    platform: "darwin" | "win32" | "linux" | "other";
+    architecture: string;
+    packaged: boolean;
+  };
+  model: CapabilityModelState;
+  availableTools: string[];
+  capabilities: Array<Pick<CapabilityDescriptor, "id" | "availability" | "reason">>;
+};
+
+export type CapabilitySnapshot = Omit<CapabilityPromptSnapshot, "capabilities"> & {
+  capabilities: CapabilityDescriptor[];
+  permissions: CapabilityPermission[];
+  connections: CapabilityConnection[];
+  workspaceCount: number;
+  backgroundMode: "foreground-only" | "background-while-routines-enabled";
 };
 
 export type UpdateChannel = "development" | "beta" | "stable";
@@ -693,7 +882,66 @@ export type UpdateEvent = {
   state: UpdateState;
 };
 
+export type RoutineSchedule =
+  | { type: "once"; at: number }
+  | { type: "interval"; everyMinutes: number; anchorAt: number }
+  | { type: "cron"; expression: string; timeZone: string };
+
+export type Routine = {
+  id: string;
+  name: string;
+  prompt: string;
+  botId: string;
+  enabled: boolean;
+  schedule: RoutineSchedule;
+  nextRunAt: number | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RoutineRun = {
+  id: string;
+  routineId: string;
+  routineName: string;
+  botId: string;
+  promptSnapshot: string;
+  scheduleSnapshot: RoutineSchedule;
+  trigger: "schedule" | "manual";
+  triggerKey: string;
+  scheduledFor: number;
+  state: "queued" | "waiting" | "running" | "completed" | "failed" | "cancelled" | "missed";
+  clientNonce: string;
+  runtimeRunId: string | null;
+  lastErrorCode: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
 export interface AevorenBotApi {
+  capabilities: {
+    getSnapshot(input?: { botId?: string }): Promise<ApiResult<CapabilitySnapshot>>;
+  };
+  mcp: {
+    list(): Promise<ApiResult<McpServerInfo[]>>;
+    save(input: McpServerMutation): Promise<ApiResult<McpServerInfo>>;
+    setEnabled(input: { id: string; expectedVersion: number; enabled: boolean }): Promise<ApiResult<McpServerInfo>>;
+    probe(id: string): Promise<ApiResult<McpServerInfo>>;
+    authorize(id: string): Promise<ApiResult<McpServerInfo>>;
+    cancelAuthorization(id: string): Promise<ApiResult<void>>;
+    clearAuthorization(input: { id: string; expectedVersion: number }): Promise<ApiResult<McpServerInfo>>;
+    delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<void>>;
+  };
+  routines: {
+    list(): Promise<ApiResult<Routine[]>>;
+    listRuns(routineId?: string): Promise<ApiResult<RoutineRun[]>>;
+    create(input: { name: string; prompt: string; botId: string; schedule: RoutineSchedule; enabled?: boolean }): Promise<ApiResult<Routine>>;
+    update(input: { id: string; expectedVersion: number; patch: Partial<Pick<Routine, "name" | "prompt" | "schedule">> }): Promise<ApiResult<Routine>>;
+    setEnabled(input: { id: string; expectedVersion: number; enabled: boolean }): Promise<ApiResult<Routine>>;
+    runNow(id: string): Promise<ApiResult<RoutineRun>>;
+    delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<void>>;
+  };
   conversations: {
     deleteBatch(input: ConversationBatchDeleteInput): Promise<ApiResult<ConversationBatchDeleteResult>>;
   };
@@ -709,8 +957,8 @@ export interface AevorenBotApi {
     copyConversationId(id: string): Promise<ApiResult<void>>;
   };
   memories: {
-    list(input: { botId: string; includeDeleted?: boolean }): Promise<ApiResult<MemoryItem[]>>;
-    create(input: { botId: string; content: string }): Promise<ApiResult<MemoryItem>>;
+    list(input: { botId: string; includeDeleted?: boolean } | (MemoryScopeSelector & { includeDeleted?: boolean })): Promise<ApiResult<MemoryItem[]>>;
+    create(input: { botId: string; content: string } | (MemoryScopeSelector & { content: string })): Promise<ApiResult<MemoryItem>>;
     update(input: { id: string; expectedVersion: number; content: string }): Promise<ApiResult<MemoryItem>>;
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
     restore(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
@@ -772,7 +1020,7 @@ export interface AevorenBotApi {
   };
   settings: {
     getGeneral(): Promise<ApiResult<GeneralSettings>>;
-    saveGeneral(input: GeneralSettings): Promise<ApiResult<GeneralSettings>>;
+    saveGeneral(input: SaveGeneralSettings): Promise<ApiResult<GeneralSettings>>;
   };
   providers: {
     list(): Promise<ApiResult<ProviderInstanceInfo[]>>;

@@ -26,6 +26,8 @@ import {
 describe("General settings schema", () => {
   it("accepts only declared appearance themes", () => {
     expect(generalSettingsSchema.parse({ theme: "system" })).toEqual({ theme: "system" });
+    expect(generalSettingsSchema.parse({ launchAtLogin: true })).toEqual({ launchAtLogin: true });
+    expect(generalSettingsSchema.safeParse({}).success).toBe(false);
     expect(generalSettingsSchema.safeParse({ theme: "sepia" }).success).toBe(false);
     expect(generalSettingsSchema.safeParse({ theme: "dark", extra: true }).success).toBe(false);
   });

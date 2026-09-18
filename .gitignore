@@ -1,6 +1,8 @@
 node_modules/
+.node_modules-backup-*/
 out/
 dist/
+.dist-backup-*/
 coverage/
 playwright-report/
 test-results/
@@ -11,3 +13,13 @@ test-results/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*.sqlite.bak
+*.asar
+*.p8
+*.p12
+*.pem
+*.key
+*.cer
+*.mobileprovision
+*.provisionprofile
+.apple-notary/

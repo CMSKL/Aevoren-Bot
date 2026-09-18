@@ -1,9 +1,23 @@
 {
   "name": "aevoren-bot",
   "productName": "Aevoren Bot",
-  "version": "0.2.0-beta.6",
+  "version": "0.2.0-beta.7",
+  "license": "Apache-2.0",
   "private": true,
   "description": "Aevoren Bot is a reliable local desktop workspace for persistent AI bots.",
+  "author": "Aevoren Bot contributors",
+  "homepage": "https://github.com/CMSKL/Aevoren-Bot#readme",
+  "bugs": {
+    "url": "https://github.com/CMSKL/Aevoren-Bot/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "electron",
+    "local-first",
+    "mcp",
+    "multi-agent"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/CMSKL/Aevoren-Bot.git"
@@ -25,15 +39,24 @@
     "release:prepare": "node scripts/verify-macos-release-assets.mjs dist",
     "release:verify": "node scripts/verify-release-version.mjs",
     "diagnostics:room": "node scripts/room-diagnostics.ts",
-    "validate": "pnpm typecheck && pnpm lint && pnpm test"
+    "licenses:check": "node scripts/check-dependency-licenses.mjs",
+    "licenses:generate": "node scripts/generate-third-party-notices.mjs",
+    "docs:check": "node scripts/check-doc-links.mjs",
+    "open-source:check": "node scripts/check-open-source-readiness.mjs",
+    "security:audit": "pnpm audit --audit-level high",
+    "validate": "pnpm typecheck && pnpm lint && pnpm test",
+    "verify": "pnpm validate && pnpm build && pnpm licenses:check && pnpm docs:check"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "croner": "10.0.1",
     "electron-updater": "6.8.9",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "semver": "7.7.3",
+    "undici": "7.29.1",
     "zod": "4.6.1"
   },
   "devDependencies": {
@@ -42,9 +65,9 @@
     "@types/node": "22.20.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "app-builder-lib": "26.15.3",
     "@types/semver": "7.7.1",
     "@vitejs/plugin-react": "5.2.0",
+    "app-builder-lib": "26.15.3",
     "electron": "44.3.0",
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppError, Bot, ProviderInstanceInfo } from "@shared/contracts";
 import { BotIcon, CheckIcon, RefreshIcon } from "./Icons";
+import { ProviderMark } from "./ProviderPresentation";
+import { providerDisplayState, providerStateLabel } from "./provider-presentation";
 
 type HeaderModelPickerProps = {
   bot: Bot;
@@ -15,18 +17,9 @@ function modelLabel(provider: ProviderInstanceInfo | undefined, modelId: string)
   return provider?.models.options.find((model) => model.id === modelId)?.label ?? (modelId || "选择模型");
 }
 
-function providerMark(provider: ProviderInstanceInfo): string {
-  if (provider.driverKind === "codex-cli") return "C";
-  if (provider.driverKind === "claude-cli") return "Cl";
-  if (provider.driverKind === "ollama-cli") return "O";
-  if (provider.driverKind === "acp-cli") return provider.displayName.split(/\s+/u).map((part) => part[0]).join("").slice(0, 2);
-  return "API";
-}
-
 function providerStatus(provider: ProviderInstanceInfo): string {
   if (provider.status === "available") return provider.runtimeVersion || "可用";
-  if (provider.cliPath && !provider.authenticated) return "未登录";
-  return provider.cliPath ? "不可用" : "未安装";
+  return providerStateLabel(provider);
 }
 
 export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderModelPickerProps): React.JSX.Element {
@@ -131,7 +124,7 @@ export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderMo
           }
         }}
       >
-        <span className="header-model-mark">{activeProvider ? providerMark(activeProvider) : <BotIcon />}</span>
+        <span className="header-model-mark">{activeProvider ? <ProviderMark provider={activeProvider} size="small" /> : <BotIcon />}</span>
         <span className="header-model-trigger-copy">{modelLabel(activeProvider, bot.modelSelection.modelId)}</span>
         <span className="header-model-chevron" aria-hidden="true">⌄</span>
       </button>
@@ -155,8 +148,8 @@ export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderMo
                       setQuery("");
                     }}
                   >
-                    <span>{providerMark(provider)}</span>
-                    {provider.status !== "available" ? <i /> : null}
+                    <ProviderMark provider={provider} size="small" />
+                    <i className={`provider-state-dot provider-state-${providerDisplayState(provider)}`} aria-hidden="true" />
                   </button>
                 ))}
               </div> : null
@@ -188,16 +181,17 @@ export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderMo
                   {models.map((model) => {
                     const current = selectedProvider.id === bot.modelSelection.providerInstanceId && model.id === bot.modelSelection.modelId;
                     return (
-                      <button key={model.id} type="button" className={current ? "selected" : ""} onClick={() => void choose(selectedProvider, model.id)}>
+                      <button key={model.id} type="button" className={current ? "selected" : ""} aria-current={current ? "true" : undefined} onClick={() => void choose(selectedProvider, model.id)}>
                         <span>
                           <strong>{model.label}</strong>
-                          <small>
-                            {[
-                              model.id === selectedProvider.models.default ? "默认" : null,
-                              model.provider ? `Provider · ${model.provider}` : model.custom ? "自定义" : model.id,
-                              model.loaded ? "已加载" : null,
-                            ].filter(Boolean).join(" · ")}
-                          </small>
+                          <small>{model.id}</small>
+                          <span className="header-model-badges">
+                            {current ? <em className="current">当前</em> : null}
+                            {model.provider ? <em>{model.provider}</em> : null}
+                            {model.custom ? <em>自定义</em> : null}
+                            {model.id === selectedProvider.models.default ? <em>默认</em> : null}
+                            {model.loaded ? <em className="loaded">已加载</em> : null}
+                          </span>
                         </span>
                         {current ? <CheckIcon /> : null}
                       </button>
@@ -207,7 +201,7 @@ export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderMo
                 </div>
               </> : (
                 <div className="header-model-unavailable">
-                  <strong>{selectedProvider.cliPath ? "当前不可用" : "尚未安装"}</strong>
+                  <strong>{providerStateLabel(selectedProvider)}</strong>
                   <p>{selectedProvider.reason || "请在设置 → 模型与 CLI 中检查此来源。"}</p>
                 </div>
               )}

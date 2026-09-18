@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Bot, MemoryItem, Session, TranscriptEntry } from "@shared/contracts";
+import type { Bot, CapabilityPromptSnapshot, MemoryItem, Session, TranscriptEntry } from "@shared/contracts";
 import { buildPrompt } from "./prompt";
 
 const bot: Bot = {
@@ -47,6 +47,19 @@ function entry(seq: number, role: "user" | "assistant", body: string, status: Tr
 }
 
 describe("buildPrompt", () => {
+  const capabilitySnapshot: CapabilityPromptSnapshot = {
+    schemaVersion: 1,
+    generatedAt: "2026-09-17T08:00:00.000Z",
+    timezone: "Asia/Shanghai",
+    utcOffsetMinutes: 480,
+    app: { name: "Aevoren Bot", version: "1.2.3", platform: "darwin", architecture: "arm64", packaged: true },
+    model: { providerInstanceId: "openai-compatible.default", providerName: "Provider", providerStatus: "available", modelId: "test-model" },
+    availableTools: ["workspace_read"],
+    capabilities: [
+      { id: "workspace.read", availability: "available", reason: null },
+      { id: "network.search", availability: "not-supported", reason: "当前版本未实现。" },
+    ],
+  };
   const memories: MemoryItem[] = [{
     id: "00000000-0000-4000-8000-000000000010",
     botId: bot.id,
@@ -112,7 +125,7 @@ describe("buildPrompt", () => {
     expect(prompt.manifest.blocks[1]).toMatchObject({
       authority: "memory",
       provenance: `bot:${bot.id}:memory-set`,
-      scope: `bot:${bot.id}:memory`,
+      scope: `bot:${bot.id}:runtime-memory`,
       digest: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(JSON.stringify(prompt.manifest)).not.toContain(memories[0]!.content);
@@ -128,6 +141,29 @@ describe("buildPrompt", () => {
       { role: "user", content: "开始" },
     ]);
     expect(prompt.manifest.blocks.some((block) => block.authority === "memory")).toBe(false);
+  });
+
+  it("injects an authoritative runtime capability snapshot before Memory and persists only its digest", () => {
+    const prompt = buildPrompt(bot, session, [entry(1, "user", "搜索今天的新闻")], 1, undefined, memories, capabilitySnapshot);
+
+    expect(prompt.manifest.schemaVersion).toBe(4);
+    expect(prompt.messages.map((message) => message.role)).toEqual(["system", "system", "system", "user"]);
+    const runtimeState = JSON.parse(prompt.messages[1]!.content) as Record<string, unknown>;
+    expect(runtimeState).toMatchObject({
+      notice: expect.stringContaining("AUTHORITATIVE_RUNTIME_CAPABILITY_SNAPSHOT"),
+      generatedAt: capabilitySnapshot.generatedAt,
+      availableTools: ["workspace_read"],
+    });
+    expect(String(runtimeState.notice)).toContain("at least two independent sources");
+    expect(prompt.messages[2]!.content).toContain("UNTRUSTED_MEMORY_DATA");
+    expect(prompt.manifest.blocks[1]).toMatchObject({
+      authority: "runtime-state",
+      provenance: "app:capabilities:v1",
+      scope: `bot:${bot.id}:runtime-state`,
+      digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(JSON.stringify(prompt.manifest)).not.toContain("network.search");
+    expect(JSON.stringify(prompt.manifest)).not.toContain("AUTHORITATIVE_RUNTIME_CAPABILITY_SNAPSHOT");
   });
 
   it("uses a stable speaker id and normalizes control characters in Room attribution", () => {

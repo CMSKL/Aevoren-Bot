@@ -100,22 +100,28 @@ type TranscriptItemProps = {
 const toolStateLabels: Record<ToolInvocation["state"], string> = {
   prepared: "正在准备",
   "awaiting-approval": "等待你的确认",
-  approved: "已允许，准备读取",
-  dispatching: "正在读取",
-  running: "正在读取",
-  succeeded: "读取完成",
-  failed: "读取失败",
+  approved: "已允许，准备执行",
+  dispatching: "正在执行",
+  running: "正在执行",
+  succeeded: "执行完成",
+  failed: "执行失败",
   denied: "已拒绝",
   expired: "确认已过期",
   cancelled: "已取消",
-  "failed-before-execution": "读取前失败",
-  "interrupted-unknown": "读取被中断",
+  "failed-before-execution": "执行前失败",
+  "interrupted-unknown": "执行被中断",
 };
 
 function toolActionLabel(invocation: ToolInvocation): string {
   if (invocation.toolKind === "workspace-list") return "查看目录";
   if (invocation.toolKind === "workspace-read") return "读取文件";
-  return "搜索文件";
+  if (invocation.toolKind === "workspace-search") return "搜索文件";
+  if (invocation.toolKind === "web-search") return "联网搜索";
+  if (invocation.toolKind === "web-fetch") return "读取网页";
+  if (invocation.toolKind === "weather-current") return "查询当前天气";
+  if (invocation.toolKind === "mcp-call") return `MCP · ${invocation.arguments.kind === "mcp-call" ? invocation.arguments.toolName : "Tool"}`;
+  if (invocation.toolKind === "clipboard-read") return "读取剪贴板";
+  return "查询当前时间";
 }
 
 const ToolActivity = memo(function ToolActivity({
@@ -129,6 +135,22 @@ const ToolActivity = memo(function ToolActivity({
 }): React.JSX.Element {
   const [resolving, setResolving] = useState<ApprovalResolution | null>(null);
   const query = invocation.arguments.kind === "workspace-search" ? invocation.arguments.query : null;
+  const remote = invocation.effectClass === "read-remote";
+  const pure = invocation.effectClass === "pure";
+  const clipboardRead = invocation.toolKind === "clipboard-read";
+  const targetLabel = invocation.arguments.kind === "mcp-call"
+    ? `Server ${invocation.arguments.serverId.slice(0, 8)}…`
+    : invocation.targetPath || "工作区根目录";
+  const resultProvider = typeof invocation.resultMetadata?.provider === "string"
+    ? invocation.resultMetadata.provider
+    : typeof invocation.resultMetadata?.server === "string"
+      ? invocation.resultMetadata.server
+      : null;
+  const resultTime = typeof invocation.resultMetadata?.observedAt === "string"
+    ? invocation.resultMetadata.observedAt
+    : typeof invocation.resultMetadata?.retrievedAt === "string"
+      ? invocation.resultMetadata.retrievedAt
+      : null;
 
   async function resolve(resolution: ApprovalResolution): Promise<void> {
     if (!approval || resolving) return;
@@ -146,16 +168,28 @@ const ToolActivity = memo(function ToolActivity({
         <span className="tool-activity-icon"><FolderIcon /></span>
         <span className="tool-activity-copy">
           <strong>{toolActionLabel(invocation)}</strong>
-          <span>{invocation.targetPath || "工作区根目录"}{query ? ` · “${query}”` : ""}</span>
+          <span>{targetLabel}{query ? ` · “${query}”` : ""}</span>
         </span>
         <span className="tool-activity-state">{toolStateLabels[invocation.state]}</span>
       </div>
+      {invocation.state === "succeeded" && (resultProvider || resultTime) ? (
+        <div className="tool-provenance">
+          {resultProvider ? <span>来源：{resultProvider}</span> : null}
+          {resultTime ? <span>时间：{resultTime}</span> : null}
+        </div>
+      ) : null}
       {approval?.state === "pending" ? (
-        <div className="tool-approval-actions" aria-label="工作区读取确认">
-          <p>仅本次允许 Aevoren Bot 访问这个已登记工作区目标。</p>
+        <div className="tool-approval-actions" aria-label={remote ? "联网查询确认" : pure ? "系统信息确认" : clipboardRead ? "剪贴板读取确认" : "本地工具确认"}>
+          <p>{remote
+            ? "仅本次允许 Aevoren Bot 将上方查询内容发送给标明的外部只读数据服务。"
+            : pure
+              ? "仅本次允许 Aevoren Bot 读取本机系统时间；不会访问外部网络。"
+              : clipboardRead
+                ? "仅本次允许 Aevoren Bot 读取当前纯文本剪贴板内容；结果不会写入 Memory。"
+                : "仅本次允许 Aevoren Bot 访问这个已登记工作区目标。"}</p>
           <div>
             <button type="button" className="secondary-button" disabled={resolving !== null} onClick={() => void resolve("deny")}>{resolving === "deny" ? "正在拒绝…" : "拒绝"}</button>
-            <button type="button" className="primary-button" disabled={resolving !== null} onClick={() => void resolve("allow-once")}>{resolving === "allow-once" ? "正在读取…" : "仅允许一次"}</button>
+            <button type="button" className="primary-button" disabled={resolving !== null} onClick={() => void resolve("allow-once")}>{resolving === "allow-once" ? "正在执行…" : "仅允许一次"}</button>
           </div>
         </div>
       ) : null}

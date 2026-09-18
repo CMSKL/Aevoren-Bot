@@ -57,7 +57,7 @@ test("routes approved workspace tools through one Room speaker and recovers a pe
     const allowedTool = page.getByTestId("workspace-tool-activity").last();
     await expect(allowedTool).toContainText("等待你的确认");
     await allowedTool.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(allowedTool).toContainText("读取完成");
+    await expect(allowedTool).toContainText("执行完成");
     await expect(page.getByText(new RegExp(marker)).last()).toBeVisible();
     await expect(page.locator(".speaker-link")).toHaveText([analyst.name]);
     await expect(page.getByTestId("room-batch-state")).toContainText("completed");
@@ -89,7 +89,7 @@ test("routes approved workspace tools through one Room speaker and recovers a pe
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     await page.locator(".bot-row").filter({ hasText: room.room.name }).click();
     await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(3);
-    await expect(page.getByTestId("workspace-tool-activity").nth(0)).toContainText("读取完成");
+    await expect(page.getByTestId("workspace-tool-activity").nth(0)).toContainText("执行完成");
     await expect(page.getByTestId("workspace-tool-activity").nth(1)).toContainText("已拒绝");
     await expect(page.getByTestId("workspace-tool-activity").nth(2)).toContainText("确认已过期");
     await expect(page.getByTestId("workspace-tool-activity").nth(2).getByRole("button")).toHaveCount(0);

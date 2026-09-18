@@ -56,7 +56,7 @@ test("runs one approved workspace read through the configured real Provider", as
     const tool = page.getByTestId("workspace-tool-activity").last();
     await expect(tool).toContainText("等待你的确认", { timeout: 90_000 });
     await tool.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(tool).toContainText("读取完成", { timeout: 30_000 });
+    await expect(tool).toContainText("执行完成", { timeout: 30_000 });
     await expect(page.locator('article.message-assistant[data-status="completed"]').last()).toContainText(token, { timeout: 90_000 });
   } finally {
     await application.close();

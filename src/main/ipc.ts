@@ -8,12 +8,17 @@ import {
   botPinnedSchema,
   botUnreadSchema,
   botUpdateSchema,
+  capabilitySnapshotInputSchema,
   conversationBatchDeleteSchema,
   generalSettingsSchema,
   memoryCreateSchema,
   memoryListSchema,
   memoryMutationSchema,
   memoryUpdateSchema,
+  mcpServerEnabledSchema,
+  mcpServerIdSchema,
+  mcpServerMutationIdSchema,
+  mcpServerMutationSchema,
   nonceSchema,
   roomArchiveSchema,
   roomCreateSchema,
@@ -25,6 +30,11 @@ import {
   roomSendCommandSchema,
   roomUnreadSchema,
   roomUpdateSchema,
+  routineCreateSchema,
+  routineEnabledSchema,
+  routineIdSchema,
+  routineMutationSchema,
+  routineUpdateSchema,
   runIdSchema,
   sendCommandSchema,
   providerInstanceIdInputSchema,
@@ -44,6 +54,9 @@ import type { RoomCoordinator } from "./room-coordinator";
 import type { WorkspaceService } from "./workspace-service";
 import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import type { UpdateService } from "./update-service";
+import type { CapabilityRegistry } from "./capability-registry";
+import type { McpService } from "./mcp-service";
+import type { RoutineService } from "./routine-service";
 
 type IpcDependencies = {
   window: BrowserWindow;
@@ -54,6 +67,9 @@ type IpcDependencies = {
   roomCoordinator: RoomCoordinator;
   workspaceService: WorkspaceService;
   workspaceToolCoordinator: WorkspaceToolCoordinator;
+  capabilityRegistry: CapabilityRegistry;
+  mcpService: McpService;
+  routineService: RoutineService;
   updateService: UpdateService;
   pickWorkspaceRoot(): Promise<string | null>;
   forceFakeProvider: boolean;
@@ -88,6 +104,44 @@ export function registerIpc(dependencies: IpcDependencies): void {
     );
   };
 
+  handle(IPC.capabilitiesGetSnapshot, (_event, input: unknown) =>
+    dependencies.capabilityRegistry.getSnapshot(capabilitySnapshotInputSchema.parse(input)),
+  );
+  handle(IPC.mcpList, () => dependencies.mcpService.list());
+  handle(IPC.mcpSave, (_event, input: unknown) => dependencies.mcpService.save(mcpServerMutationSchema.parse(input)));
+  handle(IPC.mcpSetEnabled, (_event, input: unknown) => {
+    const parsed = mcpServerEnabledSchema.parse(input);
+    return dependencies.mcpService.setEnabled(parsed.id, parsed.expectedVersion, parsed.enabled);
+  });
+  handle(IPC.mcpProbe, (_event, id: unknown) => dependencies.mcpService.probe(mcpServerIdSchema.parse(id)));
+  handle(IPC.mcpAuthorize, (_event, id: unknown) => dependencies.mcpService.authorize(mcpServerIdSchema.parse(id)));
+  handle(IPC.mcpCancelAuthorization, (_event, id: unknown) => dependencies.mcpService.cancelAuthorization(mcpServerIdSchema.parse(id)));
+  handle(IPC.mcpClearAuthorization, (_event, input: unknown) => {
+    const parsed = mcpServerMutationIdSchema.parse(input);
+    return dependencies.mcpService.clearAuthorization(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.mcpDelete, (_event, input: unknown) => {
+    const parsed = mcpServerMutationIdSchema.parse(input);
+    return dependencies.mcpService.delete(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.routinesList, () => dependencies.routineService.list());
+  handle(IPC.routinesListRuns, (_event, routineId: unknown) =>
+    dependencies.routineService.listRuns(routineId === undefined ? undefined : routineIdSchema.parse(routineId)),
+  );
+  handle(IPC.routinesCreate, (_event, input: unknown) => dependencies.routineService.create(routineCreateSchema.parse(input)));
+  handle(IPC.routinesUpdate, (_event, input: unknown) => {
+    const parsed = routineUpdateSchema.parse(input);
+    return dependencies.routineService.update(parsed.id, parsed.expectedVersion, parsed.patch);
+  });
+  handle(IPC.routinesSetEnabled, (_event, input: unknown) => {
+    const parsed = routineEnabledSchema.parse(input);
+    return dependencies.routineService.setEnabled(parsed.id, parsed.expectedVersion, parsed.enabled);
+  });
+  handle(IPC.routinesRunNow, (_event, id: unknown) => dependencies.routineService.runNow(routineIdSchema.parse(id)));
+  handle(IPC.routinesDelete, (_event, input: unknown) => {
+    const parsed = routineMutationSchema.parse(input);
+    return dependencies.routineService.delete(parsed.id, parsed.expectedVersion);
+  });
   handle(IPC.conversationsDeleteBatch, (_event, input: unknown) =>
     repository.deleteConversations(conversationBatchDeleteSchema.parse(input)),
   );
@@ -118,11 +172,15 @@ export function registerIpc(dependencies: IpcDependencies): void {
   });
   handle(IPC.memoriesList, (_event, input: unknown) => {
     const parsed = memoryListSchema.parse(input);
-    return repository.listMemories(parsed.botId, parsed.includeDeleted ?? false);
+    return "botId" in parsed
+      ? repository.listMemories(parsed.botId, parsed.includeDeleted ?? false)
+      : repository.listScopedMemories({ scope: parsed.scope, scopeKey: parsed.scopeKey }, parsed.includeDeleted ?? false);
   });
   handle(IPC.memoriesCreate, (_event, input: unknown) => {
     const parsed = memoryCreateSchema.parse(input);
-    return repository.createMemory(parsed.botId, parsed.content);
+    return "botId" in parsed
+      ? repository.createMemory(parsed.botId, parsed.content)
+      : repository.createScopedMemory({ scope: parsed.scope, scopeKey: parsed.scopeKey }, parsed.content);
   });
   handle(IPC.memoriesUpdate, (_event, input: unknown) => {
     const parsed = memoryUpdateSchema.parse(input);

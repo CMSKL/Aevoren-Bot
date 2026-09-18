@@ -363,8 +363,12 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.tools.list({ sessionId: "not-a-uuid" }),
     );
     expect(toolResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    const capabilityResult = await launched.page.evaluate(() =>
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.capabilities.getSnapshot({ botId: "not-a-uuid" }),
+    );
+    expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "bots", "conversations", "events", "memories", "messages", "providers", "roomRuntime", "rooms", "runtime", "sessions", "settings", "tools", "transcript", "updates", "workspaces",
+      "app", "approvals", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "tools", "transcript", "updates", "workspaces",
     ]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations,
@@ -372,6 +376,12 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.providers,
     ).toSorted())).toEqual(["list", "refresh", "saveCli", "saveOpenAiCompatible", "scan", "test"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp,
+    ).toSorted())).toEqual(["authorize", "cancelAuthorization", "clearAuthorization", "delete", "list", "probe", "save", "setEnabled"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.routines,
+    ).toSorted())).toEqual(["create", "delete", "list", "listRuns", "runNow", "setEnabled", "update"]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.updates,
     ).toSorted())).toEqual(["check", "getState", "installAndRestart", "retry"]);

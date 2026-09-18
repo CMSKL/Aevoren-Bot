@@ -3,10 +3,13 @@ import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { posix } from "node:path";
 import type { Stats } from "node:fs";
-import type { ToolInvocation, WorkspaceToolRequest } from "@shared/contracts";
+import type { DeviceToolRequest, NetworkToolRequest, ToolInvocation, ToolRequest, WorkspaceToolRequest } from "@shared/contracts";
 import type { AppRepository } from "./database";
 import { AevorenBotError } from "./errors";
 import type { WorkspaceService } from "./workspace-service";
+import type { NetworkToolExecutor } from "./network-tool-executor";
+import type { McpService } from "./mcp-service";
+import type { DeviceToolExecutor } from "./device-tool-executor";
 
 const MAX_SEARCH_FILES = 2_000;
 const MAX_SEARCH_BYTES = 20 * 1_048_576;
@@ -89,6 +92,9 @@ export class WorkspaceToolExecutor {
   constructor(
     private readonly repository: AppRepository,
     private readonly workspaceService: WorkspaceService,
+    private readonly networkTools?: NetworkToolExecutor,
+    private readonly mcpTools?: McpService,
+    private readonly deviceTools?: DeviceToolExecutor,
   ) {}
 
   async execute(id: string, signal: AbortSignal = new AbortController().signal): Promise<WorkspaceToolExecutionResult> {
@@ -103,8 +109,10 @@ export class WorkspaceToolExecutor {
 
     this.repository.transitionToolInvocation(id, "dispatching");
     try {
-      const targetType = initial.toolKind === "workspace-read" ? "file" : "directory";
-      await this.workspaceService.resolveExistingTarget(initial.workspaceId, initial.targetPath, targetType);
+      if (initial.workspaceId) {
+        const targetType = initial.toolKind === "workspace-read" ? "file" : "directory";
+        await this.workspaceService.resolveExistingTarget(initial.workspaceId, initial.targetPath, targetType);
+      }
       checkCancellation(signal);
       this.repository.transitionToolInvocation(id, "running");
 
@@ -127,9 +135,21 @@ export class WorkspaceToolExecutor {
   }
 
   private async run(
-    tool: WorkspaceToolRequest,
+    tool: ToolRequest,
     signal: AbortSignal,
   ): Promise<{ content: string; metadata: ResultMetadata }> {
+    if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "time-now") {
+      if (!this.networkTools) throw new AevorenBotError("NETWORK_TOOL_UNAVAILABLE");
+      return this.networkTools.run(tool as NetworkToolRequest, signal);
+    }
+    if (tool.kind === "mcp-call") {
+      if (!this.mcpTools) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
+      return this.mcpTools.run(tool, signal);
+    }
+    if (tool.kind === "clipboard-read") {
+      if (!this.deviceTools) throw new AevorenBotError("TOOL_EXECUTION_FAILED");
+      return this.deviceTools.run(tool as DeviceToolRequest, signal);
+    }
     switch (tool.kind) {
       case "workspace-list":
         return this.list(tool, signal);

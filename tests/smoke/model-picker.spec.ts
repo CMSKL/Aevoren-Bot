@@ -39,12 +39,13 @@ test("switches one Bot model from the compact header picker and preserves unavai
     const picker = page.getByRole("dialog", { name: "选择模型" });
     await expect(picker).toBeVisible();
     await expect(picker.locator(".header-model-list > button")).toHaveCount(2);
+    await expect(picker.locator('.header-model-list > button[aria-current="true"]')).toContainText("当前");
     await picker.locator(".header-model-list > button").filter({ hasText: "model-beta" }).click();
     await expect(trigger).toContainText("model-beta");
 
     await trigger.click();
     await picker.getByRole("button", { name: "Codex CLI" }).click();
-    await expect(picker.getByText("当前不可用", { exact: true })).toBeVisible();
+    await expect(picker.locator(".header-model-unavailable strong")).toHaveText(/未安装|未登录|不可用/u);
     await expect(picker.getByText("测试环境未探测 Codex CLI。", { exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
 

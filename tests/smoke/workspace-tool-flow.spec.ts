@@ -40,7 +40,7 @@ test("approves, denies, and restores one workspace tool flow without exposing jo
     const firstTool = page.getByTestId("workspace-tool-activity").last();
     await expect(firstTool).toContainText("等待你的确认");
     await firstTool.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(firstTool).toContainText("读取完成");
+    await expect(firstTool).toContainText("执行完成");
     await expect(page.getByText(/E2E_WORKSPACE_CONTENT/).last()).toBeVisible();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
 
@@ -61,7 +61,7 @@ test("approves, denies, and restores one workspace tool flow without exposing jo
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 740));
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(390);
     await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(2);
-    await expect(page.getByTestId("workspace-tool-activity").first()).toContainText("读取完成");
+    await expect(page.getByTestId("workspace-tool-activity").first()).toContainText("执行完成");
     await expect(page.getByTestId("workspace-tool-activity").last()).toContainText("已拒绝");
     expect(await page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     expect(consoleErrors).toEqual([]);

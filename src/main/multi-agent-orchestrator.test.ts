@@ -896,13 +896,13 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       { deadlineMs: 10 },
     );
     await waitForBatch(value.repository, sent.batchId, ["partial"]);
+    await vi.waitFor(() => expect(value.repository.listAgentTurns(sent.batchId).map((turn) => [turn.state, turn.outcome?.kind])).toEqual([
+      ["failed", "timeout"],
+      ["cancelled", "cancelled"],
+    ]));
 
     expect(calls).toEqual([value.bots[0]!.id]);
     expect(value.repository.getRoomRun(sent.batchId).windingDown).toBe(true);
-    expect(value.repository.listAgentTurns(sent.batchId).map((turn) => [turn.state, turn.outcome?.kind])).toEqual([
-      ["failed", "timeout"],
-      ["cancelled", "cancelled"],
-    ]);
     const timedOutRuntime = value.repository.getRuntimeRun(value.repository.listAgentTurns(sent.batchId)[0]!.runtimeRunId!);
     expect(timedOutRuntime).toMatchObject({ state: "failed", lastErrorCode: "MODEL_RUN_TIMEOUT" });
     expect(value.repository.listHandoffs(sent.batchId)).toMatchObject([{ state: "cancelled" }]);

@@ -27,12 +27,14 @@ const OPENAI_CAPABILITIES: ProviderCapabilities = {
   roomOwnerSelection: true,
   handoff: true,
   workspaceTools: true,
+  networkTools: true,
 };
 
 const CODEX_CAPABILITIES: ProviderCapabilities = {
   roomOwnerSelection: false,
   handoff: false,
-  workspaceTools: false,
+  workspaceTools: true,
+  networkTools: true,
 };
 
 const CLAUDE_CAPABILITIES: ProviderCapabilities = {
@@ -540,6 +542,7 @@ class AcpCliRuntime implements RuntimeProviderInstance {
 
 export class ProviderService implements ProviderResolver {
   private instances = new Map<string, RuntimeProviderInstance>();
+  private readonly descriptions = new Map<string, ProviderInstanceInfo>();
 
   constructor(
     private readonly repository: AppRepository,
@@ -565,13 +568,16 @@ export class ProviderService implements ProviderResolver {
   async reload(): Promise<void> {
     for (const instance of this.instances.values()) await instance.dispose();
     this.instances.clear();
+    this.descriptions.clear();
     for (const configuration of this.repository.listProviderInstanceConfigs()) {
       this.instances.set(configuration.id, this.createRuntime(configuration));
     }
   }
 
   async list(): Promise<ProviderInstanceInfo[]> {
-    return Promise.all([...this.instances.values()].map((instance) => instance.describe()));
+    const descriptions = await Promise.all([...this.instances.values()].map((instance) => instance.describe()));
+    for (const description of descriptions) this.descriptions.set(description.id, description);
+    return descriptions;
   }
 
   async scan(): Promise<ProviderInstanceInfo[]> {
@@ -585,7 +591,9 @@ export class ProviderService implements ProviderResolver {
 
   async get(instanceId: string): Promise<ProviderInstanceInfo> {
     const instance = this.requireInstance(instanceId);
-    return instance.describe();
+    const description = await instance.describe();
+    this.descriptions.set(description.id, description);
+    return description;
   }
 
   async saveOpenAiCompatible(input: SaveOpenAiCompatibleProviderInput): Promise<ProviderInstanceInfo> {
@@ -619,7 +627,13 @@ export class ProviderService implements ProviderResolver {
   async refresh(instanceId: string): Promise<ProviderInstanceInfo> {
     const instance = this.requireInstance(instanceId);
     await instance.refresh();
-    return instance.describe();
+    const description = await instance.describe();
+    this.descriptions.set(description.id, description);
+    return description;
+  }
+
+  getCached(instanceId: string): ProviderInstanceInfo | null {
+    return this.descriptions.get(instanceId) ?? null;
   }
 
   getRoute(selection: ModelSelection) {
@@ -637,6 +651,7 @@ export class ProviderService implements ProviderResolver {
   async dispose(): Promise<void> {
     for (const instance of this.instances.values()) await instance.dispose();
     this.instances.clear();
+    this.descriptions.clear();
   }
 
   private createRuntime(configuration: ProviderInstanceConfig): RuntimeProviderInstance {
@@ -668,6 +683,7 @@ export class ProviderService implements ProviderResolver {
 
   private async reloadOne(id: string): Promise<void> {
     await this.instances.get(id)?.dispose();
+    this.descriptions.delete(id);
     const configuration = this.repository.getProviderInstanceConfig(id);
     this.instances.set(id, this.createRuntime(configuration));
   }

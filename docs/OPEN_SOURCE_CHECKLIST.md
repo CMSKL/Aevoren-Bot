@@ -1,0 +1,60 @@
+# Open-Source Release Checklist
+
+Last reviewed: 2026-09-18. This is a readiness record, not authorization to publish or create a Release.
+
+## P0 — public release blockers
+
+| Item | Status | Evidence / required action |
+| --- | --- | --- |
+| Current tree secret scan | Passed | Gitleaks directory scan found no tracked source leak; ignored local `dist` fixtures are not publication inputs |
+| Full Git history secret scan | Passed | Gitleaks scanned 70 commits with 0 findings |
+| Main project license | Passed | Root `LICENSE` contains Apache-2.0 and `package.json` uses the `Apache-2.0` SPDX identifier |
+| Third-party dependency license inventory | Passed | `pnpm licenses:check`; generated `THIRD_PARTY_NOTICES.md`; production graph has no GPL/AGPL/LGPL/SSPL/BUSL/unknown group |
+| Vulnerability audit | Passed | `pnpm audit --audit-level high`: 0 high/critical findings at review time |
+| Reverse-engineering and third-party evidence | In progress | Private archive created and verified; public-tree deletion and all-branch history rewrite must complete before changing repository visibility |
+| Icon and visual asset provenance | In progress | Original replacement asset generated and documented; distributable icon derivatives must be regenerated after history rewrite |
+| README and public setup docs | Passed | Public README plus Installation, Configuration, Release, Support, Security, Contribution, Code of Conduct, Changelog, Notice, and trademark docs added |
+| Reproducible dependency install | Passed locally | Fresh `pnpm install --frozen-lockfile` and offline reinstall succeeded; remote CI must pass after commit |
+| Build and macOS package | Passed locally | Current `0.2.0-beta.7` arm64 directory package built; packaged hidden startup smoke passed |
+| Privacy declarations and ATS | Passed | Unused camera/microphone/Bluetooth descriptions removed during `afterPack`; arbitrary network loads disabled; local networking retained |
+| PR CI | Prepared, not remotely verified | Pinned GitHub Actions workflow runs secret scan, Node 24 validation/build, dependency audit/license gate, macOS smoke, and unsigned package |
+| Signed/notarized release | **Blocked for first public version** | Create a new version only after the above blockers are resolved; run the protected tag workflow and verify Developer ID, Hardened Runtime, notarization, Gatekeeper, checksums, attestation, and update metadata |
+| Real update from an older public build | **Blocked until two public test versions exist** | Complete Beta N → Beta N+1 download/install/relaunch validation before claiming production auto-update readiness |
+| Repository settings | **Blocked** | Repository remains private, default branch is `dev`, branch protection is unavailable in current private-plan state; before public launch set the intended default branch, enable private vulnerability reporting/secret scanning, and require CI reviews |
+
+The tag workflow invokes `pnpm open-source:check` before building, so an accidental version tag cannot publish while the license or internal-history blockers remain.
+
+## P1 — important before broad adoption
+
+| Item | Status / action |
+| --- | --- |
+| SBOM | Add CycloneDX or SPDX SBOM generation to the release workflow and attach it to Release attestations |
+| Intel macOS / Windows / Linux | Either add CI/package support or keep them explicitly unsupported; do not imply cross-platform availability |
+| Accessibility and localization | Run public-release accessibility review and decide whether an English/Chinese documentation split is needed |
+| Dependency update automation | Dependabot configuration added; verify grouped PR behavior after the repository is public |
+| Support operations | Define maintainer response targets, triage labels, and release/security ownership |
+| Trademark clearance | Perform an official trademark search and legal review for “Aevoren Bot”; a web search alone is not clearance |
+
+## P2 — later improvements
+
+- Public roadmap and governance model.
+- Discussions/community forum.
+- Signed nightly builds.
+- Reproducible-build comparison across independent runners.
+- Website download metadata generated from immutable GitHub Releases.
+
+## Final launch gate
+
+Run all commands from a clean checkout of the exact candidate commit:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm open-source:check
+pnpm verify
+pnpm test:smoke
+pnpm security:audit
+pnpm licenses:generate
+git diff --exit-code -- THIRD_PARTY_NOTICES.md
+```
+
+Then run a redacted full-history Gitleaks scan, promote through `dev` → `beta` → `master`, and create the version tag only on the exact protected branch head.

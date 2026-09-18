@@ -3,6 +3,28 @@ import { IPC } from "@shared/channels";
 import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
 
 const api: AevorenBotApi = {
+  capabilities: {
+    getSnapshot: (input) => ipcRenderer.invoke(IPC.capabilitiesGetSnapshot, input),
+  },
+  mcp: {
+    list: () => ipcRenderer.invoke(IPC.mcpList),
+    save: (input) => ipcRenderer.invoke(IPC.mcpSave, input),
+    setEnabled: (input) => ipcRenderer.invoke(IPC.mcpSetEnabled, input),
+    probe: (id) => ipcRenderer.invoke(IPC.mcpProbe, id),
+    authorize: (id) => ipcRenderer.invoke(IPC.mcpAuthorize, id),
+    cancelAuthorization: (id) => ipcRenderer.invoke(IPC.mcpCancelAuthorization, id),
+    clearAuthorization: (input) => ipcRenderer.invoke(IPC.mcpClearAuthorization, input),
+    delete: (input) => ipcRenderer.invoke(IPC.mcpDelete, input),
+  },
+  routines: {
+    list: () => ipcRenderer.invoke(IPC.routinesList),
+    listRuns: (routineId) => ipcRenderer.invoke(IPC.routinesListRuns, routineId),
+    create: (input) => ipcRenderer.invoke(IPC.routinesCreate, input),
+    update: (input) => ipcRenderer.invoke(IPC.routinesUpdate, input),
+    setEnabled: (input) => ipcRenderer.invoke(IPC.routinesSetEnabled, input),
+    runNow: (id) => ipcRenderer.invoke(IPC.routinesRunNow, id),
+    delete: (input) => ipcRenderer.invoke(IPC.routinesDelete, input),
+  },
   conversations: {
     deleteBatch: (input) => ipcRenderer.invoke(IPC.conversationsDeleteBatch, input),
   },

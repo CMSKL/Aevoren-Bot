@@ -5,6 +5,7 @@ import type {
   ApprovalRequest,
   Bot,
   ConversationBatchDeleteInput,
+  LoginItemStatus,
   Room,
   RoomBatch,
   RoomDetail,
@@ -83,6 +84,9 @@ export function App(): React.JSX.Element {
   const [createError, setCreateError] = useState<AppError | null>(null);
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   const [appearanceTheme, setAppearanceTheme] = useState<AppearanceTheme>("system");
+  const [launchAtLogin, setLaunchAtLogin] = useState(false);
+  const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
+  const [launchAtLoginStatus, setLaunchAtLoginStatus] = useState<LoginItemStatus>("unsupported");
   const newBotButtonRef = useRef<HTMLButtonElement>(null);
   const profileRef = useRef<ProfileInspectorHandle>(null);
   const roomRef = useRef<RoomInspectorHandle>(null);
@@ -160,7 +164,12 @@ export function App(): React.JSX.Element {
       if (result.ok) setUpdateState(result.data);
     });
     void window.aevorenBot.settings.getGeneral().then((result) => {
-      if (result.ok) setAppearanceTheme(result.data.theme);
+      if (result.ok) {
+        setAppearanceTheme(result.data.theme);
+        setLaunchAtLogin(result.data.launchAtLogin);
+        setLaunchAtLoginSupported(result.data.launchAtLoginSupported);
+        setLaunchAtLoginStatus(result.data.launchAtLoginStatus);
+      }
     });
     return () => {
       unsubscribeTranscript();
@@ -888,13 +897,25 @@ export function App(): React.JSX.Element {
       <SettingsDialog
         open={settingsOpen}
         theme={appearanceTheme}
+        launchAtLogin={launchAtLogin}
+        launchAtLoginSupported={launchAtLoginSupported}
+        launchAtLoginStatus={launchAtLoginStatus}
         updateState={updateState}
         restartBlocked={updateRestartBlocked}
+        activeBotId={selectedBot?.id ?? null}
         onClose={closeSettings}
         onThemeChange={async (theme) => {
           const result = await window.aevorenBot.settings.saveGeneral({ theme });
           if (!result.ok) return result.error;
           setAppearanceTheme(result.data.theme);
+          return null;
+        }}
+        onLaunchAtLoginChange={async (enabled) => {
+          const result = await window.aevorenBot.settings.saveGeneral({ launchAtLogin: enabled });
+          if (!result.ok) return result.error;
+          setLaunchAtLogin(result.data.launchAtLogin);
+          setLaunchAtLoginSupported(result.data.launchAtLoginSupported);
+          setLaunchAtLoginStatus(result.data.launchAtLoginStatus);
           return null;
         }}
         onCheckUpdate={() => void window.aevorenBot.updates.check().then((result) => {

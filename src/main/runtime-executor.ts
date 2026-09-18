@@ -1,5 +1,6 @@
 import type {
   AppError,
+  CapabilityPromptSnapshot,
   ModelSelection,
   RuntimeEvent,
   RuntimeRoute,
@@ -25,6 +26,7 @@ import {
 import { buildPrompt } from "./prompt";
 import type { ProviderResolver } from "./providers/contracts";
 import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
+import type { McpService } from "./mcp-service";
 
 export type RuntimeExecutorEvents = {
   transcript: (event: TranscriptEvent) => void;
@@ -60,6 +62,10 @@ export type RuntimeExecutionResult = {
   run: RuntimeRun;
   error?: AppError;
   providerStarted: boolean;
+};
+
+export type CapabilitySnapshotSource = {
+  forPrompt(botId: string, selection: ModelSelection, room: boolean): CapabilityPromptSnapshot;
 };
 
 type AbortReason = "user" | "deadline" | "app-shutdown";
@@ -105,6 +111,8 @@ export class RuntimeExecutor {
     private readonly forceFakeProvider = false,
     private readonly providerOverride?: ModelProvider,
     private readonly workspaceTools?: WorkspaceToolCoordinator,
+    private readonly capabilitySnapshots?: CapabilitySnapshotSource,
+    private readonly mcpTools?: Pick<McpService, "availableTools">,
   ) {
     this.fakeProvider = forceFakeProvider && !providerOverride ? new FakeModelProvider() : null;
   }
@@ -117,6 +125,8 @@ export class RuntimeExecutor {
     const user = this.repository.getUserMessage(input.clientNonce);
     const inputSeq = input.inputSeq ?? user.seq;
     const promptCutoffSeq = input.promptCutoffSeq ?? inputSeq;
+    const modelSelection = input.modelSelection ?? bot.modelSelection;
+    const capabilitySnapshot = this.capabilitySnapshots?.forPrompt(bot.id, modelSelection, Boolean(input.room));
     const prompt = buildPrompt(
       bot,
       session,
@@ -132,10 +142,15 @@ export class RuntimeExecutor {
             ...(input.incomingHandoff ? { handoff: input.incomingHandoff } : {}),
           }
         : undefined,
-      this.repository.listMemories(bot.id),
+      this.repository.listRuntimeMemories(bot.id),
+      capabilitySnapshot,
     );
-    const modelSelection = input.modelSelection ?? bot.modelSelection;
     const route = this.route(modelSelection);
+    const providerCapabilities = this.forceFakeProvider
+      ? { roomOwnerSelection: true, handoff: true, workspaceTools: true, networkTools: true }
+      : this.providerOverride
+        ? { roomOwnerSelection: true, handoff: true, workspaceTools: true, networkTools: false }
+        : this.providers?.getCapabilities(modelSelection);
     const run = this.repository.createRuntimeRun(input.clientNonce, route, prompt.manifest, {
       executorBotId: bot.id,
       executionKey: input.executionKey,
@@ -164,7 +179,12 @@ export class RuntimeExecutor {
         ...(input.room ? { roomId: input.room.id, sourceTurnId: input.room.sourceTurnId } : {}),
         ...(input.room?.roster ? { roomRoster: input.room.roster } : {}),
         ...(input.incomingHandoff ? { incomingHandoff: input.incomingHandoff } : {}),
-        workspaces: this.repository.listWorkspaces().map(({ id, name }) => ({ id, name })),
+        workspaces: providerCapabilities?.workspaceTools === true
+          ? this.repository.listWorkspaces().map(({ id, name }) => ({ id, name }))
+          : [],
+        networkTools: providerCapabilities?.networkTools === true,
+        mcpTools: providerCapabilities?.networkTools === true ? this.mcpTools?.availableTools(bot.id) ?? [] : [],
+        deviceTools: providerCapabilities?.networkTools === true,
       },
       onDispatchStart: input.onDispatchStart,
       onProviderStarted: input.onProviderStarted,
@@ -369,7 +389,7 @@ export class RuntimeExecutor {
           this.armStaleTimer(active);
           continue;
         }
-        if (event.type === "workspace-tool") {
+        if (event.type === "workspace-tool" || event.type === "network-tool" || event.type === "mcp-tool" || event.type === "device-tool") {
           if (!active.providerStarted || !this.workspaceTools) throw new AevorenBotError("RUNTIME_STATE_INVALID");
           if (workspaceContinuation) throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
           if (toolRounds >= 4) throw new AevorenBotError("TOOL_ROUND_LIMIT_EXCEEDED");
@@ -380,16 +400,15 @@ export class RuntimeExecutor {
             event.tool,
             active.controller.signal,
           );
-          const functionName = event.tool.kind === "workspace-list"
-            ? "workspace_list"
-            : event.tool.kind === "workspace-read"
-              ? "workspace_read"
-              : "workspace_search";
-          const argumentsValue = event.tool.kind === "workspace-list"
-            ? { workspaceId: event.tool.workspaceId, path: event.tool.path, maxEntries: event.tool.maxEntries }
-            : event.tool.kind === "workspace-read"
-              ? { workspaceId: event.tool.workspaceId, path: event.tool.path, maxBytes: event.tool.maxBytes }
-              : { workspaceId: event.tool.workspaceId, path: event.tool.path, query: event.tool.query, maxMatches: event.tool.maxMatches };
+          if (event.respond) {
+            await event.respond(outcome.content);
+            run = this.repository.touchRuntimeRun(runId);
+            this.emitRuntime(run);
+            this.armStaleTimer(active);
+            continue;
+          }
+          const functionName = event.providerToolName ?? event.tool.kind.replaceAll("-", "_");
+          const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
           active.messages.push({
             role: "assistant",
             content: active.providerBody.slice(roundBodyStart),

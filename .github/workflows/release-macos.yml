@@ -32,13 +32,13 @@ jobs:
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.19.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: pnpm
@@ -93,12 +93,22 @@ jobs:
           EXPECTED_BRANCH: ${{ steps.release.outputs.expected_branch }}
         run: |
           git fetch origin "+refs/heads/${EXPECTED_BRANCH}:refs/remotes/origin/${EXPECTED_BRANCH}"
-          git merge-base --is-ancestor HEAD "origin/${EXPECTED_BRANCH}"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "origin/${EXPECTED_BRANCH}")"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Verify open-source release readiness
+        run: pnpm open-source:check
       - name: Validate application
-        run: pnpm validate
+        run: pnpm verify
+      - name: Run Electron smoke tests
+        run: pnpm test:smoke
+      - name: Audit production dependencies
+        run: pnpm security:audit
+      - name: Verify third-party notice is current
+        run: |
+          pnpm licenses:generate
+          git diff --exit-code -- THIRD_PARTY_NOTICES.md
       - name: Build, sign and notarize update artifacts
         run: pnpm release:mac
       - name: Notarize signed disk image
@@ -146,7 +156,7 @@ jobs:
       - name: Verify release assets and generate checksums
         run: pnpm release:prepare
       - name: Attest release assets
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: |
             dist/*.dmg
@@ -192,7 +202,7 @@ jobs:
             gh release edit "$GITHUB_REF_NAME" --draft=false --latest
           fi
           gh release verify "$GITHUB_REF_NAME"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: aevoren-bot-${{ github.ref_name }}-macos
           path: |

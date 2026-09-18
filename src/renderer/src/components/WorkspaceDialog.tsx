@@ -42,6 +42,7 @@ export function WorkspaceDialog({ open, onClose }: WorkspaceDialogProps): React.
         left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
       ));
     });
+    window.dispatchEvent(new Event("aevoren:workspaces-changed"));
   }
 
   async function removeWorkspace(workspace: Workspace): Promise<void> {
@@ -54,6 +55,7 @@ export function WorkspaceDialog({ open, onClose }: WorkspaceDialogProps): React.
       return;
     }
     setWorkspaces((current) => current.filter((item) => item.id !== workspace.id));
+    window.dispatchEvent(new Event("aevoren:workspaces-changed"));
   }
 
   return (

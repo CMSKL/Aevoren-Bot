@@ -1,17 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppearanceTheme, AppError, UpdateState } from "@shared/contracts";
-import { BotIcon, CloseIcon, RefreshIcon, SettingsIcon } from "./Icons";
+import type { AppearanceTheme, AppError, LoginItemStatus, UpdateState } from "@shared/contracts";
+import { BellIcon, BotIcon, CloseIcon, EyeIcon, PanelIcon, RefreshIcon, SettingsIcon } from "./Icons";
 import { ModelSettingsPanel } from "./ModelSettingsDialog";
+import { CapabilitiesSettingsPanel } from "./CapabilitiesSettingsPanel";
+import { McpSettingsPanel } from "./McpSettingsPanel";
+import { ScopedMemorySettingsPanel } from "./ScopedMemorySettingsPanel";
+import { RoutinesSettingsPanel } from "./RoutinesSettingsPanel";
 
-type SettingsSection = "general" | "model" | "updates";
+type SettingsSection = "general" | "capabilities" | "memory" | "model" | "mcp" | "routines" | "updates";
 
 type SettingsDialogProps = {
   open: boolean;
   theme: AppearanceTheme;
+  launchAtLogin: boolean;
+  launchAtLoginSupported: boolean;
+  launchAtLoginStatus: LoginItemStatus;
   updateState: UpdateState | null;
   restartBlocked: boolean;
+  activeBotId: string | null;
   onClose(): void;
   onThemeChange(theme: AppearanceTheme): Promise<AppError | null>;
+  onLaunchAtLoginChange(enabled: boolean): Promise<AppError | null>;
   onCheckUpdate(): void;
   onRetryUpdate(): void;
   onInstallUpdate(): void;
@@ -21,6 +30,14 @@ const themeLabels: Record<AppearanceTheme, string> = {
   system: "跟随系统",
   light: "浅色",
   dark: "深色",
+};
+
+const loginItemStatusLabels: Record<LoginItemStatus, string> = {
+  unsupported: "当前开发版不可用",
+  "not-registered": "未启用",
+  enabled: "已启用",
+  "requires-approval": "需要在系统设置中批准",
+  "not-found": "系统未找到启动项",
 };
 
 const updateStatusLabels: Record<UpdateState["status"], string> = {
@@ -40,10 +57,15 @@ const updateStatusLabels: Record<UpdateState["status"], string> = {
 export function SettingsDialog({
   open,
   theme,
+  launchAtLogin,
+  launchAtLoginSupported,
+  launchAtLoginStatus,
   updateState,
   restartBlocked,
+  activeBotId,
   onClose,
   onThemeChange,
+  onLaunchAtLoginChange,
   onCheckUpdate,
   onRetryUpdate,
   onInstallUpdate,
@@ -51,11 +73,14 @@ export function SettingsDialog({
   const [section, setSection] = useState<SettingsSection>("general");
   const [themePending, setThemePending] = useState(false);
   const [themeError, setThemeError] = useState<AppError | null>(null);
+  const [launchPending, setLaunchPending] = useState(false);
+  const [launchError, setLaunchError] = useState<AppError | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const close = useCallback((): void => {
     setSection("general");
     setThemeError(null);
+    setLaunchError(null);
     onClose();
   }, [onClose]);
 
@@ -82,6 +107,15 @@ export function SettingsDialog({
     setThemePending(false);
   }
 
+  async function changeLaunchAtLogin(enabled: boolean): Promise<void> {
+    if (launchPending || !launchAtLoginSupported || enabled === launchAtLogin) return;
+    setLaunchPending(true);
+    setLaunchError(null);
+    const error = await onLaunchAtLoginChange(enabled);
+    setLaunchError(error);
+    setLaunchPending(false);
+  }
+
   const progress = Math.round(updateState?.progress?.percent ?? 0);
   const updateBusy = updateState ? ["checking", "available", "downloading", "installing"].includes(updateState.status) : true;
 
@@ -91,9 +125,13 @@ export function SettingsDialog({
         <aside className="settings-nav" aria-label="设置分类">
           <div className="settings-nav-title" id="settings-title">设置</div>
           <nav>
-            <button type="button" className={section === "general" ? "selected" : ""} aria-current={section === "general" ? "page" : undefined} onClick={() => setSection("general")}><SettingsIcon /><span>通用</span></button>
-            <button type="button" className={section === "model" ? "selected" : ""} aria-current={section === "model" ? "page" : undefined} onClick={() => setSection("model")}><BotIcon /><span>模型与 CLI</span></button>
-            <button type="button" className={section === "updates" ? "selected" : ""} aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}><RefreshIcon /><span>版本更新</span></button>
+            <button type="button" aria-label="通用" className={section === "general" ? "selected" : ""} aria-current={section === "general" ? "page" : undefined} onClick={() => setSection("general")}><SettingsIcon /><span>通用</span></button>
+            <button type="button" aria-label="能力与权限" className={section === "capabilities" ? "selected" : ""} aria-current={section === "capabilities" ? "page" : undefined} onClick={() => setSection("capabilities")}><EyeIcon /><span>能力与权限</span></button>
+            <button type="button" aria-label="长期记忆" className={section === "memory" ? "selected" : ""} aria-current={section === "memory" ? "page" : undefined} onClick={() => setSection("memory")}><BotIcon /><span>长期记忆</span></button>
+            <button type="button" aria-label="模型与 CLI" className={section === "model" ? "selected" : ""} aria-current={section === "model" ? "page" : undefined} onClick={() => setSection("model")}><BotIcon /><span>模型与 CLI</span></button>
+            <button type="button" aria-label="MCP" className={section === "mcp" ? "selected" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => setSection("mcp")}><PanelIcon /><span>MCP</span></button>
+            <button type="button" aria-label="主动服务" className={section === "routines" ? "selected" : ""} aria-current={section === "routines" ? "page" : undefined} onClick={() => setSection("routines")}><BellIcon /><span>主动服务</span></button>
+            <button type="button" aria-label="版本更新" className={section === "updates" ? "selected" : ""} aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}><RefreshIcon /><span>版本更新</span></button>
           </nav>
         </aside>
 
@@ -115,10 +153,43 @@ export function SettingsDialog({
               </label>
             </div>
             {themeError ? <div className="dialog-error" role="alert">{themeError.safeMessage}</div> : null}
+            <h3>后台与启动</h3>
+            <div className="settings-card">
+              <label className="settings-row">
+                <span>
+                  <strong>登录时启动</strong>
+                  <small>{launchAtLoginSupported ? `让 Routine 在重新登录后恢复 · ${loginItemStatusLabels[launchAtLoginStatus]}` : "仅打包版 macOS 支持；开发测试不会注册系统启动项"}</small>
+                </span>
+                <input
+                  aria-label="登录时启动"
+                  type="checkbox"
+                  checked={launchAtLogin}
+                  disabled={!launchAtLoginSupported || launchPending}
+                  onChange={(event) => void changeLaunchAtLogin(event.target.checked)}
+                />
+              </label>
+            </div>
+            {launchError ? <div className="dialog-error" role="alert">{launchError.safeMessage}</div> : null}
+          </section>
+
+          <section className="settings-panel" hidden={section !== "capabilities"} aria-label="能力与权限">
+            <CapabilitiesSettingsPanel active={open && section === "capabilities"} botId={activeBotId} />
+          </section>
+
+          <section className="settings-panel" hidden={section !== "memory"} aria-label="长期记忆">
+            <ScopedMemorySettingsPanel active={open && section === "memory"} />
           </section>
 
           <section className="settings-panel" hidden={section !== "model"} aria-label="模型与 CLI">
             <ModelSettingsPanel open={open} />
+          </section>
+
+          <section className="settings-panel" hidden={section !== "mcp"} aria-label="MCP">
+            <McpSettingsPanel active={open && section === "mcp"} />
+          </section>
+
+          <section className="settings-panel" hidden={section !== "routines"} aria-label="主动服务">
+            <RoutinesSettingsPanel active={open && section === "routines"} />
           </section>
 
           <section className="settings-panel" hidden={section !== "updates"} aria-labelledby="settings-update-title">

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const nonEmptyText = z.string().trim().min(1).max(20_000);
 const providerInstanceIdSchema = z.string().trim().min(1).max(120).regex(/^[a-z0-9][a-z0-9._-]*$/i);
+export const workspaceIdSchema = z.string().uuid();
 export const modelSelectionSchema = z.object({
   providerInstanceId: providerInstanceIdSchema,
   modelId: z.string().trim().max(200),
@@ -17,11 +18,16 @@ export const botUpdateSchema = z.object({
       description: z.string().trim().max(2_000).optional(),
       instructions: z.string().trim().max(20_000).optional(),
       modelSelection: modelSelectionSchema.optional(),
+      mcpServerIds: z.array(z.string().uuid()).max(20).refine((ids) => new Set(ids).size === ids.length, "MCP server ids must be unique").nullable().optional(),
+      memoryWorkspaceIds: z.array(workspaceIdSchema).max(20).refine((ids) => new Set(ids).size === ids.length, "Memory workspace ids must be unique").optional(),
     })
     .refine((patch) => Object.keys(patch).length > 0, "At least one field is required"),
 });
 
 export const botIdSchema = z.string().uuid();
+export const capabilitySnapshotInputSchema = z.object({
+  botId: botIdSchema.optional(),
+}).strict().optional();
 export const conversationBatchDeleteSchema = z.object({
   botIds: z.array(botIdSchema).max(200),
   roomIds: z.array(z.string().uuid()).max(200),
@@ -39,14 +45,27 @@ export const botUnreadSchema = z.object({ id: botIdSchema, unread: z.boolean() }
 export const botHiddenSchema = z.object({ id: botIdSchema, hidden: z.boolean() });
 export const memoryIdSchema = z.string().uuid();
 const memoryContentSchema = z.string().trim().min(1).max(4_000);
-export const memoryListSchema = z.object({
+const legacyMemoryListSchema = z.object({
   botId: botIdSchema,
   includeDeleted: z.boolean().optional(),
 }).strict();
-export const memoryCreateSchema = z.object({
+const legacyMemoryCreateSchema = z.object({
   botId: botIdSchema,
   content: memoryContentSchema,
 }).strict();
+export const memoryScopeSelectorSchema = z.discriminatedUnion("scope", [
+  z.object({ scope: z.literal("user"), scopeKey: z.literal("user") }).strict(),
+  z.object({ scope: z.literal("bot"), scopeKey: botIdSchema }).strict(),
+  z.object({ scope: z.literal("workspace"), scopeKey: workspaceIdSchema }).strict(),
+]);
+export const memoryListSchema = z.union([
+  legacyMemoryListSchema,
+  memoryScopeSelectorSchema.and(z.object({ includeDeleted: z.boolean().optional() })),
+]);
+export const memoryCreateSchema = z.union([
+  legacyMemoryCreateSchema,
+  memoryScopeSelectorSchema.and(z.object({ content: memoryContentSchema })),
+]);
 export const memoryUpdateSchema = z.object({
   id: memoryIdSchema,
   expectedVersion: z.number().int().positive(),
@@ -61,7 +80,6 @@ export const nonceSchema = z.string().uuid();
 export const runIdSchema = z.string().uuid();
 export const toolInvocationIdSchema = z.string().uuid();
 export const approvalIdSchema = z.string().uuid();
-export const workspaceIdSchema = z.string().uuid();
 export const workspaceMutationSchema = z.object({
   id: workspaceIdSchema,
   expectedVersion: z.number().int().positive(),
@@ -100,11 +118,47 @@ export const workspaceToolRequestSchema = z.discriminatedUnion("kind", [
     maxMatches: z.number().int().min(1).max(200),
   }).strict(),
 ]);
+export const networkToolRequestSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("web-search"),
+    query: z.string().trim().min(1).max(500),
+    maxResults: z.number().int().min(1).max(10),
+  }).strict(),
+  z.object({
+    kind: z.literal("web-fetch"),
+    url: z.string().trim().url().max(2_048),
+    maxCharacters: z.number().int().min(1).max(100_000),
+  }).strict(),
+  z.object({
+    kind: z.literal("weather-current"),
+    location: z.string().trim().min(1).max(200),
+  }).strict(),
+  z.object({
+    kind: z.literal("time-now"),
+    timezone: z.string().trim().min(1).max(100).optional(),
+  }).strict(),
+]);
+const mcpArgumentsSchema = z.record(z.string(), z.unknown()).refine(
+  (value) => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 12_000,
+  "MCP arguments are too large",
+);
+export const mcpToolRequestSchema = z.object({
+  kind: z.literal("mcp-call"),
+  serverId: z.string().uuid(),
+  toolName: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/u),
+  arguments: mcpArgumentsSchema,
+  readOnly: z.literal(true),
+}).strict();
+export const deviceToolRequestSchema = z.object({
+  kind: z.literal("clipboard-read"),
+  maxCharacters: z.number().int().min(1).max(20_000),
+}).strict();
+export const toolRequestSchema = z.union([workspaceToolRequestSchema, networkToolRequestSchema, mcpToolRequestSchema, deviceToolRequestSchema]);
 export const toolInvocationCommandSchema = z.object({
   runtimeRunId: runIdSchema,
   toolCallId: z.string().trim().min(1).max(200),
   idempotencyKey: z.string().uuid(),
-  tool: workspaceToolRequestSchema,
+  tool: toolRequestSchema,
 }).strict();
 export const approvalResolutionSchema = z.object({
   sessionId: sessionIdSchema,
@@ -200,6 +254,85 @@ export const saveCliProviderSchema = z.object({
   cliPath: z.string().trim().min(1).max(2_048).refine((value) => !/[\r\n\0]/u.test(value), "CLI path contains an unsafe character"),
 }).strict();
 
-export const generalSettingsSchema = z.object({
-  theme: z.enum(["system", "light", "dark"]),
+const mcpServerNameSchema = z.string().trim().min(1).max(32).regex(/^[a-z][a-z0-9_-]*$/u);
+export const mcpServerIdSchema = z.string().uuid();
+const mcpSecretValueSchema = z.union([z.string().max(16_384), z.literal(true)]);
+const mcpEnvNameSchema = z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/u).refine(
+  (value) => value !== "ELECTRON_RUN_AS_NODE" && !value.startsWith("AEVOREN_") && !value.startsWith("OMB_") && !value.startsWith("OGB_"),
+  "Reserved environment variable",
+);
+const mcpHeaderNameSchema = z.string().min(1).max(128).regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u);
+const mcpToolNameSchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/u);
+const mcpEnvSchema = z.record(mcpEnvNameSchema, mcpSecretValueSchema);
+const mcpHeadersSchema = z.record(mcpHeaderNameSchema, mcpSecretValueSchema);
+const mcpRemoteUrlSchema = providerBaseUrlSchema.refine((value) => {
+  const parsed = new URL(value);
+  return parsed.protocol === "https:" || ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname.replace(/^\[(.*)\]$/u, "$1"));
+}, "Remote MCP requires HTTPS, except for loopback development");
+export const mcpServerMutationSchema = z.object({
+  id: mcpServerIdSchema.optional(),
+  expectedVersion: z.number().int().positive().optional(),
+  name: mcpServerNameSchema,
+  enabled: z.boolean().optional(),
+  trustedReadOnlyTools: z.array(mcpToolNameSchema).max(100).refine((names) => new Set(names).size === names.length, "Trusted MCP tool names must be unique").optional(),
+  config: z.discriminatedUnion("transport", [
+    z.object({
+      transport: z.literal("stdio"),
+      command: z.string().trim().min(1).max(1_024).refine((value) => !/[\r\n\0]/u.test(value)),
+      args: z.array(z.string().max(4_096).refine((value) => !/[\r\n\0]/u.test(value))).max(64),
+      env: mcpEnvSchema,
+    }).strict(),
+    z.object({
+      transport: z.literal("streamable-http"),
+      url: mcpRemoteUrlSchema,
+      headers: mcpHeadersSchema,
+    }).strict(),
+  ]),
+}).strict().superRefine((value, context) => {
+  if ((value.id === undefined) !== (value.expectedVersion === undefined)) {
+    context.addIssue({ code: "custom", message: "id and expectedVersion must be provided together" });
+  }
+});
+export const mcpServerEnabledSchema = z.object({
+  id: mcpServerIdSchema,
+  expectedVersion: z.number().int().positive(),
+  enabled: z.boolean(),
 }).strict();
+export const mcpServerMutationIdSchema = z.object({
+  id: mcpServerIdSchema,
+  expectedVersion: z.number().int().positive(),
+}).strict();
+
+export const routineIdSchema = z.string().uuid();
+export const routineScheduleSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("once"), at: z.number().int().positive() }).strict(),
+  z.object({ type: z.literal("interval"), everyMinutes: z.number().int().min(5).max(43_200), anchorAt: z.number().int().positive() }).strict(),
+  z.object({
+    type: z.literal("cron"),
+    expression: z.string().trim().min(1).max(256).refine((value) => value.split(/\s+/u).length === 5 && !value.includes("@"), "Use five-field cron"),
+    timeZone: z.string().trim().min(1).max(128),
+  }).strict(),
+]);
+export const routineCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  prompt: z.string().trim().min(1).max(20_000),
+  botId: botIdSchema,
+  schedule: routineScheduleSchema,
+  enabled: z.boolean().optional(),
+}).strict();
+export const routineUpdateSchema = z.object({
+  id: routineIdSchema,
+  expectedVersion: z.number().int().positive(),
+  patch: z.object({
+    name: z.string().trim().min(1).max(120).optional(),
+    prompt: z.string().trim().min(1).max(20_000).optional(),
+    schedule: routineScheduleSchema.optional(),
+  }).strict().refine((value) => Object.keys(value).length > 0),
+}).strict();
+export const routineEnabledSchema = z.object({ id: routineIdSchema, expectedVersion: z.number().int().positive(), enabled: z.boolean() }).strict();
+export const routineMutationSchema = z.object({ id: routineIdSchema, expectedVersion: z.number().int().positive() }).strict();
+
+export const generalSettingsSchema = z.object({
+  theme: z.enum(["system", "light", "dark"]).optional(),
+  launchAtLogin: z.boolean().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "At least one general setting is required");

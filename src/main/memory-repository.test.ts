@@ -63,6 +63,45 @@ afterEach(() => {
 });
 
 describe("explicit Memory repository", () => {
+  it("isolates user, Bot, and explicitly bound Workspace Memory scopes", () => {
+    const value = repository();
+    const firstCreated = value.createBot();
+    const second = value.createBot().bot;
+    const workspace = value.registerWorkspaceRoot("/private/tmp/memory-project-a", "Project A").workspace;
+    const otherWorkspace = value.registerWorkspaceRoot("/private/tmp/memory-project-b", "Project B").workspace;
+    const first = value.updateBot(firstCreated.bot.id, firstCreated.bot.version, { memoryWorkspaceIds: [workspace.id] });
+
+    const userMemory = value.createScopedMemory({ scope: "user", scopeKey: "user" }, "USER_PREFERENCE");
+    const projectMemory = value.createScopedMemory({ scope: "workspace", scopeKey: workspace.id }, "PROJECT_A_STATE");
+    value.createScopedMemory({ scope: "workspace", scopeKey: otherWorkspace.id }, "PROJECT_B_STATE");
+    value.createMemory(first.id, "BOT_A_MEMORY");
+    value.createMemory(second.id, "BOT_B_MEMORY");
+
+    expect(value.listRuntimeMemories(first.id).map((memory) => memory.content).toSorted()).toEqual([
+      "USER_PREFERENCE", "PROJECT_A_STATE", "BOT_A_MEMORY",
+    ].toSorted());
+    expect(value.listRuntimeMemories(second.id).map((memory) => memory.content).toSorted()).toEqual([
+      "USER_PREFERENCE", "BOT_B_MEMORY",
+    ].toSorted());
+    expect(userMemory).toMatchObject({ scope: "user", scopeKey: "user", botId: null, workspaceId: null });
+    expect(projectMemory).toMatchObject({ scope: "workspace", scopeKey: workspace.id, botId: null, workspaceId: workspace.id });
+
+    const updated = value.updateBot(first.id, first.version, { memoryWorkspaceIds: [] });
+    expect(updated.memoryWorkspaceIds).toEqual([]);
+    expect(value.listRuntimeMemories(first.id).map((memory) => memory.content).toSorted()).toEqual([
+      "USER_PREFERENCE", "BOT_A_MEMORY",
+    ].toSorted());
+  });
+
+  it("allows identical content in different scopes but rejects duplicates inside one scope", () => {
+    const value = repository();
+    const bot = value.createBot().bot;
+    value.createScopedMemory({ scope: "user", scopeKey: "user" }, "SHARED_VALUE");
+    value.createMemory(bot.id, "SHARED_VALUE");
+    expect(() => value.createScopedMemory({ scope: "user", scopeKey: "user" }, "SHARED_VALUE"))
+      .toThrowError(expect.objectContaining({ code: "MEMORY_DUPLICATE" }));
+  });
+
   it("migrates v7 to v8 without changing existing logical data and only applies once", () => {
     const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-memory-v8-"));
     temporaryDirectories.push(directory);
@@ -91,7 +130,7 @@ describe("explicit Memory repository", () => {
     expect(inspected.prepare("PRAGMA table_info(memory_items)").all().map((column) => (
       column as { name: string }
     ).name)).toEqual([
-      "id", "bot_id", "content", "content_digest", "source", "version", "deleted_at", "created_at", "updated_at",
+      "id", "scope", "scope_key", "bot_id", "workspace_id", "content", "content_digest", "source", "version", "deleted_at", "created_at", "updated_at",
     ]);
     inspected.close();
   });
