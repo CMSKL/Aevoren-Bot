@@ -1,5 +1,6 @@
+import { removeTestDirectory } from "./test-cleanup";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -87,7 +88,7 @@ test("closes successfully on each of ten immediate startup close requests", asyn
     const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-ready-"));
     const { application } = await launch(userDataDir);
     if (!(await requestWindowClose(application, 1_500))) failures.push(attempt);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
   expect(failures).toEqual([]);
 });
@@ -118,7 +119,7 @@ test("flushes a dirty profile and preserves its database hash across three resta
     }
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -149,7 +150,7 @@ test("keeps the window open when a dirty profile cannot be saved, then closes af
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -174,6 +175,6 @@ test("flushes a dirty profile through the application quit path", async () => {
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

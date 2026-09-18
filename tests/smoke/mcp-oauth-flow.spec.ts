@@ -1,6 +1,7 @@
+import { removeTestDirectory } from "./test-cleanup";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -140,6 +141,6 @@ test("completes explicit MCP OAuth without exposing credentials or auto-trusting
     if (application) application.process().kill("SIGKILL");
     await remote.close().catch(() => undefined);
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

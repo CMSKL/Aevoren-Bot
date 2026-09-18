@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -69,7 +70,7 @@ test("keeps the database empty until Create new Bot is explicitly selected", asy
     expect(databaseCounts(userDataDir)).toEqual({ bots: 0, sessions: 0, transcript: 0 });
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -120,7 +121,7 @@ test("creates one neutral Bot and one MAIN session under a duplicate trigger, th
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -152,7 +153,7 @@ test("rolls back a failed create and keeps the chooser recoverable", async () =>
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -171,7 +172,7 @@ test("supports Enter to create from the recipient search field", async () => {
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -216,6 +217,6 @@ test("filters and selects an existing Bot without creating another resource", as
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -100,5 +101,5 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await expect(page.getByLabel("Bot 模型")).toHaveValue("smoke-model");
 
   await application.close();
-  rmSync(userDataDir, { recursive: true, force: true });
+  removeTestDirectory(userDataDir);
 });

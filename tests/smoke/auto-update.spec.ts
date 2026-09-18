@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
@@ -42,7 +43,7 @@ test("keeps auto-update disabled and silent in the unpackaged development app", 
     expect(checked).toEqual(state);
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -78,7 +79,7 @@ test("restores an interrupted install receipt without retrying or claiming succe
     });
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -102,7 +103,7 @@ test("keeps a packaged local test build offline when no trusted feed is embedded
     expect(state).toMatchObject({ ok: true, data: { channel: "development", status: "disabled" } });
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -129,6 +130,6 @@ test("enables the packaged release channel only when trusted feed metadata is pr
     });
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

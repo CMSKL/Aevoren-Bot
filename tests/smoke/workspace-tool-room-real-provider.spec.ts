@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -85,7 +86,7 @@ test("routes one approved Room workspace read through the configured real Provid
     await expect(page.getByTestId("room-batch-state")).toContainText("completed");
   } finally {
     await application.close();
-    rmSync(root, { recursive: true, force: true });
+    removeTestDirectory(root);
   }
 
   const database = new DatabaseSync(isolatedDatabase!, { readOnly: true });
