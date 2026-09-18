@@ -1,6 +1,6 @@
 {
   "fill" : {
-    "automatic-gradient" : "extended-srgb:0.01569,0.03529,0.14118,1.00000"
+    "automatic-gradient" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
   },
   "groups" : [
     {
@@ -8,9 +8,9 @@
         {
           "glass" : false,
           "image-name" : "icon.png",
-          "name" : "Aevoren mark",
+          "name" : "icon",
           "position" : {
-            "scale" : 1.0,
+            "scale" : 1.25,
             "translation-in-points" : [
               0,
               0
@@ -18,14 +18,14 @@
           }
         }
       ],
-      "name" : "Aevoren Bot",
+      "name" : "Group",
       "shadow" : {
         "kind" : "none",
-        "opacity" : 0.0
+        "opacity" : 0.5
       },
       "translucency" : {
         "enabled" : false,
-        "value" : 0.0
+        "value" : 0.3
       }
     }
   ],
