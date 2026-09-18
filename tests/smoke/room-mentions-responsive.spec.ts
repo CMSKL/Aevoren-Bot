@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -216,6 +217,6 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     database.close();
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -170,6 +171,6 @@ test("runs and restores a visible A-to-B fake handoff without responsive overflo
     }
   } finally {
     if (application) await application.close().catch(() => undefined);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -158,7 +159,7 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
     database.close();
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -200,6 +201,6 @@ test("keeps the entire batch and selection when one selected Bot is running", as
     database.close();
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

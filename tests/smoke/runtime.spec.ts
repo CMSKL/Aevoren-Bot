@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -102,7 +103,7 @@ test("reattaches the active runtime after renderer reloads in three phases", asy
         database.close();
       } finally {
         if (application) application.process().kill("SIGKILL");
-        rmSync(userDataDir, { recursive: true, force: true });
+        removeTestDirectory(userDataDir);
       }
     }
   }
@@ -141,7 +142,7 @@ test("regenerates a failed accepted run without duplicating its user entry", asy
     database.close();
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -174,7 +175,7 @@ test("closes a streaming runtime as interrupted and does not restart it", async 
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -224,7 +225,7 @@ test("recovers running, streaming and cancel-requested runs after SIGKILL", asyn
       application = undefined;
     } finally {
       if (application) await forceKill(application);
-      rmSync(userDataDir, { recursive: true, force: true });
+      removeTestDirectory(userDataDir);
     }
   }
 });
@@ -269,7 +270,7 @@ test("recovers a Direct pre-start SIGKILL as unknown without offering a safe ret
     application = undefined;
   } finally {
     if (application) await forceKill(application);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -296,7 +297,7 @@ test("shows stale after thirty seconds without provider activity and remains can
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -324,7 +325,7 @@ test("keeps the window open and explains a close handshake timeout", async () =>
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -391,6 +392,6 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

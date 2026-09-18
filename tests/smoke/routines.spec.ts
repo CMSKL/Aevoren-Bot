@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test, type ElectronApplication } from "@playwright/test";
@@ -52,6 +53,6 @@ test("creates, runs, restores, and keeps one enabled Routine alive after the win
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

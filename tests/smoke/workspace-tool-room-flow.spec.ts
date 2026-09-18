@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -123,7 +124,7 @@ test("routes approved workspace tools through one Room speaker and recovers a pe
     database.close();
   } finally {
     if (application) await forceKill(application);
-    rmSync(userDataDir, { recursive: true, force: true });
-    rmSync(workspaceRoot, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
+    removeTestDirectory(workspaceRoot);
   }
 });

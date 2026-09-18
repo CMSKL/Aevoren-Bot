@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -146,7 +147,7 @@ test("supports the first Grok-style Room context actions without touching the in
     database.close();
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -191,7 +192,7 @@ test("keeps Room inline rename recoverable when persistence fails", async () => 
     await expect(roomRow(page, "不应保存")).toHaveCount(0);
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -233,7 +234,7 @@ test("refuses to archive a running Room from its context menu", async () => {
     await dialog.getByRole("button", { name: "取消" }).click();
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -284,6 +285,6 @@ test("requires confirmation and permanently deletes only the selected Room", asy
     database.close();
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    removeTestDirectory(userDataDir);
   }
 });
