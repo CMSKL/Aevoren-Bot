@@ -260,7 +260,7 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
     ];
 
     for (const item of expected) {
-      await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]?.setSize(width, 700), item.width);
+      await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]?.setContentSize(width, 700), item.width);
       await page.waitForTimeout(220);
       const layout = await page.evaluate(() => {
         const sidebar = document.querySelector<HTMLElement>(".sidebar");
@@ -286,7 +286,7 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
       if (item.width === 1020) await page.screenshot({ path: "/tmp/aevoren-bot-responsive-single-pane-1020-fixed.png" });
     }
 
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1180, 700));
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1180, 700));
     await page.waitForTimeout(220);
     await page.getByRole("button", { name: "打开 Bot 设置" }).click();
     await expect(page.locator(".inspector")).toBeVisible();
