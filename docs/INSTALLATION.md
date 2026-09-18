@@ -25,8 +25,8 @@ Requirements:
 - Xcode Command Line Tools on macOS.
 
 ```bash
-git clone https://github.com/CMSKL/Aevoren-Bot.git
-cd Aevoren-Bot
+git clone https://github.com/CMSKL/Aevoren-Bot-public.git
+cd Aevoren-Bot-public
 pnpm install --frozen-lockfile
 AEVOREN_BOT_FAKE_PROVIDER=1 pnpm dev
 ```
