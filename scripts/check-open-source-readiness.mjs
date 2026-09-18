@@ -15,6 +15,10 @@ const required = [
 const findings = required.filter((path) => !existsSync(path)).map((path) => `missing required file: ${path}`);
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 if (typeof packageJson.license !== "string" || !packageJson.license.trim()) findings.push("package.json is missing a license identifier");
+const assetProvenance = readFileSync("docs/ASSET_PROVENANCE.md", "utf8");
+if (!assetProvenance.includes("## Maintainer redistribution attestation")) {
+  findings.push("the current application icon is missing a maintainer redistribution attestation");
+}
 
 const tracked = execFileSync("git", ["ls-files"], { encoding: "utf8" }).trim().split("\n").filter(Boolean);
 const internal = tracked.filter((path) => (

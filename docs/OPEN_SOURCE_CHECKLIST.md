@@ -12,7 +12,7 @@ Last reviewed: 2026-09-18. This is a readiness record, not authorization to publ
 | Third-party dependency license inventory | Passed | `pnpm licenses:check`; generated `THIRD_PARTY_NOTICES.md`; production graph has no GPL/AGPL/LGPL/SSPL/BUSL/unknown group |
 | Vulnerability audit | Passed | `pnpm audit --audit-level high`: 0 high/critical findings at review time |
 | Reverse-engineering and third-party evidence | Passed | A verified private Git bundle and checksummed material archive were created; 99 internal/evidence paths and the superseded visual assets were removed from the reachable history of `dev`, `beta`, and `master` |
-| Icon and visual asset provenance | Passed | The previous icon is unreachable from the rewritten branch histories; an original Aevoren asset and its PNG/ICNS derivatives are documented in `docs/ASSET_PROVENANCE.md` |
+| Icon and visual asset provenance | Conditionally passed | The legacy face icon is covered by the maintainer redistribution attestation in `docs/ASSET_PROVENANCE.md`; independent-authorship evidence and trademark clearance remain legal-review risks, not an undocumented project decision |
 | README and public setup docs | Passed | Public README plus Installation, Configuration, Release, Support, Security, Contribution, Code of Conduct, Changelog, Notice, and trademark docs added |
 | Reproducible dependency install | Passed | Fresh local `pnpm install --frozen-lockfile`, offline reinstall, and remote Ubuntu/macOS CI installs succeeded |
 | Build and macOS package | Passed | Current `0.2.0-beta.7` arm64 directory package built locally and in remote CI; packaged hidden startup smoke passed |
