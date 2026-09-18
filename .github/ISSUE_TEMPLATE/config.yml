@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/CMSKL/Aevoren-Bot-public/security/advisories/new
+    url: https://github.com/CMSKL/Aevoren-Bot/security/advisories/new
     about: Report vulnerabilities privately. Do not include secrets in public Issues.
   - name: Support guide
-    url: https://github.com/CMSKL/Aevoren-Bot-public/blob/master/SUPPORT.md
+    url: https://github.com/CMSKL/Aevoren-Bot/blob/master/SUPPORT.md
     about: Read supported platforms and troubleshooting guidance first.
