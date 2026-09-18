@@ -270,7 +270,7 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
             const rect = element.getBoundingClientRect();
             return getComputedStyle(element).visibility !== "hidden" && rect.right > 0 && rect.left < window.innerWidth;
           };
-          return Math.abs(window.innerWidth - expectedWidth) <= 1
+          return window.innerWidth === expectedWidth
             && isVisible(sidebar) === (window.innerWidth > 1020)
             && isVisible(inspector) === (window.innerWidth > 1180);
         }, item.width),
