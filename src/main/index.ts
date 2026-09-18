@@ -1,7 +1,7 @@
 import "./identity";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { app, BrowserWindow, dialog, nativeTheme, safeStorage, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, nativeTheme, Notification, safeStorage, shell } from "electron";
 import { valid } from "semver";
 import { IPC } from "@shared/channels";
 import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateState } from "@shared/contracts";
@@ -16,6 +16,11 @@ import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { ElectronUpdateAdapter } from "./electron-update-adapter";
 import { parsePendingUpdateReceipt, resolveUpdateChannel, UpdateService } from "./update-service";
 import { ProviderService } from "./provider-service";
+import { CapabilityRegistry } from "./capability-registry";
+import { NetworkToolExecutor } from "./network-tool-executor";
+import { McpService } from "./mcp-service";
+import { RoutineService } from "./routine-service";
+import { DeviceToolExecutor } from "./device-tool-executor";
 
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
@@ -27,6 +32,8 @@ let runtimeCoordinator: SendWorker | null = null;
 let roomCoordinator: RoomCoordinator | null = null;
 let updateService: UpdateService | null = null;
 let providerService: ProviderService | null = null;
+let mcpService: McpService | null = null;
+let routineService: RoutineService | null = null;
 let allowClose = false;
 let closeRequested = false;
 let quitRequested = false;
@@ -68,6 +75,18 @@ function emitRoomRuntime(event: RoomRuntimeEvent): void {
 
 function emitTool(event: ToolEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.toolEvent, event);
+  if (event.approval.state === "pending") showNotification("Aevoren Bot 等待确认", "有一项工具调用需要你的批准。");
+}
+
+function showNotification(title: string, body: string): void {
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({ title, body, silent: false });
+  notification.on("click", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.show();
+    mainWindow.focus();
+  });
+  notification.show();
 }
 
 function emitUpdate(state: UpdateState): void {
@@ -94,11 +113,20 @@ function armCloseConfirmationTimer(): void {
 
 async function finishClose(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!quitRequested && routineService?.hasEnabled()) {
+    clearCloseConfirmationTimer();
+    closeRequested = false;
+    pendingClose = false;
+    mainWindow.hide();
+    return;
+  }
   roomCoordinator?.beginShutdown();
   shutdownPromise ??= (async () => {
     await runtimeCoordinator?.shutdown();
     await roomCoordinator?.shutdown();
     await providerService?.dispose();
+    await mcpService?.dispose();
+    routineService?.stop();
   })();
   try {
     await shutdownPromise;
@@ -128,11 +156,11 @@ function requestRendererFlush(window: BrowserWindow): void {
   armCloseConfirmationTimer();
 }
 
-function createWindow(): BrowserWindow {
+function createWindow(showOnCreate = !hideTestWindow): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
-    show: !hideTestWindow,
+    show: showOnCreate,
     minWidth: 390,
     minHeight: 640,
     icon: appIconPath(),
@@ -204,14 +232,41 @@ app.whenReady().then(async () => {
     !forceFakeProvider,
   );
   await providerService.initialize();
-  const generalSettings = new GeneralSettingsService(repository);
+  const generalSettings = new GeneralSettingsService(repository, {
+    supported: app.isPackaged && process.platform === "darwin",
+    get: () => {
+      const value = app.getLoginItemSettings({ type: "mainAppService" });
+      return { openAtLogin: value.openAtLogin, status: value.status };
+    },
+    set: (openAtLogin) => app.setLoginItemSettings({ type: "mainAppService", openAtLogin }),
+  });
+  const openedAtLogin = (() => {
+    if (!app.isPackaged || process.platform !== "darwin") return false;
+    try {
+      return app.getLoginItemSettings({ type: "mainAppService" }).wasOpenedAtLogin;
+    } catch {
+      return false;
+    }
+  })();
   const workspaceService = new WorkspaceService(repository);
+  mcpService = new McpService(repository, electronSecretCodec, app.getVersion(), (url) => shell.openExternal(url));
+  await mcpService.initialize();
   const workspaceToolCoordinator = new WorkspaceToolCoordinator(
     repository,
-    new WorkspaceToolExecutor(repository, workspaceService),
+    new WorkspaceToolExecutor(repository, workspaceService, new NetworkToolExecutor(), mcpService, new DeviceToolExecutor(() => clipboard.readText())),
     emitTool,
   );
-  mainWindow = createWindow();
+  const platform = process.platform === "darwin" || process.platform === "win32" || process.platform === "linux"
+    ? process.platform
+    : "other";
+  const capabilityRegistry = new CapabilityRegistry(repository, providerService, {
+    name: "Aevoren Bot",
+    version: app.getVersion(),
+    platform,
+    architecture: process.arch,
+    packaged: app.isPackaged,
+  }, undefined, mcpService, () => routineService?.list() ?? []);
+  mainWindow = createWindow(!hideTestWindow && !openedAtLogin);
   const sendWorker = new SendWorker(
     repository,
     providerService,
@@ -220,8 +275,14 @@ app.whenReady().then(async () => {
     undefined,
     undefined,
     workspaceToolCoordinator,
+    capabilityRegistry,
+    mcpService,
   );
   runtimeCoordinator = sendWorker;
+  routineService = new RoutineService(repository, sendWorker, (run) => {
+    const title = run.state === "completed" ? "定时任务已完成" : run.state === "missed" ? "定时任务已错过" : "定时任务需要关注";
+    showNotification(title, `${run.routineName} · ${run.state}`);
+  });
   roomCoordinator = new RoomCoordinator(repository, sendWorker.executor, {
     transcript: emitTranscript,
     roomRuntime: emitRoomRuntime,
@@ -266,6 +327,9 @@ app.whenReady().then(async () => {
     roomCoordinator,
     workspaceService,
     workspaceToolCoordinator,
+    capabilityRegistry,
+    mcpService,
+    routineService,
     updateService,
     async pickWorkspaceRoot() {
       if (!mainWindow || mainWindow.isDestroyed()) return null;
@@ -303,9 +367,15 @@ app.whenReady().then(async () => {
     },
   });
   updateService.start();
+  routineService.start();
 });
 
 app.on("window-all-closed", () => app.quit());
+app.on("activate", () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.show();
+  mainWindow.focus();
+});
 app.on("before-quit", (event) => {
   if (allowClose) return;
   if (!rendererEverReady) {
@@ -329,4 +399,6 @@ app.on("quit", () => {
   roomCoordinator = null;
   updateService = null;
   providerService = null;
+  mcpService = null;
+  routineService = null;
 });

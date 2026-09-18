@@ -78,7 +78,7 @@ test("routes one approved Room workspace read through the configured real Provid
     const tool = page.getByTestId("workspace-tool-activity").last();
     await expect(tool).toContainText("等待你的确认", { timeout: 90_000 });
     await tool.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(tool).toContainText("读取完成", { timeout: 30_000 });
+    await expect(tool).toContainText("执行完成", { timeout: 30_000 });
     const assistant = page.locator('article.message-assistant[data-status="completed"]').last();
     await expect(assistant).toContainText(token, { timeout: 90_000 });
     await expect(assistant.locator(".speaker-link")).toHaveText(targetBotName);

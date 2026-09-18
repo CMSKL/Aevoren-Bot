@@ -54,6 +54,12 @@ function logicalV9Hash(database: DatabaseSync): string {
       ? "SELECT id,name,label,description,instructions,pinned_at,hidden_at,has_unread,deleted_at,version,created_at,updated_at FROM bots ORDER BY rowid"
       : table === "runtime_runs"
         ? "SELECT id,session_id,client_nonce,execution_key,executor_bot_id,attempt_no,state,route,input_generation,input_seq,prompt_cutoff_seq,assistant_entry_id,provider_request_id,prompt_manifest_json,version,last_error_code,created_at,accepted_at,last_activity_at,finished_at FROM runtime_runs ORDER BY rowid"
+        : table === "memory_items"
+          ? "SELECT id,bot_id,content,content_digest,source,version,deleted_at,created_at,updated_at FROM memory_items ORDER BY rowid"
+          : table === "tool_invocations"
+            ? "SELECT id,runtime_run_id,session_id,executor_bot_id,tool_call_id,idempotency_key,command_digest,tool_kind,workspace_id,target_path,arguments_json,state,attempt_count,approval_request_id,result_digest,result_metadata_json,last_error_code,version,created_at,updated_at,started_at,finished_at FROM tool_invocations ORDER BY rowid"
+            : table === "approval_requests"
+              ? "SELECT id,tool_invocation_id,runtime_run_id,session_id,executor_bot_id,action_kind,workspace_id,target_path,target_digest,arguments_digest,requested_scope,state,resolution,policy_version,version,expires_at,resolved_at,created_at,updated_at FROM approval_requests ORDER BY rowid"
         : table === "app_settings"
           ? "SELECT * FROM app_settings WHERE key NOT LIKE 'provider.%' ORDER BY rowid"
           : `SELECT * FROM ${table} ORDER BY rowid`;

@@ -1,17 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type {
   ApprovalResolution,
+  ToolRequest,
   ToolApprovalResult,
   ToolEvent,
-  WorkspaceToolRequest,
 } from "@shared/contracts";
 import { asAppError, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
-import type { WorkspaceToolExecutor } from "./workspace-tool-executor";
 
 export type WorkspaceToolOutcome = {
   toolCallId: string;
-  tool: WorkspaceToolRequest;
+  tool: ToolRequest;
   content: string;
 };
 
@@ -23,19 +22,23 @@ type Waiter = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+type ToolExecutor = {
+  execute(id: string, signal?: AbortSignal): Promise<{ invocation: ToolApprovalResult["invocation"]; content: string }>;
+};
+
 export class WorkspaceToolCoordinator {
   private readonly waiters = new Map<string, Waiter>();
 
   constructor(
     private readonly repository: AppRepository,
-    private readonly executor: WorkspaceToolExecutor,
+    private readonly executor: ToolExecutor,
     private readonly emit: (event: ToolEvent) => void,
   ) {}
 
   requestAndWait(
     runtimeRunId: string,
     toolCallId: string,
-    tool: WorkspaceToolRequest,
+    tool: ToolRequest,
     signal: AbortSignal,
   ): Promise<WorkspaceToolOutcome> {
     const prepared = this.repository.prepareToolInvocation({

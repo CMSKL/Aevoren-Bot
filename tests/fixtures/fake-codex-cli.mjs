@@ -27,6 +27,15 @@ const lines = createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.id === undefined) return;
+  if (message.id === "fixture-dynamic-tool" && message.method === undefined) {
+    const content = message.result?.contentItems?.[0]?.text;
+    if (message.result?.success !== true || typeof content !== "string" || !content.includes('"instant"')) process.exit(9);
+    queueMicrotask(() => {
+      send({ jsonrpc: "2.0", method: "item/agentMessage/delta", params: { threadId: "fixture-thread", turnId: "fixture-turn", itemId: "message", delta: "CLI used approved tool" } });
+      send({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: "fixture-thread", turn: { id: "fixture-turn", status: "completed", items: [], error: null } } });
+    });
+    return;
+  }
   if (message.method === "initialize") {
     send({ jsonrpc: "2.0", id: message.id, result: { userAgent: "fake" } });
     return;
@@ -47,6 +56,7 @@ lines.on("line", (line) => {
     return;
   }
   if (message.method === "thread/start") {
+    if (process.env.FAKE_CODEX_DYNAMIC_TOOL === "1" && !message.params.dynamicTools?.some((tool) => tool.name === "time_now")) process.exit(8);
     send({ jsonrpc: "2.0", id: message.id, result: { thread: { id: "fixture-thread" }, model: message.params.model } });
     return;
   }
@@ -54,6 +64,22 @@ lines.on("line", (line) => {
     const turn = { id: "fixture-turn", status: "inProgress", items: [], error: null };
     send({ jsonrpc: "2.0", id: message.id, result: { turn } });
     queueMicrotask(() => {
+      if (process.env.FAKE_CODEX_DYNAMIC_TOOL === "1") {
+        send({
+          jsonrpc: "2.0",
+          id: "fixture-dynamic-tool",
+          method: "item/tool/call",
+          params: {
+            threadId: "fixture-thread",
+            turnId: "fixture-turn",
+            callId: "fixture-time-call",
+            namespace: null,
+            tool: "time_now",
+            arguments: { timezone: "Asia/Shanghai" },
+          },
+        });
+        return;
+      }
       send({ jsonrpc: "2.0", method: "item/agentMessage/delta", params: { threadId: "fixture-thread", turnId: "fixture-turn", itemId: "message", delta: "CLI " } });
       send({ jsonrpc: "2.0", method: "item/agentMessage/delta", params: { threadId: "fixture-thread", turnId: "fixture-turn", itemId: "message", delta: "reply" } });
       send({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: "fixture-thread", turn: { ...turn, status: "completed" } } });

@@ -11,6 +11,7 @@ import type {
   Bot,
   BotDeleteResult,
   BotPatch,
+  CapabilityEffectClass,
   ConversationBatchDeleteInput,
   ConversationBatchDeleteResult,
   CreateHandoffInput,
@@ -18,6 +19,10 @@ import type {
   HandoffState,
   HandoffVisibility,
   MemoryItem,
+  MemoryScope,
+  MemoryScopeSelector,
+  McpServerStatus,
+  McpTransportKind,
   ModelSelection,
   PromptManifest,
   ProviderDriverKind,
@@ -35,6 +40,9 @@ import type {
   RoomRoutingMode,
   RoomTurn,
   RoomTurnState,
+  Routine,
+  RoutineRun,
+  RoutineSchedule,
   RuntimeRoute,
   RuntimeRun,
   RuntimeState,
@@ -50,9 +58,9 @@ import type {
   ToolInvocationCommand,
   ToolInvocationState,
   ToolPrepareResult,
+  ToolRequest,
   Workspace,
   WorkspaceRegistrationResult,
-  WorkspaceToolRequest,
 } from "@shared/contracts";
 import { toolInvocationCommandSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
@@ -1090,6 +1098,291 @@ export const MIGRATIONS = [
         WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested');
     `,
   },
+  {
+    version: 16,
+    foreignKeysOff: true,
+    sql: `
+      ALTER TABLE bots ADD COLUMN mcp_server_ids_json TEXT
+        CHECK (mcp_server_ids_json IS NULL OR (json_valid(mcp_server_ids_json) AND json_type(mcp_server_ids_json) = 'array'));
+
+      CREATE TABLE approval_requests_v16 (
+        id TEXT PRIMARY KEY,
+        tool_invocation_id TEXT NOT NULL UNIQUE
+          REFERENCES tool_invocations_v16(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        action_kind TEXT NOT NULL CHECK (action_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search',
+          'web-search', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        target_digest TEXT NOT NULL CHECK (length(target_digest) = 64),
+        arguments_digest TEXT NOT NULL CHECK (length(arguments_digest) = 64),
+        requested_scope TEXT NOT NULL CHECK (requested_scope = 'once'),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'allowed', 'denied', 'expired', 'cancelled')),
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('allow-once', 'deny')),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE tool_invocations_v16 (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search',
+          'web-search', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 16384),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded', 'failed',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests_v16(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      INSERT INTO approval_requests_v16(
+        id, tool_invocation_id, runtime_run_id, session_id, executor_bot_id,
+        action_kind, effect_class, workspace_id, target_path, target_digest, arguments_digest,
+        requested_scope, state, resolution, policy_version, version,
+        expires_at, resolved_at, created_at, updated_at
+      )
+      SELECT id, tool_invocation_id, runtime_run_id, session_id, executor_bot_id,
+             action_kind, 'read-local', workspace_id, target_path, target_digest, arguments_digest,
+             requested_scope, state, resolution, policy_version, version,
+             expires_at, resolved_at, created_at, updated_at
+      FROM approval_requests;
+
+      INSERT INTO tool_invocations_v16(
+        id, runtime_run_id, session_id, executor_bot_id, tool_call_id, idempotency_key,
+        command_digest, tool_kind, effect_class, workspace_id, target_path, arguments_json, state,
+        attempt_count, approval_request_id, result_digest, result_metadata_json,
+        last_error_code, version, created_at, updated_at, started_at, finished_at
+      )
+      SELECT id, runtime_run_id, session_id, executor_bot_id, tool_call_id, idempotency_key,
+             command_digest, tool_kind, 'read-local', workspace_id, target_path, arguments_json, state,
+             attempt_count, approval_request_id, result_digest, result_metadata_json,
+             last_error_code, version, created_at, updated_at, started_at, finished_at
+      FROM tool_invocations;
+
+      DROP TABLE tool_invocations;
+      DROP TABLE approval_requests;
+      ALTER TABLE approval_requests_v16 RENAME TO approval_requests;
+      ALTER TABLE tool_invocations_v16 RENAME TO tool_invocations;
+      CREATE INDEX tool_invocations_by_session
+        ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime
+        ON tool_invocations(runtime_run_id, created_at, id);
+      CREATE INDEX approval_requests_pending
+        ON approval_requests(state, expires_at, created_at, id);
+
+      CREATE TABLE mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE CHECK (length(name) BETWEEN 1 AND 32),
+        transport TEXT NOT NULL CHECK (transport IN ('stdio', 'streamable-http')),
+        config_json TEXT NOT NULL CHECK (json_valid(config_json) AND json_type(config_json) = 'object'),
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+        version INTEGER NOT NULL CHECK (version > 0),
+        last_status TEXT NOT NULL CHECK (last_status IN ('disabled', 'connecting', 'available', 'unavailable', 'needs-auth')),
+        last_error_code TEXT,
+        last_connected_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX mcp_servers_enabled ON mcp_servers(enabled, name, id);
+    `,
+  },
+  {
+    version: 17,
+    foreignKeysOff: true,
+    sql: `
+      ALTER TABLE bots ADD COLUMN memory_workspace_ids_json TEXT NOT NULL DEFAULT '[]'
+        CHECK (json_valid(memory_workspace_ids_json) AND json_type(memory_workspace_ids_json) = 'array');
+
+      CREATE TABLE memory_items_v17 (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL CHECK (scope IN ('user', 'bot', 'workspace')),
+        scope_key TEXT NOT NULL,
+        bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE,
+        workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+        content TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 4000),
+        content_digest TEXT NOT NULL CHECK (length(content_digest) = 64),
+        source TEXT NOT NULL CHECK (source = 'manual-user'),
+        version INTEGER NOT NULL CHECK (version > 0),
+        deleted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (
+          (scope = 'user' AND scope_key = 'user' AND bot_id IS NULL AND workspace_id IS NULL) OR
+          (scope = 'bot' AND scope_key = bot_id AND bot_id IS NOT NULL AND workspace_id IS NULL) OR
+          (scope = 'workspace' AND scope_key = workspace_id AND workspace_id IS NOT NULL AND bot_id IS NULL)
+        )
+      );
+      INSERT INTO memory_items_v17(
+        id, scope, scope_key, bot_id, workspace_id, content, content_digest,
+        source, version, deleted_at, created_at, updated_at
+      )
+      SELECT id, 'bot', bot_id, bot_id, NULL, content, content_digest,
+             source, version, deleted_at, created_at, updated_at
+      FROM memory_items;
+      DROP TABLE memory_items;
+      ALTER TABLE memory_items_v17 RENAME TO memory_items;
+      CREATE UNIQUE INDEX memory_one_active_content_per_scope
+        ON memory_items(scope, scope_key, content_digest) WHERE deleted_at IS NULL;
+      CREATE INDEX memory_items_by_scope
+        ON memory_items(scope, scope_key, deleted_at, created_at, id);
+      CREATE INDEX memory_items_by_bot
+        ON memory_items(bot_id, deleted_at, created_at, id);
+    `,
+  },
+  {
+    version: 18,
+    sql: `
+      CREATE TABLE routines (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
+        prompt TEXT NOT NULL CHECK (length(prompt) BETWEEN 1 AND 20000),
+        bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        schedule_json TEXT NOT NULL CHECK (json_valid(schedule_json) AND json_type(schedule_json) = 'object'),
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        next_run_at INTEGER,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX routines_due ON routines(enabled, next_run_at, id);
+
+      CREATE TABLE routine_runs (
+        id TEXT PRIMARY KEY,
+        routine_id TEXT NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+        routine_name TEXT NOT NULL,
+        bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        prompt_snapshot TEXT NOT NULL,
+        schedule_snapshot_json TEXT NOT NULL CHECK (json_valid(schedule_snapshot_json) AND json_type(schedule_snapshot_json) = 'object'),
+        trigger TEXT NOT NULL CHECK (trigger IN ('schedule', 'manual')),
+        trigger_key TEXT NOT NULL UNIQUE,
+        scheduled_for INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('queued', 'waiting', 'running', 'completed', 'failed', 'cancelled', 'missed')),
+        client_nonce TEXT NOT NULL UNIQUE,
+        runtime_run_id TEXT REFERENCES runtime_runs(id) ON DELETE SET NULL,
+        last_error_code TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT
+      );
+      CREATE UNIQUE INDEX routine_one_active_run
+        ON routine_runs(routine_id) WHERE state IN ('queued', 'waiting', 'running');
+      CREATE INDEX routine_runs_history ON routine_runs(routine_id, scheduled_for DESC, id DESC);
+    `,
+  },
+  {
+    version: 19,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE approval_requests_v19 (
+        id TEXT PRIMARY KEY,
+        tool_invocation_id TEXT NOT NULL UNIQUE
+          REFERENCES tool_invocations_v19(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        action_kind TEXT NOT NULL CHECK (action_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        target_digest TEXT NOT NULL CHECK (length(target_digest) = 64),
+        arguments_digest TEXT NOT NULL CHECK (length(arguments_digest) = 64),
+        requested_scope TEXT NOT NULL CHECK (requested_scope = 'once'),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'allowed', 'denied', 'expired', 'cancelled')),
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('allow-once', 'deny')),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE tool_invocations_v19 (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 16384),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded', 'failed',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests_v19(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      INSERT INTO approval_requests_v19 SELECT * FROM approval_requests;
+      INSERT INTO tool_invocations_v19 SELECT * FROM tool_invocations;
+      DROP TABLE tool_invocations;
+      DROP TABLE approval_requests;
+      ALTER TABLE approval_requests_v19 RENAME TO approval_requests;
+      ALTER TABLE tool_invocations_v19 RENAME TO tool_invocations;
+      CREATE INDEX tool_invocations_by_session
+        ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime
+        ON tool_invocations(runtime_run_id, created_at, id);
+      CREATE INDEX approval_requests_pending
+        ON approval_requests(state, expires_at, created_at, id);
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -1100,6 +1393,8 @@ type BotRow = {
   instructions: string;
   provider_instance_id: string;
   model_id: string;
+  mcp_server_ids_json: string | null;
+  memory_workspace_ids_json: string;
   pinned_at: string | null;
   hidden_at: string | null;
   has_unread: number;
@@ -1133,7 +1428,10 @@ export type ProviderInstanceConfig = {
 
 type MemoryRow = {
   id: string;
-  bot_id: string;
+  scope: MemoryScope;
+  scope_key: string;
+  bot_id: string | null;
+  workspace_id: string | null;
   content: string;
   content_digest: string;
   source: "manual-user";
@@ -1217,8 +1515,9 @@ type ToolInvocationRow = {
   tool_call_id: string;
   idempotency_key: string;
   command_digest: string;
-  tool_kind: WorkspaceToolRequest["kind"];
-  workspace_id: string;
+  tool_kind: ToolRequest["kind"];
+  effect_class: CapabilityEffectClass;
+  workspace_id: string | null;
   target_path: string;
   arguments_json: string;
   state: ToolInvocationState;
@@ -1240,8 +1539,9 @@ type ApprovalRequestRow = {
   runtime_run_id: string;
   session_id: string;
   executor_bot_id: string;
-  action_kind: WorkspaceToolRequest["kind"];
-  workspace_id: string;
+  action_kind: ToolRequest["kind"];
+  effect_class: CapabilityEffectClass;
+  workspace_id: string | null;
   target_path: string;
   target_digest: string;
   arguments_digest: string;
@@ -1265,6 +1565,66 @@ type WorkspaceRow = {
   removed_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type McpServerRow = {
+  id: string;
+  name: string;
+  transport: McpTransportKind;
+  config_json: string;
+  enabled: number;
+  version: number;
+  last_status: McpServerStatus;
+  last_error_code: string | null;
+  last_connected_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type RoutineRow = {
+  id: string;
+  name: string;
+  prompt: string;
+  bot_id: string;
+  schedule_json: string;
+  enabled: number;
+  next_run_at: number | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type RoutineRunRow = {
+  id: string;
+  routine_id: string;
+  routine_name: string;
+  bot_id: string;
+  prompt_snapshot: string;
+  schedule_snapshot_json: string;
+  trigger: "schedule" | "manual";
+  trigger_key: string;
+  scheduled_for: number;
+  state: RoutineRun["state"];
+  client_nonce: string;
+  runtime_run_id: string | null;
+  last_error_code: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type McpServerConfig = {
+  id: string;
+  name: string;
+  transport: McpTransportKind;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  version: number;
+  lastStatus: McpServerStatus;
+  lastErrorCode: string | null;
+  lastConnectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type RoomRow = {
@@ -1292,6 +1652,8 @@ type RoomMemberRow = {
   instructions: string;
   provider_instance_id: string;
   model_id: string;
+  mcp_server_ids_json: string | null;
+  memory_workspace_ids_json: string;
   pinned_at: string | null;
   hidden_at: string | null;
   has_unread: number;
@@ -1384,6 +1746,11 @@ function now(): string {
 }
 
 function toBot(row: BotRow): Bot {
+  const mcpServerIds = row.mcp_server_ids_json === null
+    ? null
+    : (JSON.parse(row.mcp_server_ids_json) as unknown[]).filter((value): value is string => typeof value === "string");
+  const memoryWorkspaceIds = (JSON.parse(row.memory_workspace_ids_json) as unknown[])
+    .filter((value): value is string => typeof value === "string");
   return {
     id: row.id,
     name: row.name,
@@ -1394,6 +1761,8 @@ function toBot(row: BotRow): Bot {
       providerInstanceId: row.provider_instance_id,
       modelId: row.model_id,
     },
+    mcpServerIds,
+    memoryWorkspaceIds,
     pinnedAt: row.pinned_at,
     hiddenAt: row.hidden_at,
     hasUnread: row.has_unread === 1,
@@ -1426,7 +1795,10 @@ function toProviderInstanceConfig(row: ProviderInstanceRow): ProviderInstanceCon
 function toMemory(row: MemoryRow): MemoryItem {
   return {
     id: row.id,
+    scope: row.scope,
+    scopeKey: row.scope_key,
     botId: row.bot_id,
+    workspaceId: row.workspace_id,
     content: row.content,
     contentDigest: row.content_digest,
     source: row.source,
@@ -1493,9 +1865,10 @@ function toToolInvocation(row: ToolInvocationRow): ToolInvocation {
     idempotencyKey: row.idempotency_key,
     commandDigest: row.command_digest,
     toolKind: row.tool_kind,
+    effectClass: row.effect_class,
     workspaceId: row.workspace_id,
     targetPath: row.target_path,
-    arguments: JSON.parse(row.arguments_json) as WorkspaceToolRequest,
+    arguments: JSON.parse(row.arguments_json) as ToolRequest,
     state: row.state,
     attemptCount: Number(row.attempt_count),
     approvalRequestId: row.approval_request_id,
@@ -1520,6 +1893,7 @@ function toApprovalRequest(row: ApprovalRequestRow): ApprovalRequest {
     sessionId: row.session_id,
     executorBotId: row.executor_bot_id,
     actionKind: row.action_kind,
+    effectClass: row.effect_class,
     workspaceId: row.workspace_id,
     targetPath: row.target_path,
     targetDigest: row.target_digest,
@@ -1544,6 +1918,58 @@ function toWorkspace(row: WorkspaceRow): Workspace {
     removedAt: row.removed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function toMcpServerConfig(row: McpServerRow): McpServerConfig {
+  return {
+    id: row.id,
+    name: row.name,
+    transport: row.transport,
+    config: JSON.parse(row.config_json) as Record<string, unknown>,
+    enabled: row.enabled === 1,
+    version: Number(row.version),
+    lastStatus: row.last_status,
+    lastErrorCode: row.last_error_code,
+    lastConnectedAt: row.last_connected_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toRoutine(row: RoutineRow): Routine {
+  return {
+    id: row.id,
+    name: row.name,
+    prompt: row.prompt,
+    botId: row.bot_id,
+    enabled: row.enabled === 1,
+    schedule: JSON.parse(row.schedule_json) as RoutineSchedule,
+    nextRunAt: row.next_run_at === null ? null : Number(row.next_run_at),
+    version: Number(row.version),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toRoutineRun(row: RoutineRunRow): RoutineRun {
+  return {
+    id: row.id,
+    routineId: row.routine_id,
+    routineName: row.routine_name,
+    botId: row.bot_id,
+    promptSnapshot: row.prompt_snapshot,
+    scheduleSnapshot: JSON.parse(row.schedule_snapshot_json) as RoutineSchedule,
+    trigger: row.trigger,
+    triggerKey: row.trigger_key,
+    scheduledFor: Number(row.scheduled_for),
+    state: row.state,
+    clientNonce: row.client_nonce,
+    runtimeRunId: row.runtime_run_id,
+    lastErrorCode: row.last_error_code,
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
   };
 }
 
@@ -1719,8 +2145,46 @@ function canonicalToolCommand(input: ToolInvocationCommand): string {
   });
 }
 
-function toolTargetDigest(tool: WorkspaceToolRequest): string {
-  return digestMessage(JSON.stringify({ workspaceId: tool.workspaceId, path: tool.path }));
+function toolEffectClass(tool: ToolRequest): CapabilityEffectClass {
+  if (tool.kind === "time-now") return "pure";
+  if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "mcp-call") return "read-remote";
+  return "read-local";
+}
+
+function toolWorkspaceId(tool: ToolRequest): string | null {
+  switch (tool.kind) {
+    case "workspace-list":
+    case "workspace-read":
+    case "workspace-search":
+      return tool.workspaceId;
+    default:
+      return null;
+  }
+}
+
+function toolTargetPath(tool: ToolRequest): string {
+  switch (tool.kind) {
+    case "workspace-list":
+    case "workspace-read":
+    case "workspace-search":
+      return tool.path;
+    case "web-search":
+      return tool.query;
+    case "web-fetch":
+      return tool.url;
+    case "weather-current":
+      return tool.location;
+    case "time-now":
+      return tool.timezone ?? "local";
+    case "mcp-call":
+      return `${tool.serverId}:${tool.toolName}`;
+    case "clipboard-read":
+      return "clipboard";
+  }
+}
+
+function toolTargetDigest(tool: ToolRequest): string {
+  return digestMessage(JSON.stringify({ kind: tool.kind, target: toolTargetPath(tool) }));
 }
 
 function defaultApprovalExpiry(): string {
@@ -2044,14 +2508,14 @@ export class AppRepository {
   }
 
   updateBot(id: string, expectedVersion: number, patch: BotPatch): Bot {
-    const columns: Record<Exclude<keyof BotPatch, "modelSelection">, string> = {
+    const columns: Record<Exclude<keyof BotPatch, "modelSelection" | "mcpServerIds" | "memoryWorkspaceIds">, string> = {
       name: "name",
       label: "label",
       description: "description",
       instructions: "instructions",
     };
     const assignments: string[] = [];
-    const values: Array<string | number> = [];
+    const values: Array<string | number | null> = [];
     for (const field of ["name", "label", "description", "instructions"] as const) {
       const value = patch[field];
       if (value === undefined) continue;
@@ -2062,6 +2526,16 @@ export class AppRepository {
       this.getProviderInstanceConfig(patch.modelSelection.providerInstanceId);
       assignments.push("provider_instance_id = ?", "model_id = ?");
       values.push(patch.modelSelection.providerInstanceId, patch.modelSelection.modelId);
+    }
+    if (patch.mcpServerIds !== undefined) {
+      for (const serverId of patch.mcpServerIds ?? []) this.getMcpServerConfig(serverId);
+      assignments.push("mcp_server_ids_json = ?");
+      values.push(patch.mcpServerIds === null ? null : JSON.stringify(patch.mcpServerIds));
+    }
+    if (patch.memoryWorkspaceIds !== undefined) {
+      for (const workspaceId of patch.memoryWorkspaceIds) this.getWorkspace(workspaceId);
+      assignments.push("memory_workspace_ids_json = ?");
+      values.push(JSON.stringify(patch.memoryWorkspaceIds));
     }
     if (assignments.length === 0) return this.getBot(id);
     const result = this.database
@@ -2078,15 +2552,35 @@ export class AppRepository {
   }
 
   listMemories(botId: string, includeDeleted = false): MemoryItem[] {
-    this.getBot(botId);
+    return this.listScopedMemories({ scope: "bot", scopeKey: botId }, includeDeleted);
+  }
+
+  listScopedMemories(selector: MemoryScopeSelector, includeDeleted = false): MemoryItem[] {
+    this.assertMemoryScope(selector);
     const rows = this.database
       .prepare(
         `SELECT * FROM memory_items
-         WHERE bot_id = ? ${includeDeleted ? "" : "AND deleted_at IS NULL"}
+         WHERE scope = ? AND scope_key = ? ${includeDeleted ? "" : "AND deleted_at IS NULL"}
          ORDER BY created_at ASC, id ASC`,
       )
-      .all(botId) as MemoryRow[];
+      .all(selector.scope, selector.scopeKey) as MemoryRow[];
     return rows.map(toMemory);
+  }
+
+  listRuntimeMemories(botId: string): MemoryItem[] {
+    const bot = this.getBot(botId);
+    return [
+      ...this.listScopedMemories({ scope: "user", scopeKey: "user" }),
+      ...(bot.memoryWorkspaceIds ?? []).flatMap((workspaceId) => {
+        try {
+          return this.listScopedMemories({ scope: "workspace", scopeKey: workspaceId });
+        } catch (error) {
+          if (error instanceof AevorenBotError && error.code === "WORKSPACE_NOT_FOUND") return [];
+          throw error;
+        }
+      }),
+      ...this.listScopedMemories({ scope: "bot", scopeKey: botId }),
+    ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   }
 
   getMemory(id: string): MemoryItem {
@@ -2096,21 +2590,28 @@ export class AppRepository {
   }
 
   createMemory(botId: string, content: string): MemoryItem {
-    this.getBot(botId);
+    return this.createScopedMemory({ scope: "bot", scopeKey: botId }, content);
+  }
+
+  createScopedMemory(selector: MemoryScopeSelector, content: string): MemoryItem {
+    this.assertMemoryScope(selector);
     const normalized = normalizeMemoryContent(content);
     const contentDigest = digestMemoryContent(normalized);
     this.assertMemoryContent(normalized);
-    this.assertNoActiveMemoryDuplicate(botId, contentDigest);
-    this.assertMemoryCapacity(botId, normalized.length, 1);
+    this.assertNoActiveMemoryDuplicate(selector, contentDigest);
+    this.assertMemoryCapacity(selector, normalized.length, 1);
     const id = randomUUID();
     const timestamp = now();
+    const botId = selector.scope === "bot" ? selector.scopeKey : null;
+    const workspaceId = selector.scope === "workspace" ? selector.scopeKey : null;
     this.database
       .prepare(
         `INSERT INTO memory_items(
-           id, bot_id, content, content_digest, source, version, deleted_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, 'manual-user', 1, NULL, ?, ?)`,
+           id, scope, scope_key, bot_id, workspace_id, content, content_digest,
+           source, version, deleted_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'manual-user', 1, NULL, ?, ?)`,
       )
-      .run(id, botId, normalized, contentDigest, timestamp, timestamp);
+      .run(id, selector.scope, selector.scopeKey, botId, workspaceId, normalized, contentDigest, timestamp, timestamp);
     return this.getMemory(id);
   }
 
@@ -2123,8 +2624,9 @@ export class AppRepository {
     const normalized = normalizeMemoryContent(content);
     const contentDigest = digestMemoryContent(normalized);
     this.assertMemoryContent(normalized);
-    this.assertNoActiveMemoryDuplicate(current.botId, contentDigest, id);
-    this.assertMemoryCapacity(current.botId, normalized.length - current.content.length, 0);
+    const selector = { scope: current.scope!, scopeKey: current.scopeKey! };
+    this.assertNoActiveMemoryDuplicate(selector, contentDigest, id);
+    this.assertMemoryCapacity(selector, normalized.length - current.content.length, 0);
     const result = this.database
       .prepare(
         `UPDATE memory_items
@@ -2160,9 +2662,10 @@ export class AppRepository {
       throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
     }
     if (!current.deletedAt) return current;
-    this.getBot(current.botId);
-    this.assertNoActiveMemoryDuplicate(current.botId, current.contentDigest, id);
-    this.assertMemoryCapacity(current.botId, current.content.length, 1);
+    const selector = { scope: current.scope!, scopeKey: current.scopeKey! };
+    this.assertMemoryScope(selector);
+    this.assertNoActiveMemoryDuplicate(selector, current.contentDigest, id);
+    this.assertMemoryCapacity(selector, current.content.length, 1);
     const result = this.database
       .prepare(
         `UPDATE memory_items
@@ -2178,24 +2681,38 @@ export class AppRepository {
     if (content.length === 0 || content.length > 4_000) throw new AevorenBotError("INVALID_REQUEST");
   }
 
-  private assertNoActiveMemoryDuplicate(botId: string, contentDigest: string, excludedId?: string): void {
+  private assertMemoryScope(selector: MemoryScopeSelector): void {
+    if (selector.scope === "user") {
+      if (selector.scopeKey !== "user") throw new AevorenBotError("INVALID_REQUEST");
+      return;
+    }
+    if (selector.scope === "bot") {
+      this.getBot(selector.scopeKey);
+      return;
+    }
+    this.getWorkspace(selector.scopeKey);
+  }
+
+  private assertNoActiveMemoryDuplicate(selector: MemoryScopeSelector, contentDigest: string, excludedId?: string): void {
     const duplicate = this.database
       .prepare(
         `SELECT 1 FROM memory_items
-         WHERE bot_id = ? AND content_digest = ? AND deleted_at IS NULL ${excludedId ? "AND id <> ?" : ""}
+         WHERE scope = ? AND scope_key = ? AND content_digest = ? AND deleted_at IS NULL ${excludedId ? "AND id <> ?" : ""}
          LIMIT 1`,
       )
-      .get(...(excludedId ? [botId, contentDigest, excludedId] : [botId, contentDigest]));
+      .get(...(excludedId
+        ? [selector.scope, selector.scopeKey, contentDigest, excludedId]
+        : [selector.scope, selector.scopeKey, contentDigest]));
     if (duplicate) throw new AevorenBotError("MEMORY_DUPLICATE");
   }
 
-  private assertMemoryCapacity(botId: string, characterDelta: number, countDelta: number): void {
+  private assertMemoryCapacity(selector: MemoryScopeSelector, characterDelta: number, countDelta: number): void {
     const row = this.database
       .prepare(
         `SELECT COUNT(*) AS count, COALESCE(SUM(length(content)), 0) AS characters
-         FROM memory_items WHERE bot_id = ? AND deleted_at IS NULL`,
+         FROM memory_items WHERE scope = ? AND scope_key = ? AND deleted_at IS NULL`,
       )
-      .get(botId) as { count: number; characters: number };
+      .get(selector.scope, selector.scopeKey) as { count: number; characters: number };
     if (Number(row.count) + countDelta > MAX_ACTIVE_MEMORIES_PER_BOT) {
       throw new AevorenBotError("MEMORY_LIMIT_EXCEEDED", undefined, undefined, { reason: "item-count" });
     }
@@ -2319,15 +2836,18 @@ export class AppRepository {
     const timestamp = now();
     const argumentsJson = JSON.stringify(parsed.tool);
     const targetDigest = toolTargetDigest(parsed.tool);
+    const effectClass = toolEffectClass(parsed.tool);
+    const workspaceId = toolWorkspaceId(parsed.tool);
+    const targetPath = toolTargetPath(parsed.tool);
     this.transaction(() => {
       this.database
         .prepare(
           `INSERT INTO tool_invocations(
              id, runtime_run_id, session_id, executor_bot_id, tool_call_id, idempotency_key,
-             command_digest, tool_kind, workspace_id, target_path, arguments_json, state,
+             command_digest, tool_kind, effect_class, workspace_id, target_path, arguments_json, state,
              attempt_count, approval_request_id, result_digest, result_metadata_json,
              last_error_code, version, created_at, updated_at, started_at, finished_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting-approval',
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting-approval',
              0, ?, NULL, NULL, NULL, 1, ?, ?, NULL, NULL)`,
         )
         .run(
@@ -2339,8 +2859,9 @@ export class AppRepository {
           parsed.idempotencyKey,
           commandDigest,
           parsed.tool.kind,
-          parsed.tool.workspaceId,
-          parsed.tool.path,
+          effectClass,
+          workspaceId,
+          targetPath,
           argumentsJson,
           approvalId,
           timestamp,
@@ -2350,10 +2871,10 @@ export class AppRepository {
         .prepare(
           `INSERT INTO approval_requests(
              id, tool_invocation_id, runtime_run_id, session_id, executor_bot_id,
-             action_kind, workspace_id, target_path, target_digest, arguments_digest,
+             action_kind, effect_class, workspace_id, target_path, target_digest, arguments_digest,
              requested_scope, state, resolution, policy_version, version,
              expires_at, resolved_at, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'once', 'pending', NULL, 1, 1, ?, NULL, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'once', 'pending', NULL, 1, 1, ?, NULL, ?, ?)`,
         )
         .run(
           approvalId,
@@ -2362,8 +2883,9 @@ export class AppRepository {
           session.id,
           runtime.executorBotId,
           parsed.tool.kind,
-          parsed.tool.workspaceId,
-          parsed.tool.path,
+          effectClass,
+          workspaceId,
+          targetPath,
           targetDigest,
           commandDigest,
           expiresAt,
@@ -2746,9 +3268,9 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO bots(
-             id, name, label, description, instructions, provider_instance_id, model_id,
+             id, name, label, description, instructions, provider_instance_id, model_id, mcp_server_ids_json, memory_workspace_ids_json,
              version, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .run(
           botId,
@@ -2758,6 +3280,8 @@ export class AppRepository {
           source.instructions,
           source.modelSelection.providerInstanceId,
           source.modelSelection.modelId,
+          source.mcpServerIds == null ? null : JSON.stringify(source.mcpServerIds),
+          JSON.stringify(source.memoryWorkspaceIds ?? []),
           timestamp,
           timestamp,
         );
@@ -4599,6 +5123,202 @@ export class AppRepository {
       .all(roomId) as RoomTurnRow[]).map(toRoomTurn);
   }
 
+  listMcpServerConfigs(): McpServerConfig[] {
+    return (this.database
+      .prepare("SELECT * FROM mcp_servers ORDER BY name ASC, id ASC")
+      .all() as McpServerRow[]).map(toMcpServerConfig);
+  }
+
+  listRoutines(): Routine[] {
+    return (this.database.prepare("SELECT * FROM routines ORDER BY created_at ASC, id ASC").all() as RoutineRow[]).map(toRoutine);
+  }
+
+  getRoutine(id: string): Routine {
+    const row = this.database.prepare("SELECT * FROM routines WHERE id = ?").get(id) as RoutineRow | undefined;
+    if (!row) throw new AevorenBotError("ROUTINE_NOT_FOUND");
+    return toRoutine(row);
+  }
+
+  createRoutine(input: { name: string; prompt: string; botId: string; schedule: RoutineSchedule; enabled: boolean; nextRunAt: number | null }): Routine {
+    this.getBot(input.botId);
+    const id = randomUUID();
+    const timestamp = now();
+    this.database.prepare(
+      `INSERT INTO routines(id,name,prompt,bot_id,schedule_json,enabled,next_run_at,version,created_at,updated_at)
+       VALUES(?,?,?,?,?,?,?,1,?,?)`,
+    ).run(id, input.name, input.prompt, input.botId, JSON.stringify(input.schedule), input.enabled ? 1 : 0, input.nextRunAt, timestamp, timestamp);
+    return this.getRoutine(id);
+  }
+
+  updateRoutine(id: string, expectedVersion: number, patch: Partial<Pick<Routine, "name" | "prompt" | "schedule">>, nextRunAt: number | null): Routine {
+    const current = this.getRoutine(id);
+    const updated = this.database.prepare(
+      `UPDATE routines SET name=?,prompt=?,schedule_json=?,next_run_at=?,version=version+1,updated_at=? WHERE id=? AND version=?`,
+    ).run(patch.name ?? current.name, patch.prompt ?? current.prompt, JSON.stringify(patch.schedule ?? current.schedule), nextRunAt, now(), id, expectedVersion);
+    if (Number(updated.changes) !== 1) this.throwRoutineConflict(id);
+    return this.getRoutine(id);
+  }
+
+  setRoutineEnabled(id: string, expectedVersion: number, enabled: boolean, nextRunAt: number | null): Routine {
+    const updated = this.database.prepare(
+      "UPDATE routines SET enabled=?,next_run_at=?,version=version+1,updated_at=? WHERE id=? AND version=?",
+    ).run(enabled ? 1 : 0, nextRunAt, now(), id, expectedVersion);
+    if (Number(updated.changes) !== 1) this.throwRoutineConflict(id);
+    return this.getRoutine(id);
+  }
+
+  deleteRoutine(id: string, expectedVersion: number): void {
+    const active = this.database.prepare("SELECT 1 FROM routine_runs WHERE routine_id=? AND state IN ('queued','waiting','running')").get(id);
+    if (active) throw new AevorenBotError("ROUTINE_BUSY");
+    const deleted = this.database.prepare("DELETE FROM routines WHERE id=? AND version=?").run(id, expectedVersion);
+    if (Number(deleted.changes) !== 1) this.throwRoutineConflict(id);
+  }
+
+  listRoutineRuns(routineId?: string): RoutineRun[] {
+    if (routineId) this.getRoutine(routineId);
+    const rows = this.database.prepare(
+      `SELECT * FROM routine_runs ${routineId ? "WHERE routine_id = ?" : ""} ORDER BY scheduled_for DESC, id DESC LIMIT 500`,
+    ).all(...(routineId ? [routineId] : [])) as RoutineRunRow[];
+    return rows.map(toRoutineRun);
+  }
+
+  createRoutineRun(routine: Routine, trigger: "schedule" | "manual", triggerKey: string, scheduledFor: number, state: RoutineRun["state"] = "queued"): RoutineRun {
+    const id = randomUUID();
+    const clientNonce = randomUUID();
+    const timestamp = now();
+    this.database.prepare(
+      `INSERT INTO routine_runs(
+         id,routine_id,routine_name,bot_id,prompt_snapshot,schedule_snapshot_json,trigger,trigger_key,
+         scheduled_for,state,client_nonce,runtime_run_id,last_error_code,created_at,started_at,finished_at
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,NULL,?)`,
+    ).run(
+      id, routine.id, routine.name, routine.botId, routine.prompt, JSON.stringify(routine.schedule), trigger, triggerKey,
+      scheduledFor, state, clientNonce, timestamp, ["missed", "cancelled"].includes(state) ? timestamp : null,
+    );
+    return this.getRoutineRun(id);
+  }
+
+  getRoutineRun(id: string): RoutineRun {
+    const row = this.database.prepare("SELECT * FROM routine_runs WHERE id=?").get(id) as RoutineRunRow | undefined;
+    if (!row) throw new AevorenBotError("ROUTINE_RUN_NOT_FOUND");
+    return toRoutineRun(row);
+  }
+
+  listPendingRoutineRuns(): RoutineRun[] {
+    return (this.database.prepare("SELECT * FROM routine_runs WHERE state IN ('queued','waiting','running') ORDER BY scheduled_for ASC,id ASC").all() as RoutineRunRow[]).map(toRoutineRun);
+  }
+
+  advanceRoutineAndCreateRun(routineId: string, expectedNextRunAt: number, nextRunAt: number | null, missed: boolean): RoutineRun | null {
+    return this.transaction(() => {
+      const routine = this.getRoutine(routineId);
+      const updated = this.database.prepare(
+        "UPDATE routines SET next_run_at=?,enabled=CASE WHEN json_extract(schedule_json,'$.type')='once' THEN 0 ELSE enabled END,version=version+1,updated_at=? WHERE id=? AND enabled=1 AND next_run_at=?",
+      ).run(nextRunAt, now(), routineId, expectedNextRunAt);
+      if (Number(updated.changes) !== 1) return null;
+      return this.createRoutineRun(routine, "schedule", `${routine.id}:schedule:${expectedNextRunAt}`, expectedNextRunAt, missed ? "missed" : "queued");
+    });
+  }
+
+  attachRoutineRuntime(runId: string, runtimeRunId: string): RoutineRun {
+    const updated = this.database.prepare(
+      "UPDATE routine_runs SET runtime_run_id=?,state='running',started_at=? WHERE id=? AND state IN ('queued','waiting')",
+    ).run(runtimeRunId, now(), runId);
+    if (Number(updated.changes) !== 1) throw new AevorenBotError("ROUTINE_RUN_STATE_INVALID");
+    return this.getRoutineRun(runId);
+  }
+
+  transitionRoutineRun(runId: string, state: RoutineRun["state"], errorCode: string | null = null): RoutineRun {
+    const terminal = ["completed", "failed", "cancelled", "missed"].includes(state);
+    const updated = this.database.prepare(
+      "UPDATE routine_runs SET state=?,last_error_code=?,finished_at=CASE WHEN ?=1 THEN ? ELSE finished_at END WHERE id=?",
+    ).run(state, errorCode, terminal ? 1 : 0, now(), runId);
+    if (Number(updated.changes) !== 1) throw new AevorenBotError("ROUTINE_RUN_NOT_FOUND");
+    return this.getRoutineRun(runId);
+  }
+
+  hasEnabledRoutines(): boolean {
+    return Boolean(this.database.prepare("SELECT 1 FROM routines WHERE enabled=1 LIMIT 1").get());
+  }
+
+  private throwRoutineConflict(id: string): never {
+    const current = this.getRoutine(id);
+    throw new AevorenBotError("ROUTINE_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+  }
+
+  getMcpServerConfig(id: string): McpServerConfig {
+    const row = this.database.prepare("SELECT * FROM mcp_servers WHERE id = ?").get(id) as McpServerRow | undefined;
+    if (!row) throw new AevorenBotError("MCP_SERVER_NOT_FOUND");
+    return toMcpServerConfig(row);
+  }
+
+  createMcpServerConfig(name: string, transport: McpTransportKind, config: Record<string, unknown>): McpServerConfig {
+    if (this.database.prepare("SELECT 1 FROM mcp_servers WHERE name = ?").get(name)) {
+      throw new AevorenBotError("MCP_SERVER_NAME_CONFLICT");
+    }
+    const id = randomUUID();
+    const timestamp = now();
+    this.database.prepare(
+      `INSERT INTO mcp_servers(
+         id, name, transport, config_json, enabled, version, last_status,
+         last_error_code, last_connected_at, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 0, 1, 'disabled', NULL, NULL, ?, ?)`,
+    ).run(id, name, transport, JSON.stringify(config), timestamp, timestamp);
+    return this.getMcpServerConfig(id);
+  }
+
+  updateMcpServerConfig(
+    id: string,
+    expectedVersion: number,
+    name: string,
+    transport: McpTransportKind,
+    config: Record<string, unknown>,
+  ): McpServerConfig {
+    const duplicate = this.database.prepare("SELECT id FROM mcp_servers WHERE name = ? AND id <> ?").get(name, id);
+    if (duplicate) throw new AevorenBotError("MCP_SERVER_NAME_CONFLICT");
+    const timestamp = now();
+    const updated = this.database.prepare(
+      `UPDATE mcp_servers
+       SET name = ?, transport = ?, config_json = ?, enabled = 0, version = version + 1,
+           last_status = 'disabled', last_error_code = NULL, last_connected_at = NULL, updated_at = ?
+       WHERE id = ? AND version = ?`,
+    ).run(name, transport, JSON.stringify(config), timestamp, id, expectedVersion);
+    if (Number(updated.changes) !== 1) this.throwMcpVersionConflict(id);
+    return this.getMcpServerConfig(id);
+  }
+
+  setMcpServerEnabled(id: string, expectedVersion: number, enabled: boolean): McpServerConfig {
+    const timestamp = now();
+    const updated = this.database.prepare(
+      `UPDATE mcp_servers
+       SET enabled = ?, version = version + 1, last_status = ?, last_error_code = NULL, updated_at = ?
+       WHERE id = ? AND version = ?`,
+    ).run(enabled ? 1 : 0, enabled ? "connecting" : "disabled", timestamp, id, expectedVersion);
+    if (Number(updated.changes) !== 1) this.throwMcpVersionConflict(id);
+    return this.getMcpServerConfig(id);
+  }
+
+  setMcpServerStatus(id: string, status: McpServerStatus, lastErrorCode: string | null): McpServerConfig {
+    const timestamp = now();
+    const updated = this.database.prepare(
+      `UPDATE mcp_servers
+       SET last_status = ?, last_error_code = ?, last_connected_at = CASE WHEN ? = 'available' THEN ? ELSE last_connected_at END,
+           updated_at = ?
+       WHERE id = ?`,
+    ).run(status, lastErrorCode, status, timestamp, timestamp, id);
+    if (Number(updated.changes) !== 1) throw new AevorenBotError("MCP_SERVER_NOT_FOUND");
+    return this.getMcpServerConfig(id);
+  }
+
+  deleteMcpServerConfig(id: string, expectedVersion: number): void {
+    const deleted = this.database.prepare("DELETE FROM mcp_servers WHERE id = ? AND version = ?").run(id, expectedVersion);
+    if (Number(deleted.changes) !== 1) this.throwMcpVersionConflict(id);
+  }
+
+  private throwMcpVersionConflict(id: string): never {
+    const current = this.getMcpServerConfig(id);
+    throw new AevorenBotError("MCP_SERVER_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+  }
+
   getSetting(key: string): { value: string; encrypted: boolean } | null {
     const row = this.database.prepare("SELECT value, encrypted FROM app_settings WHERE key = ?").get(key) as
       | { value: string; encrypted: number }
@@ -4614,5 +5334,9 @@ export class AppRepository {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, encrypted = excluded.encrypted, updated_at = excluded.updated_at`,
       )
       .run(key, value, encrypted ? 1 : 0, now());
+  }
+
+  deleteSetting(key: string): void {
+    this.database.prepare("DELETE FROM app_settings WHERE key = ?").run(key);
   }
 }

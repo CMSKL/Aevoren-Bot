@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test } from "@playwright/test";
+import type { AevorenBotApi } from "@shared/contracts";
 
 test("creates, persists and restores a reliable fake-provider conversation", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-smoke-"));
@@ -29,6 +30,22 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await page.getByLabel("Bot 模型").fill("smoke-model");
   await page.getByLabel("Bot 模型").blur();
   await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+  const capabilitySnapshot = await page.evaluate(async () => {
+    const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+    const bots = await api.bots.list();
+    if (!bots.ok || !bots.data[0]) return bots;
+    return api.capabilities.getSnapshot({ botId: bots.data[0].id });
+  });
+  expect(capabilitySnapshot).toMatchObject({
+    ok: true,
+    data: {
+      availableTools: expect.arrayContaining(["web_search", "time_now", "weather_current"]),
+      capabilities: expect.arrayContaining([
+        expect.objectContaining({ id: "network.search", availability: "available" }),
+        expect.objectContaining({ id: "network.realtime-data", availability: "available" }),
+      ]),
+    },
+  });
 
   const description = page.getByLabel("描述");
   await description.fill("把模糊想法整理成可评审的产品需求。");
@@ -66,6 +83,10 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   expect(database.prepare("SELECT provider_instance_id, model_id FROM bots LIMIT 1").get()).toEqual({
     provider_instance_id: "openai-compatible.default",
     model_id: "smoke-model",
+  });
+  expect(database.prepare("SELECT MIN(json_extract(prompt_manifest_json, '$.schemaVersion')) AS min_version, MAX(json_extract(prompt_manifest_json, '$.schemaVersion')) AS max_version FROM runtime_runs").get()).toEqual({
+    min_version: 4,
+    max_version: 4,
   });
   database.close();
 

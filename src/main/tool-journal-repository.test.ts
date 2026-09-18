@@ -118,6 +118,32 @@ afterEach(() => {
 });
 
 describe("Approval and Tool Journal repository", () => {
+  it("persists a read-remote invocation without inventing a workspace scope", () => {
+    const value = repository();
+    const fixture = createRunningRuntime(value);
+    const prepared = value.prepareToolInvocation({
+      runtimeRunId: fixture.runtime.id,
+      toolCallId: "web-search-1",
+      idempotencyKey: crypto.randomUUID(),
+      tool: { kind: "web-search", query: "Aevoren Bot", maxResults: 5 },
+    });
+    expect(prepared.invocation).toMatchObject({
+      toolKind: "web-search",
+      effectClass: "read-remote",
+      workspaceId: null,
+      targetPath: "Aevoren Bot",
+      arguments: { kind: "web-search", query: "Aevoren Bot", maxResults: 5 },
+      state: "awaiting-approval",
+    });
+    expect(prepared.approval).toMatchObject({
+      actionKind: "web-search",
+      effectClass: "read-remote",
+      workspaceId: null,
+      targetPath: "Aevoren Bot",
+      state: "pending",
+    });
+  });
+
   it("migrates v8 to v9 without changing existing data and applies once", () => {
     const directory = mkdtempSync(join(tmpdir(), "aevoren-tool-v9-"));
     temporaryDirectories.push(directory);
@@ -168,6 +194,8 @@ describe("Approval and Tool Journal repository", () => {
     const value = repository();
     const fixture = createRunningRuntime(value);
     const input = command(fixture.runtime.id);
+    if (input.tool.kind !== "workspace-read") throw new Error("workspace-read fixture expected");
+    const workspaceTool = input.tool;
     const first = value.prepareToolInvocation(input);
     const duplicate = value.prepareToolInvocation(input);
 
@@ -192,7 +220,7 @@ describe("Approval and Tool Journal repository", () => {
       sessionId: fixture.session.id,
       executorBotId: fixture.bot.id,
       actionKind: "workspace-read",
-      workspaceId: input.tool.workspaceId,
+      workspaceId: workspaceTool.workspaceId,
       targetPath: "docs/spec.md",
       requestedScope: "once",
       state: "pending",
@@ -204,7 +232,7 @@ describe("Approval and Tool Journal repository", () => {
     expect(() =>
       value.prepareToolInvocation({
         ...input,
-        tool: { ...input.tool, path: "docs/other.md" },
+        tool: { ...workspaceTool, path: "docs/other.md" },
       }),
     ).toThrowError(expect.objectContaining({ code: "TOOL_IDEMPOTENCY_CONFLICT" }));
     expect(value.listToolInvocations(fixture.session.id)).toHaveLength(1);

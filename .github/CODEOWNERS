@@ -1,0 +1,8 @@
+* @CMSKL
+
+/.github/ @CMSKL
+/build/ @CMSKL
+/scripts/ @CMSKL
+/src/main/ @CMSKL
+/src/preload/ @CMSKL
+/src/shared/ @CMSKL

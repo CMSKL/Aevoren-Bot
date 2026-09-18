@@ -91,6 +91,11 @@ describe("ProviderService", () => {
       }),
     ]));
     expect(repository.getDefaultModelSelection()).toEqual({ providerInstanceId: "codex.default", modelId: "fixture-model" });
+    expect(service.getCached("codex.default")).toMatchObject({ status: "available", models: { default: "fixture-model" } });
+    expect(service.getCapabilities({ providerInstanceId: "codex.default", modelId: "fixture-model" })).toMatchObject({
+      workspaceTools: true,
+      networkTools: true,
+    });
     await service.dispose();
   });
 
@@ -269,6 +274,33 @@ describe("Codex CLI Provider", () => {
       { type: "completed", finishReason: "stop" },
     ]);
   });
+
+  it("bridges one official Codex dynamic tool request through the host response contract", async () => {
+    vi.stubEnv("CODEX_HOME", providerWorkspace());
+    vi.stubEnv("FAKE_CODEX_DYNAMIC_TOOL", "1");
+    const provider = new CodexCliProvider(fixtureCli, "fixture-model", providerWorkspace());
+    const events: Array<{ type: string; text?: string }> = [];
+    for await (const event of provider.run([
+      { role: "system", content: "Use only supplied tools." },
+      { role: "user", content: "现在几点" },
+    ], new AbortController().signal, {
+      executorBotId: "00000000-0000-4000-8000-000000000001",
+      executionKey: "fixture-execution",
+      networkTools: true,
+    })) {
+      events.push({ type: event.type, ...(event.type === "delta" ? { text: event.text } : {}) });
+      if (event.type === "network-tool") {
+        expect(event).toMatchObject({ toolCallId: "fixture-time-call", tool: { kind: "time-now", timezone: "Asia/Shanghai" } });
+        await event.respond?.(JSON.stringify({ instant: "2026-09-17T08:00:00.000Z" }));
+      }
+    }
+    expect(events).toEqual([
+      { type: "started" },
+      { type: "network-tool" },
+      { type: "delta", text: "CLI used approved tool" },
+      { type: "completed" },
+    ]);
+  }, 30_000);
 
   it("falls back to codex exec before acceptance when app-server is unavailable", async () => {
     const sourceHome = providerWorkspace();

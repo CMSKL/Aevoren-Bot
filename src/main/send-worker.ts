@@ -14,8 +14,9 @@ import { asAppError, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 import type { ModelProvider } from "./model";
 import type { ProviderResolver } from "./providers/contracts";
-import { RuntimeExecutor, type RuntimeExecutionResult } from "./runtime-executor";
+import { RuntimeExecutor, type CapabilitySnapshotSource, type RuntimeExecutionResult } from "./runtime-executor";
 import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
+import type { McpService } from "./mcp-service";
 
 export type WorkerEvents = {
   transcript: (event: TranscriptEvent) => void;
@@ -35,6 +36,8 @@ export class RuntimeCoordinator {
     providerOverride?: ModelProvider,
     executorOverride?: RuntimeExecutor,
     workspaceTools?: WorkspaceToolCoordinator,
+    capabilitySnapshots?: CapabilitySnapshotSource,
+    mcpTools?: Pick<McpService, "availableTools">,
   ) {
     this.executor = executorOverride ?? new RuntimeExecutor(
       repository,
@@ -43,6 +46,8 @@ export class RuntimeCoordinator {
       forceFakeProvider,
       providerOverride,
       workspaceTools,
+      capabilitySnapshots,
+      mcpTools,
     );
   }
 

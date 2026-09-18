@@ -3,7 +3,9 @@ import {
   DEFAULT_PROVIDER_TIMEOUTS,
   OpenAiCompatibleProvider,
   parseOpenAiStream,
+  parseStructuredModelToolCall,
   selectDeterministicRoomOwner,
+  structuredModelToolDefinitions,
   type ModelEvent,
 } from "./model";
 
@@ -85,7 +87,67 @@ describe("parseOpenAiStream", () => {
       undefined,
       new Set([workspaceId]),
     ))).toEqual([
-      { type: "workspace-tool", toolCallId: "read-1", tool: { kind: "workspace-read", workspaceId, path: "docs/spec.md", maxBytes: 4096 } },
+      { type: "workspace-tool", toolCallId: "read-1", tool: { kind: "workspace-read", workspaceId, path: "docs/spec.md", maxBytes: 4096 }, providerToolName: "workspace_read" },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
+  it("parses one bounded network tool only when the provider context enables it", async () => {
+    const args = JSON.stringify({ location: "上海" });
+    const payload = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "weather-1", type: "function", function: { name: "weather_current", arguments: args } }] }, finish_reason: "tool_calls" }] })}\n\n`;
+    expect(await collect(parseOpenAiStream(
+      streamFrom([payload]),
+      new AbortController().signal,
+      DEFAULT_PROVIDER_TIMEOUTS,
+      undefined,
+      undefined,
+      true,
+    ))).toEqual([
+      { type: "network-tool", toolCallId: "weather-1", tool: { kind: "weather-current", location: "上海" }, providerToolName: "weather_current" },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+    await expect(collect(parseOpenAiStream(streamFrom([payload])))).rejects.toMatchObject({ code: "MODEL_NETWORK_TOOL_INVALID" });
+  });
+
+  it("maps one namespaced read-only MCP tool to its stable server and tool identity", async () => {
+    const serverId = crypto.randomUUID();
+    const definition = {
+      serverId,
+      serverName: "fixture",
+      name: "lookup",
+      namespacedName: "mcp__fixture__lookup",
+      description: "read-only lookup",
+      inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      claimedReadOnly: true,
+      readOnly: true,
+    };
+    const payload = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "mcp-1", type: "function", function: { name: definition.namespacedName, arguments: JSON.stringify({ query: "hello" }) } }] }, finish_reason: "tool_calls" }] })}\n\n`;
+    expect(await collect(parseOpenAiStream(
+      streamFrom([payload]),
+      new AbortController().signal,
+      DEFAULT_PROVIDER_TIMEOUTS,
+      undefined,
+      undefined,
+      false,
+      new Map([[definition.namespacedName, definition]]),
+    ))).toEqual([
+      {
+        type: "mcp-tool",
+        toolCallId: "mcp-1",
+        tool: { kind: "mcp-call", serverId, toolName: "lookup", arguments: { query: "hello" }, readOnly: true },
+        providerToolName: "mcp__fixture__lookup",
+      },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
+  it("parses a bounded clipboard read only when device tools are enabled", async () => {
+    const payload = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "clipboard-1", type: "function", function: { name: "clipboard_read", arguments: JSON.stringify({ maxCharacters: 500 }) } }] }, finish_reason: "tool_calls" }] })}\n\n`;
+    expect(await collect(parseOpenAiStream(
+      streamFrom([payload]), new AbortController().signal, DEFAULT_PROVIDER_TIMEOUTS,
+      undefined, undefined, false, undefined, true,
+    ))).toEqual([
+      { type: "device-tool", toolCallId: "clipboard-1", tool: { kind: "clipboard-read", maxCharacters: 500 }, providerToolName: "clipboard_read" },
       { type: "completed", finishReason: "tool_calls" },
     ]);
   });
@@ -249,6 +311,58 @@ describe("parseOpenAiStream", () => {
     const directBody = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<string, unknown>;
     expect(directBody).not.toHaveProperty("tools");
     expect(directBody).not.toHaveProperty("tool_choice");
+  });
+
+  it("advertises only bounded read-only network tools when the runtime enables them", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      streamFrom(['data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n']),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "test-model", "test-key");
+    const context = {
+      executorBotId: crypto.randomUUID(),
+      executionKey: "network-tools",
+      networkTools: true,
+    };
+    await collect(provider.run([{ role: "user", content: "查询实时信息" }], new AbortController().signal, context));
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
+      tools: Array<{ function: { name: string; parameters: Record<string, unknown> } }>;
+    };
+    expect(request.tools.map((tool) => tool.function.name)).toEqual(["web_search", "web_fetch", "weather_current", "time_now"]);
+    expect(request.tools.map((tool) => tool.function.name)).toEqual(structuredModelToolDefinitions(context).map((tool) => tool.name));
+    expect(request.tools.every((tool) => tool.function.parameters.additionalProperties === false)).toBe(true);
+    expect(JSON.stringify(request)).not.toContain("write");
+    expect(JSON.stringify(request)).not.toContain("browser");
+  });
+
+  it("parses one host dynamic MCP tool call only from the exact reviewed catalog", () => {
+    const serverId = crypto.randomUUID();
+    const context = {
+      executorBotId: crypto.randomUUID(),
+      executionKey: "dynamic-mcp",
+      mcpTools: [{
+        serverId,
+        serverName: "search",
+        name: "lookup",
+        namespacedName: "mcp__search__lookup",
+        description: "fixture",
+        inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        claimedReadOnly: true,
+        readOnly: true,
+      }],
+    };
+    expect(parseStructuredModelToolCall("call-1", "mcp__search__lookup", { query: "news" }, context)).toMatchObject({
+      type: "mcp-tool",
+      toolCallId: "call-1",
+      tool: { kind: "mcp-call", serverId, toolName: "lookup", arguments: { query: "news" }, readOnly: true },
+    });
+    expect(() => parseStructuredModelToolCall("call-2", "mcp__search__write", { value: "x" }, context))
+      .toThrowError(expect.objectContaining({ code: "MODEL_NETWORK_TOOL_INVALID" }));
+    expect(() => parseStructuredModelToolCall("x".repeat(201), "mcp__search__lookup", { query: "news" }, context))
+      .toThrowError(expect.objectContaining({ code: "MODEL_NETWORK_TOOL_INVALID" }));
+    expect(() => parseStructuredModelToolCall("call-3", "mcp__search__lookup", { query: "x".repeat(13_000) }, context))
+      .toThrowError(expect.objectContaining({ code: "MODEL_NETWORK_TOOL_INVALID" }));
   });
 
   it("adds one bounded handoff function schema only for a coordinated Room without leaking agent instructions", async () => {
