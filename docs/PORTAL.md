@@ -36,4 +36,4 @@ Forks may reuse the source under Apache-2.0. The Aevoren Bot name, Logo, and off
 
 ## Official channels
 
-Until the first release is published, the canonical source is the [GitHub repository](https://github.com/CMSKL/Aevoren-Bot). When signed builds become available, this portal will link only to the repository's immutable GitHub Releases and checksums.
+Until the first release is published, the canonical public source mirror is [Aevoren-Bot-public](https://github.com/CMSKL/Aevoren-Bot-public). Development remains in the private source repository. When signed builds become available, this portal will link only to the mirror's immutable GitHub Releases and checksums.
