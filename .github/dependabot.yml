@@ -5,7 +5,9 @@ updates:
     schedule:
       interval: weekly
     target-branch: dev
-    open-pull-requests-limit: 5
+    # Paused while the repository is private and the public branch policy is being finalized.
+    # Restore the limit before enabling public maintenance automation.
+    open-pull-requests-limit: 0
     groups:
       production-dependencies:
         dependency-type: production
@@ -16,4 +18,4 @@ updates:
     schedule:
       interval: weekly
     target-branch: dev
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0
