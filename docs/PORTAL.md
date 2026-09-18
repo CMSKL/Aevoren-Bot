@@ -24,6 +24,7 @@ Aevoren Bot is an open-source, local-first macOS workspace for persistent AI Bot
 | Understand signed releases and update channels | [Release process](RELEASING.md) |
 | Review public-release gates | [Open-source checklist](OPEN_SOURCE_CHECKLIST.md) |
 | Read licensing and brand rules | [LICENSE](../LICENSE), [Trademark notice](../TRADEMARKS.md) |
+| See planned direction | [Roadmap](../ROADMAP.md) |
 
 ## Product boundaries
 
