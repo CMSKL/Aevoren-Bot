@@ -1,0 +1,43 @@
+name: Sync public master mirror
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-master-mirror
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'CMSKL/Aevoren-Bot'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Push only master or an explicit release tag
+        env:
+          MIRROR_DEPLOY_KEY: ${{ secrets.MIRROR_DEPLOY_KEY }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          test -n "$MIRROR_DEPLOY_KEY"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$MIRROR_DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -H github.com >> "$HOME/.ssh/known_hosts"
+          git remote add public-mirror git@github.com:CMSKL/Aevoren-Bot-public.git
+          if [[ "$REF_TYPE" == "branch" && "$REF_NAME" == "master" ]]; then
+            git push public-mirror HEAD:refs/heads/master
+          elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == v* ]]; then
+            git push public-mirror "refs/tags/$REF_NAME:refs/tags/$REF_NAME"
+          else
+            echo "Ref is outside the public mirror policy: $REF_TYPE/$REF_NAME"
+            exit 1
+          fi
