@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -110,6 +111,6 @@ test("renders Markdown during streaming and keeps the same semantic structure wh
     await page.screenshot({ path: "/tmp/aevoren-bot-markdown-rendered.png", fullPage: true });
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

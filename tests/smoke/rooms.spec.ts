@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -263,7 +264,7 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await expect(restored.page.getByLabel("描述")).toHaveValue("恢复归档 Room 前必须先保存的 Bot 描述");
   } finally {
     if (application) await forceKill(application);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -306,7 +307,7 @@ test("renders historical Room speaker envelopes as clean Grok-style speaker mess
     database.close();
   } finally {
     if (application) await forceKill(application);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -390,7 +391,7 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     expect(consoleErrors).toEqual([]);
   } finally {
     if (application) await forceKill(application);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -462,7 +463,7 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     await expect(launched.page.getByRole("button", { name: "继续未开始成员" })).toBeVisible();
   } finally {
     if (application) await forceKill(application);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -498,7 +499,7 @@ test("reconciles a completed Room Runtime and exposes Continue for only the unst
     database.close();
   } finally {
     if (application) await forceKill(application);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -530,7 +531,7 @@ test("offers a Turn retry when a Room member fails before Provider acceptance", 
     database.close();
   } finally {
     if (application) await forceKill(application);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -567,7 +568,7 @@ test("settles Cancel then SIGKILL without leaving a running Turn or auto-resumin
     database.close();
   } finally {
     if (application) await forceKill(application);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -606,6 +607,6 @@ test("preserves Room user-cancel intent through a normal close when the Provider
     database.close();
   } finally {
     if (application) await forceKill(application);
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

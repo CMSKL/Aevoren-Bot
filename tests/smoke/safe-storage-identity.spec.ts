@@ -1,6 +1,7 @@
+import { removeTestDirectory } from "./test-cleanup";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -74,6 +75,6 @@ test("decrypts ciphertext from the established Aevoren Bot safeStorage identity 
   } finally {
     if (application) await application.close();
     if (server.listening) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-    rmSync(directory, { recursive: true, force: true });
+    removeTestDirectory(directory);
   }
 });

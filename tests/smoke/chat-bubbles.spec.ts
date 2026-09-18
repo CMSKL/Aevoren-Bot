@@ -1,5 +1,6 @@
+import { removeTestDirectory } from "./test-cleanup";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -149,6 +150,6 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     await page.screenshot({ path: "/tmp/aevoren-bot-chat-bubbles-narrow-dark.png", fullPage: true });
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });

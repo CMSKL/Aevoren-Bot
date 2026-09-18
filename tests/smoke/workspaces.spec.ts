@@ -1,5 +1,6 @@
+import { removeTestDirectory } from "./test-cleanup";
 import { expect, test, _electron as electron, type ElectronApplication } from "@playwright/test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -65,7 +66,7 @@ test("shows only public Workspace identity and revokes access without touching d
     database.close();
   } finally {
     if (application) application.process().kill("SIGKILL");
-    rmSync(userDataDir, { recursive: true, force: true });
-    rmSync(workspaceRoot, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
+    removeTestDirectory(workspaceRoot);
   }
 });

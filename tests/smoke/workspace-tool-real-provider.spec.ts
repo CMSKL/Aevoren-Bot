@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -60,7 +61,7 @@ test("runs one approved workspace read through the configured real Provider", as
     await expect(page.locator('article.message-assistant[data-status="completed"]').last()).toContainText(token, { timeout: 90_000 });
   } finally {
     await application.close();
-    rmSync(root, { recursive: true, force: true });
+    removeTestDirectory(root);
   }
 
   const database = new DatabaseSync(isolatedDatabase!, { readOnly: true });

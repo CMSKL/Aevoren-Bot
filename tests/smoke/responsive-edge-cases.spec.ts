@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
@@ -64,7 +65,7 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
     expect(consoleErrors).toEqual([]);
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -176,7 +177,7 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
     expect(consoleErrors).toEqual([]);
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -234,7 +235,7 @@ test("keeps Room member actions on one line beside a long Bot name", async () =>
     await page.screenshot({ path: "/tmp/aevoren-bot-responsive-long-member-fixed.png" });
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -293,7 +294,7 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
     await expect(page.locator(".inspector")).not.toBeVisible();
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -336,7 +337,7 @@ test("does not stack the new-chat chooser over an open narrow sidebar", async ()
     await expect(page.locator(".sidebar")).not.toBeVisible();
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
 
@@ -417,6 +418,6 @@ test("keeps a long sidebar scrollable without pushing the conversation below the
     expect(consoleErrors).toEqual([]);
   } finally {
     await application.close();
-    rmSync(userDataDir, { recursive: true, force: true });
+    removeTestDirectory(userDataDir);
   }
 });
