@@ -490,6 +490,12 @@ export class CodexCliProvider implements ModelProvider {
     let completed = false;
     let streamed = false;
     const early: JsonObject[] = [];
+    const earlyToolCalls: Array<{
+      method: string;
+      params: unknown;
+      resolve(value: unknown): void;
+      reject(error: unknown): void;
+    }> = [];
     let settleCompletion: (() => void) | null = null;
     const completion = new Promise<void>((resolve) => { settleCompletion = resolve; });
 
@@ -538,7 +544,7 @@ export class CodexCliProvider implements ModelProvider {
     };
     signal.addEventListener("abort", abort, { once: true });
 
-    client.setServerRequestHandler(async (method, rawParams) => {
+    const handleToolCall = async (method: string, rawParams: unknown): Promise<unknown> => {
       if (method !== "item/tool/call") throw new AevorenBotError("MODEL_CLI_PROTOCOL_ERROR");
       const params = object(rawParams);
       if (
@@ -568,6 +574,17 @@ export class CodexCliProvider implements ModelProvider {
           },
         });
       });
+    };
+
+    client.setServerRequestHandler((method, rawParams) => {
+      // A JSON-RPC response and the following server request can arrive in the
+      // same stdout chunk. Defer validation until turnId has been assigned.
+      if (!threadId || !turnId) {
+        return new Promise((resolve, reject) => {
+          earlyToolCalls.push({ method, params: rawParams, resolve, reject });
+        });
+      }
+      return handleToolCall(method, rawParams);
     });
 
     void (async () => {
@@ -610,9 +627,13 @@ export class CodexCliProvider implements ModelProvider {
         turnId = turn.id;
         queue.push({ type: "started", requestId: turnId || randomUUID() });
         for (const message of early.splice(0)) consume(message);
+        for (const request of earlyToolCalls.splice(0)) {
+          void handleToolCall(request.method, request.params).then(request.resolve, request.reject);
+        }
         await completion;
         if (!completed && !signal.aborted) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
       } catch (error) {
+        for (const request of earlyToolCalls.splice(0)) request.reject(error);
         queue.fail(error);
       } finally {
         client.setServerRequestHandler(null);
