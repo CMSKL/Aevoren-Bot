@@ -1,4 +1,4 @@
-name: Release signed macOS update to GitHub
+name: Publish signed macOS release artifacts
 
 on:
   push:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release-macos:
+  publish-macos:
     if: github.repository == 'CMSKL/Aevoren-Bot'
     runs-on: macos-15
     environment: release
