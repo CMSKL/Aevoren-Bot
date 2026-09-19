@@ -95,7 +95,15 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
 
     await page.getByRole("button", { name: "打开 Bot 设置" }).click();
     await expect(page.locator(".inspector")).toBeVisible();
-    await page.waitForTimeout(220);
+    await expect.poll(
+      () => page.evaluate(() => {
+        const inspector = document.querySelector<HTMLElement>(".inspector");
+        if (!inspector) return false;
+        const rect = inspector.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= window.innerWidth;
+      }),
+      { timeout: 2_000 },
+    ).toBe(true);
     const inspectorLayout = await page.evaluate(() => {
       const inspector = document.querySelector<HTMLElement>(".inspector");
       const header = document.querySelector<HTMLElement>(".inspector-header");
