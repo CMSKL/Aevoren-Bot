@@ -62,24 +62,26 @@ lines.on("line", (line) => {
   }
   if (message.method === "turn/start") {
     const turn = { id: "fixture-turn", status: "inProgress", items: [], error: null };
+    if (process.env.FAKE_CODEX_DYNAMIC_TOOL === "1") {
+      // Deliberately emit the response and server request in one chunk to
+      // exercise the host's early-request buffering.
+      process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { turn } })}\n${JSON.stringify({
+        jsonrpc: "2.0",
+        id: "fixture-dynamic-tool",
+        method: "item/tool/call",
+        params: {
+          threadId: "fixture-thread",
+          turnId: "fixture-turn",
+          callId: "fixture-time-call",
+          namespace: null,
+          tool: "time_now",
+          arguments: { timezone: "Asia/Shanghai" },
+        },
+      })}\n`);
+      return;
+    }
     send({ jsonrpc: "2.0", id: message.id, result: { turn } });
     queueMicrotask(() => {
-      if (process.env.FAKE_CODEX_DYNAMIC_TOOL === "1") {
-        send({
-          jsonrpc: "2.0",
-          id: "fixture-dynamic-tool",
-          method: "item/tool/call",
-          params: {
-            threadId: "fixture-thread",
-            turnId: "fixture-turn",
-            callId: "fixture-time-call",
-            namespace: null,
-            tool: "time_now",
-            arguments: { timezone: "Asia/Shanghai" },
-          },
-        });
-        return;
-      }
       send({ jsonrpc: "2.0", method: "item/agentMessage/delta", params: { threadId: "fixture-thread", turnId: "fixture-turn", itemId: "message", delta: "CLI " } });
       send({ jsonrpc: "2.0", method: "item/agentMessage/delta", params: { threadId: "fixture-thread", turnId: "fixture-turn", itemId: "message", delta: "reply" } });
       send({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: "fixture-thread", turn: { ...turn, status: "completed" } } });
