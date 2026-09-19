@@ -205,7 +205,18 @@ jobs:
           else
             gh release edit "$GITHUB_REF_NAME" --draft=false --latest
           fi
-          gh release verify "$GITHUB_REF_NAME"
+          release_json="$(gh release view "$GITHUB_REF_NAME" --json isDraft,isPrerelease,assets)"
+          RELEASE_JSON="$release_json" node --input-type=module -e '
+            const release = JSON.parse(process.env.RELEASE_JSON);
+            if (release.isDraft) throw new Error("published release is still a draft");
+            if (release.isPrerelease !== (process.env.RELEASE_TYPE === "prerelease")) {
+              throw new Error("release channel flag does not match the tag policy");
+            }
+            const names = new Set((release.assets ?? []).map((asset) => asset.name));
+            for (const required of ["SHASUMS256.txt", "beta-mac.yml", "aevoren-bot-sbom.cdx.json"]) {
+              if (!names.has(required)) throw new Error(`published release is missing ${required}`);
+            }
+          '
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: aevoren-bot-${{ github.ref_name }}-macos
