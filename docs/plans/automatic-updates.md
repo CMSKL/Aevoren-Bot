@@ -44,8 +44,8 @@ Beta/Stable 都使用构建时固化的公开 GitHub Provider，固定为 `CMSKL
 5. App 的 `codesign --verify`、Gatekeeper `spctl` 和 `stapler validate` 均通过，DMG 的 `codesign --verify`、`stapler validate` 与 `spctl --type open` 均通过；
 6. Draft Release 同时包含 ZIP、DMG、blockmap、`beta-mac.yml` 或 `latest-mac.yml`、`SHASUMS256.txt`；
 7. Draft 资产重新下载后必须同时通过 SHA-256 清单和 manifest SHA-512 校验；
-8. 发布后 `gh release verify` 必须通过，仓库必须启用 Immutable Releases；
-9. Release 资产生成 GitHub Artifact Attestation。
+8. 发布后 Release 必须为非 Draft、预发布/稳定渠道标记与 tag 策略一致，并包含完整的资产集合；
+9. Release 资产生成 GitHub Artifact Attestation；工作流通过资产 attestation 上传、SHA-256 清单和 manifest SHA-512 校验完成发布门禁。`gh release verify` 查询的是 Release 级 attestation，与本项目按资产生成的 attestation 口径不一致，不作为门禁。
 
 CI 所需 Secrets：
 
