@@ -21,7 +21,7 @@ import type { ProviderResolver, RuntimeProviderInstance } from "./providers/cont
 const OPENAI_INSTANCE_ID = "openai-compatible.default";
 const CODEX_INSTANCE_ID = "codex.default";
 const CLAUDE_INSTANCE_ID = "claude.default";
-const OLLAMA_INSTANCE_ID = "ollama.default";
+const FIRST_PHASE_PROVIDER_IDS = new Set([OPENAI_INSTANCE_ID, CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID]);
 
 const OPENAI_CAPABILITIES: ProviderCapabilities = {
   roomOwnerSelection: true,
@@ -57,11 +57,22 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function connectionReason(displayName: string, error: unknown): string {
+  if (error instanceof AevorenBotError) {
+    if (error.code === "MODEL_AUTHENTICATION_FAILED") return `${displayName} 未登录、登录已失效或凭据无效。`;
+    if (error.code === "MODEL_QUOTA_EXCEEDED") return `${displayName} 已识别，但当前额度不足或已达到使用上限。`;
+    if (error.code === "MODEL_SELECTED_MODEL_UNAVAILABLE") return `${displayName} 当前选择的模型不可用，请刷新或改选模型。`;
+    if (error.code === "MODEL_CONNECTION_TIMEOUT") return `${displayName} 最小请求超时，请检查网络后重试。`;
+  }
+  return `${displayName} 已识别，但最小真实请求未能完成。`;
+}
+
 class OpenAiCompatibleRuntime implements RuntimeProviderInstance {
   readonly driverKind = "openai-compatible" as const;
   readonly capabilities = OPENAI_CAPABILITIES;
   readonly route = "openai-compatible" as const;
   private catalog: { default: string; options: ProviderModelOption[] };
+  private connectionError: string | null = null;
 
   constructor(
     private readonly repository: AppRepository,
@@ -84,15 +95,16 @@ class OpenAiCompatibleRuntime implements RuntimeProviderInstance {
   async describe(): Promise<ProviderInstanceInfo> {
     const keyConfigured = this.repository.getSetting(credentialKey(this.id)) !== null;
     const baseUrl = text(this.configuration.config.baseUrl) ?? "https://api.openai.com/v1";
+    const available = this.configuration.enabled && keyConfigured && this.connectionError === null;
     return {
       id: this.id,
       driverKind: this.driverKind,
-      displayName: this.configuration.displayName,
+      displayName: "API",
       access: "cloud",
       enabled: this.configuration.enabled,
       version: this.configuration.version,
-      status: this.configuration.enabled && keyConfigured ? "available" : "unavailable",
-      reason: !this.configuration.enabled ? "该供应商已停用。" : keyConfigured ? null : "尚未配置 API Key。",
+      status: available ? "available" : "unavailable",
+      reason: available ? null : !this.configuration.enabled ? "API 已停用。" : this.connectionError ?? "尚未配置 API Key。",
       authenticated: keyConfigured,
       runtimeVersion: null,
       discoveryMode: "not-applicable",
@@ -125,8 +137,11 @@ class OpenAiCompatibleRuntime implements RuntimeProviderInstance {
         this.catalog.default || "connection-test",
         this.getApiKey(),
       ).testConnection(controller.signal);
+      this.connectionError = null;
     } catch (error) {
-      if (controller.signal.aborted) throw new AevorenBotError("MODEL_CONNECTION_TIMEOUT");
+      const mapped = controller.signal.aborted ? new AevorenBotError("MODEL_CONNECTION_TIMEOUT") : error;
+      this.connectionError = connectionReason("API", mapped);
+      if (controller.signal.aborted) throw mapped;
       throw error;
     } finally {
       clearTimeout(timer);
@@ -177,6 +192,7 @@ class CodexCliRuntime implements RuntimeProviderInstance {
   readonly route = "codex-cli" as const;
   private inspection: CodexCliInspection | null = null;
   private inspectionError: string | null = null;
+  private connectionError: string | null = null;
   private lastScannedAt: string | null = null;
 
   constructor(
@@ -194,7 +210,7 @@ class CodexCliRuntime implements RuntimeProviderInstance {
     const configured = text(this.configuration.config.cliPath) ?? "codex";
     const manual = configured !== "codex";
     const detectedPath = this.inspection?.path ?? resolveCliPath(configured);
-    const available = this.configuration.enabled && Boolean(this.inspection?.authenticated && this.inspection.models.default);
+    const available = this.configuration.enabled && this.connectionError === null && Boolean(this.inspection?.authenticated && this.inspection.models.default);
     return {
       id: this.id,
       driverKind: this.driverKind,
@@ -203,9 +219,9 @@ class CodexCliRuntime implements RuntimeProviderInstance {
       enabled: this.configuration.enabled,
       version: this.configuration.version,
       status: available ? "available" : "unavailable",
-      reason: !this.configuration.enabled
+      reason: available ? null : !this.configuration.enabled
         ? "该供应商已停用。"
-        : this.inspectionError ?? (this.inspection?.authenticated
+        : this.connectionError ?? this.inspectionError ?? (this.inspection?.authenticated
           ? "Codex CLI 没有返回可用模型。"
           : this.inspectOnDescribe ? "Codex CLI 尚未登录。" : "测试环境未探测 Codex CLI。"),
       authenticated: this.inspection?.authenticated ?? false,
@@ -240,6 +256,22 @@ class CodexCliRuntime implements RuntimeProviderInstance {
     await this.inspect();
     if (!this.inspection?.authenticated || !this.inspection.models.default) {
       throw new AevorenBotError("MODEL_PROVIDER_UNAVAILABLE", undefined, false, { reason: "authentication" });
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      await new CodexCliProvider(
+        this.inspection.path,
+        this.inspection.models.default,
+        join(this.workspaceDirectory, this.id),
+      ).testConnection(controller.signal);
+      this.connectionError = null;
+    } catch (error) {
+      const mapped = controller.signal.aborted ? new AevorenBotError("MODEL_CONNECTION_TIMEOUT") : error;
+      this.connectionError = connectionReason("Codex CLI", mapped);
+      throw mapped;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -278,6 +310,7 @@ class ClaudeCliRuntime implements RuntimeProviderInstance {
   readonly route = "claude-cli" as const;
   private inspection: ClaudeCliInspection | null = null;
   private inspectionError: string | null = null;
+  private connectionError: string | null = null;
   private lastScannedAt: string | null = null;
 
   constructor(
@@ -295,7 +328,7 @@ class ClaudeCliRuntime implements RuntimeProviderInstance {
     const configured = text(this.configuration.config.cliPath) ?? "claude";
     const manual = configured !== "claude";
     const detectedPath = this.inspection?.path ?? resolveCliPath(configured);
-    const available = this.configuration.enabled && Boolean(this.inspection?.authenticated && this.inspection.models.default);
+    const available = this.configuration.enabled && this.connectionError === null && Boolean(this.inspection?.authenticated && this.inspection.models.default);
     return {
       id: this.id,
       driverKind: this.driverKind,
@@ -304,9 +337,9 @@ class ClaudeCliRuntime implements RuntimeProviderInstance {
       enabled: this.configuration.enabled,
       version: this.configuration.version,
       status: available ? "available" : "unavailable",
-      reason: !this.configuration.enabled
+      reason: available ? null : !this.configuration.enabled
         ? "该供应商已停用。"
-        : this.inspectionError ?? (this.inspection?.authenticated
+        : this.connectionError ?? this.inspectionError ?? (this.inspection?.authenticated
           ? "Claude Code 没有返回可用模型。"
           : this.inspectOnDescribe ? "Claude Code 已检测到，但尚未登录。" : "测试环境未探测 Claude Code。"),
       authenticated: this.inspection?.authenticated ?? false,
@@ -337,6 +370,22 @@ class ClaudeCliRuntime implements RuntimeProviderInstance {
     await this.inspect();
     if (!this.inspection?.authenticated || !this.inspection.models.default) {
       throw new AevorenBotError("MODEL_PROVIDER_UNAVAILABLE", undefined, false, { reason: "authentication" });
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      await new ClaudeCliProvider(
+        this.inspection.path,
+        this.inspection.models.default,
+        join(this.workspaceDirectory, this.id),
+      ).testConnection(controller.signal);
+      this.connectionError = null;
+    } catch (error) {
+      const mapped = controller.signal.aborted ? new AevorenBotError("MODEL_CONNECTION_TIMEOUT") : error;
+      this.connectionError = connectionReason("Claude Code", mapped);
+      throw mapped;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -555,14 +604,18 @@ export class ProviderService implements ProviderResolver {
     await this.reload();
     const descriptions = await this.scan();
     const current = this.repository.getDefaultModelSelection();
-    if (current.modelId) return;
-    const preferred = descriptions.find((instance) => instance.id === CODEX_INSTANCE_ID && instance.status === "available")
-      ?? descriptions.find((instance) => instance.id === CLAUDE_INSTANCE_ID && instance.status === "available")
-      ?? descriptions.find((instance) => instance.status === "available");
+    if (current.modelId && descriptions.some((instance) => instance.id === current.providerInstanceId)) {
+      this.repository.applyDefaultSelectionToUnsupportedBots([...FIRST_PHASE_PROVIDER_IDS], current);
+      return;
+    }
+    const preferred = [OPENAI_INSTANCE_ID, CODEX_INSTANCE_ID, CLAUDE_INSTANCE_ID]
+      .map((id) => descriptions.find((instance) => instance.id === id && instance.status === "available"))
+      .find((instance): instance is ProviderInstanceInfo => Boolean(instance));
     if (!preferred?.models.default) return;
     const selection = { providerInstanceId: preferred.id, modelId: preferred.models.default };
     this.repository.setDefaultModelSelection(selection);
     this.repository.applyDefaultSelectionToUnconfiguredBots(selection);
+    this.repository.applyDefaultSelectionToUnsupportedBots([...FIRST_PHASE_PROVIDER_IDS], selection);
   }
 
   async reload(): Promise<void> {
@@ -570,6 +623,7 @@ export class ProviderService implements ProviderResolver {
     this.instances.clear();
     this.descriptions.clear();
     for (const configuration of this.repository.listProviderInstanceConfigs()) {
+      if (!FIRST_PHASE_PROVIDER_IDS.has(configuration.id)) continue;
       this.instances.set(configuration.id, this.createRuntime(configuration));
     }
   }
@@ -634,6 +688,10 @@ export class ProviderService implements ProviderResolver {
 
   getCached(instanceId: string): ProviderInstanceInfo | null {
     return this.descriptions.get(instanceId) ?? null;
+  }
+
+  isSupported(instanceId: string): boolean {
+    return FIRST_PHASE_PROVIDER_IDS.has(instanceId);
   }
 
   getRoute(selection: ModelSelection) {
@@ -701,6 +759,5 @@ export class ProviderService implements ProviderResolver {
 export const DEFAULT_PROVIDER_INSTANCE_IDS = {
   codex: CODEX_INSTANCE_ID,
   claude: CLAUDE_INSTANCE_ID,
-  ollama: OLLAMA_INSTANCE_ID,
   openAiCompatible: OPENAI_INSTANCE_ID,
 } as const;

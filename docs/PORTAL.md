@@ -4,13 +4,14 @@
 
 ![Aevoren Bot overview](assets/aevoren-bot-overview.png)
 
-Aevoren Bot is an open-source, local-first macOS workspace for persistent AI Bots and deterministic multi-Bot collaboration. Conversations, explicit Memory, approvals, tool journal data, and runtime recovery stay on the user's computer.
+Aevoren Bot is an open-source, local-first desktop workspace for persistent AI Bots and deterministic multi-Bot collaboration. Conversations, explicit Memory, approvals, tool journal data, and runtime recovery stay on the user's computer.
 
 ## Current status
 
-- Pre-release source distribution; no public binary is published yet.
+- Open source plus signed macOS Beta distribution through GitHub Releases; Windows remains an explicitly labeled MVP track.
 - Supported release target: macOS 13 or newer on Apple silicon.
-- Windows, Linux, Intel macOS, and mobile builds are not currently published.
+- Windows 10/11 x64 is in the MVP source/CI validation track; signed public Windows artifacts are pending certificate setup.
+- Linux, Intel macOS, and mobile builds are not currently published.
 - Local unsigned packages are development artifacts, not official releases.
 
 ## Start here
@@ -30,7 +31,7 @@ Aevoren Bot is an open-source, local-first macOS workspace for persistent AI Bot
 
 ## Product boundaries
 
-Aevoren Bot does not currently provide cloud sync, multi-user accounts, billing, unrestricted shell execution, file writing, remote desktop, automatic Memory synthesis, or write-capable MCP tools. External actions remain explicit, scoped, and approval-gated.
+Aevoren Bot does not currently provide cloud sync, multi-user accounts, billing, unrestricted shell execution, arbitrary Workspace file writing, remote desktop, automatic Memory synthesis, or write-capable MCP tools. Users can explicitly export a completed reply as a bounded Markdown artifact through the system save dialog. External actions remain explicit, scoped, and approval-gated.
 
 Forks may reuse the source under Apache-2.0. The Aevoren Bot name, Logo, and official release identity are separate project identifiers; modified distributions should use their own name and visual identity and must not imply official endorsement.
 

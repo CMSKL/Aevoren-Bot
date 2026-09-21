@@ -2,6 +2,7 @@ import { clipboard, ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMain
 import { IPC } from "@shared/channels";
 import {
   approvalResolutionSchema,
+  artifactSaveSchema,
   batchIdSchema,
   botHiddenSchema,
   botIdSchema,
@@ -14,6 +15,8 @@ import {
   memoryCreateSchema,
   memoryListSchema,
   memoryMutationSchema,
+  memoryProposalAcceptSchema,
+  memoryProposalListSchema,
   memoryUpdateSchema,
   mcpServerEnabledSchema,
   mcpServerIdSchema,
@@ -72,6 +75,8 @@ type IpcDependencies = {
   routineService: RoutineService;
   updateService: UpdateService;
   pickWorkspaceRoot(): Promise<string | null>;
+  pickAttachments(): Promise<import("@shared/contracts").AttachmentDraft[]>;
+  saveArtifact(input: import("@shared/contracts").ArtifactSaveInput): Promise<import("@shared/contracts").ArtifactSaveResult | null>;
   forceFakeProvider: boolean;
   rendererReady(): void;
   confirmClose(canClose: boolean): void;
@@ -104,6 +109,8 @@ export function registerIpc(dependencies: IpcDependencies): void {
     );
   };
 
+  handle(IPC.attachmentsPick, () => dependencies.pickAttachments());
+  handle(IPC.artifactsSave, (_event, input: unknown) => dependencies.saveArtifact(artifactSaveSchema.parse(input)));
   handle(IPC.capabilitiesGetSnapshot, (_event, input: unknown) =>
     dependencies.capabilityRegistry.getSnapshot(capabilitySnapshotInputSchema.parse(input)),
   );
@@ -149,6 +156,9 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.botsCreate, () => repository.createBot());
   handle(IPC.botsUpdate, (_event, input: unknown) => {
     const parsed = botUpdateSchema.parse(input);
+    if (parsed.patch.modelSelection && !providers.isSupported(parsed.patch.modelSelection.providerInstanceId)) {
+      throw new AevorenBotError("MODEL_PROVIDER_NOT_FOUND");
+    }
     return repository.updateBot(parsed.id, parsed.expectedVersion, parsed.patch);
   });
   handle(IPC.botsSetPinned, (_event, input: unknown) => {
@@ -179,12 +189,19 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.memoriesCreate, (_event, input: unknown) => {
     const parsed = memoryCreateSchema.parse(input);
     return "botId" in parsed
-      ? repository.createMemory(parsed.botId, parsed.content)
-      : repository.createScopedMemory({ scope: parsed.scope, scopeKey: parsed.scopeKey }, parsed.content);
+      ? repository.createMemory(parsed.botId, parsed.content, { kind: parsed.kind, expiresAt: parsed.expiresAt })
+      : repository.createScopedMemory(
+          { scope: parsed.scope, scopeKey: parsed.scopeKey },
+          parsed.content,
+          { kind: parsed.kind, expiresAt: parsed.expiresAt },
+        );
   });
   handle(IPC.memoriesUpdate, (_event, input: unknown) => {
     const parsed = memoryUpdateSchema.parse(input);
-    return repository.updateMemory(parsed.id, parsed.expectedVersion, parsed.content);
+    return repository.updateMemory(parsed.id, parsed.expectedVersion, parsed.content, {
+      kind: parsed.kind,
+      expiresAt: parsed.expiresAt,
+    });
   });
   handle(IPC.memoriesDelete, (_event, input: unknown) => {
     const parsed = memoryMutationSchema.parse(input);
@@ -193,6 +210,22 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.memoriesRestore, (_event, input: unknown) => {
     const parsed = memoryMutationSchema.parse(input);
     return repository.restoreMemory(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.memoriesListProposals, (_event, input: unknown) => {
+    const parsed = memoryProposalListSchema.parse(input) ?? {};
+    return repository.listMemoryProposals(parsed);
+  });
+  handle(IPC.memoriesAcceptProposal, (_event, input: unknown) => {
+    const parsed = memoryProposalAcceptSchema.parse(input);
+    return repository.acceptMemoryProposal(parsed.id, parsed.expectedVersion, {
+      content: parsed.content,
+      kind: parsed.kind,
+      expiresAt: parsed.expiresAt,
+    });
+  });
+  handle(IPC.memoriesRejectProposal, (_event, input: unknown) => {
+    const parsed = memoryMutationSchema.parse(input);
+    return repository.rejectMemoryProposal(parsed.id, parsed.expectedVersion);
   });
   handle(IPC.workspacesList, () => repository.listWorkspaces());
   handle(IPC.workspacesAdd, async () => {

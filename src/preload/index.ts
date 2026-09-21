@@ -3,6 +3,12 @@ import { IPC } from "@shared/channels";
 import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
 
 const api: AevorenBotApi = {
+  attachments: {
+    pick: () => ipcRenderer.invoke(IPC.attachmentsPick),
+  },
+  artifacts: {
+    save: (input) => ipcRenderer.invoke(IPC.artifactsSave, input),
+  },
   capabilities: {
     getSnapshot: (input) => ipcRenderer.invoke(IPC.capabilitiesGetSnapshot, input),
   },
@@ -45,6 +51,9 @@ const api: AevorenBotApi = {
     update: (input) => ipcRenderer.invoke(IPC.memoriesUpdate, input),
     delete: (input) => ipcRenderer.invoke(IPC.memoriesDelete, input),
     restore: (input) => ipcRenderer.invoke(IPC.memoriesRestore, input),
+    listProposals: (input) => ipcRenderer.invoke(IPC.memoriesListProposals, input),
+    acceptProposal: (input) => ipcRenderer.invoke(IPC.memoriesAcceptProposal, input),
+    rejectProposal: (input) => ipcRenderer.invoke(IPC.memoriesRejectProposal, input),
   },
   workspaces: {
     list: () => ipcRenderer.invoke(IPC.workspacesList),

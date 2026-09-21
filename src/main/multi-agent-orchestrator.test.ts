@@ -11,6 +11,7 @@ import type { ChatMessage, ModelEvent, ModelProvider, ModelRunContext } from "./
 import { ScriptedFakeModelProvider } from "./model";
 import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
+import { DecisionService, FakeDecisionProvider } from "./decision-service";
 
 const repositories: AppRepository[] = [];
 const temporaryDirectories: string[] = [];
@@ -37,6 +38,7 @@ function harness(
   providerFactory: (fixture: Pick<Harness, "repository" | "bots" | "detail">) => ModelProvider,
   memberCount = 3,
   filename = ":memory:",
+  decisionFactory?: (fixture: Pick<Harness, "repository" | "bots" | "detail">) => DecisionService,
 ): Harness {
   const repository = new AppRepository(filename);
   repositories.push(repository);
@@ -49,6 +51,7 @@ function harness(
   });
   const detail = repository.createRoom({ memberBotIds: bots.map((bot) => bot.id), name: "M2 Room" });
   const provider = providerFactory({ repository, bots, detail });
+  const decisions = decisionFactory?.({ repository, bots, detail });
   const roomEvents = vi.fn();
   const executor = new RuntimeExecutor(
     repository,
@@ -56,6 +59,10 @@ function harness(
     { transcript: vi.fn(), runtime: vi.fn() },
     false,
     provider,
+    undefined,
+    undefined,
+    undefined,
+    decisions,
   );
   const coordinator = new RoomCoordinator(repository, executor, { roomRuntime: roomEvents, transcript: vi.fn() });
   return { repository, bots, detail, coordinator, executor, roomEvents };
@@ -209,7 +216,11 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
           reason: "草稿明确要求 Agent B 立即复核。",
         };
       },
-    }), 2);
+    }), 2, ":memory:", ({ repository }) => new DecisionService(repository, new FakeDecisionProvider(() => ({
+      answers: { action: { value: "handoff", confidence: 0.86 } },
+      modelVersion: "fake-decision-1",
+      requestId: "handoff-shadow",
+    })), true));
 
     const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
     await waitForBatch(value.repository, sent.batchId, ["completed"]);
@@ -226,6 +237,8 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       task: "通过 结构化转交 复核当前结果。",
       state: "accepted",
     });
+    await vi.waitFor(() => expect(value.repository.listDecisionJournals()[0]?.state).toBe("completed"));
+    expect(value.repository.listDecisionJournals()[0]?.answers.existingContinuation?.value).toMatchObject({ action: "handoff" });
     expect(JSON.stringify(value.repository.listTranscript(value.detail.session.id))).not.toContain("handoff_to_agent");
   });
 

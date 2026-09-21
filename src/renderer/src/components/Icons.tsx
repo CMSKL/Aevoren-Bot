@@ -55,6 +55,15 @@ export function FolderIcon(props: IconProps): React.JSX.Element {
   );
 }
 
+export function AttachmentIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="m8.5 12.5 5.8-5.8a3.2 3.2 0 1 1 4.5 4.5l-7.4 7.4a5.2 5.2 0 0 1-7.4-7.4l7.2-7.2" />
+      <path d="m8.2 15.8 6.1-6.1" />
+    </IconBase>
+  );
+}
+
 export function SendIcon(props: IconProps): React.JSX.Element {
   return (
     <IconBase {...props}>

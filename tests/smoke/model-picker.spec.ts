@@ -39,6 +39,10 @@ test("switches one Bot model from the compact header picker and preserves unavai
     await trigger.click();
     const picker = page.getByRole("dialog", { name: "选择模型" });
     await expect(picker).toBeVisible();
+    await expect(picker.locator(".header-model-rail button")).toHaveCount(3);
+    await expect(picker.getByRole("button", { name: "API", exact: true })).toBeVisible();
+    await expect(picker.getByRole("button", { name: "Claude Code", exact: true })).toBeVisible();
+    await expect(picker.getByRole("button", { name: "Codex CLI", exact: true })).toBeVisible();
     await expect(picker.locator(".header-model-list > button")).toHaveCount(2);
     await expect(picker.locator('.header-model-list > button[aria-current="true"]')).toContainText("当前");
     await picker.locator(".header-model-list > button").filter({ hasText: "model-beta" }).click();

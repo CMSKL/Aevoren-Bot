@@ -195,6 +195,35 @@ jobs:
           gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/aevoren-release-download"
           (cd "$RUNNER_TEMP/aevoren-release-download" && shasum -a 256 -c SHASUMS256.txt)
           node scripts/verify-macos-release-assets.mjs "$RUNNER_TEMP/aevoren-release-download" "$RELEASE_VERSION" arm64
+      - name: Wait for Windows assets in the shared draft release
+        if: ${{ vars.AEVOREN_WINDOWS_RELEASE_ENABLED == '1' }}
+        shell: bash
+        env:
+          RELEASE_TYPE: ${{ steps.release.outputs.release_type }}
+        run: |
+          if [[ "$RELEASE_TYPE" == "prerelease" ]]; then
+            manifest='beta.yml'
+          else
+            manifest='latest.yml'
+          fi
+          for attempt in $(seq 1 60); do
+            draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)"
+            if [[ "$draft" != "true" ]]; then
+              echo 'The shared release was published before Windows assets arrived' >&2
+              exit 1
+            fi
+            names="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')"
+            if grep -Fxq "$manifest" <<<"$names" \
+              && grep -Fxq 'SHASUMS256-win.txt' <<<"$names" \
+              && grep -Eq '\.exe$' <<<"$names" \
+              && grep -Eq '\.blockmap$' <<<"$names"; then
+              echo 'Windows release assets are present in the shared draft'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Timed out waiting for Windows release assets' >&2
+          exit 1
       - name: Publish immutable release
         shell: bash
         env:

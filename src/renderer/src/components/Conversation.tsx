@@ -1,6 +1,7 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AppError,
+  AttachmentDraft,
   ApprovalRequest,
   ApprovalResolution,
   Bot,
@@ -30,8 +31,9 @@ import {
   type RoomMention,
 } from "../room-mentions";
 import { AssistantMarkdown } from "./AssistantMarkdown";
-import { BotIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
+import { AttachmentIcon, BotIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
 import { HeaderModelPicker } from "./HeaderModelPicker";
+import { ExpandableTrace, type ExpandableTraceKind, type ExpandableTraceTone } from "./ExpandableTrace";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
@@ -95,6 +97,7 @@ type TranscriptItemProps = {
   onRetryRoomTurn(turnId: string): void;
   onOpenSpeaker(botId: string): void;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
+  onSaveArtifact(entry: TranscriptEntry): Promise<void>;
 };
 
 const toolStateLabels: Record<ToolInvocation["state"], string> = {
@@ -124,6 +127,36 @@ function toolActionLabel(invocation: ToolInvocation): string {
   return "查询当前时间";
 }
 
+const activeToolStates = new Set<ToolInvocation["state"]>(["prepared", "approved", "dispatching", "running"]);
+
+function toolTraceKind(invocation: ToolInvocation): ExpandableTraceKind {
+  if (["web-search", "web-fetch", "weather-current", "time-now"].includes(invocation.toolKind)) return "search";
+  if (["workspace-list", "workspace-read", "workspace-search"].includes(invocation.toolKind)) return "coding";
+  return "steps";
+}
+
+function toolTraceTone(invocation: ToolInvocation): ExpandableTraceTone {
+  if (activeToolStates.has(invocation.state)) return "working";
+  if (invocation.state === "succeeded") return "success";
+  if (["awaiting-approval", "denied", "expired", "cancelled"].includes(invocation.state)) return "attention";
+  if (["failed", "failed-before-execution", "interrupted-unknown"].includes(invocation.state)) return "error";
+  return "neutral";
+}
+
+function activeTraceLabel(kind: ExpandableTraceKind): string {
+  if (kind === "search") return "正在搜索";
+  if (kind === "coding") return "正在运行工具";
+  if (kind === "reasoning") return "正在思考";
+  return "正在执行步骤";
+}
+
+function completedTraceLabel(kind: ExpandableTraceKind): string {
+  if (kind === "search") return "已完成搜索";
+  if (kind === "coding") return "已运行工具";
+  if (kind === "reasoning") return "思考完成";
+  return "步骤已完成";
+}
+
 const ToolActivity = memo(function ToolActivity({
   invocation,
   approval,
@@ -134,7 +167,9 @@ const ToolActivity = memo(function ToolActivity({
   onResolve(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
 }): React.JSX.Element {
   const [resolving, setResolving] = useState<ApprovalResolution | null>(null);
-  const query = invocation.arguments.kind === "workspace-search" ? invocation.arguments.query : null;
+  const query = invocation.arguments.kind === "workspace-search" || invocation.arguments.kind === "web-search"
+    ? invocation.arguments.query
+    : null;
   const remote = invocation.effectClass === "read-remote";
   const pure = invocation.effectClass === "pure";
   const clipboardRead = invocation.toolKind === "clipboard-read";
@@ -151,6 +186,11 @@ const ToolActivity = memo(function ToolActivity({
     : typeof invocation.resultMetadata?.retrievedAt === "string"
       ? invocation.resultMetadata.retrievedAt
       : null;
+  const traceKind = toolTraceKind(invocation);
+  const active = activeToolStates.has(invocation.state);
+  const settledLabel = invocation.state === "succeeded"
+    ? completedTraceLabel(traceKind)
+    : toolStateLabels[invocation.state];
 
   async function resolve(resolution: ApprovalResolution): Promise<void> {
     if (!approval || resolving) return;
@@ -163,23 +203,31 @@ const ToolActivity = memo(function ToolActivity({
   }
 
   return (
-    <div className={`tool-activity tool-${invocation.state}`} data-testid="workspace-tool-activity">
-      <div className="tool-activity-heading">
-        <span className="tool-activity-icon"><FolderIcon /></span>
-        <span className="tool-activity-copy">
-          <strong>{toolActionLabel(invocation)}</strong>
-          <span>{targetLabel}{query ? ` · “${query}”` : ""}</span>
-        </span>
-        <span className="tool-activity-state">{toolStateLabels[invocation.state]}</span>
-      </div>
+    <ExpandableTrace
+      active={active}
+      activeLabel={activeTraceLabel(traceKind)}
+      autoExpanded={active || invocation.state !== "succeeded"}
+      className={`tool-${invocation.state}`}
+      kind={traceKind}
+      rows={[{
+        id: invocation.id,
+        primary: toolActionLabel(invocation),
+        secondary: `${targetLabel}${query ? ` · “${query}”` : ""}`,
+        trailing: toolStateLabels[invocation.state],
+        mono: traceKind === "coding",
+      }]}
+      settledLabel={settledLabel}
+      testId="workspace-tool-activity"
+      tone={toolTraceTone(invocation)}
+    >
       {invocation.state === "succeeded" && (resultProvider || resultTime) ? (
-        <div className="tool-provenance">
+        <div className="expandable-trace-meta">
           {resultProvider ? <span>来源：{resultProvider}</span> : null}
           {resultTime ? <span>时间：{resultTime}</span> : null}
         </div>
       ) : null}
       {approval?.state === "pending" ? (
-        <div className="tool-approval-actions" aria-label={remote ? "联网查询确认" : pure ? "系统信息确认" : clipboardRead ? "剪贴板读取确认" : "本地工具确认"}>
+        <div className="expandable-trace-actions" aria-label={remote ? "联网查询确认" : pure ? "系统信息确认" : clipboardRead ? "剪贴板读取确认" : "本地工具确认"}>
           <p>{remote
             ? "仅本次允许 Aevoren Bot 将上方查询内容发送给标明的外部只读数据服务。"
             : pure
@@ -193,7 +241,7 @@ const ToolActivity = memo(function ToolActivity({
           </div>
         </div>
       ) : null}
-    </div>
+    </ExpandableTrace>
   );
 });
 
@@ -217,6 +265,7 @@ const TranscriptItem = memo(function TranscriptItem({
   onRetryRoomTurn,
   onOpenSpeaker,
   onResolveApproval,
+  onSaveArtifact,
 }: TranscriptItemProps): React.JSX.Element {
   const failedBeforeAcceptance = entry.sendState === "failed-before-acceptance";
   const interrupted = run?.state === "interrupted";
@@ -257,9 +306,20 @@ const TranscriptItem = memo(function TranscriptItem({
                 {routeMode === "automatic" && routeReason ? <span className="message-route-reason">{routeReason}</span> : null}
               </div>
             ) : null}
-            {entry.role === "assistant"
+          {entry.role === "assistant"
               ? <AssistantMarkdown body={assistantBody} />
               : <p className="user-message-body">{entry.body}</p>}
+            {entry.attachments && entry.attachments.length > 0 ? (
+              <div className="message-attachments" aria-label="消息附件">
+                {entry.attachments.map((attachment) => (
+                  <span className="message-attachment" key={attachment.id}>
+                    <AttachmentIcon />
+                    <span>{attachment.name}</span>
+                    <small>{Math.max(1, Math.round(attachment.size / 1024))} KB</small>
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div> : null}
           {handoffs.length > 0 ? (
             <div className="message-handoffs" aria-label="Agent 任务转交" data-testid="room-handoff-list">
@@ -301,7 +361,7 @@ const TranscriptItem = memo(function TranscriptItem({
             ? <div className="streaming-indicator">正在生成<span /></div>
             : null}
           {entry.role === "assistant" && entry.status === "completed"
-            ? <div className="entry-note success">已完成</div>
+            ? <div className="entry-note success">已完成 <button type="button" className="text-button" onClick={() => void onSaveArtifact(entry)}>保存为 Markdown</button></div>
             : null}
           {cancelled ? (
             <div className="entry-note warning">
@@ -361,10 +421,12 @@ type ConversationProps = {
   onOpenBots(): void;
   onOpenProfile(): void;
   onOpenWorkspaces(): void;
+  onPickAttachments(): Promise<AttachmentDraft[]>;
   onBotUpdated(bot: Bot): void;
   onError(error: AppError | null): void;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
-  onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode): Promise<boolean>;
+  onSaveArtifact(entry: TranscriptEntry): Promise<void>;
+  onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode, attachments?: AttachmentDraft[]): Promise<boolean>;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onCancelRun(runId: string): void;
@@ -393,9 +455,11 @@ export function Conversation({
   onOpenBots,
   onOpenProfile,
   onOpenWorkspaces,
+  onPickAttachments,
   onBotUpdated,
   onError,
   onResolveApproval,
+  onSaveArtifact,
   onSend,
   onRetryMessage,
   onRetryRun,
@@ -406,6 +470,7 @@ export function Conversation({
   onOpenSpeaker,
 }: ConversationProps): React.JSX.Element {
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [roomMentions, setRoomMentions] = useState<RoomMention[]>([]);
   const [mentionQuery, setMentionQuery] = useState<ActiveMentionQuery | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
@@ -566,9 +631,10 @@ export function Conversation({
         : effectiveRoomMentions.some((mention) => mention.kind === "everyone")
           ? "everyone"
           : "explicit";
-    const accepted = await onSend(text, room ? targetBotIds : undefined, routingMode);
+    const accepted = await onSend(text, room ? targetBotIds : undefined, routingMode, attachments);
     if (accepted) {
       setDraft("");
+      setAttachments([]);
       setRoomMentions([]);
       setMentionQuery(null);
       dismissedMentionRef.current = null;
@@ -700,6 +766,7 @@ export function Conversation({
               onRetryRoomTurn={onRetryRoomTurn}
               onOpenSpeaker={onOpenSpeaker}
               onResolveApproval={onResolveApproval}
+              onSaveArtifact={onSaveArtifact}
             />
           );
         })}
@@ -768,6 +835,23 @@ export function Conversation({
             </div>
           ) : null}
           <div className="composer-editor">
+            {attachments.length > 0 ? <div className="attachment-chips" aria-label="已添加的附件">
+              {attachments.map((attachment) => (
+                <button
+                  className="attachment-chip"
+                  type="button"
+                  key={attachment.id}
+                  aria-label={`移除附件 ${attachment.name}`}
+                  disabled={busy}
+                  onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                >
+                  <AttachmentIcon />
+                  <span>{attachment.name}</span>
+                  <small>{Math.max(1, Math.round(attachment.size / 1024))} KB</small>
+                  <span aria-hidden="true">×</span>
+                </button>
+              ))}
+            </div> : null}
             {roomMentions.length > 0 ? <div className="mention-chips" aria-label="已提及的 Bot">
               {roomMentions.map((mention) => {
                 const invalid = mention.kind === "bot" && !memberBotIds.includes(mention.id);
@@ -787,6 +871,17 @@ export function Conversation({
                 );
               })}
             </div> : null}
+            <button
+              className="attachment-button"
+              type="button"
+              aria-label="添加文本附件"
+              title="添加文本附件"
+              disabled={busy || attachments.length >= 6 || (!bot && !room)}
+              onClick={() => void onPickAttachments().then((picked) => {
+                if (picked.length === 0) return;
+                setAttachments((current) => [...current, ...picked.filter((item) => !current.some((existing) => existing.sha256 === item.sha256))].slice(0, 6));
+              })}
+            ><AttachmentIcon /></button>
             <textarea
               ref={composerInputRef}
               aria-label="消息"

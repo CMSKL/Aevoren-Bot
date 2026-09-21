@@ -5,8 +5,8 @@ This roadmap is intentionally short and describes direction, not a promise of da
 ## Current release line
 
 - macOS-first local Bot and Room conversations;
-- automatic local CLI discovery and model selection;
-- explicit Memory, read-only Workspace access, reviewed MCP tools, and approval journals;
+- first-phase API, Claude Code, and Codex CLI discovery, validation, and model selection;
+- reviewed long-term Memory capture, read-only Workspace access, reviewed MCP tools, and approval journals;
 - bounded Routines and recovery-aware signed update infrastructure;
 - Apache-2.0 source with brand identity handled separately.
 

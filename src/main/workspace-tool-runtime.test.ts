@@ -9,6 +9,7 @@ import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { NetworkToolExecutor } from "./network-tool-executor";
+import { DecisionService, FakeDecisionProvider } from "./decision-service";
 
 const repositories: AppRepository[] = [];
 const directories: string[] = [];
@@ -25,13 +26,17 @@ afterEach(() => {
   while (directories.length > 0) rmSync(directories.pop()!, { recursive: true, force: true });
 });
 
-async function harness(resolution: "allow-once" | "deny") {
+async function harness(
+  resolution: "allow-once" | "deny",
+  decisionFactory?: (repository: AppRepository) => DecisionService,
+) {
   const repository = new AppRepository(":memory:");
   repositories.push(repository);
   const root = directory();
   writeFileSync(join(root, "brief.txt"), "PRIVATE_WORKSPACE_RESULT", "utf8");
   const workspaceService = new WorkspaceService(repository);
   const registered = await workspaceService.registerRoot(root);
+  const decisions = decisionFactory?.(repository);
   const created = repository.createBot();
   const calls: ChatMessage[][] = [];
   const provider: ModelProvider = {
@@ -63,6 +68,7 @@ async function harness(resolution: "allow-once" | "deny") {
         queueMicrotask(() => void coordinator.resolve(event.sessionId, event.approval.id, event.approval.version, resolution));
       }
     },
+    decisions,
   );
   const worker = new SendWorker(
     repository,
@@ -97,6 +103,14 @@ describe("Workspace tool Runtime wiring", () => {
       testConnection: async () => {},
     };
     const service = new WorkspaceService(repository);
+    const decisions = new DecisionService(repository, new FakeDecisionProvider(() => ({
+      answers: {
+        riskLevel: { value: 0, confidence: 0.98 },
+        needsHumanApproval: { value: true, confidence: 0.99 },
+      },
+      modelVersion: "fake-decision-1",
+      requestId: "tool-shadow",
+    })), true);
     const coordinator = new WorkspaceToolCoordinator(
       repository,
       new WorkspaceToolExecutor(repository, service, new NetworkToolExecutor(() => new Date("2026-09-17T08:00:00.000Z"))),
@@ -105,6 +119,7 @@ describe("Workspace tool Runtime wiring", () => {
           queueMicrotask(() => void coordinator.resolve(event.sessionId, event.approval.id, event.approval.version, "allow-once"));
         }
       },
+      decisions,
     );
     const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "CLI 查询时间" });
@@ -112,6 +127,16 @@ describe("Workspace tool Runtime wiring", () => {
     expect(hostResult).toContain("2026-09-17T08:00:00.000Z");
     expect(repository.listTranscript(created.session.id).at(-1)?.body).toContain("CLI_RESULT");
     expect(repository.listToolInvocations(created.session.id)[0]).toMatchObject({ state: "succeeded", toolKind: "time-now" });
+    await vi.waitFor(() => expect(repository.listDecisionJournals()).toHaveLength(2));
+    expect(repository.listDecisionJournals().map((entry) => entry.policyId)).toEqual(expect.arrayContaining([
+      "tool-risk-shadow",
+      "tool-result-quality-shadow",
+    ]));
+    expect(repository.listDecisionJournals().every((entry) => entry.state === "completed")).toBe(true);
+    const riskJournal = repository.listDecisionJournals().find((entry) => entry.policyId === "tool-risk-shadow")!;
+    const qualityJournal = repository.listDecisionJournals().find((entry) => entry.policyId === "tool-result-quality-shadow")!;
+    expect(riskJournal.answers.existingApproval?.value).toMatchObject({ state: "pending" });
+    expect(qualityJournal.answers.existingResult?.value).toMatchObject({ resultCharacters: expect.any(Number) });
   });
 
   it("keeps fetched page text out of the journal while returning it to the same approved model run", async () => {
@@ -233,7 +258,15 @@ describe("Workspace tool Runtime wiring", () => {
   });
 
   it("executes only after allow-once, returns the result to the same model run, and persists only a digest", async () => {
-    const value = await harness("allow-once");
+    const capturedStates: Array<Record<string, unknown>> = [];
+    const value = await harness("allow-once", (repository) => new DecisionService(repository, new FakeDecisionProvider((request) => {
+      capturedStates.push(request.state);
+      return {
+        answers: { evidenceSufficiency: { value: true, confidence: 0.8 } },
+        modelVersion: "fake-decision-1",
+        requestId: "quality-shadow",
+      };
+    }), true));
     const sent = value.worker.send({ sessionId: value.created.session.id, clientNonce: crypto.randomUUID(), text: "读取 brief" });
     await vi.waitFor(() => expect(value.repository.getRuntimeRun(sent.runId).state).toBe("completed"));
 
@@ -248,6 +281,10 @@ describe("Workspace tool Runtime wiring", () => {
     expect(JSON.stringify(invocation)).not.toContain("PRIVATE_WORKSPACE_RESULT");
     expect(JSON.stringify(value.toolEvents)).not.toContain("PRIVATE_WORKSPACE_RESULT");
     expect(value.toolEvents.map((event) => event.invocation.state)).toEqual(expect.arrayContaining(["awaiting-approval", "approved", "succeeded"]));
+    await vi.waitFor(() => expect(value.repository.listDecisionJournals()).toHaveLength(2));
+    const qualityState = capturedStates.find((state) => state.privateContentOmitted === true);
+    expect(qualityState).toBeDefined();
+    expect(JSON.stringify(qualityState)).not.toContain("PRIVATE_WORKSPACE_RESULT");
   });
 
   it("returns a denial to the model without resolving any filesystem target", async () => {

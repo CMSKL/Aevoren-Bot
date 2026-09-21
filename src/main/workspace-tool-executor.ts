@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
-import { posix } from "node:path";
+import { join, posix } from "node:path";
 import type { Stats } from "node:fs";
 import type { DeviceToolRequest, NetworkToolRequest, ToolInvocation, ToolRequest, WorkspaceToolRequest } from "@shared/contracts";
 import type { AppRepository } from "./database";
@@ -223,7 +223,10 @@ export class WorkspaceToolExecutor {
       for (const entry of directory.entries) {
         if (limitReached()) return;
         const childRelative = relativeDirectory ? posix.join(relativeDirectory, entry.name) : entry.name;
-        const childCanonical = posix.join(canonicalDirectory, entry.name);
+        // Keep user-visible relative paths POSIX-normalized, but use the host
+        // path implementation for canonical filesystem paths (Windows drive
+        // roots and separators must not be joined with posix.join()).
+        const childCanonical = join(canonicalDirectory, entry.name);
         const before = await lstat(childCanonical);
         if (before.isSymbolicLink()) continue;
         if (before.isDirectory()) {
@@ -288,7 +291,11 @@ export class WorkspaceToolExecutor {
   ): Promise<{ text: string; bytes: number; truncated: boolean }> {
     checkCancellation(signal);
     const target = await this.workspaceService.resolveExistingTarget(workspaceId, relativePath, "file");
-    const handle = await open(target.canonicalPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    // Windows does not expose the POSIX O_NOFOLLOW flag. The target was already
+    // resolved and checked for symlinks by WorkspaceService; keep that guard on
+    // Windows while retaining the stronger open-time check on POSIX platforms.
+    const noFollowFlag = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+    const handle = await open(target.canonicalPath, constants.O_RDONLY | noFollowFlag);
     try {
       const before = await handle.stat();
       if (!before.isFile()) throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");

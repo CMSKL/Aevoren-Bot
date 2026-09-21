@@ -10,19 +10,20 @@
 
 Start with the [project portal](docs/PORTAL.md), [installation guide](docs/INSTALLATION.md), or [user guide](docs/USER_GUIDE.md).
 
-Aevoren Bot is a local-first macOS workspace for persistent AI Bots and deterministic multi-Bot collaboration. It keeps conversations, explicit Memory, tool approvals, and runtime recovery on the user's computer while allowing the user to choose a local CLI or OpenAI-compatible model source.
+Aevoren Bot is a local-first desktop workspace for persistent AI Bots and deterministic multi-Bot collaboration. It keeps conversations, explicit Memory, tool approvals, and runtime recovery on the user's computer while allowing the user to choose API, Claude Code, or Codex CLI.
 
-> **Pre-release status:** the source is under active development and no public binary has been released yet. The supported target is macOS 13+ on Apple silicon. Do not treat local unsigned builds as official releases.
+> **Pre-release status:** signed macOS Beta binaries are distributed through [GitHub Releases](https://github.com/CMSKL/Aevoren-Bot/releases). macOS 13+ on Apple silicon is the signed release target; Windows 10/11 x64 remains in the Windows MVP validation track. Do not treat local unsigned builds as official releases.
 
 ## Highlights
 
 - Reliable streamed conversations backed by SQLite Transcript, Send Journal, stable nonces, idempotent retry, cancellation, and crash recovery.
+- Bounded text/code attachments with validated metadata, prompt-safe ingestion, and user-controlled Markdown result export.
 - Direct Bot chats and 2–6 member Rooms with explicit `@Bot`, automatic owner selection, bounded handoff, speaker identity, and loop suppression.
-- Automatic discovery for Codex CLI, Claude Code, Ollama, and supported ACP CLIs, plus an OpenAI-compatible fallback.
+- First-phase model support for a manually configured OpenAI-compatible API, automatically discovered Claude Code, and automatically discovered Codex CLI.
 - Codex App Server Dynamic Tools routed through Aevoren's explicit Approval and Tool Journal boundary.
-- User-, Bot-, and Workspace-scoped explicit Memory; models cannot silently write long-term Memory.
+- User-, Bot-, and Workspace-scoped long-term Memory with non-blocking reviewed capture; model suggestions stay pending until the user accepts them.
 - User-authorized, read-only Workspace list/read/search and bounded clipboard access.
-- Read-only time, weather, limited Wikipedia search, safe public HTTPS page reading, and reviewed MCP tools.
+- Read-only time, weather, public web search, safe public HTTPS page reading, and reviewed MCP tools.
 - MCP stdio and Streamable HTTP support with OAuth 2.1/PKCE, encrypted credentials, per-Bot scope, exact tool review, and one-time approval.
 - One-time, interval, and cron Routines with history, notifications, background window behavior, and optional macOS login startup.
 - Sandboxed Renderer, typed Preload API, encrypted secrets, bounded tool inputs, private-network rejection, and signed/notarized release gates.
@@ -33,7 +34,8 @@ Aevoren Bot is a local-first macOS workspace for persistent AI Bots and determin
 | --- | --- |
 | macOS 13+ on Apple silicon | Supported development and release target |
 | Intel macOS | Not tested or released |
-| Windows / Linux | Not tested or released |
+| Windows 10/11 x64 | Windows MVP source/smoke/package target; signed public installer pending certificate setup |
+| Intel macOS / Linux | Not tested or released |
 | Mobile | Not implemented |
 
 ## Run from source
@@ -42,8 +44,8 @@ Requirements:
 
 - Node.js 24;
 - pnpm 11.19.0;
-- Xcode Command Line Tools;
-- macOS 13 or newer on Apple silicon.
+- Xcode Command Line Tools on macOS, or PowerShell on Windows;
+- macOS 13 or newer on Apple silicon, or Windows 10/11 x64.
 
 ```bash
 git clone https://github.com/CMSKL/Aevoren-Bot.git
@@ -58,11 +60,11 @@ The Fake Provider is deterministic and requires no account or API key. See [Inst
 
 Open **Settings → Models & CLI**. Aevoren Bot scans common installation locations and `PATH` for supported CLIs and reads only the installation, login, and model information required by the corresponding adapter.
 
-- **Codex CLI:** model discovery and host Dynamic Tool support.
+- **API:** OpenAI-compatible Base URL, API Key, model discovery, and real request validation.
 - **Claude Code:** model/login discovery and text conversations; host tools remain unavailable until an equivalent verified protocol is supported.
-- **Ollama:** installed local model discovery and text conversations.
-- **ACP CLIs:** protocol-based model discovery and text conversations where supported.
-- **OpenAI-compatible:** manual Base URL and API key fallback.
+- **Codex CLI:** model discovery, text conversations, and host Dynamic Tool support.
+
+Other Provider and CLI adapters are outside the first-phase product scope and are not exposed in the model UI.
 
 Saved API keys and OAuth credentials are encrypted by Electron `safeStorage` and are not returned to the Renderer. See [Configuration](docs/CONFIGURATION.md) for MCP, Workspace, Memory, Routine, and environment-variable details.
 
@@ -98,11 +100,13 @@ pnpm verify
 
 Electron smoke tests use hidden windows and temporary user-data directories. A local unsigned macOS package can be created with `pnpm package:mac`; it is not a distributable release.
 
+For Windows x64 source validation, use `pnpm package:win`. This creates an unsigned NSIS installer for CI/development checks; the signed installer is produced only by the Windows release workflow after `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD` are configured. Use `pnpm package:win:dir` when an unpacked directory is needed for diagnostics.
+
 ## Data and privacy
 
 Application data is stored locally in Electron's user-data directory. Aevoren Bot stores Bots, Rooms, transcripts, explicit Memory, settings, Tool Journal metadata, and Routine history in SQLite. Secret values are stored separately through `safeStorage`.
 
-Models and enabled external services receive only the context and tool inputs required for the user's request. Aevoren Bot does not provide cloud sync, multi-user accounts, billing, remote desktop, unrestricted shell, file writing, automatic Memory synthesis, or write-capable MCP tools in the current release line.
+Models and enabled external services receive only the context and tool inputs required for the user's request. Aevoren Bot does not provide cloud sync, multi-user accounts, billing, remote desktop, unrestricted shell, arbitrary Workspace file writing, automatic Memory synthesis, or write-capable MCP tools in the current release line. Users can explicitly export a completed reply as a bounded Markdown artifact through the system save dialog.
 
 ## Contributing and support
 

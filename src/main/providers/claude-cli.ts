@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import type { ChatMessage, ModelEvent, ModelProvider } from "../model";
 import { AevorenBotError } from "../errors";
-import { cliEnvironment, probeCliVersion, resolveCliPath } from "./cli-utils";
+import { cliEnvironment, cliShellOptions, probeCliVersion, resolveCliPath } from "./cli-utils";
 
 const execFileAsync = promisify(execFile);
 const MODEL_ID = /^[a-z0-9][a-z0-9._:/-]*$/iu;
@@ -33,14 +33,13 @@ const REUSABLE_CLAUDE_ENVIRONMENT_KEYS = new Set([
   "CLAUDE_CODE_USE_FOUNDRY",
 ]);
 
-const STATIC_CLAUDE_MODELS = {
-  default: "claude-sonnet-5",
+const FALLBACK_CLAUDE_MODELS = {
+  default: "sonnet",
   options: [
-    { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
-    { id: "claude-fable-5", label: "Claude Fable 5" },
-    { id: "claude-opus-5", label: "Claude Opus 5" },
-    { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
-    { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+    { id: "sonnet", label: "Claude Sonnet" },
+    { id: "opus", label: "Claude Opus" },
+    { id: "fable", label: "Claude Fable" },
+    { id: "haiku", label: "Claude Haiku" },
   ],
 } as const;
 
@@ -144,6 +143,7 @@ export async function inspectClaudeCli(cliCommand: string): Promise<ClaudeCliIns
         env: environment,
         timeout: 8_000,
         maxBuffer: 64 * 1024,
+        ...cliShellOptions(probe.path),
       });
       const status = JSON.parse(result.stdout) as { loggedIn?: unknown };
       return status.loggedIn === true;
@@ -151,15 +151,22 @@ export async function inspectClaudeCli(cliCommand: string): Promise<ClaudeCliIns
       return false;
     }
   })();
-  const options: Array<{ id: string; label: string; provider?: string; custom?: boolean }> = STATIC_CLAUDE_MODELS.options.map((model) => ({ ...model }));
-  for (const model of configuredModels(environment)) {
-    if (!options.some((candidate) => candidate.id === model.id)) options.push(model);
-  }
+  const configured = configuredModels(environment);
+  const options: Array<{ id: string; label: string; provider?: string; custom?: boolean }> = configured.length > 0
+    ? configured
+    : FALLBACK_CLAUDE_MODELS.options.map((model) => ({ ...model }));
+  const preferred = [
+    environment.ANTHROPIC_MODEL,
+    environment.ANTHROPIC_DEFAULT_SONNET_MODEL,
+    environment.ANTHROPIC_DEFAULT_FABLE_MODEL,
+    environment.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    environment.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+  ].find((candidate): candidate is string => typeof candidate === "string" && options.some((model) => model.id === candidate));
   return {
     path: probe.path,
     version: probe.version,
     authenticated,
-    models: { default: STATIC_CLAUDE_MODELS.default, options },
+    models: { default: preferred ?? options[0]?.id ?? "", options },
   };
 }
 
@@ -179,6 +186,22 @@ function textFromAssistantFrame(value: unknown): string {
     const item = block as { type?: unknown; text?: unknown };
     return item.type === "text" && typeof item.text === "string" ? [item.text] : [];
   }).join("");
+}
+
+function claudeResultError(frame: Record<string, unknown>): AevorenBotError {
+  const message = [frame.result, frame.error, frame.message]
+    .filter((value): value is string => typeof value === "string")
+    .join("\n");
+  if (/(?:not logged in|please run \/login|authentication|invalid api key|unauthorized)/iu.test(message)) {
+    return new AevorenBotError("MODEL_AUTHENTICATION_FAILED");
+  }
+  if (/(?:usage limit|quota|rate.?limit|purchase extra usage|upgrade your plan)/iu.test(message)) {
+    return new AevorenBotError("MODEL_QUOTA_EXCEEDED");
+  }
+  if (/(?:unrecognized.model|model.+(?:not found|unavailable|invalid|unsupported))/iu.test(message)) {
+    return new AevorenBotError("MODEL_SELECTED_MODEL_UNAVAILABLE");
+  }
+  return new AevorenBotError("MODEL_REQUEST_REFUSED");
 }
 
 export class ClaudeCliProvider implements ModelProvider {
@@ -213,6 +236,7 @@ export class ClaudeCliProvider implements ModelProvider {
       cwd: this.cwd,
       env: environment,
       stdio: ["pipe", "pipe", "pipe"],
+      ...cliShellOptions(path),
     });
     let processError: Error | null = null;
     let requestId: string = randomUUID();
@@ -253,7 +277,7 @@ export class ClaudeCliProvider implements ModelProvider {
           continue;
         }
         if (frame.type !== "result") continue;
-        if (frame.subtype !== "success" || frame.is_error === true) throw new AevorenBotError("MODEL_REQUEST_REFUSED");
+        if (frame.subtype !== "success" || frame.is_error === true) throw claudeResultError(frame);
         if (!started) {
           started = true;
           yield { type: "started", requestId };
@@ -274,10 +298,13 @@ export class ClaudeCliProvider implements ModelProvider {
     }
   }
 
-  async testConnection(_signal: AbortSignal): Promise<void> {
-    const inspection = await inspectClaudeCli(this.cliCommand);
-    if (!inspection.authenticated) {
-      throw new AevorenBotError("MODEL_PROVIDER_UNAVAILABLE", undefined, false, { reason: "authentication" });
+  async testConnection(signal: AbortSignal): Promise<void> {
+    let completed = false;
+    for await (const event of this.run([
+      { role: "user", content: "Reply only AEVOREN_CLAUDE_CONNECTION_OK." },
+    ], signal)) {
+      if (event.type === "completed") completed = true;
     }
+    if (!completed) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
   }
 }

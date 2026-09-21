@@ -27,6 +27,8 @@ import { buildPrompt } from "./prompt";
 import type { ProviderResolver } from "./providers/contracts";
 import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import type { McpService } from "./mcp-service";
+import { choiceQuestion, type DecisionService } from "./decision-service";
+import type { MemoryCaptureService } from "./memory-capture-service";
 
 export type RuntimeExecutorEvents = {
   transcript: (event: TranscriptEvent) => void;
@@ -113,6 +115,8 @@ export class RuntimeExecutor {
     private readonly workspaceTools?: WorkspaceToolCoordinator,
     private readonly capabilitySnapshots?: CapabilitySnapshotSource,
     private readonly mcpTools?: Pick<McpService, "availableTools">,
+    private readonly decisions?: DecisionService,
+    private readonly memoryCapture?: MemoryCaptureService,
   ) {
     this.fakeProvider = forceFakeProvider && !providerOverride ? new FakeModelProvider() : null;
   }
@@ -383,6 +387,17 @@ export class RuntimeExecutor {
         }
         if (event.type === "handoff") {
           if (!active.providerStarted || !active.onHandoff) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          const roster = active.providerContext.roomRoster;
+          if (roster && event.visibility === "room") {
+            void this.recordHandoffShadow(active, {
+              action: "handoff",
+              toAgentId: event.toAgentId,
+              task: event.task,
+              contextRefs: event.contextRefs,
+              visibility: event.visibility,
+              reason: "provider structured Handoff",
+            }, roster);
+          }
           active.handoffEmitted = active.onHandoff(event) !== false || active.handoffEmitted;
           run = this.repository.touchRuntimeRun(runId);
           this.emitRuntime(run);
@@ -443,6 +458,12 @@ export class RuntimeExecutor {
           this.finalizeAssistant(active, "completed");
           run = this.repository.transitionRuntimeRun(runId, "completed");
           this.emitRuntime(run);
+          const user = this.repository.getUserMessage(active.clientNonce);
+          this.memoryCapture?.enqueue({
+            botId: active.providerContext.executorBotId,
+            sourceEntryId: user.id,
+            userText: user.body,
+          });
           completed = true;
           break;
         }
@@ -539,13 +560,64 @@ export class RuntimeExecutor {
       !roster ||
       !mentionsAnotherRoomPeer(active.body, active.providerContext.executorBotId, roster)
     ) return null;
-    return selector.call(
+    const continuation = await selector.call(
       provider,
       active.body,
       active.providerContext.executorBotId,
       roster,
       active.controller.signal,
     );
+    void this.recordHandoffShadow(active, continuation, roster);
+    return continuation;
+  }
+
+  private async recordHandoffShadow(
+    active: ActiveRun,
+    existingContinuation: RoomContinuationDecision,
+    roster: readonly RoomPeer[],
+  ): Promise<void> {
+    if (!this.decisions?.isEnabled()) return;
+    try {
+      const evaluation = await this.decisions.evaluate({
+        policyId: "room-handoff-shadow",
+        policyVersion: 1,
+        state: {
+          assistantDraft: active.body,
+          executorBotId: active.providerContext.executorBotId,
+          roster,
+          existingContinuation,
+        },
+        questions: {
+          action: choiceQuestion(
+            { complete: "完成当前任务并停止", handoff: "将当前任务转交给下一个 Bot" },
+            "判断当前草稿是否明确要求现在把任务交给另一个 Room Bot。",
+            "仅当草稿明确要求立即转交时选择 handoff。等待用户批准时选择 complete。",
+          ),
+          nextOwner: choiceQuestion(
+            Object.fromEntries(roster
+              .filter((peer) => peer.id !== active.providerContext.executorBotId)
+              .map((peer) => [peer.id, `${peer.name} · ${peer.label}`])),
+            "如果需要转交，选择最适合的下一个 Room Bot。",
+            "只能从提供的候选中选择。",
+          ),
+          needsHumanApproval: choiceQuestion(
+            { yes: "需要人工确认", no: "不需要人工确认" },
+            "判断当前任务是否必须等待人工门禁。",
+            "如果草稿要求用户批准、补充真实经验或亲自发布，选择 yes。",
+          ),
+        },
+        idempotencyKey: `room-handoff-shadow:${active.runId}`,
+      });
+      if (evaluation.disposition !== "completed" || !evaluation.result) return;
+      this.repository.updateDecisionJournal(evaluation.journal.id, {
+        answers: {
+          ...evaluation.result.answers,
+          existingContinuation: { value: existingContinuation },
+        },
+      });
+    } catch {
+      // Shadow evaluation must never change the accepted Handoff decision.
+    }
   }
 
   private createProvider(selection: ModelSelection): ModelProvider {

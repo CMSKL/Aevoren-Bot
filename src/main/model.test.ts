@@ -313,6 +313,32 @@ describe("parseOpenAiStream", () => {
     expect(directBody).not.toHaveProperty("tool_choice");
   });
 
+  it("tests an API Provider with one minimal real chat request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "OK" } }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "test-model", "test-key");
+
+    await expect(provider.testConnection(new AbortController().signal)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.com/v1/chat/completions",
+      expect.objectContaining({ method: "POST", signal: expect.any(AbortSignal) }),
+    );
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(request).toMatchObject({ model: "test-model", stream: false, max_tokens: 1 });
+  });
+
+  it.each([
+    [401, "MODEL_AUTHENTICATION_FAILED"],
+    [429, "MODEL_QUOTA_EXCEEDED"],
+    [404, "MODEL_SELECTED_MODEL_UNAVAILABLE"],
+  ])("maps API connection status %i to %s", async (status, code) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status })));
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "test-model", "test-key");
+    await expect(provider.testConnection(new AbortController().signal)).rejects.toMatchObject({ code });
+  });
+
   it("advertises only bounded read-only network tools when the runtime enables them", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       streamFrom(['data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n']),

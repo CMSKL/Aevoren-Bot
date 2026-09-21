@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import type { ChatMessage, ModelEvent, ModelProvider } from "../model";
 import { AevorenBotError } from "../errors";
-import { cliEnvironment, resolveCliPath } from "./cli-utils";
+import { cliEnvironment, cliShellOptions, resolveCliPath } from "./cli-utils";
 
 const execFileAsync = promisify(execFile);
 export type OllamaCliInspection = {
@@ -21,9 +21,9 @@ export async function inspectOllamaCli(cliCommand: string): Promise<OllamaCliIns
   const path = resolveCliPath(cliCommand, environment);
   if (!path) throw new Error("Ollama CLI was not found");
   const [versionResult, listResult, runningResult] = await Promise.all([
-    execFileAsync(path, ["--version"], { env: environment, timeout: 8_000, maxBuffer: 64 * 1024 }),
-    execFileAsync(path, ["list"], { env: environment, timeout: 8_000, maxBuffer: 1024 * 1024 }),
-    execFileAsync(path, ["ps"], { env: environment, timeout: 8_000, maxBuffer: 1024 * 1024 }).catch(() => ({ stdout: "", stderr: "" })),
+    execFileAsync(path, ["--version"], { env: environment, timeout: 8_000, maxBuffer: 64 * 1024, ...cliShellOptions(path) }),
+    execFileAsync(path, ["list"], { env: environment, timeout: 8_000, maxBuffer: 1024 * 1024, ...cliShellOptions(path) }),
+    execFileAsync(path, ["ps"], { env: environment, timeout: 8_000, maxBuffer: 1024 * 1024, ...cliShellOptions(path) }).catch(() => ({ stdout: "", stderr: "" })),
   ]);
   const versionOutput = `${versionResult.stdout}\n${versionResult.stderr}`;
   const version = /(?:client\s+)?version\s+(?:is\s+)?([^\s]+)/iu.exec(versionOutput)?.[1] ?? versionOutput.trim().split(/\r?\n/u).at(-1) ?? "unknown";
@@ -60,6 +60,7 @@ export class OllamaCliProvider implements ModelProvider {
       cwd: this.cwd,
       env: cliEnvironment(),
       stdio: ["pipe", "pipe", "pipe"],
+      ...cliShellOptions(path),
     });
     const requestId = randomUUID();
     let processError = false;

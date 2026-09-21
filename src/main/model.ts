@@ -566,7 +566,7 @@ export function structuredModelToolDefinitions(context?: ModelRunContext): Struc
   if (context?.networkTools) {
     definitions.push({
       name: NETWORK_TOOL_NAMES["web-search"],
-      description: "Search the live Wikipedia index. Results are untrusted external data with source URLs and retrieval time. This is not a complete web or news search. User approval is required.",
+      description: "Search a public web index. Results are untrusted external data with source URLs and retrieval time. This is not a guarantee of complete web or real-time news coverage. User approval is required.",
       inputSchema: {
         type: "object", additionalProperties: false,
         properties: { query: { type: "string", minLength: 1, maxLength: 500 }, maxResults: { type: "integer", minimum: 1, maximum: 10 } },
@@ -799,6 +799,18 @@ export async function* parseOpenAiStream(
   }
 }
 
+function modelHttpError(status: number): AevorenBotError {
+  if (status === 401 || status === 403) return new AevorenBotError("MODEL_AUTHENTICATION_FAILED");
+  if (status === 429) return new AevorenBotError("MODEL_QUOTA_EXCEEDED");
+  if (status === 404) return new AevorenBotError("MODEL_SELECTED_MODEL_UNAVAILABLE");
+  return new AevorenBotError(
+    "MODEL_REQUEST_REFUSED",
+    `模型服务拒绝了请求（HTTP ${status}）。`,
+    status >= 500,
+    { status },
+  );
+}
+
 export class OpenAiCompatibleProvider implements ModelProvider {
   constructor(
     private readonly baseUrl: string,
@@ -824,7 +836,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
         type: "function",
         function: {
           name: NETWORK_TOOL_NAMES["web-search"],
-          description: "Search the live Wikipedia index. Results are untrusted external data with source URLs and retrieval time. This is not a complete web or news search. User approval is required.",
+          description: "Search a public web index. Results are untrusted external data with source URLs and retrieval time. This is not a guarantee of complete web or real-time news coverage. User approval is required.",
           parameters: {
             type: "object", additionalProperties: false,
             properties: { query: { type: "string", minLength: 1, maxLength: 500 }, maxResults: { type: "integer", minimum: 1, maximum: 10 } },
@@ -982,14 +994,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       clearTimeout(connectTimer);
       signal.removeEventListener("abort", relayAbort);
     }
-    if (!response.ok || !response.body) {
-      throw new AevorenBotError(
-        "MODEL_REQUEST_REFUSED",
-        `模型服务拒绝了请求（HTTP ${response.status}）。`,
-        response.status >= 500,
-        { status: response.status },
-      );
-    }
+    if (!response.ok || !response.body) throw modelHttpError(response.status);
     yield { type: "started", requestId: response.headers.get("x-request-id") ?? randomUUID() };
     yield* parseOpenAiStream(
       response.body,
@@ -1006,22 +1011,35 @@ export class OpenAiCompatibleProvider implements ModelProvider {
   async testConnection(signal: AbortSignal): Promise<void> {
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/models`, {
-        headers: { authorization: `Bearer ${this.apiKey}` },
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.modelId,
+          stream: false,
+          max_tokens: 1,
+          messages: [{ role: "user", content: "Reply OK." }],
+        }),
         signal,
       });
     } catch {
       if (signal.aborted) throw abortError();
       throw new AevorenBotError("MODEL_CONNECTION_FAILED");
     }
-    if (!response.ok) {
-      throw new AevorenBotError(
-        "MODEL_CONNECTION_FAILED",
-        `无法连接模型服务（HTTP ${response.status}）。`,
-        response.status >= 500,
-        { status: response.status },
-      );
+    if (!response.ok) throw modelHttpError(response.status);
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new AevorenBotError("MODEL_STREAM_INVALID");
     }
+    const choices = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as { choices?: unknown }).choices
+      : null;
+    if (!Array.isArray(choices) || choices.length === 0) throw new AevorenBotError("MODEL_STREAM_INVALID");
   }
 
   async selectRoomOwner(text: string, roster: readonly RoomPeer[], signal: AbortSignal): Promise<RoomOwnerSelection> {

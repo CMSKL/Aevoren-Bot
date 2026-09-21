@@ -50,7 +50,10 @@ function createV6Fixture(): string {
     INSERT INTO room_members VALUES('${ROOM_ID}', '${BOT_B}', 1, '${timestamp}');
     INSERT INTO sessions VALUES('${SESSION_ID}', NULL, '${ROOM_ID}', 'MAIN', 1, 1, '${timestamp}', '${timestamp}');
     INSERT INTO send_journal VALUES('nonce', '${SESSION_ID}', 'digest', 'acked', 0, NULL, NULL, '${timestamp}', '${timestamp}');
-    INSERT INTO transcript_entries VALUES(
+    INSERT INTO transcript_entries(
+      id, session_id, generation, seq, client_nonce, role, body, status, updated_seq,
+      speaker_bot_id, speaker_name_snapshot, source_turn_id, created_at, updated_at
+    ) VALUES(
       'entry', '${SESSION_ID}', 1, 1, 'nonce', 'user', 'SECRET_TRANSCRIPT_BODY', 'completed', 1,
       NULL, NULL, NULL, '${timestamp}', '${timestamp}'
     );
@@ -209,9 +212,10 @@ describe("room diagnostics CLI", () => {
 
   it("is exposed through the package command", () => {
     const filename = createV6Fixture();
-    const stdout = execFileSync("pnpm", ["--silent", "diagnostics:room", "--", "--db", filename, "--run", RUN_ID], {
+    const stdout = execFileSync(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["--silent", "diagnostics:room", "--", "--db", filename, "--run", RUN_ID], {
       cwd: process.cwd(),
       encoding: "utf8",
+      ...(process.platform === "win32" ? { shell: true } : {}),
     });
     expect(JSON.parse(stdout).runId).toBe(RUN_ID);
     for (const marker of SECRET_MARKERS) expect(stdout).not.toContain(marker);

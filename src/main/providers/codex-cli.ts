@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { parseStructuredModelToolCall, structuredModelToolDefinitions, type ChatMessage, type ModelEvent, type ModelProvider, type ModelRunContext } from "../model";
 import { AevorenBotError } from "../errors";
-import { cliEnvironment, isolatedCodexEnvironment, probeCliVersion, readCodexConfiguredSelection, resolveCliPath } from "./cli-utils";
+import { cliEnvironment, cliShellOptions, isolatedCodexEnvironment, probeCliVersion, readCodexConfiguredSelection, resolveCliPath } from "./cli-utils";
 
 const DISABLED_CODEX_FEATURES = [
   "plugins",
@@ -83,6 +83,7 @@ class CodexRpcClient {
         cwd: this.cwd,
         env: isolatedCodexEnvironment(join(this.cwd, ".codex-home")),
         stdio: ["pipe", "pipe", "pipe"],
+        ...cliShellOptions(this.cliPath),
       });
     } catch {
       throw new AevorenBotError("MODEL_CLI_INVALID");
@@ -397,6 +398,7 @@ class CodexExecProvider implements ModelProvider {
       cwd: this.cwd,
       env: isolatedCodexEnvironment(join(this.cwd, ".codex-home")),
       stdio: ["pipe", "pipe", "pipe"],
+      ...cliShellOptions(path),
     });
     let processError = false;
     let started = false;
@@ -646,8 +648,13 @@ export class CodexCliProvider implements ModelProvider {
     yield* queue.iterate();
   }
 
-  async testConnection(_signal: AbortSignal): Promise<void> {
-    const inspected = await inspectCodexCli(this.cliCommand, this.cwd).catch(() => inspectCodexCliFallback(this.cliCommand));
-    if (!inspected.authenticated) throw new AevorenBotError("MODEL_PROVIDER_UNAVAILABLE", undefined, false, { reason: "authentication" });
+  async testConnection(signal: AbortSignal): Promise<void> {
+    let completed = false;
+    for await (const event of this.run([
+      { role: "user", content: "Reply only AEVOREN_CODEX_CONNECTION_OK." },
+    ], signal)) {
+      if (event.type === "completed") completed = true;
+    }
+    if (!completed) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
   }
 }

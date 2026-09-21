@@ -1,6 +1,6 @@
-import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { accessSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join } from "node:path";
+import { delimiter, isAbsolute, join, win32 } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -21,7 +21,8 @@ const PRIVATE_ENV_NAMES = new Set([
   "XAI_API_KEY",
 ]);
 
-function standardCliDirectories(): string[] {
+export function standardCliDirectories(platform = process.platform, sourceEnv: NodeJS.ProcessEnv = process.env): string[] {
+  const pathJoin = platform === "win32" ? win32.join : join;
   const userHome = homedir();
   const nvmDirectories = (() => {
     try {
@@ -33,7 +34,7 @@ function standardCliDirectories(): string[] {
       return [];
     }
   })();
-  return [
+  const common = [
     join(userHome, ".local", "bin"),
     join(userHome, ".npm-global", "bin"),
     join(userHome, ".claude", "local"),
@@ -50,10 +51,26 @@ function standardCliDirectories(): string[] {
     "/usr/bin",
     "/bin",
   ];
+  if (platform !== "win32") return common;
+  const windows = [
+    sourceEnv.APPDATA ? pathJoin(sourceEnv.APPDATA, "npm") : null,
+    sourceEnv.LOCALAPPDATA ? pathJoin(sourceEnv.LOCALAPPDATA, "Programs") : null,
+    sourceEnv.LOCALAPPDATA ? pathJoin(sourceEnv.LOCALAPPDATA, "pnpm") : null,
+    sourceEnv.USERPROFILE ? pathJoin(sourceEnv.USERPROFILE, ".local", "bin") : null,
+    sourceEnv.USERPROFILE ? pathJoin(sourceEnv.USERPROFILE, ".cargo", "bin") : null,
+    sourceEnv.PNPM_HOME,
+    sourceEnv.VOLTA_HOME,
+    sourceEnv.SCOOP ? pathJoin(sourceEnv.SCOOP, "shims") : null,
+    sourceEnv.ChocolateyInstall ? pathJoin(sourceEnv.ChocolateyInstall, "bin") : null,
+    sourceEnv.ProgramFiles ? pathJoin(sourceEnv.ProgramFiles, "nodejs") : null,
+    sourceEnv.ProgramFiles ? pathJoin(sourceEnv.ProgramFiles, "Ollama") : null,
+    sourceEnv["ProgramFiles(x86)"] ? pathJoin(sourceEnv["ProgramFiles(x86)"], "nodejs") : null,
+  ].filter((value): value is string => Boolean(value));
+  return [...windows, ...common.filter((directory) => !directory.startsWith("/"))];
 }
 
-export function cliEnvironment(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+export function cliEnvironment(sourceEnv: NodeJS.ProcessEnv = process.env, platform = process.platform): NodeJS.ProcessEnv {
+  const env = { ...sourceEnv };
   for (const name of Object.keys(env)) {
     if (
       PRIVATE_ENV_NAMES.has(name) ||
@@ -61,12 +78,13 @@ export function cliEnvironment(): NodeJS.ProcessEnv {
       PRIVATE_ENV_SUFFIX.test(name)
     ) delete env[name];
   }
-  const directories = [...String(process.env.PATH ?? "").split(delimiter), ...standardCliDirectories()].filter(Boolean);
-  env.PATH = [...new Set(directories)].join(delimiter);
+  const pathDelimiter = platform === "win32" ? ";" : delimiter;
+  const directories = [...String(sourceEnv.PATH ?? "").split(pathDelimiter), ...standardCliDirectories(platform, sourceEnv)].filter(Boolean);
+  env.PATH = [...new Set(directories)].join(pathDelimiter);
   return env;
 }
 
-export function isolatedCodexEnvironment(runtimeHome: string): NodeJS.ProcessEnv {
+export function isolatedCodexEnvironment(runtimeHome: string, platform = process.platform): NodeJS.ProcessEnv {
   mkdirSync(runtimeHome, { recursive: true, mode: 0o700 });
   const sourceHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex");
   const sourceAuth = join(sourceHome, "auth.json");
@@ -74,16 +92,23 @@ export function isolatedCodexEnvironment(runtimeHome: string): NodeJS.ProcessEnv
   if (sourceAuth !== targetAuth && existsSync(sourceAuth)) {
     if (existsSync(targetAuth)) {
       const current = lstatSync(targetAuth);
-      if (!current.isSymbolicLink() || readlinkSync(targetAuth) !== sourceAuth) {
-        throw new Error("The isolated Codex credential link is not owned by Aevoren Bot");
+      if (current.isSymbolicLink()) {
+        if (readlinkSync(targetAuth) !== sourceAuth) throw new Error("The isolated Codex credential link is not owned by Aevoren Bot");
+      } else if (platform !== "win32" || readFileSync(targetAuth).compare(readFileSync(sourceAuth)) !== 0) {
+        throw new Error("The isolated Codex credential copy is not owned by Aevoren Bot");
       }
     } else {
-      symlinkSync(sourceAuth, targetAuth, "file");
+      try {
+        symlinkSync(sourceAuth, targetAuth, "file");
+      } catch (error) {
+        if (platform !== "win32") throw error;
+        copyFileSync(sourceAuth, targetAuth);
+      }
     }
   }
   const sanitized = readCodexConfiguration(sourceHome);
   if (sanitized.text) writeFileSync(join(runtimeHome, "config.toml"), sanitized.text, { encoding: "utf8", mode: 0o600 });
-  const environment: NodeJS.ProcessEnv = { ...cliEnvironment(), CODEX_HOME: runtimeHome };
+  const environment: NodeJS.ProcessEnv = { ...cliEnvironment(process.env, platform), CODEX_HOME: runtimeHome };
   for (const name of sanitized.environmentKeys) {
     const value = process.env[name];
     if (value) environment[name] = value;
@@ -192,32 +217,57 @@ export function readCodexConfiguredSelection(): { model: string; provider: strin
   return { model: configuration.model, provider: configuration.provider };
 }
 
-export function findCliCandidates(command: string, env: NodeJS.ProcessEnv = cliEnvironment()): string[] {
+function windowsExecutableCandidates(path: string, env: NodeJS.ProcessEnv): string[] {
+  if (/[.]\w+$/u.test(path)) return [path];
+  const extensions = String(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  return [path, ...extensions.map((extension) => `${path}${extension.toLowerCase()}`)];
+}
+
+function canAccessCli(path: string, platform: NodeJS.Platform): boolean {
+  try {
+    accessSync(path, platform === "win32" ? constants.F_OK : constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function findCliCandidates(command: string, env: NodeJS.ProcessEnv = cliEnvironment(), platform = process.platform): string[] {
   const trimmed = command.trim();
   if (!trimmed || /[\r\n\0]/u.test(trimmed)) return [];
-  if (isAbsolute(trimmed) || trimmed.includes("/")) {
-    try {
-      accessSync(trimmed, constants.X_OK);
-      return [trimmed];
-    } catch {
-      return [];
-    }
+  if (isAbsolute(trimmed) || trimmed.includes("/") || trimmed.includes("\\")) {
+    return (platform === "win32" ? windowsExecutableCandidates(trimmed, env) : [trimmed]).filter((candidate) => canAccessCli(candidate, platform));
   }
   const candidates: string[] = [];
-  for (const directory of String(env.PATH ?? "").split(delimiter).filter(Boolean)) {
-    const path = join(directory, trimmed);
-    try {
-      accessSync(path, constants.X_OK);
-      if (!candidates.includes(path)) candidates.push(path);
-    } catch {
-      // Continue scanning PATH.
+  const pathDelimiter = platform === "win32" ? ";" : delimiter;
+  const pathJoin = platform === "win32" ? win32.join : join;
+  for (const directory of String(env.PATH ?? "").split(pathDelimiter).filter(Boolean)) {
+    for (const path of platform === "win32" ? windowsExecutableCandidates(pathJoin(directory, trimmed), env) : [pathJoin(directory, trimmed)]) {
+      if (canAccessCli(path, platform) && !candidates.includes(path)) candidates.push(path);
+    }
+  }
+  if (candidates.length === 0 && platform === "win32") {
+    for (const directory of standardCliDirectories(platform, env)) {
+      for (const path of windowsExecutableCandidates(pathJoin(directory, trimmed), env)) {
+        if (canAccessCli(path, platform) && !candidates.includes(path)) candidates.push(path);
+      }
     }
   }
   return candidates;
 }
 
-export function resolveCliPath(command: string, env: NodeJS.ProcessEnv = cliEnvironment()): string | null {
-  return findCliCandidates(command, env)[0] ?? null;
+export function resolveCliPath(command: string, env: NodeJS.ProcessEnv = cliEnvironment(), platform = process.platform): string | null {
+  return findCliCandidates(command, env, platform)[0] ?? null;
+}
+
+/**
+ * Windows installs commonly expose npm/ pnpm based CLIs as .cmd or .bat
+ * wrappers. Node cannot execute those wrappers directly without a shell. Keep
+ * the shell opt-in and limited to an already-resolved wrapper path so Unix
+ * providers retain their current execution semantics.
+ */
+export function cliShellOptions(path: string, platform = process.platform): { shell?: boolean } {
+  return platform === "win32" && /\.(?:cmd|bat)$/iu.test(path) ? { shell: true } : {};
 }
 
 export async function probeCliVersion(command: string): Promise<{ path: string; version: string }> {
@@ -228,6 +278,7 @@ export async function probeCliVersion(command: string): Promise<{ path: string; 
     env,
     timeout: 10_000,
     maxBuffer: 64 * 1024,
+    ...cliShellOptions(path),
   });
   const version = `${result.stdout}\n${result.stderr}`.trim().split(/\r?\n/u)[0]?.slice(0, 200) ?? "";
   if (!version) throw new Error("CLI did not report a version");

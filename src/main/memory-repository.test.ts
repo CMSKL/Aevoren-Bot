@@ -15,10 +15,10 @@ function repository(filename = ":memory:"): AppRepository {
   return value;
 }
 
-function migrateThroughV7(filename: string): void {
+function migrateThrough(filename: string, count: number): void {
   const database = new DatabaseSync(filename);
   database.exec("PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);");
-  for (const migration of MIGRATIONS.slice(0, 7)) {
+  for (const migration of MIGRATIONS.slice(0, count)) {
     const foreignKeysOff = "foreignKeysOff" in migration && migration.foreignKeysOff;
     if (foreignKeysOff) database.exec("PRAGMA foreign_keys = OFF;");
     database.exec("BEGIN IMMEDIATE;");
@@ -34,6 +34,10 @@ function migrateThroughV7(filename: string): void {
     }
   }
   database.close();
+}
+
+function migrateThroughV7(filename: string): void {
+  migrateThrough(filename, 7);
 }
 
 function logicalV7Hash(database: DatabaseSync): string {
@@ -102,6 +106,61 @@ describe("explicit Memory repository", () => {
       .toThrowError(expect.objectContaining({ code: "MEMORY_DUPLICATE" }));
   });
 
+  it("bounds prompt Memory while preserving representation from each active scope", () => {
+    const value = repository();
+    const bot = value.createBot().bot;
+    for (let index = 0; index < 5; index += 1) {
+      value.createScopedMemory({ scope: "user", scopeKey: "user" }, `U${index}-${"u".repeat(3_900)}`);
+      value.createMemory(bot.id, `B${index}-${"b".repeat(3_900)}`);
+    }
+    const runtime = value.listRuntimeMemories(bot.id);
+    expect(Buffer.byteLength(runtime.map((item) => item.content).join(""), "utf8")).toBeLessThanOrEqual(24_000);
+    expect(runtime.some((item) => item.scope === "user")).toBe(true);
+    expect(runtime.some((item) => item.scope === "bot")).toBe(true);
+  });
+
+  it("migrates existing manual Memory to typed records without changing its content", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-memory-v22-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    migrateThrough(filename, 21);
+    const legacy = new DatabaseSync(filename);
+    legacy.prepare(
+      `INSERT INTO bots(
+        id,name,label,description,instructions,provider_instance_id,model_id,mcp_server_ids_json,memory_workspace_ids_json,
+        pinned_at,hidden_at,has_unread,deleted_at,version,created_at,updated_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL,0,NULL,1,'t','t')`,
+    ).run(
+      "00000000-0000-4000-8000-000000000501", "Legacy Memory", "", "", "",
+      "openai-compatible.default", "legacy-model", "[]", "[]",
+    );
+    legacy.prepare(
+      `INSERT INTO memory_items(
+        id,scope,scope_key,bot_id,workspace_id,content,content_digest,source,version,deleted_at,created_at,updated_at
+      ) VALUES(?,?,?,?,NULL,?,?, 'manual-user',1,NULL,'t','t')`,
+    ).run(
+      "00000000-0000-4000-8000-000000000502", "bot", "00000000-0000-4000-8000-000000000501",
+      "00000000-0000-4000-8000-000000000501", "保留原有内容", createHash("sha256").update("保留原有内容").digest("hex"),
+    );
+    legacy.close();
+
+    const migrated = repository(filename);
+    expect(migrated.listMemories("00000000-0000-4000-8000-000000000501")).toEqual([
+      expect.objectContaining({ content: "保留原有内容", kind: "fact", source: "manual-user", sourceEntryId: null, expiresAt: null }),
+    ]);
+    const inspected = new DatabaseSync(filename, { readOnly: true });
+    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    inspected.close();
+  });
+
+  it("refuses likely credentials before they reach long-term Memory", () => {
+    const value = repository();
+    const bot = value.createBot().bot;
+    expect(() => value.createMemory(bot.id, "API_KEY=sk-example-secret-1234567890"))
+      .toThrowError(expect.objectContaining({ code: "MEMORY_SENSITIVE_CONTENT" }));
+    expect(value.listMemories(bot.id)).toEqual([]);
+  });
+
   it("migrates v7 to v8 without changing existing logical data and only applies once", () => {
     const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-memory-v8-"));
     temporaryDirectories.push(directory);
@@ -130,7 +189,7 @@ describe("explicit Memory repository", () => {
     expect(inspected.prepare("PRAGMA table_info(memory_items)").all().map((column) => (
       column as { name: string }
     ).name)).toEqual([
-      "id", "scope", "scope_key", "bot_id", "workspace_id", "content", "content_digest", "source", "version", "deleted_at", "created_at", "updated_at",
+      "id", "scope", "scope_key", "bot_id", "workspace_id", "content", "content_digest", "kind", "source", "source_entry_id", "expires_at", "version", "deleted_at", "created_at", "updated_at",
     ]);
     inspected.close();
   });

@@ -6,6 +6,7 @@ import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
 import { RuntimeCoordinator } from "./send-worker";
 import type { ProviderResolver } from "./providers/contracts";
+import { DecisionService, FakeDecisionProvider } from "./decision-service";
 
 const repositories: AppRepository[] = [];
 
@@ -49,6 +50,72 @@ function command(detail: ReturnType<AppRepository["createRoom"]>, targetBotIds: 
 }
 
 describe("RoomCoordinator", () => {
+  it("records automatic route agreement in Shadow Mode without changing the real owner", async () => {
+    let decisionCalls = 0;
+    let providerCalls = 0;
+    const provider: ModelProvider = {
+      async *run() {
+        providerCalls += 1;
+        yield { type: "started", requestId: `route-shadow-${providerCalls}` };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+      selectRoomOwner: async (_text, roster) => ({ ownerAgentId: roster[1]!.id, reason: "provider owner" }),
+    };
+    const { repository, bots, detail, executor } = setup(provider, 2);
+    const decisionProvider = new FakeDecisionProvider(() => {
+      decisionCalls += 1;
+      return {
+        answers: { ownerAgentId: { value: bots[1]!.bot.id, confidence: 0.93 } },
+        modelVersion: "fake-decision-1",
+        requestId: "shadow-request",
+      };
+    });
+    const decisions = new DecisionService(repository, decisionProvider, true);
+    const coordinator = new RoomCoordinator(repository, executor, { roomRuntime: vi.fn(), transcript: vi.fn() }, decisions);
+    const sent = await coordinator.routeAndSend({
+      ...command(detail, []),
+      routingMode: "automatic",
+      targetBotIds: [],
+    });
+
+    await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
+    await vi.waitFor(() => expect(repository.listDecisionJournals()[0]?.state).toBe("completed"));
+
+    const journal = repository.listDecisionJournals()[0]!;
+    expect(decisionCalls).toBe(1);
+    expect(providerCalls).toBe(1);
+    expect(repository.listRoomTurns(sent.batchId).map((turn) => turn.memberBotId)).toEqual([bots[1]!.bot.id]);
+    expect(journal.answers.existingRoute?.value).toMatchObject({ ownerAgentId: bots[1]!.bot.id });
+    expect(journal.answers.agreement?.value).toBe(true);
+  });
+
+  it("does not call DecisionService for explicit Room targets", async () => {
+    let decisionCalls = 0;
+    const provider: ModelProvider = {
+      async *run() {
+        yield { type: "started", requestId: "explicit-route" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, bots, detail, executor } = setup(provider, 2);
+    const decisions = new DecisionService(repository, new FakeDecisionProvider(() => {
+      decisionCalls += 1;
+      return { answers: {}, modelVersion: "fake", requestId: null };
+    }), true);
+    const coordinator = new RoomCoordinator(repository, executor, { roomRuntime: vi.fn(), transcript: vi.fn() }, decisions);
+    const sent = await coordinator.routeAndSend({
+      ...command(detail, [bots[0]!.bot.id]),
+      routingMode: "explicit",
+      targetBotIds: [bots[0]!.bot.id],
+    });
+
+    await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
+    expect(decisionCalls).toBe(0);
+    expect(repository.listDecisionJournals()).toHaveLength(0);
+  });
+
   it("injects each Room executor's own Memory without leaking peer Memory", async () => {
     const captured: ChatMessage[][] = [];
     const provider: ModelProvider = {

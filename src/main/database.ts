@@ -8,6 +8,8 @@ import type {
   AgentTurnOrigin,
   ApprovalRequest,
   ApprovalResolution,
+  AttachmentDraft,
+  MessageAttachment,
   Bot,
   BotDeleteResult,
   BotPatch,
@@ -16,11 +18,19 @@ import type {
   ConversationBatchDeleteResult,
   CreateHandoffInput,
   CreateRoomRunInput,
+  DecisionAnswer,
+  DecisionJournalEntry,
+  DecisionProviderKind,
+  DecisionState,
   HandoffState,
   HandoffVisibility,
   MemoryItem,
+  MemoryKind,
+  MemoryProposal,
+  MemoryProposalState,
   MemoryScope,
   MemoryScopeSelector,
+  MemorySource,
   McpServerStatus,
   McpTransportKind,
   ModelSelection,
@@ -62,8 +72,9 @@ import type {
   Workspace,
   WorkspaceRegistrationResult,
 } from "@shared/contracts";
-import { toolInvocationCommandSchema } from "@shared/schemas";
+import { messageAttachmentsSchema, toolInvocationCommandSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
+import { containsLikelySecret } from "./memory-safety";
 
 const ACTIVE_RUNTIME_STATES: readonly RuntimeState[] = [
   "created",
@@ -153,6 +164,7 @@ const MAX_HANDOFF_CONTEXT_REFS = 64;
 const MAX_HANDOFF_CONTEXT_REF_LENGTH = 200;
 const MAX_ACTIVE_MEMORIES_PER_BOT = 100;
 const MAX_ACTIVE_MEMORY_CHARACTERS = 20_000;
+export const MAX_RUNTIME_MEMORY_BYTES = 24_000;
 
 export const MIGRATIONS = [
   {
@@ -1383,6 +1395,130 @@ export const MIGRATIONS = [
         ON approval_requests(state, expires_at, created_at, id);
     `,
   },
+  {
+    version: 20,
+    sql: `
+      ALTER TABLE transcript_entries ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]';
+      CREATE TABLE message_attachments (
+        id TEXT PRIMARY KEY,
+        transcript_entry_id TEXT NOT NULL REFERENCES transcript_entries(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
+        mime_type TEXT NOT NULL CHECK (length(mime_type) BETWEEN 1 AND 120),
+        size INTEGER NOT NULL CHECK (size >= 0 AND size <= 1048576),
+        sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+        kind TEXT NOT NULL CHECK (kind = 'text'),
+        content TEXT NOT NULL CHECK (length(content) <= 1048576),
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX message_attachments_by_entry
+        ON message_attachments(transcript_entry_id, created_at, id);
+      CREATE INDEX message_attachments_by_nonce
+        ON message_attachments(client_nonce, created_at, id);
+    `,
+  },
+  {
+    version: 21,
+    sql: `
+      CREATE TABLE decision_journal (
+        id TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 200),
+        policy_id TEXT NOT NULL CHECK (length(policy_id) BETWEEN 1 AND 120),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        provider TEXT NOT NULL CHECK (provider IN ('rules', 'fake', 'jev')),
+        model_version TEXT,
+        state TEXT NOT NULL CHECK (state IN (
+          'prepared', 'dispatched', 'completed', 'timeout', 'failed',
+          'rate-limited', 'fallback', 'cancelled'
+        )),
+        input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+        answers_json TEXT NOT NULL CHECK (json_valid(answers_json) AND json_type(answers_json) = 'object'),
+        confidence_json TEXT NOT NULL CHECK (json_valid(confidence_json) AND json_type(confidence_json) = 'object'),
+        fallback_reason TEXT,
+        request_id TEXT,
+        latency_ms INTEGER CHECK (latency_ms IS NULL OR latency_ms >= 0),
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX decision_journal_by_policy
+        ON decision_journal(policy_id, created_at DESC, id DESC);
+      CREATE INDEX decision_journal_by_state
+        ON decision_journal(state, updated_at DESC, id DESC);
+    `,
+  },
+  {
+    version: 22,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE memory_items_v22 (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL CHECK (scope IN ('user', 'bot', 'workspace')),
+        scope_key TEXT NOT NULL,
+        bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE,
+        workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+        content TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 4000),
+        content_digest TEXT NOT NULL CHECK (length(content_digest) = 64),
+        kind TEXT NOT NULL CHECK (kind IN ('fact', 'preference', 'decision', 'procedure')),
+        source TEXT NOT NULL CHECK (source IN ('manual-user', 'model-captured')),
+        source_entry_id TEXT,
+        expires_at TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        deleted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (
+          (scope = 'user' AND scope_key = 'user' AND bot_id IS NULL AND workspace_id IS NULL) OR
+          (scope = 'bot' AND scope_key = bot_id AND bot_id IS NOT NULL AND workspace_id IS NULL) OR
+          (scope = 'workspace' AND scope_key = workspace_id AND workspace_id IS NOT NULL AND bot_id IS NULL)
+        )
+      );
+      INSERT INTO memory_items_v22(
+        id, scope, scope_key, bot_id, workspace_id, content, content_digest,
+        kind, source, source_entry_id, expires_at, version, deleted_at, created_at, updated_at
+      )
+      SELECT id, scope, scope_key, bot_id, workspace_id, content, content_digest,
+             'fact', source, NULL, NULL, version, deleted_at, created_at, updated_at
+      FROM memory_items;
+      DROP TABLE memory_items;
+      ALTER TABLE memory_items_v22 RENAME TO memory_items;
+      CREATE UNIQUE INDEX memory_one_active_content_per_scope
+        ON memory_items(scope, scope_key, content_digest) WHERE deleted_at IS NULL;
+      CREATE INDEX memory_items_by_scope
+        ON memory_items(scope, scope_key, deleted_at, created_at, id);
+      CREATE INDEX memory_items_by_bot
+        ON memory_items(bot_id, deleted_at, created_at, id);
+      CREATE INDEX memory_items_by_expiry
+        ON memory_items(expires_at, deleted_at, updated_at);
+
+      CREATE TABLE memory_proposals (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        scope TEXT NOT NULL CHECK (scope IN ('user', 'bot', 'workspace')),
+        scope_key TEXT NOT NULL,
+        workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('fact', 'preference', 'decision', 'procedure')),
+        content TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 4000),
+        content_digest TEXT NOT NULL CHECK (length(content_digest) = 64),
+        reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 1000),
+        source_entry_id TEXT NOT NULL,
+        supersedes_memory_id TEXT REFERENCES memory_items(id) ON DELETE SET NULL,
+        expires_at TEXT,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'accepted', 'rejected')),
+        version INTEGER NOT NULL CHECK (version > 0),
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX memory_pending_digest_per_scope
+        ON memory_proposals(scope, scope_key, content_digest) WHERE state = 'pending';
+      CREATE INDEX memory_proposals_by_state
+        ON memory_proposals(state, created_at DESC, id DESC);
+      CREATE INDEX memory_proposals_by_bot
+        ON memory_proposals(bot_id, state, created_at DESC, id DESC);
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -1415,6 +1551,26 @@ type ProviderInstanceRow = {
   updated_at: string;
 };
 
+type DecisionJournalRow = {
+  id: string;
+  idempotency_key: string;
+  policy_id: string;
+  policy_version: number;
+  provider: DecisionProviderKind;
+  model_version: string | null;
+  state: DecisionState;
+  input_digest: string;
+  answers_json: string;
+  confidence_json: string;
+  fallback_reason: string | null;
+  request_id: string | null;
+  latency_ms: number | null;
+  last_error_code: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ProviderInstanceConfig = {
   id: string;
   driverKind: ProviderDriverKind;
@@ -1434,9 +1590,32 @@ type MemoryRow = {
   workspace_id: string | null;
   content: string;
   content_digest: string;
-  source: "manual-user";
+  kind: MemoryKind;
+  source: MemorySource;
+  source_entry_id: string | null;
+  expires_at: string | null;
   version: number;
   deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type MemoryProposalRow = {
+  id: string;
+  bot_id: string;
+  scope: MemoryScope;
+  scope_key: string;
+  workspace_id: string | null;
+  kind: MemoryKind;
+  content: string;
+  content_digest: string;
+  reason: string;
+  source_entry_id: string;
+  supersedes_memory_id: string | null;
+  expires_at: string | null;
+  state: MemoryProposalState;
+  version: number;
+  resolved_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1460,6 +1639,7 @@ type TranscriptRow = {
   client_nonce: string | null;
   role: TranscriptRole;
   body: string;
+  attachments_json?: string;
   status: TranscriptStatus;
   send_state?: SendState | null;
   speaker_bot_id: string | null;
@@ -1469,6 +1649,8 @@ type TranscriptRow = {
   created_at: string;
   updated_at: string;
 };
+
+type PromptAttachment = MessageAttachment & { content: string };
 
 type SendRow = {
   client_nonce: string;
@@ -1801,9 +1983,34 @@ function toMemory(row: MemoryRow): MemoryItem {
     workspaceId: row.workspace_id,
     content: row.content,
     contentDigest: row.content_digest,
+    kind: row.kind,
     source: row.source,
+    sourceEntryId: row.source_entry_id,
+    expiresAt: row.expires_at,
     version: Number(row.version),
     deletedAt: row.deleted_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toMemoryProposal(row: MemoryProposalRow): MemoryProposal {
+  return {
+    id: row.id,
+    botId: row.bot_id,
+    scope: row.scope,
+    scopeKey: row.scope_key,
+    workspaceId: row.workspace_id,
+    kind: row.kind,
+    content: row.content,
+    contentDigest: row.content_digest,
+    reason: row.reason,
+    sourceEntryId: row.source_entry_id,
+    supersedesMemoryId: row.supersedes_memory_id,
+    expiresAt: row.expires_at,
+    state: row.state,
+    version: Number(row.version),
+    resolvedAt: row.resolved_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1830,6 +2037,7 @@ function toTranscript(row: TranscriptRow): TranscriptEntry {
     clientNonce: row.client_nonce,
     role: row.role,
     body: row.body,
+    attachments: parseAttachmentMetadata(row.attachments_json),
     status: row.status,
     sendState: row.send_state ?? null,
     speakerBotId: row.speaker_bot_id,
@@ -1850,6 +2058,39 @@ function toSend(row: SendRow): SendJournalEntry {
     attemptCount: row.attempt_count,
     providerRequestId: row.provider_request_id,
     lastErrorCode: row.last_error_code,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toDecisionJournal(row: DecisionJournalRow): DecisionJournalEntry {
+  let answers: Record<string, DecisionAnswer>;
+  let confidence: Record<string, number>;
+  try {
+    answers = JSON.parse(row.answers_json) as Record<string, DecisionAnswer>;
+    confidence = JSON.parse(row.confidence_json) as Record<string, number>;
+  } catch {
+    throw new AevorenBotError("INTERNAL_ERROR");
+  }
+  if (!answers || typeof answers !== "object" || Array.isArray(answers) || !confidence || typeof confidence !== "object" || Array.isArray(confidence)) {
+    throw new AevorenBotError("INTERNAL_ERROR");
+  }
+  return {
+    id: row.id,
+    idempotencyKey: row.idempotency_key,
+    policyId: row.policy_id,
+    policyVersion: row.policy_version,
+    provider: row.provider,
+    modelVersion: row.model_version,
+    state: row.state,
+    inputDigest: row.input_digest,
+    answers,
+    confidence,
+    fallbackReason: row.fallback_reason,
+    requestId: row.request_id,
+    latencyMs: row.latency_ms,
+    lastErrorCode: row.last_error_code,
+    version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2125,8 +2366,63 @@ function toRuntime(row: RuntimeRow): RuntimeRun {
   };
 }
 
-export function digestMessage(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex");
+export function digestMessage(text: string, attachments: readonly MessageAttachment[] = []): string {
+  if (attachments.length === 0) return createHash("sha256").update(text, "utf8").digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify({
+      text,
+      attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
+    }), "utf8")
+    .digest("hex");
+}
+
+function parseAttachmentMetadata(value: string | undefined): MessageAttachment[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const candidate = item as Record<string, unknown>;
+      if (
+        typeof candidate.id !== "string" || typeof candidate.name !== "string" ||
+        typeof candidate.mimeType !== "string" || typeof candidate.size !== "number" ||
+        typeof candidate.sha256 !== "string" || candidate.kind !== "text"
+      ) return [];
+      return [{
+        id: candidate.id,
+        name: candidate.name,
+        mimeType: candidate.mimeType,
+        size: candidate.size,
+        sha256: candidate.sha256,
+        kind: "text" as const,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function normalizeAttachmentDrafts(input: readonly AttachmentDraft[] | undefined): PromptAttachment[] {
+  if (!input || input.length === 0) return [];
+  let parsed: AttachmentDraft[];
+  try {
+    parsed = messageAttachmentsSchema.parse(input) as AttachmentDraft[];
+  } catch {
+    throw new AevorenBotError("ATTACHMENT_INVALID");
+  }
+  const seen = new Set<string>();
+  const result: PromptAttachment[] = [];
+  for (const attachment of parsed) {
+    if (seen.has(attachment.id)) throw new AevorenBotError("ATTACHMENT_INVALID");
+    seen.add(attachment.id);
+    const bytes = Buffer.from(attachment.content, "utf8");
+    if (bytes.length !== attachment.size || createHash("sha256").update(bytes).digest("hex") !== attachment.sha256) {
+      throw new AevorenBotError("ATTACHMENT_INVALID");
+    }
+    result.push({ ...attachment });
+  }
+  return result;
 }
 
 function normalizeMemoryContent(content: string): string {
@@ -2197,8 +2493,17 @@ export function digestRoomCommand(
   text: string,
   targetBotIds: string[],
   routingMode: RoomRoutingMode = "legacy",
+  attachments: readonly MessageAttachment[] = [],
 ): string {
-  const command = { roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() };
+  const command = attachments.length === 0
+    ? { roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() }
+    : {
+        roomId,
+        sessionId,
+        text,
+        targetBotIds: targetBotIds.toSorted(),
+        attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
+      };
   return digestMessage(JSON.stringify(routingMode === "legacy" ? command : { ...command, routingMode }));
 }
 
@@ -2467,6 +2772,23 @@ export class AppRepository {
     return Number(result.changes);
   }
 
+  applyDefaultSelectionToUnsupportedBots(
+    supportedProviderInstanceIds: readonly string[],
+    selection: ModelSelection,
+  ): number {
+    if (supportedProviderInstanceIds.length === 0) throw new AevorenBotError("INVALID_REQUEST");
+    this.getProviderInstanceConfig(selection.providerInstanceId);
+    const placeholders = supportedProviderInstanceIds.map(() => "?").join(",");
+    const result = this.database
+      .prepare(
+        `UPDATE bots
+         SET provider_instance_id = ?, model_id = ?, version = version + 1, updated_at = ?
+         WHERE deleted_at IS NULL AND provider_instance_id NOT IN (${placeholders})`,
+      )
+      .run(selection.providerInstanceId, selection.modelId, now(), ...supportedProviderInstanceIds);
+    return Number(result.changes);
+  }
+
   getBot(id: string): Bot {
     const row = this.database.prepare("SELECT * FROM bots WHERE id = ? AND deleted_at IS NULL").get(id) as BotRow | undefined;
     if (!row) throw new AevorenBotError("BOT_NOT_FOUND");
@@ -2569,7 +2891,8 @@ export class AppRepository {
 
   listRuntimeMemories(botId: string): MemoryItem[] {
     const bot = this.getBot(botId);
-    return [
+    const timestamp = now();
+    const candidates = [
       ...this.listScopedMemories({ scope: "user", scopeKey: "user" }),
       ...(bot.memoryWorkspaceIds ?? []).flatMap((workspaceId) => {
         try {
@@ -2580,7 +2903,30 @@ export class AppRepository {
         }
       }),
       ...this.listScopedMemories({ scope: "bot", scopeKey: botId }),
-    ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+    ].filter((memory) => memory.deletedAt === null && (!memory.expiresAt || memory.expiresAt > timestamp));
+    const groups = new Map<string, MemoryItem[]>();
+    for (const memory of candidates) {
+      const key = `${memory.scope}:${memory.scopeKey}`;
+      const group = groups.get(key) ?? [];
+      group.push(memory);
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      group.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
+    }
+    const selected: MemoryItem[] = [];
+    let bytes = 0;
+    while ([...groups.values()].some((group) => group.length > 0)) {
+      for (const group of groups.values()) {
+        const memory = group.shift();
+        if (!memory) continue;
+        const itemBytes = Buffer.byteLength(memory.content, "utf8");
+        if (bytes + itemBytes > MAX_RUNTIME_MEMORY_BYTES) continue;
+        selected.push(memory);
+        bytes += itemBytes;
+      }
+    }
+    return selected.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   }
 
   getMemory(id: string): MemoryItem {
@@ -2589,14 +2935,26 @@ export class AppRepository {
     return toMemory(row);
   }
 
-  createMemory(botId: string, content: string): MemoryItem {
-    return this.createScopedMemory({ scope: "bot", scopeKey: botId }, content);
+  createMemory(
+    botId: string,
+    content: string,
+    options: { kind?: MemoryKind; expiresAt?: string | null; source?: MemorySource; sourceEntryId?: string | null } = {},
+  ): MemoryItem {
+    return this.createScopedMemory({ scope: "bot", scopeKey: botId }, content, options);
   }
 
-  createScopedMemory(selector: MemoryScopeSelector, content: string): MemoryItem {
+  createScopedMemory(
+    selector: MemoryScopeSelector,
+    content: string,
+    options: { kind?: MemoryKind; expiresAt?: string | null; source?: MemorySource; sourceEntryId?: string | null } = {},
+  ): MemoryItem {
     this.assertMemoryScope(selector);
     const normalized = normalizeMemoryContent(content);
     const contentDigest = digestMemoryContent(normalized);
+    const kind = options.kind ?? "fact";
+    const source = options.source ?? "manual-user";
+    const expiresAt = this.normalizeMemoryExpiresAt(options.expiresAt);
+    this.assertMemoryKind(kind);
     this.assertMemoryContent(normalized);
     this.assertNoActiveMemoryDuplicate(selector, contentDigest);
     this.assertMemoryCapacity(selector, normalized.length, 1);
@@ -2608,14 +2966,22 @@ export class AppRepository {
       .prepare(
         `INSERT INTO memory_items(
            id, scope, scope_key, bot_id, workspace_id, content, content_digest,
-           source, version, deleted_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'manual-user', 1, NULL, ?, ?)`,
+           kind, source, source_entry_id, expires_at, version, deleted_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)`,
       )
-      .run(id, selector.scope, selector.scopeKey, botId, workspaceId, normalized, contentDigest, timestamp, timestamp);
+      .run(
+        id, selector.scope, selector.scopeKey, botId, workspaceId, normalized, contentDigest,
+        kind, source, options.sourceEntryId ?? null, expiresAt, timestamp, timestamp,
+      );
     return this.getMemory(id);
   }
 
-  updateMemory(id: string, expectedVersion: number, content: string): MemoryItem {
+  updateMemory(
+    id: string,
+    expectedVersion: number,
+    content: string,
+    options: { kind?: MemoryKind; expiresAt?: string | null } = {},
+  ): MemoryItem {
     const current = this.getMemory(id);
     if (current.deletedAt) throw new AevorenBotError("MEMORY_DELETED");
     if (current.version !== expectedVersion) {
@@ -2623,6 +2989,9 @@ export class AppRepository {
     }
     const normalized = normalizeMemoryContent(content);
     const contentDigest = digestMemoryContent(normalized);
+    const kind = options.kind ?? current.kind;
+    const expiresAt = options.expiresAt === undefined ? current.expiresAt : this.normalizeMemoryExpiresAt(options.expiresAt);
+    this.assertMemoryKind(kind);
     this.assertMemoryContent(normalized);
     const selector = { scope: current.scope!, scopeKey: current.scopeKey! };
     this.assertNoActiveMemoryDuplicate(selector, contentDigest, id);
@@ -2630,10 +2999,10 @@ export class AppRepository {
     const result = this.database
       .prepare(
         `UPDATE memory_items
-         SET content = ?, content_digest = ?, version = version + 1, updated_at = ?
+         SET content = ?, content_digest = ?, kind = ?, expires_at = ?, version = version + 1, updated_at = ?
          WHERE id = ? AND version = ? AND deleted_at IS NULL`,
       )
-      .run(normalized, contentDigest, now(), id, expectedVersion);
+      .run(normalized, contentDigest, kind, expiresAt, now(), id, expectedVersion);
     if (Number(result.changes) === 0) this.throwMemoryConflict(id);
     return this.getMemory(id);
   }
@@ -2677,8 +3046,158 @@ export class AppRepository {
     return this.getMemory(id);
   }
 
+  listMemoryProposals(filter: { botId?: string; state?: MemoryProposalState } = {}): MemoryProposal[] {
+    const clauses: string[] = [];
+    const values: string[] = [];
+    if (filter.botId) {
+      this.getBot(filter.botId);
+      clauses.push("bot_id = ?");
+      values.push(filter.botId);
+    }
+    if (filter.state) {
+      clauses.push("state = ?");
+      values.push(filter.state);
+    }
+    const rows = this.database.prepare(
+      `SELECT * FROM memory_proposals ${clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""}
+       ORDER BY created_at DESC, id DESC`,
+    ).all(...values) as MemoryProposalRow[];
+    return rows.map(toMemoryProposal);
+  }
+
+  getMemoryProposal(id: string): MemoryProposal {
+    const row = this.database.prepare("SELECT * FROM memory_proposals WHERE id = ?").get(id) as MemoryProposalRow | undefined;
+    if (!row) throw new AevorenBotError("MEMORY_PROPOSAL_NOT_FOUND");
+    return toMemoryProposal(row);
+  }
+
+  createMemoryProposal(input: {
+    botId: string;
+    scope: MemoryScope;
+    scopeKey: string;
+    kind: MemoryKind;
+    content: string;
+    reason: string;
+    sourceEntryId: string;
+    supersedesMemoryId?: string | null;
+    expiresAt?: string | null;
+  }): MemoryProposal | null {
+    const bot = this.getBot(input.botId);
+    const source = this.getTranscriptEntry(input.sourceEntryId);
+    if (source.role !== "user") throw new AevorenBotError("INVALID_REQUEST");
+    const sourceSession = this.getSession(source.sessionId);
+    const belongsToBot = sourceSession.botId === bot.id || Boolean(
+      sourceSession.roomId && this.listRoomMembers(sourceSession.roomId).some((member) => member.botId === bot.id),
+    );
+    if (!belongsToBot) throw new AevorenBotError("INVALID_REQUEST");
+    const selector = { scope: input.scope, scopeKey: input.scopeKey } as MemoryScopeSelector;
+    this.assertMemoryScope(selector);
+    if (input.scope === "bot" && input.scopeKey !== bot.id) throw new AevorenBotError("INVALID_REQUEST");
+    if (input.scope === "workspace" && !(bot.memoryWorkspaceIds ?? []).includes(input.scopeKey)) {
+      throw new AevorenBotError("INVALID_REQUEST");
+    }
+    const content = normalizeMemoryContent(input.content);
+    const contentDigest = digestMemoryContent(content);
+    const reason = input.reason.trim().slice(0, 1_000);
+    this.assertMemoryContent(content);
+    this.assertMemoryKind(input.kind);
+    if (!reason) throw new AevorenBotError("INVALID_REQUEST");
+    const existing = this.database.prepare(
+      "SELECT 1 FROM memory_items WHERE scope = ? AND scope_key = ? AND content_digest = ? AND deleted_at IS NULL",
+    ).get(input.scope, input.scopeKey, contentDigest);
+    if (existing) return null;
+    const pending = this.database.prepare(
+      "SELECT * FROM memory_proposals WHERE scope = ? AND scope_key = ? AND content_digest = ? AND state = 'pending'",
+    ).get(input.scope, input.scopeKey, contentDigest) as MemoryProposalRow | undefined;
+    if (pending) return toMemoryProposal(pending);
+    if (input.supersedesMemoryId) {
+      const replaced = this.getMemory(input.supersedesMemoryId);
+      if (replaced.deletedAt || replaced.scope !== input.scope || replaced.scopeKey !== input.scopeKey) {
+        throw new AevorenBotError("INVALID_REQUEST");
+      }
+    }
+    const id = randomUUID();
+    const timestamp = now();
+    const workspaceId = input.scope === "workspace" ? input.scopeKey : null;
+    this.database.prepare(
+      `INSERT INTO memory_proposals(
+        id, bot_id, scope, scope_key, workspace_id, kind, content, content_digest, reason,
+        source_entry_id, supersedes_memory_id, expires_at, state, version, resolved_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, NULL, ?, ?)`,
+    ).run(
+      id, input.botId, input.scope, input.scopeKey, workspaceId, input.kind, content, contentDigest, reason,
+      input.sourceEntryId, input.supersedesMemoryId ?? null, this.normalizeMemoryExpiresAt(input.expiresAt), timestamp, timestamp,
+    );
+    return this.getMemoryProposal(id);
+  }
+
+  acceptMemoryProposal(
+    id: string,
+    expectedVersion: number,
+    edit: { content?: string; kind?: MemoryKind; expiresAt?: string | null } = {},
+  ): { proposal: MemoryProposal; memory: MemoryItem } {
+    return this.transaction(() => {
+      const proposal = this.getMemoryProposal(id);
+      if (proposal.version !== expectedVersion) {
+        throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: proposal.version });
+      }
+      if (proposal.state !== "pending") throw new AevorenBotError("MEMORY_PROPOSAL_RESOLVED");
+      const content = edit.content ?? proposal.content;
+      const kind = edit.kind ?? proposal.kind;
+      const expiresAt = edit.expiresAt === undefined ? proposal.expiresAt : edit.expiresAt;
+      if (proposal.supersedesMemoryId) {
+        const replaced = this.getMemory(proposal.supersedesMemoryId);
+        if (!replaced.deletedAt) this.deleteMemory(replaced.id, replaced.version);
+      }
+      const memory = this.createScopedMemory(
+        { scope: proposal.scope, scopeKey: proposal.scopeKey },
+        content,
+        { kind, expiresAt, source: "model-captured", sourceEntryId: proposal.sourceEntryId },
+      );
+      const timestamp = now();
+      const result = this.database.prepare(
+        `UPDATE memory_proposals
+         SET content = ?, content_digest = ?, kind = ?, expires_at = ?, state = 'accepted',
+             version = version + 1, resolved_at = ?, updated_at = ?
+         WHERE id = ? AND version = ? AND state = 'pending'`,
+      ).run(
+        memory.content, memory.contentDigest, memory.kind, memory.expiresAt,
+        timestamp, timestamp, id, expectedVersion,
+      );
+      if (Number(result.changes) !== 1) throw new AevorenBotError("MEMORY_VERSION_CONFLICT");
+      return { proposal: this.getMemoryProposal(id), memory };
+    });
+  }
+
+  rejectMemoryProposal(id: string, expectedVersion: number): MemoryProposal {
+    const timestamp = now();
+    const result = this.database.prepare(
+      `UPDATE memory_proposals
+       SET state = 'rejected', version = version + 1, resolved_at = ?, updated_at = ?
+       WHERE id = ? AND version = ? AND state = 'pending'`,
+    ).run(timestamp, timestamp, id, expectedVersion);
+    if (Number(result.changes) !== 1) {
+      const current = this.getMemoryProposal(id);
+      if (current.state !== "pending") throw new AevorenBotError("MEMORY_PROPOSAL_RESOLVED");
+      throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+    }
+    return this.getMemoryProposal(id);
+  }
+
   private assertMemoryContent(content: string): void {
     if (content.length === 0 || content.length > 4_000) throw new AevorenBotError("INVALID_REQUEST");
+    if (containsLikelySecret(content)) throw new AevorenBotError("MEMORY_SENSITIVE_CONTENT");
+  }
+
+  private assertMemoryKind(kind: MemoryKind): void {
+    if (!["fact", "preference", "decision", "procedure"].includes(kind)) throw new AevorenBotError("INVALID_REQUEST");
+  }
+
+  private normalizeMemoryExpiresAt(value: string | null | undefined): string | null {
+    if (value === undefined || value === null || value === "") return null;
+    const timestamp = new Date(value);
+    if (!Number.isFinite(timestamp.getTime())) throw new AevorenBotError("INVALID_REQUEST");
+    return timestamp.toISOString();
   }
 
   private assertMemoryScope(selector: MemoryScopeSelector): void {
@@ -3655,7 +4174,33 @@ export class AppRepository {
         entry.status !== "failed" &&
         entry.status !== "cancelled" &&
         entry.body.trim().length > 0,
-    );
+    ).map((entry) => {
+      const rows = this.database.prepare(
+        `SELECT id, name, mime_type, size, sha256, kind, content
+         FROM message_attachments WHERE transcript_entry_id = ? ORDER BY created_at ASC, id ASC`,
+      ).all(entry.id) as Array<{
+        id: string;
+        name: string;
+        mime_type: string;
+        size: number;
+        sha256: string;
+        kind: "text";
+        content: string;
+      }>;
+      if (rows.length === 0) return entry;
+      return {
+        ...entry,
+        attachmentContents: rows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          mimeType: row.mime_type,
+          size: row.size,
+          sha256: row.sha256,
+          kind: row.kind,
+          content: row.content,
+        })),
+      } as TranscriptEntry & { attachmentContents: PromptAttachment[] };
+    });
   }
 
   private nextSequence(sessionId: string, generation: number): number {
@@ -3665,8 +4210,35 @@ export class AppRepository {
     return Number(row.current) + 1;
   }
 
+  private insertMessageAttachments(entryId: string, clientNonce: string, attachments: readonly PromptAttachment[]): string {
+    const metadata = attachments.map(({ content: _content, ...attachment }) => attachment);
+    const insert = this.database.prepare(
+      `INSERT INTO message_attachments(
+         id, transcript_entry_id, client_nonce, name, mime_type, size, sha256, kind, content, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const timestamp = now();
+    for (const attachment of attachments) {
+      insert.run(
+        attachment.id,
+        entryId,
+        clientNonce,
+        attachment.name,
+        attachment.mimeType,
+        attachment.size,
+        attachment.sha256,
+        attachment.kind,
+        attachment.content,
+        timestamp,
+      );
+    }
+    return JSON.stringify(metadata);
+  }
+
   prepareMessage(command: SendCommand): { disposition: "prepared" | "duplicate"; journal: SendJournalEntry } {
-    const digest = digestMessage(command.text);
+    const attachments = normalizeAttachmentDrafts(command.attachments);
+    const attachmentMetadata = attachments.map(({ content: _content, ...attachment }) => attachment);
+    const digest = digestMessage(command.text, attachmentMetadata);
     const existing = this.getSend(command.clientNonce);
     if (existing) {
       if (existing.bodyDigest !== digest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
@@ -3675,6 +4247,7 @@ export class AppRepository {
     if (this.getActiveRuntimeRun(command.sessionId)) throw new AevorenBotError("SESSION_BUSY");
     const session = this.getSession(command.sessionId);
     const timestamp = now();
+    const userEntryId = randomUUID();
     this.transaction(() => {
       const sequence = this.nextSequence(session.id, session.generation);
       const updatedSeq = this.nextTranscriptUpdateSeq(session.id);
@@ -3689,10 +4262,11 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO transcript_entries(
-             id, session_id, generation, seq, client_nonce, role, body, status, updated_seq, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, 'user', ?, 'pending', ?, ?, ?)`,
+             id, session_id, generation, seq, client_nonce, role, body, attachments_json, status, updated_seq, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, 'user', ?, ?, 'pending', ?, ?, ?)`,
         )
-        .run(randomUUID(), session.id, session.generation, sequence, command.clientNonce, command.text, updatedSeq, timestamp, timestamp);
+        .run(userEntryId, session.id, session.generation, sequence, command.clientNonce, command.text, JSON.stringify(attachmentMetadata), updatedSeq, timestamp, timestamp);
+      this.insertMessageAttachments(userEntryId, command.clientNonce, attachments);
     });
     return { disposition: "prepared", journal: this.getSendOrThrow(command.clientNonce) };
   }
@@ -3735,6 +4309,8 @@ export class AppRepository {
     run: RoomRun;
     turns: AgentTurn[];
   } {
+    const attachments = normalizeAttachmentDrafts(input.attachments);
+    const attachmentMetadata = attachments.map(({ content: _content, ...attachment }) => attachment);
     const canonicalTargetIds = input.initialTurns.map((turn) => turn.agentId).toSorted();
     const routingMode = input.routingMode ?? "legacy";
     const routingReason = input.routingReason?.trim() || null;
@@ -3759,7 +4335,7 @@ export class AppRepository {
     ) {
       throw new AevorenBotError("INVALID_REQUEST");
     }
-    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode);
+    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode, attachmentMetadata);
     const targetDigest = digestMessage(JSON.stringify(canonicalTargetIds));
     const existingJournal = this.getSend(input.clientNonce);
     if (existingJournal) {
@@ -3823,9 +4399,9 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO transcript_entries(
-             id, session_id, generation, seq, client_nonce, role, body, status, updated_seq,
+             id, session_id, generation, seq, client_nonce, role, body, attachments_json, status, updated_seq,
              speaker_bot_id, speaker_name_snapshot, source_turn_id, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, 'user', ?, 'completed', ?, NULL, NULL, NULL, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, 'user', ?, ?, 'completed', ?, NULL, NULL, NULL, ?, ?)`,
         )
         .run(
           triggerMessageId,
@@ -3834,10 +4410,12 @@ export class AppRepository {
           sequence,
           input.clientNonce,
           input.text,
+          JSON.stringify(attachmentMetadata),
           updatedSeq,
           timestamp,
           timestamp,
         );
+      this.insertMessageAttachments(triggerMessageId, input.clientNonce, attachments);
       this.database
         .prepare(
           `INSERT INTO room_batches(
@@ -5317,6 +5895,117 @@ export class AppRepository {
   private throwMcpVersionConflict(id: string): never {
     const current = this.getMcpServerConfig(id);
     throw new AevorenBotError("MCP_SERVER_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+  }
+
+  prepareDecisionJournal(input: {
+    idempotencyKey: string;
+    policyId: string;
+    policyVersion: number;
+    provider: DecisionProviderKind;
+    inputDigest: string;
+  }): { disposition: "prepared" | "duplicate"; journal: DecisionJournalEntry } {
+    const existing = this.database
+      .prepare("SELECT * FROM decision_journal WHERE idempotency_key = ?")
+      .get(input.idempotencyKey) as DecisionJournalRow | undefined;
+    if (existing) {
+      if (
+        existing.policy_id !== input.policyId ||
+        existing.policy_version !== input.policyVersion ||
+        existing.provider !== input.provider ||
+        existing.input_digest !== input.inputDigest
+      ) throw new AevorenBotError("DECISION_IDEMPOTENCY_CONFLICT");
+      return { disposition: "duplicate", journal: toDecisionJournal(existing) };
+    }
+    const id = randomUUID();
+    const timestamp = now();
+    this.database.prepare(
+      `INSERT INTO decision_journal(
+        id, idempotency_key, policy_id, policy_version, provider, model_version, state,
+        input_digest, answers_json, confidence_json, fallback_reason, request_id,
+        latency_ms, last_error_code, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, NULL, 'prepared', ?, '{}', '{}', NULL, NULL, NULL, NULL, 1, ?, ?)`,
+    ).run(
+      id,
+      input.idempotencyKey,
+      input.policyId,
+      input.policyVersion,
+      input.provider,
+      input.inputDigest,
+      timestamp,
+      timestamp,
+    );
+    return { disposition: "prepared", journal: this.getDecisionJournal(id) };
+  }
+
+  getDecisionJournal(id: string): DecisionJournalEntry {
+    const row = this.database.prepare("SELECT * FROM decision_journal WHERE id = ?").get(id) as DecisionJournalRow | undefined;
+    if (!row) throw new AevorenBotError("DECISION_NOT_FOUND");
+    return toDecisionJournal(row);
+  }
+
+  getDecisionJournalByIdempotencyKey(idempotencyKey: string): DecisionJournalEntry | null {
+    const row = this.database.prepare("SELECT * FROM decision_journal WHERE idempotency_key = ?").get(idempotencyKey) as DecisionJournalRow | undefined;
+    return row ? toDecisionJournal(row) : null;
+  }
+
+  updateDecisionJournal(id: string, patch: {
+    state?: DecisionState;
+    modelVersion?: string | null;
+    answers?: Record<string, DecisionAnswer>;
+    confidence?: Record<string, number>;
+    fallbackReason?: string | null;
+    requestId?: string | null;
+    latencyMs?: number | null;
+    lastErrorCode?: string | null;
+  }): DecisionJournalEntry {
+    const current = this.getDecisionJournal(id);
+    const assignments: string[] = ["version = version + 1", "updated_at = ?"];
+    const values: Array<string | number | null> = [now()];
+    if (patch.state !== undefined) {
+      assignments.push("state = ?");
+      values.push(patch.state);
+    }
+    if (patch.modelVersion !== undefined) {
+      assignments.push("model_version = ?");
+      values.push(patch.modelVersion);
+    }
+    if (patch.answers !== undefined) {
+      assignments.push("answers_json = ?");
+      values.push(JSON.stringify(patch.answers));
+    }
+    if (patch.confidence !== undefined) {
+      assignments.push("confidence_json = ?");
+      values.push(JSON.stringify(patch.confidence));
+    }
+    if (patch.fallbackReason !== undefined) {
+      assignments.push("fallback_reason = ?");
+      values.push(patch.fallbackReason);
+    }
+    if (patch.requestId !== undefined) {
+      assignments.push("request_id = ?");
+      values.push(patch.requestId);
+    }
+    if (patch.latencyMs !== undefined) {
+      assignments.push("latency_ms = ?");
+      values.push(patch.latencyMs);
+    }
+    if (patch.lastErrorCode !== undefined) {
+      assignments.push("last_error_code = ?");
+      values.push(patch.lastErrorCode);
+    }
+    values.push(id, current.version);
+    const updated = this.database.prepare(
+      `UPDATE decision_journal SET ${assignments.join(", ")} WHERE id = ? AND version = ?`,
+    ).run(...values);
+    if (Number(updated.changes) !== 1) throw new AevorenBotError("DECISION_IDEMPOTENCY_CONFLICT");
+    return this.getDecisionJournal(id);
+  }
+
+  listDecisionJournals(limit = 100): DecisionJournalEntry[] {
+    const boundedLimit = Math.max(1, Math.min(1_000, Math.trunc(limit)));
+    return (this.database.prepare(
+      "SELECT * FROM decision_journal ORDER BY created_at DESC, id DESC LIMIT ?",
+    ).all(boundedLimit) as DecisionJournalRow[]).map(toDecisionJournal);
   }
 
   getSetting(key: string): { value: string; encrypted: boolean } | null {

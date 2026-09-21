@@ -1,10 +1,10 @@
-# Aevoren Bot macOS 自动更新
+# Aevoren Bot 桌面自动更新
 
 ## 目标与边界
 
-Aevoren Bot 使用 Main 进程中的 `electron-updater` 完成 macOS 应用更新。Renderer 不能设置下载地址、版本或校验规则，只能读取状态、手动检查、失败重试和请求重启安装。
+Aevoren Bot 使用 Main 进程中的 `electron-updater` 完成 macOS 和 Windows 应用更新。Renderer 不能设置下载地址、版本或校验规则，只能读取状态、手动检查、失败重试和请求重启安装。
 
-macOS 的 Squirrel.Mac 会先下载并验证更新，再暂存可安装版本。应用不会在用户工作过程中强制退出：下载完成后可点击“重启更新”，也可在下一次正常退出时自动安装。下载、校验或安装准备失败不会覆盖当前应用包。
+macOS 的 Squirrel.Mac 和 Windows 的 NSIS 更新器会先下载并验证更新，再暂存可安装版本。应用不会在用户工作过程中强制退出：下载完成后可点击“重启更新”，也可在下一次正常退出时自动安装。下载、校验或安装准备失败不会覆盖当前应用包。
 
 完全无交互的中途重启会打断用户工作，因此不采用。若一个已正确签名且成功安装的新版本自身存在业务缺陷，运行中的旧进程无法保证对一个无法启动的新包实施自动二进制回滚；此类事故需要暂停更新元数据并发布更高版本的修复包。当前实现所称“安全回滚”是指 Squirrel.Mac 的暂存/替换边界：下载、完整性、签名或替换失败时保留当前可用版本，不是任意已安装版本降级。
 
@@ -26,14 +26,14 @@ macOS 的 Squirrel.Mac 会先下载并验证更新，再暂存可安装版本。
 | 构建 | 判定 | 更新元数据 | 行为 |
 | --- | --- | --- | --- |
 | Development | 未打包、未嵌入 `app-update.yml`，或设置紧急禁用开关 | 无 | 更新完全禁用，不发网络请求 |
-| Beta | 已打包且版本包含 SemVer prerelease，例如 `0.2.0-beta.1` | `beta-mac.yml` | 允许 Beta，禁止降级 |
-| Stable | 已打包且版本无 prerelease，例如 `0.2.0` | `latest-mac.yml` | 仅稳定版本，禁止 prerelease 与降级 |
+| Beta | 已打包且版本包含 SemVer prerelease，例如 `0.2.0-beta.1` | macOS `beta-mac.yml`；Windows `beta.yml` | 允许 Beta，禁止降级 |
+| Stable | 已打包且版本无 prerelease，例如 `0.2.0` | macOS `latest-mac.yml`；Windows `latest.yml` | 仅稳定版本，禁止 prerelease 与降级 |
 
 Beta/Stable 都使用构建时固化的公开 GitHub Provider，固定为 `CMSKL/Aevoren-Bot`。客户端不嵌入 GitHub PAT，也不允许 Renderer 修改 owner、repo、频道或下载地址。仓库公开前正式更新保持禁用。
 
 ## 可信发布链
 
-`build/electron-builder.config.cjs` 生成 macOS `dmg + zip`、blockmap 和频道元数据。ZIP 是 Squirrel.Mac 更新所需目标，元数据包含包大小与 SHA-512。GitHub Actions 创建 Draft Release，上传并重新下载校验全部资产后才发布。
+`build/electron-builder.config.cjs` 生成 macOS `dmg + zip`、Windows NSIS `exe`、blockmap 和频道元数据。ZIP 是 Squirrel.Mac 更新所需目标，Windows NSIS 安装包是 Windows 更新目标，元数据包含包大小与 SHA-512。GitHub Actions 创建 Draft Release，上传并重新下载校验全部资产后才发布。
 
 正式发布必须同时满足：
 
@@ -42,7 +42,7 @@ Beta/Stable 都使用构建时固化的公开 GitHub Provider，固定为 `CMSKL
 3. 使用 `Developer ID Application` 签名并启用 Hardened Runtime；
 4. App 公证成功且 ticket 已 stapled；DMG 单独公证后执行 `release:finalize:mac`，装订 ticket、重建 DMG blockmap 并刷新频道 manifest 的 SHA-512/size；
 5. App 的 `codesign --verify`、Gatekeeper `spctl` 和 `stapler validate` 均通过，DMG 的 `codesign --verify`、`stapler validate` 与 `spctl --type open` 均通过；
-6. Draft Release 同时包含 ZIP、DMG、blockmap、`beta-mac.yml` 或 `latest-mac.yml`、`SHASUMS256.txt`；
+6. Draft Release 同时包含 ZIP、DMG、blockmap、`beta-mac.yml` 或 `latest-mac.yml`、`SHASUMS256.txt`；Windows 同一 Release 另外包含 NSIS `exe`、`beta.yml` 或 `latest.yml`、对应 blockmap 和 `SHASUMS256-win.txt`；
 7. Draft 资产重新下载后必须同时通过 SHA-256 清单和 manifest SHA-512 校验；
 8. 发布后 Release 必须为非 Draft、预发布/稳定渠道标记与 tag 策略一致，并包含完整的资产集合；
 9. Release 资产生成 GitHub Artifact Attestation；工作流通过资产 attestation 上传、SHA-256 清单和 manifest SHA-512 校验完成发布门禁。`gh release verify` 查询的是 Release 级 attestation，与本项目按资产生成的 attestation 口径不一致，不作为门禁。
@@ -64,6 +64,16 @@ API Key 模式优先；Key 只在 Runner 临时目录解码并设置为 `0600`�
 ```bash
 pnpm package:mac
 ```
+
+Windows 本地验证：
+
+```powershell
+pnpm package:win
+```
+
+该命令只生成未签名的 Windows x64 NSIS 安装包。需要目录包时使用 `pnpm package:win:dir`。正式 Windows 更新必须通过带 Authenticode 签名的 `release-windows.yml`，不能把本地包当作更新源。
+
+Windows 仍处于 MVP 阶段时，仓库变量 `AEVOREN_WINDOWS_RELEASE_ENABLED` 保持未设置，macOS Release 不等待 Windows 资产。配置 Windows 签名凭据并将该变量设为 `1` 后，同一 Tag 的 macOS 流程会把完整 Windows 资产集作为发布门禁。
 
 本地 Release 资产结构验证：
 

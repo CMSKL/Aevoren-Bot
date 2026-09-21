@@ -29,7 +29,8 @@ The tag workflow invokes `pnpm open-source:check` before building, so an acciden
 | Item | Status / action |
 | --- | --- |
 | SBOM | Passed locally | `pnpm sbom:generate` creates a deterministic CycloneDX 1.5 SBOM; the release workflow attests and uploads it with the immutable asset set |
-| Intel macOS / Windows / Linux | Documented unsupported | README, Installation, Support, and Portal explicitly scope the current release line to macOS 13+ Apple silicon |
+| Windows 10/11 x64 | MVP validation track | Source build, Windows-specific CLI/path tests, CI smoke, and unsigned NSIS package job are configured; signed public installer remains blocked on Windows certificate secrets |
+| Intel macOS / Linux | Documented unsupported | README, Installation, Support, and Portal scope the current release line to macOS arm64 and Windows x64 MVP |
 | Accessibility and localization | Pending public review | Core UI tests and user-facing English/Chinese strings exist, but a dedicated accessibility audit and documentation-language decision remain |
 | Dependency update automation | Prepared | Dependabot grouping is active and grouped PRs have been observed; upgrades remain subject to compatibility and license gates |
 | Support operations | Passed | SUPPORT.md defines private security reporting, issue triage guidance, and maintainer response targets |

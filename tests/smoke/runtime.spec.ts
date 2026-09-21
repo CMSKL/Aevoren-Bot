@@ -287,7 +287,7 @@ test("shows stale after thirty seconds without provider activity and remains can
     const startedAt = Date.now();
     await createAndSend(launched.page, "stale runtime");
     await expect(launched.page.getByText("连接可能已停滞，仍可停止本次运行", { exact: true })).toBeVisible({
-      timeout: 33_000,
+      timeout: 45_000,
     });
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(28_000);
     expect(Date.now() - startedAt).toBeLessThanOrEqual(33_000);
@@ -369,7 +369,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "tools", "transcript", "updates", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "tools", "transcript", "updates", "workspaces",
     ]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations,

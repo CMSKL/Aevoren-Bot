@@ -17,6 +17,8 @@ import type { ProviderResolver } from "./providers/contracts";
 import { RuntimeExecutor, type CapabilitySnapshotSource, type RuntimeExecutionResult } from "./runtime-executor";
 import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import type { McpService } from "./mcp-service";
+import type { DecisionService } from "./decision-service";
+import type { MemoryCaptureService } from "./memory-capture-service";
 
 export type WorkerEvents = {
   transcript: (event: TranscriptEvent) => void;
@@ -38,6 +40,8 @@ export class RuntimeCoordinator {
     workspaceTools?: WorkspaceToolCoordinator,
     capabilitySnapshots?: CapabilitySnapshotSource,
     mcpTools?: Pick<McpService, "availableTools">,
+    decisions?: DecisionService,
+    memoryCapture?: MemoryCaptureService,
   ) {
     this.executor = executorOverride ?? new RuntimeExecutor(
       repository,
@@ -48,6 +52,8 @@ export class RuntimeCoordinator {
       workspaceTools,
       capabilitySnapshots,
       mcpTools,
+      decisions,
+      memoryCapture,
     );
   }
 

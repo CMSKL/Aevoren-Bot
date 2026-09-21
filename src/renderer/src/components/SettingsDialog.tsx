@@ -138,7 +138,7 @@ export function SettingsDialog({
         <div className="settings-content">
           <button ref={closeButtonRef} className="settings-close-button" type="button" aria-label="关闭设置" onClick={close}><CloseIcon /></button>
 
-          <section className="settings-panel" hidden={section !== "general"} aria-labelledby="settings-general-title">
+          {section === "general" ? <section className="settings-panel" aria-labelledby="settings-general-title">
             <div className="settings-section-heading">
               <h2 id="settings-general-title">通用</h2>
               <p>调整 Aevoren Bot 在这台电脑上的基础偏好。</p>
@@ -158,7 +158,7 @@ export function SettingsDialog({
               <label className="settings-row">
                 <span>
                   <strong>登录时启动</strong>
-                  <small>{launchAtLoginSupported ? `让 Routine 在重新登录后恢复 · ${loginItemStatusLabels[launchAtLoginStatus]}` : "仅打包版 macOS 支持；开发测试不会注册系统启动项"}</small>
+                  <small>{launchAtLoginSupported ? `让 Routine 在重新登录后恢复 · ${loginItemStatusLabels[launchAtLoginStatus]}` : "当前仅 macOS 打包版支持；Windows 启动任务适配尚未启用"}</small>
                 </span>
                 <input
                   aria-label="登录时启动"
@@ -170,29 +170,29 @@ export function SettingsDialog({
               </label>
             </div>
             {launchError ? <div className="dialog-error" role="alert">{launchError.safeMessage}</div> : null}
-          </section>
+          </section> : null}
 
-          <section className="settings-panel" hidden={section !== "capabilities"} aria-label="能力与权限">
+          {section === "capabilities" ? <section className="settings-panel" aria-label="能力与权限">
             <CapabilitiesSettingsPanel active={open && section === "capabilities"} botId={activeBotId} />
-          </section>
+          </section> : null}
 
-          <section className="settings-panel" hidden={section !== "memory"} aria-label="长期记忆">
+          {section === "memory" ? <section className="settings-panel" aria-label="长期记忆">
             <ScopedMemorySettingsPanel active={open && section === "memory"} />
-          </section>
+          </section> : null}
 
-          <section className="settings-panel" hidden={section !== "model"} aria-label="模型与 CLI">
-            <ModelSettingsPanel open={open} />
-          </section>
+          {section === "model" ? <section className="settings-panel" aria-label="模型与 CLI">
+            <ModelSettingsPanel open={open && section === "model"} />
+          </section> : null}
 
-          <section className="settings-panel" hidden={section !== "mcp"} aria-label="MCP">
+          {section === "mcp" ? <section className="settings-panel" aria-label="MCP">
             <McpSettingsPanel active={open && section === "mcp"} />
-          </section>
+          </section> : null}
 
-          <section className="settings-panel" hidden={section !== "routines"} aria-label="主动服务">
+          {section === "routines" ? <section className="settings-panel" aria-label="主动服务">
             <RoutinesSettingsPanel active={open && section === "routines"} />
-          </section>
+          </section> : null}
 
-          <section className="settings-panel" hidden={section !== "updates"} aria-labelledby="settings-update-title">
+          {section === "updates" ? <section className="settings-panel" aria-labelledby="settings-update-title">
             <div className="settings-section-heading">
               <h2 id="settings-update-title">版本更新</h2>
               <p>检查并安装可信来源发布的 Aevoren Bot 新版本。</p>
@@ -227,7 +227,7 @@ export function SettingsDialog({
                 <button className="secondary-button" type="button" disabled={updateBusy || updateState?.status === "disabled"} onClick={onCheckUpdate}>{updateState?.status === "checking" ? "检查中…" : "检查更新"}</button>
               )}
             </div>
-          </section>
+          </section> : null}
         </div>
       </section>
     </div>
