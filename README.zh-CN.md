@@ -58,13 +58,13 @@ Fake Provider 是确定性的，不需要账号或 API Key。源码构建、数�
 
 打开**设置 → 模型与 CLI**。Aevoren Bot 会扫描常见安装目录和 `PATH`，只读取对应适配器所需的 CLI 安装、登录和模型信息。
 
-- **Codex CLI：** 模型发现和宿主 Dynamic Tool 支持；
-- **Claude Code：** 登录和模型发现，以及文本对话；
-- **Ollama：** 本地安装模型发现和文本对话；
-- **ACP CLI：** 在协议支持范围内发现模型并进行文本对话；
-- **OpenAI-compatible：** 手动 Base URL 和 API Key 兜底。
+- **API：** OpenAI-compatible Base URL、API Key、模型发现和真实请求验证；
+- **Claude Code：** 模型及登录状态发现和文本对话；在具备等价且经过验证的协议前，不开放宿主工具；
+- **Codex CLI：** 模型发现、文本对话和宿主 Dynamic Tool 支持。
 
-保存的 API Key 和 OAuth 凭据由 Electron `safeStorage` 加密，之后不会返回给 Renderer。MCP、Workspace、Memory、Routine 和环境变量说明见[配置指南](docs/CONFIGURATION.md)。
+其他 Provider 和 CLI 适配器不属于第一阶段产品范围，也不会显示在模型界面中。
+
+保存的 API Key 和 OAuth 凭据由 Electron `safeStorage` 加密，之后不会返回给 Renderer。MCP、Workspace、Routine 和环境变量说明见[配置指南](docs/CONFIGURATION.md)，经用户审核的 Memory 捕获及作用域规则见 [Memory 架构](docs/MEMORY.md)。
 
 ## 安全模型
 
@@ -102,7 +102,7 @@ Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac
 
 应用数据存储在 Electron 的 user-data 目录。Aevoren Bot 会在 SQLite 中保存 Bot、Room、Transcript、显式 Memory、设置、Tool Journal 元数据和 Routine 历史；密钥值通过 `safeStorage` 单独存储。
 
-模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远程桌面、无限制 Shell、任意文件写入或可写 MCP 工具。
+模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远程桌面、无限制 Shell、任意文件写入、未经审核的自动 Memory 写入或可写 MCP 工具。
 
 ## 文档、贡献和支持
 

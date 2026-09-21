@@ -66,7 +66,7 @@ Open **Settings → Models & CLI**. Aevoren Bot scans common installation locati
 
 Other Provider and CLI adapters are outside the first-phase product scope and are not exposed in the model UI.
 
-Saved API keys and OAuth credentials are encrypted by Electron `safeStorage` and are not returned to the Renderer. See [Configuration](docs/CONFIGURATION.md) for MCP, Workspace, Memory, Routine, and environment-variable details.
+Saved API keys and OAuth credentials are encrypted by Electron `safeStorage` and are not returned to the Renderer. See [Configuration](docs/CONFIGURATION.md) for MCP, Workspace, Routine, and environment-variable details, and [Memory architecture](docs/MEMORY.md) for reviewed capture and scope rules.
 
 ## Security model
 
@@ -106,7 +106,7 @@ For Windows x64 source validation, use `pnpm package:win`. This creates an unsig
 
 Application data is stored locally in Electron's user-data directory. Aevoren Bot stores Bots, Rooms, transcripts, explicit Memory, settings, Tool Journal metadata, and Routine history in SQLite. Secret values are stored separately through `safeStorage`.
 
-Models and enabled external services receive only the context and tool inputs required for the user's request. Aevoren Bot does not provide cloud sync, multi-user accounts, billing, remote desktop, unrestricted shell, arbitrary Workspace file writing, automatic Memory synthesis, or write-capable MCP tools in the current release line. Users can explicitly export a completed reply as a bounded Markdown artifact through the system save dialog.
+Models and enabled external services receive only the context and tool inputs required for the user's request. Aevoren Bot does not provide cloud sync, multi-user accounts, billing, remote desktop, unrestricted shell, arbitrary Workspace file writing, unreviewed automatic Memory writes, or write-capable MCP tools in the current release line. Users can explicitly export a completed reply as a bounded Markdown artifact through the system save dialog.
 
 ## Contributing and support
 
