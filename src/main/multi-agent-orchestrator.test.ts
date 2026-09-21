@@ -1385,6 +1385,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   });
 
   it("re-arms the persisted root deadline when an interrupted coordinated root is explicitly continued", async () => {
+    const deadlineMs = process.platform === "win32" ? 5_000 : 250;
     const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-m2-root-deadline-rearm-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
@@ -1398,7 +1399,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       maxTurns: 8,
       maxHops: 6,
       maxTargetsPerTurn: 2,
-      deadlineAt: new Date(Date.now() + 250).toISOString(),
+      deadlineAt: new Date(Date.now() + deadlineMs).toISOString(),
       initialTurns: [{ agentId: bots[0]!.id, nonce: "initial-a" }],
     });
     initial.transitionRoomRun(created.run.id, "running");
@@ -1409,7 +1410,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     reopened.recoverInterruptedRooms();
     const provider = new ScriptedFakeModelProvider(() => [
       { type: "started", requestId: "continued-a" },
-      { type: "delay", milliseconds: 350, ignoreAbort: true },
+      { type: "delay", milliseconds: deadlineMs + 500, ignoreAbort: true },
       { type: "delta", text: "TOO_LATE" },
       { type: "completed", finishReason: "stop" },
     ]);
