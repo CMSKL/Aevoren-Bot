@@ -22,6 +22,7 @@ test("boots Main, Preload and Renderer and completes Windows core IPC flows", as
   };
   const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
   const page = await application.firstWindow();
+  let applicationClosed = false;
   const consoleErrors: string[] = [];
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   try {
@@ -77,6 +78,7 @@ test("boots Main, Preload and Renderer and completes Windows core IPC flows", as
     await expect.poll(() => page.locator("html").getAttribute("data-theme")).toBe("dark");
     expect(consoleErrors).toEqual([]);
     await application.close();
+    applicationClosed = true;
 
     const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
     expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs WHERE state = 'completed'").get()).toEqual({ count: 2 });
@@ -85,7 +87,7 @@ test("boots Main, Preload and Renderer and completes Windows core IPC flows", as
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   } finally {
-    if (!application.process().killed) application.process().kill("SIGKILL");
+    if (!applicationClosed) await application.close().catch(() => undefined);
     removeTestDirectory(userDataDir);
   }
 });
