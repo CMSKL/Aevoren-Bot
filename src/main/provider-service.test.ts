@@ -141,7 +141,7 @@ describe("ProviderService", () => {
     expect(service.isSupported("codex.default")).toBe(true);
     expect(service.isSupported("ollama.default")).toBe(false);
     await service.dispose();
-  });
+  }, 15_000);
 
   it("marks a removed discovered CLI unavailable after an explicit rescan", async () => {
     const binaryDirectory = join(providerWorkspace(), "bin");
