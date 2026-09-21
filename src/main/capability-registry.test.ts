@@ -89,4 +89,23 @@ describe("CapabilityRegistry", () => {
     expect(serialized).not.toContain("secret.example");
     expect(serialized).not.toContain("API Key");
   });
+
+  it("does not claim model-driven Handoff for a text-only provider", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const created = repository.createBot();
+    const currentProvider = { ...provider(), capabilities: { roomOwnerSelection: false, handoff: false, workspaceTools: false, networkTools: false } };
+    const registry = new CapabilityRegistry(repository, {
+      list: async () => [currentProvider],
+      getCached: () => currentProvider,
+      getCapabilities: () => currentProvider.capabilities,
+    }, { name: "Aevoren Bot", version: "1.2.3", platform: "darwin", architecture: "arm64", packaged: true });
+
+    const snapshot = await registry.getSnapshot({ botId: created.bot.id });
+    expect(snapshot.capabilities.find((item) => item.id === "room.collaboration")).toMatchObject({
+      availability: "available",
+      reason: "当前模型来源仅支持顺序群聊和显式目标。",
+      toolNames: [],
+    });
+  });
 });

@@ -174,7 +174,7 @@ describe("Workspace Registry", () => {
     inspected.close();
   });
 
-  it("registers one canonical directory, hides its path and deduplicates a symlink alias", async () => {
+  it.skipIf(process.platform === "win32")("registers one canonical directory, hides its path and deduplicates a symlink alias", async () => {
     const root = temporaryDirectory("aevoren-workspace-root-");
     const aliasParent = temporaryDirectory("aevoren-workspace-alias-");
     const alias = join(aliasParent, "project-link");
@@ -221,7 +221,7 @@ describe("Workspace Registry", () => {
     expect(restored).toMatchObject({ disposition: "restored", workspace: { id: registered.workspace.id, version: 3, removedAt: null } });
   });
 
-  it("resolves only existing targets whose canonical path remains inside the registered root", async () => {
+  it.skipIf(process.platform === "win32")("resolves only existing targets whose canonical path remains inside the registered root", async () => {
     const root = temporaryDirectory("aevoren-workspace-containment-");
     const outside = temporaryDirectory("aevoren-workspace-outside-");
     mkdirSync(join(root, "docs"));

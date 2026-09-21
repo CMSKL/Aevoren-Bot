@@ -30,11 +30,21 @@ test("approves, executes, restores, and audits one read-only real-time tool with
     await page.getByLabel("消息").fill("现在几点");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     const tool = page.getByTestId("workspace-tool-activity").last();
+    const traceHeader = tool.locator(".expandable-trace-header");
+    const traceBody = tool.locator(".expandable-trace-collapse");
+    await expect(tool).toHaveAttribute("data-trace-kind", "search");
+    await expect(traceHeader).toHaveAttribute("aria-expanded", "true");
+    await expect(traceBody).toBeVisible();
     await expect(tool).toContainText("查询当前时间");
     await expect(tool).toContainText("Asia/Shanghai");
     await expect(tool.getByLabel("系统信息确认")).toContainText("不会访问外部网络");
     await tool.getByRole("button", { name: "仅允许一次" }).click();
     await expect(tool).toContainText("执行完成");
+    await expect(traceHeader).toHaveAttribute("aria-expanded", "false");
+    await expect(traceBody).toBeHidden();
+    await traceHeader.click();
+    await expect(traceHeader).toHaveAttribute("aria-expanded", "true");
+    await expect(traceBody).toBeVisible();
     await expect(page.getByText(/system-clock/).last()).toBeVisible();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
 

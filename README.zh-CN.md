@@ -12,7 +12,7 @@
 
 Aevoren Bot 是一个本地优先的 macOS AI Bot 工作台，用于持久化 Bot 对话和有边界的多 Bot 协作。对话、显式 Memory、工具审批、Tool Journal 和运行恢复都保存在用户自己的电脑上。
 
-> **预发布状态：** 当前公开的是开发中的源码，尚未发布正式二进制版本。支持目标为 macOS 13+ Apple silicon；本地未签名构建不代表官方发行版。
+> **预发布状态：** 已签名的 macOS Beta 安装包通过 [GitHub Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 分发。当前正式签名目标为 macOS 13+ Apple silicon；Windows 10/11 x64 仍处于 MVP 验证阶段。本地未签名构建不代表官方发行版。
 
 ## 核心能力
 
@@ -102,7 +102,7 @@ Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac
 
 应用数据存储在 Electron 的 user-data 目录。Aevoren Bot 会在 SQLite 中保存 Bot、Room、Transcript、显式 Memory、设置、Tool Journal 元数据和 Routine 历史；密钥值通过 `safeStorage` 单独存储。
 
-模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。当前版本不提供云同步、多用户账号、计费、远程桌面、无限制 Shell、文件写入、自动 Memory synthesis 或可写 MCP 工具。
+模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远程桌面、无限制 Shell、任意文件写入或可写 MCP 工具。
 
 ## 文档、贡献和支持
 

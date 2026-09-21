@@ -1,5 +1,5 @@
-import { join } from "node:path";
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, join, win32 } from "node:path";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRepository } from "./database";
@@ -9,7 +9,7 @@ import { CodexCliProvider, inspectCodexCli } from "./providers/codex-cli";
 import { ClaudeCliProvider, inspectClaudeCli } from "./providers/claude-cli";
 import { OllamaCliProvider, inspectOllamaCli } from "./providers/ollama-cli";
 import { AcpCliProvider, acpSpec, inspectAcpCli } from "./providers/acp-cli";
-import { isolatedCodexEnvironment } from "./providers/cli-utils";
+import { cliShellOptions, findCliCandidates, isolatedCodexEnvironment, standardCliDirectories } from "./providers/cli-utils";
 
 const repositories: AppRepository[] = [];
 const temporaryDirectories: string[] = [];
@@ -18,51 +18,100 @@ const codec: SecretCodec = {
   encrypt: (value) => Buffer.from(value, "utf8").toString("base64"),
   decrypt: (value) => Buffer.from(value, "base64").toString("utf8"),
 };
-const fixtureCli = join(process.cwd(), "tests/fixtures/fake-codex-cli.mjs");
-const fixtureClaudeCli = join(process.cwd(), "tests/fixtures/fake-claude-cli.mjs");
-const fixtureOllamaCli = join(process.cwd(), "tests/fixtures/fake-ollama-cli.mjs");
-const fixtureAcpCli = join(process.cwd(), "tests/fixtures/fake-acp-cli.mjs");
-
 function providerWorkspace(): string {
   const directory = mkdtempSync(join(tmpdir(), "aevoren-provider-test-"));
   temporaryDirectories.push(directory);
   return directory;
 }
 
+function installFixtureCommand(directory: string, command: string, source: string): string {
+  if (process.platform !== "win32") {
+    const target = join(directory, command);
+    symlinkSync(source, target);
+    return target;
+  }
+  const fixture = join(directory, basename(source));
+  copyFileSync(source, fixture);
+  const target = join(directory, `${command}.cmd`);
+  // The tests intentionally replace PATH with the fixture directory. Use the
+  // current Node executable explicitly so the wrapper remains self-contained
+  // on Windows and does not depend on the machine's PATH layout.
+  writeFileSync(target, `@echo off\r\n"${process.execPath}" "%~dp0${basename(source)}" %*\r\n`, "utf8");
+  return target;
+}
+
+// Keep the Windows wrapper fixtures alive across tests; afterEach cleans only
+// per-test workspaces, while these command shims are shared by the file.
+const fixtureDirectory = mkdtempSync(join(tmpdir(), "aevoren-provider-fixtures-"));
+const fixtureCli = process.platform === "win32"
+  ? installFixtureCommand(fixtureDirectory, "codex", join(process.cwd(), "tests/fixtures/fake-codex-cli.mjs"))
+  : join(process.cwd(), "tests/fixtures/fake-codex-cli.mjs");
+const fixtureClaudeCli = process.platform === "win32"
+  ? installFixtureCommand(fixtureDirectory, "claude", join(process.cwd(), "tests/fixtures/fake-claude-cli.mjs"))
+  : join(process.cwd(), "tests/fixtures/fake-claude-cli.mjs");
+const fixtureOllamaCli = process.platform === "win32"
+  ? installFixtureCommand(fixtureDirectory, "ollama", join(process.cwd(), "tests/fixtures/fake-ollama-cli.mjs"))
+  : join(process.cwd(), "tests/fixtures/fake-ollama-cli.mjs");
+const fixtureAcpCli = process.platform === "win32"
+  ? installFixtureCommand(fixtureDirectory, "gemini", join(process.cwd(), "tests/fixtures/fake-acp-cli.mjs"))
+  : join(process.cwd(), "tests/fixtures/fake-acp-cli.mjs");
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   while (repositories.length > 0) repositories.pop()?.close();
-  while (temporaryDirectories.length > 0) rmSync(temporaryDirectories.pop()!, { recursive: true, force: true });
+  while (temporaryDirectories.length > 0) {
+    try {
+      rmSync(temporaryDirectories.pop()!, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (error) {
+      // Windows can briefly retain a command-wrapper working directory after
+      // the child process has emitted its close event. The files are confined
+      // to the OS temp directory; do not turn that platform cleanup race into
+      // a provider contract failure.
+      if (process.platform !== "win32") throw error;
+    }
+  }
 });
 
 describe("ProviderService", () => {
-  it("loads one unified CLI and HTTP registry and chooses the authenticated CLI for a fresh install", async () => {
+  it("loads only the first-phase API, Claude Code, and Codex CLI registry", async () => {
     const binaryDirectory = join(providerWorkspace(), "bin");
     mkdirSync(binaryDirectory);
-    symlinkSync(fixtureCli, join(binaryDirectory, "codex"));
-    symlinkSync(fixtureClaudeCli, join(binaryDirectory, "claude"));
-    symlinkSync(fixtureOllamaCli, join(binaryDirectory, "ollama"));
-    symlinkSync(fixtureAcpCli, join(binaryDirectory, "gemini"));
+    const codexPath = process.platform === "win32"
+      ? installFixtureCommand(binaryDirectory, "codex", join(process.cwd(), "tests/fixtures/fake-codex-cli.mjs"))
+      : installFixtureCommand(binaryDirectory, "codex", fixtureCli);
+    const claudePath = process.platform === "win32"
+      ? installFixtureCommand(binaryDirectory, "claude", join(process.cwd(), "tests/fixtures/fake-claude-cli.mjs"))
+      : installFixtureCommand(binaryDirectory, "claude", fixtureClaudeCli);
     vi.stubEnv("PATH", binaryDirectory);
     vi.stubEnv("CODEX_HOME", providerWorkspace());
+    vi.stubEnv("CLAUDE_CONFIG_DIR", providerWorkspace());
     const repository = new AppRepository(":memory:");
     repositories.push(repository);
+    const legacyCreated = repository.createBot();
+    repository.updateBot(legacyCreated.bot.id, legacyCreated.bot.version, {
+      modelSelection: { providerInstanceId: "ollama.default", modelId: "fixture-ollama" },
+    });
     const service = new ProviderService(repository, codec, providerWorkspace());
 
     await service.initialize();
     const providers = await service.list();
 
+    expect(providers.map((provider) => provider.id)).toEqual([
+      "codex.default",
+      "openai-compatible.default",
+      "claude.default",
+    ]);
     expect(providers).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "openai-compatible.default", driverKind: "openai-compatible", status: "unavailable" }),
+      expect.objectContaining({ id: "openai-compatible.default", displayName: "API", driverKind: "openai-compatible", status: "unavailable" }),
       expect.objectContaining({
         id: "codex.default",
         driverKind: "codex-cli",
         status: "available",
         authenticated: true,
         discoveryMode: "automatic",
-        cliPath: join(binaryDirectory, "codex"),
+        cliPath: codexPath,
         models: { default: "fixture-model", options: [{ id: "fixture-model", label: "Fixture Model" }] },
       }),
       expect.objectContaining({
@@ -71,39 +120,35 @@ describe("ProviderService", () => {
         status: "available",
         authenticated: true,
         discoveryMode: "automatic",
-        cliPath: join(binaryDirectory, "claude"),
-      }),
-      expect.objectContaining({
-        id: "ollama.default",
-        driverKind: "ollama-cli",
-        status: "available",
-        discoveryMode: "automatic",
-        cliPath: join(binaryDirectory, "ollama"),
-        models: { default: "fixture-ollama", options: [{ id: "fixture-ollama", label: "fixture-ollama", loaded: true }] },
-      }),
-      expect.objectContaining({
-        id: "gemini.default",
-        driverKind: "acp-cli",
-        status: "available",
-        authenticated: true,
-        cliPath: join(binaryDirectory, "gemini"),
-        models: { default: "fixture-acp", options: [{ id: "fixture-acp", label: "Fixture ACP" }] },
+        cliPath: claudePath,
       }),
     ]));
     expect(repository.getDefaultModelSelection()).toEqual({ providerInstanceId: "codex.default", modelId: "fixture-model" });
+    expect(repository.getBot(legacyCreated.bot.id).modelSelection).toEqual({
+      providerInstanceId: "codex.default",
+      modelId: "fixture-model",
+    });
     expect(service.getCached("codex.default")).toMatchObject({ status: "available", models: { default: "fixture-model" } });
     expect(service.getCapabilities({ providerInstanceId: "codex.default", modelId: "fixture-model" })).toMatchObject({
       workspaceTools: true,
       networkTools: true,
     });
+    expect(service.getRoute({ providerInstanceId: "openai-compatible.default", modelId: "api-model" })).toBe("openai-compatible");
+    expect(service.getRoute({ providerInstanceId: "claude.default", modelId: "sonnet" })).toBe("claude-cli");
+    expect(service.getRoute({ providerInstanceId: "codex.default", modelId: "fixture-model" })).toBe("codex-cli");
+    expect(service.isSupported("openai-compatible.default")).toBe(true);
+    expect(service.isSupported("claude.default")).toBe(true);
+    expect(service.isSupported("codex.default")).toBe(true);
+    expect(service.isSupported("ollama.default")).toBe(false);
     await service.dispose();
   });
 
   it("marks a removed discovered CLI unavailable after an explicit rescan", async () => {
     const binaryDirectory = join(providerWorkspace(), "bin");
     mkdirSync(binaryDirectory);
-    const claudePath = join(binaryDirectory, "claude");
-    symlinkSync(fixtureClaudeCli, claudePath);
+    const installedClaudePath = process.platform === "win32"
+      ? installFixtureCommand(binaryDirectory, "claude", join(process.cwd(), "tests/fixtures/fake-claude-cli.mjs"))
+      : installFixtureCommand(binaryDirectory, "claude", fixtureClaudeCli);
     vi.stubEnv("PATH", binaryDirectory);
     const repository = new AppRepository(":memory:");
     repositories.push(repository);
@@ -115,12 +160,12 @@ describe("ProviderService", () => {
       });
     }
     const claude = repository.getProviderInstanceConfig("claude.default");
-    repository.updateProviderInstanceConfig(claude.id, claude.version, { cliPath: claudePath });
+    repository.updateProviderInstanceConfig(claude.id, claude.version, { cliPath: installedClaudePath });
     const service = new ProviderService(repository, codec, providerWorkspace());
     await service.initialize();
-    expect(await service.get("claude.default")).toMatchObject({ status: "available", cliPath: claudePath });
+    expect(await service.get("claude.default")).toMatchObject({ status: "available", cliPath: installedClaudePath });
 
-    unlinkSync(claudePath);
+    unlinkSync(installedClaudePath);
     const rescanned = await service.scan();
 
     expect(rescanned.find((provider) => provider.id === "claude.default")).toMatchObject({
@@ -131,6 +176,26 @@ describe("ProviderService", () => {
     });
     await service.dispose();
   });
+
+  it("marks Claude unavailable after a real-request quota failure", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const claude = repository.getProviderInstanceConfig("claude.default");
+    repository.updateProviderInstanceConfig(claude.id, claude.version, { cliPath: fixtureClaudeCli });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", providerWorkspace());
+    const service = new ProviderService(repository, codec, providerWorkspace());
+    await service.initialize();
+    expect(await service.get("claude.default")).toMatchObject({ status: "available", authenticated: true });
+
+    vi.stubEnv("FAKE_CLAUDE_RESULT_ERROR", "quota");
+    await expect(service.test("claude.default")).rejects.toMatchObject({ code: "MODEL_QUOTA_EXCEEDED" });
+    expect(await service.get("claude.default")).toMatchObject({
+      status: "unavailable",
+      authenticated: true,
+      reason: "Claude Code 已识别，但当前额度不足或已达到使用上限。",
+    });
+    await service.dispose();
+  }, 15_000);
 
   it("keeps an OpenAI-compatible key encrypted behind the same registry contract", async () => {
     const repository = new AppRepository(":memory:");
@@ -219,6 +284,35 @@ describe("ProviderService", () => {
 });
 
 describe("Codex CLI Provider", () => {
+  it("discovers Windows command wrappers and standard installation directories without changing Unix behavior", () => {
+    const directory = providerWorkspace();
+    const command = join(directory, "codex.cmd");
+    writeFileSync(command, "fixture", { encoding: "utf8", mode: 0o755 });
+    const env = { PATH: `${directory};C:\\Program Files\\nodejs`, PATHEXT: ".COM;.EXE;.BAT;.CMD", APPDATA: "C:\\Users\\tester\\AppData\\Roaming", LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local", USERPROFILE: "C:\\Users\\tester" };
+    expect(findCliCandidates(join(directory, "codex"), env, "win32")).toEqual([command]);
+    expect(standardCliDirectories("win32", env)).toEqual(expect.arrayContaining([
+      win32.join(env.APPDATA, "npm"),
+      win32.join(env.LOCALAPPDATA, "Programs"),
+      win32.join(env.USERPROFILE, ".local", "bin"),
+    ]));
+  });
+
+  it("executes Windows command wrappers through the platform shell only when needed", () => {
+    expect(cliShellOptions("C:\\Users\\tester\\AppData\\Roaming\\npm\\codex.cmd", "win32")).toEqual({ shell: true });
+    expect(cliShellOptions("C:\\Program Files\\Ollama\\ollama.exe", "win32")).toEqual({});
+    expect(cliShellOptions("/usr/local/bin/codex", "darwin")).toEqual({});
+  });
+
+  it("falls back to a verified credential copy when Windows cannot create a symlink", () => {
+    const sourceHome = providerWorkspace();
+    const runtimeHome = providerWorkspace();
+    writeFileSync(join(sourceHome, "auth.json"), "fixture-auth", { encoding: "utf8", mode: 0o600 });
+    writeFileSync(join(sourceHome, "config.toml"), 'model = "fixture-model"\nmodel_provider = "openai"\n', { encoding: "utf8", mode: 0o600 });
+    vi.stubEnv("CODEX_HOME", sourceHome);
+    expect(isolatedCodexEnvironment(runtimeHome, "win32").CODEX_HOME).toBe(runtimeHome);
+    expect(readFileSync(join(runtimeHome, "auth.json"), "utf8")).toBe("fixture-auth");
+  });
+
   it("uses an isolated Codex home and strips unrelated credentials from the child process", () => {
     const sourceHome = providerWorkspace();
     const runtimeHome = providerWorkspace();
@@ -243,7 +337,11 @@ describe("Codex CLI Provider", () => {
     expect(environment.OPENAI_API_KEY).toBeUndefined();
     expect(environment.TIKHUB_API_KEY).toBeUndefined();
     expect(environment.CUSTOM_PROVIDER_KEY).toBe("reused-by-declared-provider-only");
-    expect(readlinkSync(join(runtimeHome, "auth.json"))).toBe(join(sourceHome, "auth.json"));
+    if (process.platform === "win32") {
+      expect(readFileSync(join(runtimeHome, "auth.json"))).toEqual(readFileSync(join(sourceHome, "auth.json")));
+    } else {
+      expect(readlinkSync(join(runtimeHome, "auth.json"))).toBe(join(sourceHome, "auth.json"));
+    }
     const sanitized = readFileSync(join(runtimeHome, "config.toml"), "utf8");
     expect(sanitized).toContain('base_url = "https://provider.example/v1"');
     expect(sanitized).toContain('env_key = "CUSTOM_PROVIDER_KEY"');
@@ -273,6 +371,7 @@ describe("Codex CLI Provider", () => {
       { type: "delta", text: "reply" },
       { type: "completed", finishReason: "stop" },
     ]);
+    await expect(provider.testConnection(new AbortController().signal)).resolves.toBeUndefined();
   });
 
   it("bridges one official Codex dynamic tool request through the host response contract", async () => {
@@ -318,15 +417,25 @@ describe("Codex CLI Provider", () => {
       { type: "delta", text: "Exec reply" },
       { type: "completed", finishReason: "stop" },
     ]);
+    await expect(provider.testConnection(new AbortController().signal)).resolves.toBeUndefined();
+  });
+
+  it("maps a real Claude usage-limit response to a clear stable error", async () => {
+    vi.stubEnv("FAKE_CLAUDE_RESULT_ERROR", "quota");
+    const provider = new ClaudeCliProvider(fixtureClaudeCli, "sonnet", join(providerWorkspace(), "quota-runtime"));
+    await expect(provider.testConnection(new AbortController().signal)).rejects.toMatchObject({
+      code: "MODEL_QUOTA_EXCEEDED",
+    });
   });
 });
 
 describe("Claude CLI Provider", () => {
   it("discovers login status and configured model aliases", async () => {
+    vi.stubEnv("CLAUDE_CONFIG_DIR", providerWorkspace());
     await expect(inspectClaudeCli(fixtureClaudeCli)).resolves.toMatchObject({
       authenticated: true,
       version: "2.1.273-fixture (Claude Code)",
-      models: { default: "claude-sonnet-5" },
+      models: { default: "sonnet" },
     });
   });
 
@@ -337,7 +446,7 @@ describe("Claude CLI Provider", () => {
     }), { encoding: "utf8", mode: 0o600 });
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDirectory);
     vi.stubEnv("FAKE_CLAUDE_EXPECT_SETTING", "1");
-    const provider = new ClaudeCliProvider(fixtureClaudeCli, "claude-sonnet-5", join(providerWorkspace(), "nested-runtime"));
+    const provider = new ClaudeCliProvider(fixtureClaudeCli, "sonnet", join(providerWorkspace(), "nested-runtime"));
     const events = [];
     for await (const event of provider.run([
       { role: "system", content: "Stay concise." },

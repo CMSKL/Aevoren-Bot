@@ -21,10 +21,21 @@ import { NetworkToolExecutor } from "./network-tool-executor";
 import { McpService } from "./mcp-service";
 import { RoutineService } from "./routine-service";
 import { DeviceToolExecutor } from "./device-tool-executor";
+import { readAttachments } from "./attachments";
+import { saveArtifact as writeArtifact } from "./artifacts";
+import { createConfiguredJevProvider, DecisionService } from "./decision-service";
+import { MemoryCaptureService } from "./memory-capture-service";
 
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
 const hideTestWindow = process.env.AEVOREN_BOT_TEST_HIDDEN === "1";
+if (process.env.AEVOREN_BOT_TEST_HIDDEN === "0") {
+  // Windows ARM VMs may expose a 200% desktop scale, which otherwise moves
+  // the desktop inspector below the viewport during visible Electron smoke
+  // tests. Keep the production window untouched and normalize only explicit
+  // visible test runs.
+  app.commandLine.appendSwitch("force-device-scale-factor", "1");
+}
 
 let mainWindow: BrowserWindow | null = null;
 let repository: AppRepository | null = null;
@@ -232,18 +243,34 @@ app.whenReady().then(async () => {
     !forceFakeProvider,
   );
   await providerService.initialize();
+  const decisionShadowEnabled = process.env.AEVOREN_DECISION_SHADOW === "1";
+  const decisionService = new DecisionService(
+    repository,
+    decisionShadowEnabled ? createConfiguredJevProvider(repository, electronSecretCodec) : null,
+    decisionShadowEnabled,
+  );
+  const loginItemOptions = process.platform === "darwin" ? { type: "mainAppService" as const } : undefined;
+  const readLoginItemSettings = () => loginItemOptions
+    ? app.getLoginItemSettings(loginItemOptions)
+    : app.getLoginItemSettings();
+  const writeLoginItemSettings = (openAtLogin: boolean) => loginItemOptions
+    ? app.setLoginItemSettings({ ...loginItemOptions, openAtLogin })
+    : app.setLoginItemSettings({ openAtLogin });
   const generalSettings = new GeneralSettingsService(repository, {
+    // Electron's Windows login-item status is incomplete on packaged ARM
+    // builds. Keep this optional setting fail-closed until a dedicated startup
+    // task adapter is validated; it must never crash the settings Renderer.
     supported: app.isPackaged && process.platform === "darwin",
     get: () => {
-      const value = app.getLoginItemSettings({ type: "mainAppService" });
+      const value = readLoginItemSettings();
       return { openAtLogin: value.openAtLogin, status: value.status };
     },
-    set: (openAtLogin) => app.setLoginItemSettings({ type: "mainAppService", openAtLogin }),
+    set: writeLoginItemSettings,
   });
   const openedAtLogin = (() => {
     if (!app.isPackaged || process.platform !== "darwin") return false;
     try {
-      return app.getLoginItemSettings({ type: "mainAppService" }).wasOpenedAtLogin;
+      return readLoginItemSettings().wasOpenedAtLogin;
     } catch {
       return false;
     }
@@ -255,6 +282,7 @@ app.whenReady().then(async () => {
     repository,
     new WorkspaceToolExecutor(repository, workspaceService, new NetworkToolExecutor(), mcpService, new DeviceToolExecutor(() => clipboard.readText())),
     emitTool,
+    decisionService,
   );
   const platform = process.platform === "darwin" || process.platform === "win32" || process.platform === "linux"
     ? process.platform
@@ -277,6 +305,8 @@ app.whenReady().then(async () => {
     workspaceToolCoordinator,
     capabilityRegistry,
     mcpService,
+    decisionService,
+    forceFakeProvider ? undefined : new MemoryCaptureService(repository, providerService),
   );
   runtimeCoordinator = sendWorker;
   routineService = new RoutineService(repository, sendWorker, (run) => {
@@ -286,7 +316,7 @@ app.whenReady().then(async () => {
   roomCoordinator = new RoomCoordinator(repository, sendWorker.executor, {
     transcript: emitTranscript,
     roomRuntime: emitRoomRuntime,
-  });
+  }, decisionService);
   const updateConfigurationPath = join(process.resourcesPath, "app-update.yml");
   const updateChannel = resolveUpdateChannel({
     isPackaged: app.isPackaged,
@@ -339,6 +369,33 @@ app.whenReady().then(async () => {
         properties: ["openDirectory", "createDirectory"],
       });
       return result.canceled ? null : result.filePaths[0] ?? null;
+    },
+    async pickAttachments() {
+      const testPaths = process.env.AEVOREN_BOT_TEST_HIDDEN === "1"
+        ? process.env.AEVOREN_BOT_ATTACHMENT_TEST_PATHS?.split("\n").map((value) => value.trim()).filter(Boolean)
+        : undefined;
+      if (testPaths && testPaths.length > 0) return readAttachments(testPaths);
+      if (!mainWindow || mainWindow.isDestroyed()) return [];
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: "添加文本附件",
+        buttonLabel: "添加附件",
+        properties: ["openFile", "multiSelections"],
+        filters: [{ name: "文本与代码", extensions: ["txt", "md", "markdown", "csv", "json", "yaml", "yml", "xml", "html", "htm", "js", "mjs", "cjs", "ts", "tsx", "jsx", "css", "scss", "sql", "py", "go", "rs", "java", "sh", "toml", "ini", "log", "diff"] }],
+      });
+      return result.canceled ? [] : readAttachments(result.filePaths);
+    },
+    async saveArtifact(input) {
+      const testPath = process.env.AEVOREN_BOT_TEST_HIDDEN === "1" ? process.env.AEVOREN_BOT_ARTIFACT_TEST_PATH : undefined;
+      if (testPath) return writeArtifact(testPath, input);
+      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: "保存结果文件",
+        buttonLabel: "保存 Markdown",
+        defaultPath: input.name.toLocaleLowerCase("en-US").endsWith(".md") ? input.name : `${input.name}.md`,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+        properties: ["createDirectory"],
+      });
+      return result.canceled || !result.filePath ? null : writeArtifact(result.filePath, input);
     },
     forceFakeProvider,
     rendererReady() {

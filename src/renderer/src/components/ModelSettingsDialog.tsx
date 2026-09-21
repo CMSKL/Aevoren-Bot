@@ -34,6 +34,8 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
   const [activeProviderId, setActiveProviderId] = useState<string | null>(null);
   const [error, setError] = useState<AppError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
+  const [manualFallbackProviderId, setManualFallbackProviderId] = useState<string | null>(null);
   const compatible = useMemo(
     () => providers.find((provider) => provider.driverKind === "openai-compatible") ?? null,
     [providers],
@@ -123,7 +125,7 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
       setProviders((current) => replaceProvider(current, result.data));
       setBaseUrl(result.data.baseUrl || "https://api.openai.com/v1");
       setApiKey("");
-      setNotice("OpenAI-compatible 兜底配置已保存。");
+      setNotice("API 配置已保存。");
       notifyProviderChange();
     } else setError(result.error);
     setActiveProviderId(null);
@@ -137,7 +139,9 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
     setError(null);
     setNotice(null);
     const result = await window.aevorenBot.providers.test(provider.id);
-    if (result.ok) setNotice(`${provider.displayName} 连接正常。`);
+    const refreshed = await window.aevorenBot.providers.list();
+    if (refreshed.ok) setProviders(refreshed.data);
+    if (result.ok) setNotice(`${provider.displayName} 已完成真实最小请求。`);
     else setError(result.error);
     setActiveProviderId(null);
     setOperation("idle");
@@ -173,7 +177,7 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
       <div className="settings-section-heading provider-scan-heading">
         <span>
           <h2>模型与 CLI</h2>
-          <p>自动发现本机已安装并登录的 CLI，直接复用它们的账号与模型配置。</p>
+          <p>第一阶段支持 API、Claude Code 和 Codex CLI；切换后请求会直接走对应调用链路。</p>
         </span>
         <button className="secondary-button" type="button" disabled={pending} onClick={() => void scanAll()}>
           {operation === "scanning" ? "扫描中…" : "重新扫描"}
@@ -190,12 +194,19 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
             const isCompatible = provider.driverKind === "openai-compatible";
             const state = providerDisplayState(provider);
             return (
-              <details
+              <div
                 className="settings-card settings-model-card provider-settings-card provider-engine-card"
+                data-expanded={expandedProviderId === provider.id}
                 data-provider-state={state}
                 key={provider.id}
               >
-                <summary aria-label={`管理 ${provider.displayName}`}>
+                <button
+                  className="provider-engine-summary"
+                  type="button"
+                  aria-label={`管理 ${provider.displayName}`}
+                  aria-expanded={expandedProviderId === provider.id}
+                  onClick={() => setExpandedProviderId((current) => current === provider.id ? null : provider.id)}
+                >
                   <div className="provider-engine-identity">
                     <ProviderMark provider={provider} size="large" />
                     <span>
@@ -212,8 +223,8 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
                       <small className="provider-engine-setup">设置 ↗</small>
                     )}
                   </div>
-                </summary>
-                <div className="provider-engine-details">
+                </button>
+                {expandedProviderId === provider.id ? <div className="provider-engine-details">
                   <dl className="provider-discovery-details">
                     <div><dt>状态</dt><dd>{providerStateLabel(provider)}</dd></div>
                     <div><dt>发现方式</dt><dd>{provider.discoveryMode === "manual" ? "手动兜底" : provider.discoveryMode === "automatic" ? "自动扫描" : "手动配置"}</dd></div>
@@ -231,20 +242,28 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
                       <span><strong>API Key</strong><small>{compatible?.apiKeyConfigured ? "已安全保存；留空表示不替换" : "尚未配置"}</small></span>
                       <input aria-label="API Key" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={compatible?.apiKeyConfigured ? "••••••••" : "输入 API Key"} autoComplete="off" disabled={pending} />
                     </label>
-                    <p className="settings-security-note">该表单只作为 CLI 无法覆盖时的兜底；API Key 由 macOS safeStorage 加密且不会返回 Renderer。</p>
+                    <p className="settings-security-note">API Key 由系统 safeStorage 加密且不会返回 Renderer；测试会发送一次最小真实请求。</p>
                     <div className="settings-panel-actions">
                       <button className="secondary-button" type="button" disabled={pending || !provider.apiKeyConfigured} onClick={() => void refresh(provider)}>{actionLabel(provider.id, "刷新模型")}</button>
-                      <button className="secondary-button" type="button" disabled={pending || !provider.apiKeyConfigured} onClick={() => void verify(provider)}>测试</button>
-                      <button className="primary-button" type="button" disabled={pending || !baseUrl.trim()} onClick={() => void saveCompatible()}>{actionLabel(provider.id, "保存兜底配置")}</button>
+                      <button className="secondary-button" type="button" disabled={pending || !provider.apiKeyConfigured} onClick={() => void verify(provider)}>测试真实请求</button>
+                      <button className="primary-button" type="button" disabled={pending || !baseUrl.trim()} onClick={() => void saveCompatible()}>{actionLabel(provider.id, "保存 API 配置")}</button>
                     </div>
                   </> : <>
                     <p className="settings-security-note">Aevoren 不读取或保存该 CLI 的明文密钥；模型调用继续使用 CLI 自己的登录与配置。</p>
                     <div className="settings-panel-actions">
                       <button className="secondary-button" type="button" disabled={pending} onClick={() => void refresh(provider)}>{actionLabel(provider.id, "检查")}</button>
-                      <button className="secondary-button" type="button" disabled={pending || provider.status !== "available"} onClick={() => void verify(provider)}>测试</button>
+                      <button className="secondary-button" type="button" disabled={pending || !provider.cliPath || !provider.authenticated || !provider.models.default} onClick={() => void verify(provider)}>测试真实请求</button>
                     </div>
-                    <details className="provider-manual-fallback">
-                      <summary>高级：手动指定 CLI 路径</summary>
+                    <div className="provider-manual-fallback" data-expanded={manualFallbackProviderId === provider.id}>
+                      <button
+                        className="provider-manual-summary"
+                        type="button"
+                        aria-expanded={manualFallbackProviderId === provider.id}
+                        onClick={() => setManualFallbackProviderId((current) => current === provider.id ? null : provider.id)}
+                      >
+                        高级：手动指定 CLI 路径
+                      </button>
+                      {manualFallbackProviderId === provider.id ? <>
                       <label className="settings-field-row">
                         <span><strong>CLI 路径</strong><small>仅在自动扫描找不到 CLI 时使用</small></span>
                         <input
@@ -259,10 +278,11 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
                         <button className="secondary-button" type="button" disabled={pending || provider.discoveryMode === "automatic"} onClick={() => void saveCli(provider, provider.cliDefault || "")}>恢复自动发现</button>
                         <button className="primary-button" type="button" disabled={pending || !(manualPaths[provider.id] ?? "").trim()} onClick={() => void saveCli(provider, manualPaths[provider.id] ?? "")}>{actionLabel(provider.id, "保存兜底路径")}</button>
                       </div>
-                    </details>
+                      </> : null}
+                    </div>
                   </>}
-                </div>
-              </details>
+                </div> : null}
+              </div>
             );
           }),
         ])}

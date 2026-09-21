@@ -52,7 +52,9 @@ test("runs one approved workspace read through the configured real Provider", as
     );
     expect(connection.ok, connection.ok ? undefined : connection.error.code).toBe(true);
     await page.locator(".bot-row").filter({ hasText: botName }).click();
+    await expect(page.getByRole("heading", { name: botName })).toBeVisible();
     await page.getByLabel("消息").fill("请读取 provider-check.txt，并按 Instructions 返回结果。");
+    await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "发送", exact: true }).click();
     const tool = page.getByTestId("workspace-tool-activity").last();
     await expect(tool).toContainText("等待你的确认", { timeout: 90_000 });

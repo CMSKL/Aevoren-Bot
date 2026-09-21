@@ -3,6 +3,7 @@ import type {
   AppearanceTheme,
   AppError,
   ApprovalRequest,
+  AttachmentDraft,
   Bot,
   ConversationBatchDeleteInput,
   LoginItemStatus,
@@ -720,7 +721,7 @@ export function App(): React.JSX.Element {
     return true;
   }
 
-  async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone"): Promise<boolean> {
+  async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone", attachments: AttachmentDraft[] = []): Promise<boolean> {
     if (!session || submitting) return false;
     setSubmitting(true);
     setError(null);
@@ -732,10 +733,11 @@ export function App(): React.JSX.Element {
           sessionId: session.id,
           clientNonce,
           text,
+          attachments,
           targetBotIds: targetBotIds ?? [],
           routingMode: routingMode ?? "automatic",
         })
-      : await window.aevorenBot.messages.send({ sessionId: session.id, clientNonce, text });
+      : await window.aevorenBot.messages.send({ sessionId: session.id, clientNonce, text, attachments });
     setSubmitting(false);
     if (!result.ok) {
       setError(result.error);
@@ -828,6 +830,23 @@ export function App(): React.JSX.Element {
         onOpenBots={() => setMobilePanel("bots")}
         onOpenProfile={() => setMobilePanel("profile")}
         onOpenWorkspaces={() => setWorkspacesOpen(true)}
+        onPickAttachments={async () => {
+          const result = await window.aevorenBot.attachments.pick();
+          if (!result.ok) {
+            setError(result.error);
+            return [];
+          }
+          return result.data;
+        }}
+        onSaveArtifact={async (entry) => {
+          const title = selectedBot?.name ?? selectedRoom?.room.name ?? "aevoren-result";
+          const stamp = new Date(entry.createdAt).toISOString().replace(/[:.]/gu, "-");
+          const result = await window.aevorenBot.artifacts.save({
+            name: `${title}-${stamp}.md`,
+            content: entry.body,
+          });
+          if (!result.ok) setError(result.error);
+        }}
         onBotUpdated={updateBot}
         onError={setError}
         onResolveApproval={async (approval, resolution) => {

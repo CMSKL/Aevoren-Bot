@@ -24,11 +24,9 @@ module.exports = {
     { from: "NOTICE", to: "NOTICE" },
   ],
   artifactName: "Aevoren-Bot-${version}-${arch}.${ext}",
-  ...(publishConfiguration
-    ? {
-        publish: [publishConfiguration],
-      }
-    : {}),
+  // Never let electron-builder infer a GitHub provider from package metadata
+  // for unsigned local packages. Only signed release builds embed the feed.
+  publish: publishConfiguration ? [publishConfiguration] : null,
   mac: {
     target: ["dmg", "zip"],
     category: "public.app-category.productivity",
@@ -39,6 +37,24 @@ module.exports = {
     ...(releaseBuild
       ? { hardenedRuntime: true, notarize: true }
       : { identity: null, hardenedRuntime: false, notarize: false }),
+  },
+  win: {
+    target: [{ target: "nsis", arch: ["x64"] }],
+    icon: "resources/icon.ico",
+    ...(releaseBuild
+      ? {
+          forceCodeSigning: true,
+        }
+      : {}),
+  },
+  nsis: {
+    oneClick: false,
+    perMachine: false,
+    allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: "Aevoren Bot",
+    deleteAppDataOnUninstall: false,
   },
   dmg: {
     sign: releaseBuild,

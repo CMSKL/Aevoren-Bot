@@ -10,14 +10,14 @@ body:
     id: version
     attributes:
       label: Version or commit
-      placeholder: 0.2.0-beta.7 or commit SHA
+      placeholder: 0.3.0-beta.1 or commit SHA
     validations:
       required: true
   - type: input
     id: environment
     attributes:
       label: Environment
-      placeholder: macOS version, Apple silicon model, Node/pnpm for source builds
+      placeholder: OS and architecture, Node/pnpm for source builds
     validations:
       required: true
   - type: dropdown

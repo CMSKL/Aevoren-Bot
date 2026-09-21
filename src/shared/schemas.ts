@@ -45,6 +45,8 @@ export const botUnreadSchema = z.object({ id: botIdSchema, unread: z.boolean() }
 export const botHiddenSchema = z.object({ id: botIdSchema, hidden: z.boolean() });
 export const memoryIdSchema = z.string().uuid();
 const memoryContentSchema = z.string().trim().min(1).max(4_000);
+export const memoryKindSchema = z.enum(["fact", "preference", "decision", "procedure"]);
+const memoryExpiresAtSchema = z.string().datetime({ offset: true }).nullable();
 const legacyMemoryListSchema = z.object({
   botId: botIdSchema,
   includeDeleted: z.boolean().optional(),
@@ -52,6 +54,8 @@ const legacyMemoryListSchema = z.object({
 const legacyMemoryCreateSchema = z.object({
   botId: botIdSchema,
   content: memoryContentSchema,
+  kind: memoryKindSchema.optional(),
+  expiresAt: memoryExpiresAtSchema.optional(),
 }).strict();
 export const memoryScopeSelectorSchema = z.discriminatedUnion("scope", [
   z.object({ scope: z.literal("user"), scopeKey: z.literal("user") }).strict(),
@@ -64,16 +68,33 @@ export const memoryListSchema = z.union([
 ]);
 export const memoryCreateSchema = z.union([
   legacyMemoryCreateSchema,
-  memoryScopeSelectorSchema.and(z.object({ content: memoryContentSchema })),
+  memoryScopeSelectorSchema.and(z.object({
+    content: memoryContentSchema,
+    kind: memoryKindSchema.optional(),
+    expiresAt: memoryExpiresAtSchema.optional(),
+  })),
 ]);
 export const memoryUpdateSchema = z.object({
   id: memoryIdSchema,
   expectedVersion: z.number().int().positive(),
   content: memoryContentSchema,
+  kind: memoryKindSchema.optional(),
+  expiresAt: memoryExpiresAtSchema.optional(),
 }).strict();
 export const memoryMutationSchema = z.object({
   id: memoryIdSchema,
   expectedVersion: z.number().int().positive(),
+}).strict();
+export const memoryProposalListSchema = z.object({
+  botId: botIdSchema.optional(),
+  state: z.enum(["pending", "accepted", "rejected"]).optional(),
+}).strict().optional();
+export const memoryProposalAcceptSchema = z.object({
+  id: memoryIdSchema,
+  expectedVersion: z.number().int().positive(),
+  content: memoryContentSchema.optional(),
+  kind: memoryKindSchema.optional(),
+  expiresAt: memoryExpiresAtSchema.optional(),
 }).strict();
 export const sessionIdSchema = z.string().uuid();
 export const nonceSchema = z.string().uuid();
@@ -169,6 +190,23 @@ export const approvalResolutionSchema = z.object({
 export const toolSessionScopeSchema = z.object({
   sessionId: sessionIdSchema,
 }).strict();
+export const attachmentDraftSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(200),
+  mimeType: z.string().trim().min(1).max(120),
+  size: z.number().int().min(0).max(1_048_576),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  kind: z.literal("text"),
+  content: z.string().max(1_048_576),
+}).strict();
+export const artifactSaveSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  content: z.string().max(2 * 1_048_576),
+}).strict();
+export const messageAttachmentsSchema = z.array(attachmentDraftSchema).max(6).superRefine((attachments, context) => {
+  const total = attachments.reduce((sum, attachment) => sum + new TextEncoder().encode(attachment.content).byteLength, 0);
+  if (total > 4 * 1_048_576) context.addIssue({ code: "custom", message: "Attachments are too large" });
+});
 export const roomIdSchema = z.string().uuid();
 export const batchIdSchema = z.string().uuid();
 export const turnIdSchema = z.string().uuid();
@@ -177,6 +215,7 @@ export const sendCommandSchema = z.object({
   sessionId: sessionIdSchema,
   clientNonce: nonceSchema,
   text: nonEmptyText,
+  attachments: messageAttachmentsSchema.optional(),
 });
 
 const roomMemberIdsSchema = z.array(botIdSchema).min(2).max(6).refine(
@@ -334,5 +373,6 @@ export const routineMutationSchema = z.object({ id: routineIdSchema, expectedVer
 
 export const generalSettingsSchema = z.object({
   theme: z.enum(["system", "light", "dark"]).optional(),
+  memoryCaptureEnabled: z.boolean().optional(),
   launchAtLogin: z.boolean().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one general setting is required");

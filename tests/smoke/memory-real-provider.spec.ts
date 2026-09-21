@@ -97,9 +97,9 @@ test("uses one Bot-owned explicit Memory in one real Provider call", async () =>
       .prepare("SELECT prompt_manifest_json FROM runtime_runs WHERE session_id = ?")
       .get(sessionId) as { prompt_manifest_json: string };
     const manifest = JSON.parse(row.prompt_manifest_json) as PromptManifest;
-    expect(manifest.schemaVersion).toBe(3);
-    expect(manifest.blocks.map((block) => block.authority)).toEqual(["agent-profile", "memory", "user"]);
-    expect(manifest.blocks.find((block) => block.authority === "memory")?.scope).toBe(`bot:${botId}:memory`);
+    expect(manifest.schemaVersion).toBe(4);
+    expect(manifest.blocks.map((block) => block.authority)).toEqual(["agent-profile", "runtime-state", "memory", "user"]);
+    expect(manifest.blocks.find((block) => block.authority === "memory")?.scope).toBe(`bot:${botId}:runtime-memory`);
     expect(row.prompt_manifest_json).not.toContain(storedToken);
     expect(row.prompt_manifest_json).not.toContain(currentToken);
     expect(row.prompt_manifest_json).not.toContain("本次验收的参考编号");

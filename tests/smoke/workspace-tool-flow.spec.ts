@@ -39,6 +39,7 @@ test("approves, denies, and restores one workspace tool flow without exposing jo
     await page.locator('textarea[aria-label="消息"]').fill("请读取工作区摘要");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     const firstTool = page.getByTestId("workspace-tool-activity").last();
+    await expect(firstTool).toHaveAttribute("data-trace-kind", "coding");
     await expect(firstTool).toContainText("等待你的确认");
     await firstTool.getByRole("button", { name: "仅允许一次" }).click();
     await expect(firstTool).toContainText("执行完成");
@@ -64,6 +65,7 @@ test("approves, denies, and restores one workspace tool flow without exposing jo
     await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(2);
     await expect(page.getByTestId("workspace-tool-activity").first()).toContainText("执行完成");
     await expect(page.getByTestId("workspace-tool-activity").last()).toContainText("已拒绝");
+    await expect(page.getByTestId("workspace-tool-activity").first().locator(".expandable-trace-header")).toHaveAttribute("aria-expanded", "false");
     expect(await page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     expect(consoleErrors).toEqual([]);
     await application.close();

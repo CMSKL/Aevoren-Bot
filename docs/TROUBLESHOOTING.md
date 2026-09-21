@@ -2,11 +2,11 @@
 
 ## No model is available
 
-Open **Settings → Models & CLI** and run a rescan. Confirm the CLI is installed, logged in, and reports at least one model. Ollama also needs a running local service and an installed model. If no supported CLI is available, use the OpenAI-compatible fallback and keep the API key inside the app so Main can encrypt it with `safeStorage`.
+Open **Settings → Models & CLI**. For API, confirm Base URL, encrypted API Key, and model selection. For Claude Code or Codex CLI, run a rescan and confirm the CLI is installed, logged in, and reports at least one model. Use **Test real request** to distinguish installation/login success from an expired login, unavailable model, or exhausted quota.
 
 ## The app starts but does not answer
 
-Check the selected Provider status, model ID, and connection test. For source evaluation, enable `AEVOREN_BOT_FAKE_PROVIDER=1` and retry with synthetic data. Do not put a real key in `.env` or a command-line argument.
+Check the selected Provider, model ID, and latest real-request test. A quota or authentication failure can occur even when a CLI binary is installed. For source evaluation, enable `AEVOREN_BOT_FAKE_PROVIDER=1` and retry with synthetic data. Do not put a real key in `.env` or a command-line argument.
 
 ## A Room is busy or interrupted
 
@@ -22,4 +22,4 @@ The current version remains usable. Retry after checking the network and the off
 
 ## Reporting a bug
 
-Run `pnpm validate` for a source build, redact secrets and personal paths, and include the version or commit, macOS version, Apple silicon model, Provider type, smallest reproduction, and safe error code. Use the private process in [SECURITY.md](../SECURITY.md) for security issues.
+Run `pnpm validate` for a source build, redact secrets and personal paths, and include the version or commit, operating system and architecture, Provider type, smallest reproduction, and safe error code. Use the private process in [SECURITY.md](../SECURITY.md) for security issues.

@@ -15,7 +15,7 @@ Last reviewed: 2026-09-18. This is a readiness record, not authorization to publ
 | Icon and visual asset provenance | Conditionally passed | The legacy face icon is covered by the maintainer redistribution attestation in `docs/ASSET_PROVENANCE.md`; independent-authorship evidence and trademark clearance remain legal-review risks, not an undocumented project decision |
 | README and public setup docs | Passed | Public README plus Installation, Configuration, Release, Support, Security, Contribution, Code of Conduct, Changelog, Notice, and trademark docs added |
 | Reproducible dependency install | Passed | Fresh local `pnpm install --frozen-lockfile`, offline reinstall, and remote Ubuntu/macOS CI installs succeeded |
-| Build and macOS package | Passed | Current `0.2.0-beta.7` arm64 directory package built locally and in remote CI; packaged hidden startup smoke passed |
+| Build and macOS package | Passed | Current `0.3.0-beta.1` arm64 directory package built locally and in remote CI; packaged hidden startup smoke passed |
 | Privacy declarations and ATS | Passed | Unused camera/microphone/Bluetooth descriptions removed during `afterPack`; arbitrary network loads disabled; local networking retained |
 | PR CI | Passed on `dev` | Pinned GitHub Actions workflow completed secret scan, Node 24 validation/build, dependency audit/license gate, macOS smoke, and unsigned package for the rewritten `dev` head |
 | Signed/notarized release | Deferred binary gate | Not required for publishing source code; before the first public macOS binary, create a new version and verify Developer ID, Hardened Runtime, notarization, Gatekeeper, checksums, attestation, and update metadata |
@@ -29,7 +29,8 @@ The tag workflow invokes `pnpm open-source:check` before building, so an acciden
 | Item | Status / action |
 | --- | --- |
 | SBOM | Passed locally | `pnpm sbom:generate` creates a deterministic CycloneDX 1.5 SBOM; the release workflow attests and uploads it with the immutable asset set |
-| Intel macOS / Windows / Linux | Documented unsupported | README, Installation, Support, and Portal explicitly scope the current release line to macOS 13+ Apple silicon |
+| Windows 10/11 x64 | MVP validation track | Source build, Windows-specific CLI/path tests, CI smoke, and unsigned NSIS package job are configured; signed public installer remains blocked on Windows certificate secrets |
+| Intel macOS / Linux | Documented unsupported | README, Installation, Support, and Portal scope the current release line to macOS arm64 and Windows x64 MVP |
 | Accessibility and localization | Pending public review | Core UI tests and user-facing English/Chinese strings exist, but a dedicated accessibility audit and documentation-language decision remain |
 | Dependency update automation | Prepared | Dependabot grouping is active and grouped PRs have been observed; upgrades remain subject to compatibility and license gates |
 | Support operations | Passed | SUPPORT.md defines private security reporting, issue triage guidance, and maintainer response targets |

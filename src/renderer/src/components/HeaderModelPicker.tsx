@@ -125,7 +125,9 @@ export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderMo
         }}
       >
         <span className="header-model-mark">{activeProvider ? <ProviderMark provider={activeProvider} size="small" /> : <BotIcon />}</span>
-        <span className="header-model-trigger-copy">{modelLabel(activeProvider, bot.modelSelection.modelId)}</span>
+        <span className="header-model-trigger-copy">
+          {activeProvider ? `${activeProvider.displayName} · ${modelLabel(activeProvider, bot.modelSelection.modelId)}` : modelLabel(activeProvider, bot.modelSelection.modelId)}
+        </span>
         <span className="header-model-chevron" aria-hidden="true">⌄</span>
       </button>
 

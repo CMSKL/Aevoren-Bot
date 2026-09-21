@@ -1,4 +1,6 @@
 export const IPC = {
+  attachmentsPick: "attachments:pick",
+  artifactsSave: "artifacts:save",
   capabilitiesGetSnapshot: "capabilities:get-snapshot",
   mcpList: "mcp:list",
   mcpSave: "mcp:save",
@@ -30,6 +32,9 @@ export const IPC = {
   memoriesUpdate: "memories:update",
   memoriesDelete: "memories:delete",
   memoriesRestore: "memories:restore",
+  memoriesListProposals: "memories:list-proposals",
+  memoriesAcceptProposal: "memories:accept-proposal",
+  memoriesRejectProposal: "memories:reject-proposal",
   workspacesList: "workspaces:list",
   workspacesAdd: "workspaces:add",
   workspacesRemove: "workspaces:remove",

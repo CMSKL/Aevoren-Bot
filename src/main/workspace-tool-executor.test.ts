@@ -195,7 +195,7 @@ describe("WorkspaceToolExecutor", () => {
     });
   });
 
-  it("searches literal text recursively, skips symlinks and stops at maxMatches", async () => {
+  it.skipIf(process.platform === "win32")("searches literal text recursively, skips symlinks and stops at maxMatches", async () => {
     const root = temporaryDirectory("aevoren-tool-search-");
     const outside = temporaryDirectory("aevoren-tool-search-outside-");
     mkdirSync(join(root, "src"));

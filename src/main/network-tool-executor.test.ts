@@ -38,15 +38,16 @@ describe("NetworkToolExecutor", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("returns bounded Wikipedia results with explicit provider and freshness metadata", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      query: {
-        pages: {
-          "2": { index: 2, title: "第二项", fullurl: "https://zh.wikipedia.org/wiki/2", extract: "第二项摘要" },
-          "1": { index: 1, title: "第一项", fullurl: "https://zh.wikipedia.org/wiki/1", extract: "第一项摘要" },
-        },
-      },
-    }), { status: 200, headers: { "content-type": "application/json" } })));
+  it("returns bounded public web results with explicit provider and freshness metadata", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Response(`
+      <div class="result results_links">
+        <a class="result__a" href="https://example.com/one">第一项</a>
+        <a class="result__snippet">第一项摘要</a>
+      </div>
+      <div class="result results_links">
+        <a class="result__a" href="https://example.com/two">第二项</a>
+        <a class="result__snippet">第二项摘要</a>
+      </div>`, { status: 200, headers: { "content-type": "text/html" } })));
     const result = await new NetworkToolExecutor(now).run(
       { kind: "web-search", query: "Aevoren", maxResults: 1 },
       new AbortController().signal,
@@ -54,12 +55,66 @@ describe("NetworkToolExecutor", () => {
     expect(JSON.parse(result.content)).toEqual({
       untrusted: true,
       query: "Aevoren",
-      provider: "Wikipedia",
-      scopeNotice: "当前搜索来源仅覆盖 Wikipedia，不代表完整互联网或实时新闻。",
+      provider: "DuckDuckGo",
+      scopeNotice: "搜索结果来自公开网页索引，内容和时效性均需自行核验，不代表完整互联网或实时事实。",
       retrievedAt: "2026-09-17T08:00:00.000Z",
-      results: [{ title: "第一项", url: "https://zh.wikipedia.org/wiki/1", snippet: "第一项摘要" }],
+      results: [{ title: "第一项", url: "https://example.com/one", snippet: "第一项摘要" }],
     });
-    expect(result.metadata).toMatchObject({ provider: "Wikipedia", results: 1, retrievedAt: "2026-09-17T08:00:00.000Z" });
+    expect(result.metadata).toMatchObject({ provider: "DuckDuckGo", results: 1, retrievedAt: "2026-09-17T08:00:00.000Z" });
+  });
+
+  it("uses the stable DuckDuckGo JSON endpoint before the HTML fallback", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      AbstractText: "A concise result",
+      AbstractURL: "https://example.com/abstract",
+      Heading: "Example",
+      RelatedTopics: [{ FirstURL: "https://example.com/topic", Text: "Topic - Topic summary" }],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    const result = await new NetworkToolExecutor(now).run(
+      { kind: "web-search", query: "Aevoren", maxResults: 3 },
+      new AbortController().signal,
+    );
+    expect(JSON.parse(result.content).results).toEqual([
+      { title: "Example", url: "https://example.com/abstract", snippet: "A concise result" },
+      { title: "Topic", url: "https://example.com/topic", snippet: "Topic summary" },
+    ]);
+  });
+
+  it("uses Bing RSS when DuckDuckGo instant answers are empty", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ RelatedTopics: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(`<?xml version="1.0"?><rss><channel><item>
+        <title>OpenAI official site</title><link>https://openai.com/</link>
+        <description>Official OpenAI website and product information.</description>
+      </item></channel></rss>`, { status: 200, headers: { "content-type": "application/rss+xml" } })));
+    const result = await new NetworkToolExecutor(now).run(
+      { kind: "web-search", query: "OpenAI official website", maxResults: 3 },
+      new AbortController().signal,
+    );
+    expect(JSON.parse(result.content)).toMatchObject({
+      provider: "Bing RSS",
+      results: [{ title: "OpenAI official site", url: "https://openai.com/" }],
+    });
+    expect(result.metadata).toMatchObject({ provider: "Bing RSS", results: 1 });
+  });
+
+  it("detects a blocked DuckDuckGo page and continues to the lite fallback", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ RelatedTopics: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response("<rss><channel></channel></rss>", { status: 200 }))
+      .mockResolvedValueOnce(new Response("<div id='anomaly-modal'>Unfortunately, bots use DuckDuckGo too</div>", { status: 202 }))
+      .mockResolvedValueOnce(new Response(`
+        <table><tr><td><a class="result-link" href="https://example.com/fallback">Fallback result</a></td></tr>
+        <tr><td class="result-snippet">Fallback summary</td></tr></table>
+      `, { status: 200 })));
+    const result = await new NetworkToolExecutor(now).run(
+      { kind: "web-search", query: "fallback", maxResults: 2 },
+      new AbortController().signal,
+    );
+    expect(JSON.parse(result.content)).toMatchObject({
+      provider: "DuckDuckGo",
+      results: [{ title: "Fallback result", url: "https://example.com/fallback", snippet: "Fallback summary" }],
+    });
   });
 
   it("resolves a named location and returns current weather with observation and source data", async () => {
@@ -155,9 +210,9 @@ describe("NetworkToolExecutor", () => {
     await expect(executor.run({ kind: "weather-current", location: "不存在地点" }, new AbortController().signal))
       .rejects.toMatchObject({ code: "NETWORK_LOCATION_NOT_FOUND" });
 
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("not-json", { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Response("not-json", { status: 200 })));
     await expect(executor.run({ kind: "web-search", query: "test", maxResults: 3 }, new AbortController().signal))
-      .rejects.toMatchObject({ code: "NETWORK_TOOL_RESPONSE_INVALID" });
+      .rejects.toMatchObject({ code: "NETWORK_TOOL_UNAVAILABLE" });
 
     const controller = new AbortController();
     controller.abort();
@@ -166,18 +221,32 @@ describe("NetworkToolExecutor", () => {
   });
 
   it.skipIf(process.env.AEVOREN_BOT_REAL_NETWORK !== "1")(
-    "queries the live Wikipedia and Open-Meteo endpoints with source and freshness fields",
+    "queries the live web and Open-Meteo endpoints with source and freshness fields",
     async () => {
       vi.unstubAllGlobals();
       const executor = new NetworkToolExecutor();
-      const search = JSON.parse((await executor.run(
-        { kind: "web-search", query: "人工智能", maxResults: 2 },
-        new AbortController().signal,
-      )).content) as { provider: string; retrievedAt: string; results: Array<{ url: string }> };
-      expect(search.provider).toBe("Wikipedia");
-      expect(Date.parse(search.retrievedAt)).not.toBeNaN();
-      expect(search.results.length).toBeGreaterThan(0);
-      expect(search.results.every((result) => result.url.startsWith("https://zh.wikipedia.org/"))).toBe(true);
+      const queries = [
+        "OpenAI official website",
+        "GitHub official website",
+        "Apple developer documentation",
+        "TypeScript official documentation",
+        "Electron documentation",
+        "人工智能 最新研究",
+        "开源桌面应用",
+        "上海 科技 新闻",
+        "Codex CLI GitHub",
+        "Claude Code documentation",
+      ];
+      for (const query of queries) {
+        const search = JSON.parse((await executor.run(
+          { kind: "web-search", query, maxResults: 2 },
+          new AbortController().signal,
+        )).content) as { provider: string; retrievedAt: string; results: Array<{ url: string }> };
+        expect(["DuckDuckGo", "Bing RSS"]).toContain(search.provider);
+        expect(Date.parse(search.retrievedAt)).not.toBeNaN();
+        expect(search.results.length, query).toBeGreaterThan(0);
+        expect(search.results.every((result) => result.url.startsWith("https://"))).toBe(true);
+      }
 
       const weather = JSON.parse((await executor.run(
         { kind: "weather-current", location: "上海" },
@@ -196,6 +265,6 @@ describe("NetworkToolExecutor", () => {
       expect(Date.parse(page.source.retrievedAt)).not.toBeNaN();
       expect(page.content).toContain("Example Domain");
     },
-    30_000,
+    120_000,
   );
 });

@@ -58,6 +58,44 @@ async function fetchJson(url: URL, signal: AbortSignal): Promise<unknown> {
   }
 }
 
+async function fetchText(
+  url: URL,
+  signal: AbortSignal,
+  maximumBytes = MAX_RESPONSE_BYTES,
+  init: Pick<RequestInit, "method" | "headers" | "body" | "redirect"> = {},
+): Promise<string> {
+  const controller = new AbortController();
+  const onAbort = (): void => controller.abort(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(new AevorenBotError("NETWORK_TOOL_TIMEOUT")), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        accept: "text/html,text/plain,application/rss+xml,application/xml;q=0.9",
+        "user-agent": "Aevoren-Bot/0.2",
+        ...init.headers,
+      },
+      redirect: init.redirect ?? "error",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new AevorenBotError("NETWORK_TOOL_UNAVAILABLE", undefined, response.status >= 500, { status: response.status });
+    const declaredLength = Number(response.headers.get("content-length") ?? "0");
+    if (declaredLength > maximumBytes) throw new AevorenBotError("NETWORK_TOOL_RESPONSE_INVALID");
+    const body = await response.text();
+    if (Buffer.byteLength(body, "utf8") > maximumBytes) throw new AevorenBotError("NETWORK_TOOL_RESPONSE_INVALID");
+    return body;
+  } catch (error) {
+    if (signal.aborted) throw abortError();
+    if (controller.signal.reason instanceof AevorenBotError) throw controller.signal.reason;
+    if (error instanceof AevorenBotError) throw error;
+    throw new AevorenBotError("NETWORK_TOOL_UNAVAILABLE");
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 async function readBoundedBody(response: WebPageResponse, maximumBytes: number): Promise<string> {
   const declaredHeader = response.headers["content-length"];
   const declaredLength = Number(Array.isArray(declaredHeader) ? declaredHeader[0] ?? "0" : declaredHeader ?? "0");
@@ -165,6 +203,112 @@ function finite(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function duckDuckGoJsonResults(payload: unknown, maximum: number): Array<{ title: string; url: string; snippet: string }> {
+  const root = object(payload);
+  if (!root) return [];
+  const results: Array<{ title: string; url: string; snippet: string }> = [];
+  const add = (raw: unknown): void => {
+    if (results.length >= maximum) return;
+    const item = object(raw);
+    if (!item || typeof item.FirstURL !== "string" || typeof item.Text !== "string") return;
+    try {
+      const url = new URL(item.FirstURL);
+      if (url.protocol !== "https:") return;
+      const [title, ...rest] = item.Text.split(" - ");
+      results.push({ title: title?.trim() || url.hostname, url: url.toString(), snippet: rest.join(" - ").trim().slice(0, 600) });
+    } catch {
+      // Ignore malformed result links from the external index.
+    }
+  };
+  if (typeof root.AbstractURL === "string" && typeof root.AbstractText === "string" && root.AbstractText.trim()) {
+    add({ FirstURL: root.AbstractURL, Text: `${root.Heading ?? root.AbstractURL} - ${root.AbstractText}` });
+  }
+  const visit = (value: unknown): void => {
+    if (results.length >= maximum || !Array.isArray(value)) return;
+    for (const item of value) {
+      if (results.length >= maximum) break;
+      const objectItem = object(item);
+      if (objectItem?.Topics) visit(objectItem.Topics);
+      else add(item);
+    }
+  };
+  visit(root.RelatedTopics);
+  return results;
+}
+
+type SearchResult = { title: string; url: string; snippet: string };
+
+function cleanSearchText(value: string): string {
+  return decodeEntities(value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gu, "$1").replace(/<[^>]+>/gu, " "))
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function searchUrl(value: string, base: URL): URL | null {
+  try {
+    const parsed = new URL(decodeEntities(value).startsWith("//") ? `https:${decodeEntities(value)}` : decodeEntities(value), base);
+    const redirected = parsed.searchParams.get("uddg");
+    const result = redirected ? new URL(redirected) : parsed;
+    if (result.protocol !== "https:" || result.hostname.endsWith("duckduckgo.com") || result.hostname.endsWith("bing.com")) return null;
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+function duckDuckGoChallenge(html: string): boolean {
+  return /(?:anomaly-modal|\/anomaly\.js|Unfortunately, bots use DuckDuckGo too)/iu.test(html);
+}
+
+function duckDuckGoHtmlResults(html: string, maximum: number, base: URL): SearchResult[] {
+  if (duckDuckGoChallenge(html)) return [];
+  const results: SearchResult[] = [];
+  const links = [...html.matchAll(/<a[^>]+class=["'][^"']*result__a[^"']*["'][^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/giu)];
+  const snippets = [...html.matchAll(/<(?:a|div)[^>]+class=["'][^"']*result__snippet[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div)>/giu)];
+  for (const [index, link] of links.entries()) {
+    if (results.length >= maximum) break;
+    const url = searchUrl(link[1]!, base);
+    const title = cleanSearchText(link[2]!);
+    if (!url || !title) continue;
+    results.push({ title, url: url.toString(), snippet: snippets[index] ? cleanSearchText(snippets[index]![1]!) : "" });
+  }
+  return results;
+}
+
+function duckDuckGoLiteResults(html: string, maximum: number, base: URL): SearchResult[] {
+  if (duckDuckGoChallenge(html)) return [];
+  const results: SearchResult[] = [];
+  const links = [...html.matchAll(/<a[^>]+(?:class=["'][^"']*result-link[^"']*["'][^>]*)?href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/giu)];
+  const snippets = [...html.matchAll(/<td[^>]+class=["'][^"']*result-snippet[^"']*["'][^>]*>([\s\S]*?)<\/td>/giu)];
+  for (const [index, link] of links.entries()) {
+    if (results.length >= maximum) break;
+    const url = searchUrl(link[1]!, base);
+    const title = cleanSearchText(link[2]!);
+    if (!url || !title) continue;
+    results.push({ title, url: url.toString(), snippet: snippets[index] ? cleanSearchText(snippets[index]![1]!) : "" });
+  }
+  return results;
+}
+
+function bingRssResults(xml: string, maximum: number): SearchResult[] {
+  const results: SearchResult[] = [];
+  for (const item of xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/giu)) {
+    if (results.length >= maximum) break;
+    const title = /<title\b[^>]*>([\s\S]*?)<\/title>/iu.exec(item[1]!)?.[1];
+    const link = /<link\b[^>]*>([\s\S]*?)<\/link>/iu.exec(item[1]!)?.[1];
+    const description = /<description\b[^>]*>([\s\S]*?)<\/description>/iu.exec(item[1]!)?.[1] ?? "";
+    if (!title || !link) continue;
+    try {
+      const url = new URL(cleanSearchText(link));
+      if (url.protocol !== "https:") continue;
+      results.push({ title: cleanSearchText(title), url: url.toString(), snippet: cleanSearchText(description).slice(0, 600) });
+    } catch {
+      // Ignore malformed external result URLs.
+    }
+  }
+  return results;
+}
+
 export class NetworkToolExecutor {
   constructor(
     private readonly now: () => Date = () => new Date(),
@@ -205,45 +349,63 @@ export class NetworkToolExecutor {
   }
 
   private async search(tool: Extract<NetworkToolRequest, { kind: "web-search" }>, signal: AbortSignal): Promise<NetworkToolResult> {
-    const url = new URL("https://zh.wikipedia.org/w/api.php");
-    url.search = new URLSearchParams({
-      action: "query",
-      generator: "search",
-      gsrsearch: tool.query,
-      gsrlimit: String(tool.maxResults),
-      prop: "info|extracts",
-      inprop: "url",
-      exintro: "1",
-      explaintext: "1",
-      exchars: "600",
-      format: "json",
-      origin: "*",
-    }).toString();
-    const payload = object(await fetchJson(url, signal));
-    const pages = object(object(payload?.query)?.pages);
-    if (!payload || !pages) throw new AevorenBotError("NETWORK_TOOL_RESPONSE_INVALID");
-    const results = Object.values(pages).flatMap((raw) => {
-      const page = object(raw);
-      if (!page || typeof page.title !== "string" || typeof page.fullurl !== "string") return [];
-      return [{
-        title: page.title,
-        url: page.fullurl,
-        snippet: typeof page.extract === "string" ? page.extract : "",
-        index: finite(page.index) ?? Number.MAX_SAFE_INTEGER,
-      }];
-    }).toSorted((left, right) => left.index - right.index).slice(0, tool.maxResults)
-      .map(({ index: _index, ...result }) => result);
+    const apiUrl = new URL("https://api.duckduckgo.com/");
+    apiUrl.search = new URLSearchParams({ q: tool.query, format: "json", no_html: "1", no_redirect: "1", skip_disambig: "1" }).toString();
+    let results: SearchResult[] = [];
+    let provider = "DuckDuckGo";
+    try {
+      results = duckDuckGoJsonResults(await fetchJson(apiUrl, signal), tool.maxResults);
+    } catch (error) {
+      if (signal.aborted) throw error;
+    }
+    if (results.length === 0) {
+      try {
+        const bingUrl = new URL("https://www.bing.com/search");
+        bingUrl.search = new URLSearchParams({ q: tool.query, format: "rss" }).toString();
+        results = bingRssResults(await fetchText(bingUrl, signal, MAX_RESPONSE_BYTES, { redirect: "follow" }), tool.maxResults);
+        if (results.length > 0) provider = "Bing RSS";
+      } catch (error) {
+        if (signal.aborted) throw error;
+      }
+    }
+    const form = new URLSearchParams({ q: tool.query, b: "", l: "us-en" }).toString();
+    const duckHeaders = {
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      referer: "https://duckduckgo.com/",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130 Safari/537.36",
+    };
+    if (results.length === 0) {
+      const htmlUrl = new URL("https://html.duckduckgo.com/html/");
+      try {
+        results = duckDuckGoHtmlResults(await fetchText(htmlUrl, signal, MAX_RESPONSE_BYTES, {
+          method: "POST", headers: duckHeaders, body: form,
+        }), tool.maxResults, htmlUrl);
+      } catch (error) {
+        if (signal.aborted) throw error;
+      }
+    }
+    if (results.length === 0) {
+      const liteUrl = new URL("https://lite.duckduckgo.com/lite/");
+      try {
+        results = duckDuckGoLiteResults(await fetchText(liteUrl, signal, MAX_RESPONSE_BYTES, {
+          method: "POST", headers: duckHeaders, body: form,
+        }), tool.maxResults, liteUrl);
+      } catch (error) {
+        if (signal.aborted) throw error;
+      }
+    }
+    if (results.length === 0) throw new AevorenBotError("NETWORK_TOOL_UNAVAILABLE");
     const retrievedAt = this.now().toISOString();
     return {
       content: JSON.stringify({
         untrusted: true,
         query: tool.query,
-        provider: "Wikipedia",
-        scopeNotice: "当前搜索来源仅覆盖 Wikipedia，不代表完整互联网或实时新闻。",
+        provider,
+        scopeNotice: "搜索结果来自公开网页索引，内容和时效性均需自行核验，不代表完整互联网或实时事实。",
         retrievedAt,
         results,
       }),
-      metadata: { kind: tool.kind, provider: "Wikipedia", retrievedAt, results: results.length },
+      metadata: { kind: tool.kind, provider, retrievedAt, results: results.length },
     };
   }
 

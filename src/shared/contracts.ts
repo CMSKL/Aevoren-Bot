@@ -33,7 +33,8 @@ export type ConversationBatchDeleteResult = {
   rooms: RoomDeleteResult[];
 };
 
-export type MemorySource = "manual-user";
+export type MemorySource = "manual-user" | "model-captured";
+export type MemoryKind = "fact" | "preference" | "decision" | "procedure";
 export type MemoryScope = "user" | "bot" | "workspace";
 
 export type MemoryScopeSelector = {
@@ -49,9 +50,34 @@ export type MemoryItem = {
   workspaceId?: string | null;
   content: string;
   contentDigest: string;
+  kind: MemoryKind;
   source: MemorySource;
+  sourceEntryId: string | null;
+  expiresAt: string | null;
   version: number;
   deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MemoryProposalState = "pending" | "accepted" | "rejected";
+
+export type MemoryProposal = {
+  id: string;
+  botId: string;
+  scope: MemoryScope;
+  scopeKey: string;
+  workspaceId: string | null;
+  kind: MemoryKind;
+  content: string;
+  contentDigest: string;
+  reason: string;
+  sourceEntryId: string;
+  supersedesMemoryId: string | null;
+  expiresAt: string | null;
+  state: MemoryProposalState;
+  version: number;
+  resolvedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -103,6 +129,9 @@ export type TranscriptEntry = {
   clientNonce: string | null;
   role: TranscriptRole;
   body: string;
+  attachments?: MessageAttachment[];
+  /** Main-only prompt enrichment; never populated in Renderer-facing snapshots. */
+  attachmentContents?: Array<MessageAttachment & { content: string }>;
   status: TranscriptStatus;
   sendState: SendState | null;
   speakerBotId: string | null;
@@ -125,10 +154,36 @@ export type SendJournalEntry = {
   updatedAt: string;
 };
 
+export type MessageAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  sha256: string;
+  kind: "text";
+};
+
+/** Content is transient Renderer state and is validated again in Main. */
+export type AttachmentDraft = MessageAttachment & {
+  content: string;
+};
+
+export type ArtifactSaveInput = {
+  name: string;
+  content: string;
+};
+
+export type ArtifactSaveResult = {
+  name: string;
+  path: string;
+  size: number;
+};
+
 export type SendCommand = {
   sessionId: string;
   clientNonce: string;
   text: string;
+  attachments?: AttachmentDraft[];
 };
 
 export type SendResult = {
@@ -155,6 +210,62 @@ export type ProviderDiscoveryMode = "automatic" | "manual" | "not-applicable";
 export type ModelSelection = {
   providerInstanceId: string;
   modelId: string;
+};
+
+export type DecisionProviderKind = "rules" | "fake" | "jev";
+
+export type DecisionState =
+  | "prepared"
+  | "dispatched"
+  | "completed"
+  | "timeout"
+  | "failed"
+  | "rate-limited"
+  | "fallback"
+  | "cancelled";
+
+export type DecisionAnswer = {
+  value: unknown;
+  confidence?: number;
+  probabilities?: Record<string, number>;
+};
+
+export type DecisionRequest = {
+  policyId: string;
+  policyVersion: number;
+  state: Record<string, unknown>;
+  questions: Record<string, unknown>;
+  model?: string;
+  timeoutMs?: number;
+  idempotencyKey: string;
+};
+
+export type DecisionResult = {
+  provider: DecisionProviderKind;
+  modelVersion: string;
+  answers: Record<string, DecisionAnswer>;
+  latencyMs: number;
+  requestId: string | null;
+};
+
+export type DecisionJournalEntry = {
+  id: string;
+  idempotencyKey: string;
+  policyId: string;
+  policyVersion: number;
+  provider: DecisionProviderKind;
+  modelVersion: string | null;
+  state: DecisionState;
+  inputDigest: string;
+  answers: Record<string, DecisionAnswer>;
+  confidence: Record<string, number>;
+  fallbackReason: string | null;
+  requestId: string | null;
+  latencyMs: number | null;
+  lastErrorCode: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ProviderCapabilities = {
@@ -619,6 +730,7 @@ export type CreateRoomRunInput = {
   sessionId: string;
   clientNonce: string;
   text: string;
+  attachments?: AttachmentDraft[];
   membershipVersion: number;
   maxTurns: number;
   maxHops: number;
@@ -708,6 +820,7 @@ export type LoginItemStatus = "unsupported" | "not-registered" | "enabled" | "re
 
 export type GeneralSettings = {
   theme: AppearanceTheme;
+  memoryCaptureEnabled: boolean;
   launchAtLogin: boolean;
   launchAtLoginSupported: boolean;
   launchAtLoginStatus: LoginItemStatus;
@@ -715,6 +828,7 @@ export type GeneralSettings = {
 
 export type SaveGeneralSettings = {
   theme?: AppearanceTheme;
+  memoryCaptureEnabled?: boolean;
   launchAtLogin?: boolean;
 };
 
@@ -827,6 +941,7 @@ export type ErrorDomain =
   | "runtime"
   | "tool"
   | "approval"
+  | "decision"
   | "provider"
   | "storage"
   | "security"
@@ -920,6 +1035,12 @@ export type RoutineRun = {
 };
 
 export interface AevorenBotApi {
+  attachments: {
+    pick(): Promise<ApiResult<AttachmentDraft[]>>;
+  };
+  artifacts: {
+    save(input: ArtifactSaveInput): Promise<ApiResult<ArtifactSaveResult | null>>;
+  };
   capabilities: {
     getSnapshot(input?: { botId?: string }): Promise<ApiResult<CapabilitySnapshot>>;
   };
@@ -958,10 +1079,13 @@ export interface AevorenBotApi {
   };
   memories: {
     list(input: { botId: string; includeDeleted?: boolean } | (MemoryScopeSelector & { includeDeleted?: boolean })): Promise<ApiResult<MemoryItem[]>>;
-    create(input: { botId: string; content: string } | (MemoryScopeSelector & { content: string })): Promise<ApiResult<MemoryItem>>;
-    update(input: { id: string; expectedVersion: number; content: string }): Promise<ApiResult<MemoryItem>>;
+    create(input: { botId: string; content: string; kind?: MemoryKind; expiresAt?: string | null } | (MemoryScopeSelector & { content: string; kind?: MemoryKind; expiresAt?: string | null })): Promise<ApiResult<MemoryItem>>;
+    update(input: { id: string; expectedVersion: number; content: string; kind?: MemoryKind; expiresAt?: string | null }): Promise<ApiResult<MemoryItem>>;
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
     restore(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
+    listProposals(input?: { botId?: string; state?: MemoryProposalState }): Promise<ApiResult<MemoryProposal[]>>;
+    acceptProposal(input: { id: string; expectedVersion: number; content?: string; kind?: MemoryKind; expiresAt?: string | null }): Promise<ApiResult<{ proposal: MemoryProposal; memory: MemoryItem }>>;
+    rejectProposal(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryProposal>>;
   };
   workspaces: {
     list(): Promise<ApiResult<Workspace[]>>;

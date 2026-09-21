@@ -64,6 +64,7 @@ function capabilityDescriptors(
       : "当前模型来源未声明 Workspace 工具能力。";
   const networkAvailable = context.providerCapabilities?.networkTools === true;
   const networkReason = networkAvailable ? null : "当前模型来源未声明结构化联网工具能力。";
+  const handoffAvailable = context.providerCapabilities?.handoff === true;
   const mcpAvailable = networkAvailable && context.mcpTools.length > 0;
   return [
     {
@@ -82,19 +83,21 @@ function capabilityDescriptors(
       id: "room.collaboration",
       name: "多 Bot 群聊",
       category: "conversation",
-      description: "确定性路由、显式 @ 和有界 Agent Handoff。",
+      description: handoffAvailable
+        ? "确定性路由、显式 @ 和有界 Agent Handoff。"
+        : "确定性路由和显式 @；当前模型来源不支持模型驱动的结构化 Handoff。",
       effectClass: "pure",
       adapterKind: "core",
       availability: "available",
-      reason: null,
+      reason: handoffAvailable ? null : "当前模型来源仅支持顺序群聊和显式目标。",
       permissionState: "not-required",
-      toolNames: context.room ? ["handoff_to_agent"] : [],
+      toolNames: context.room && handoffAvailable ? ["handoff_to_agent"] : [],
     },
     {
       id: "memory.manual",
       name: "显式长期记忆",
       category: "memory",
-      description: "用户管理的 Bot 级版本化 Memory。",
+      description: "用户管理并审批的 user / Bot / Workspace 长期 Memory。",
       effectClass: "read-local",
       adapterKind: "local",
       availability: "available",
@@ -118,7 +121,7 @@ function capabilityDescriptors(
       id: "network.search",
       name: "联网搜索",
       category: "network",
-      description: "查询 Wikipedia 实时索引并返回来源和抓取时间。",
+      description: "查询公开网页索引并返回来源和抓取时间。",
       effectClass: "read-remote",
       adapterKind: "connector",
       availability: networkAvailable ? "available" : "unavailable",

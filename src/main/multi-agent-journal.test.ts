@@ -163,6 +163,8 @@ function logicalV5Hash(database: DatabaseSync): string {
   const snapshot = Object.fromEntries(tables.map((table) => {
     const columns = table === "bots"
       ? "id, name, label, description, instructions, version, created_at, updated_at"
+      : table === "transcript_entries"
+        ? "id, session_id, generation, seq, client_nonce, role, body, status, updated_seq, speaker_bot_id, speaker_name_snapshot, source_turn_id, created_at, updated_at"
       : table === "runtime_runs"
         ? "id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route, input_generation, input_seq, prompt_cutoff_seq, assistant_entry_id, provider_request_id, prompt_manifest_json, version, last_error_code, created_at, accepted_at, last_activity_at, finished_at"
       : table === "rooms"

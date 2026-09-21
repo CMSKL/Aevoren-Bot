@@ -60,3 +60,48 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:smoke
       - run: pnpm package:mac
+
+  windows:
+    name: Windows smoke and package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - name: Run Windows Electron smoke tests
+        env:
+          # GitHub-hosted Windows runners have no interactive desktop. The
+          # Playwright Electron connection still exercises the full Renderer.
+          AEVOREN_BOT_TEST_HIDDEN: "1"
+        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts
+      - run: pnpm package:win
+      - name: Verify unsigned Windows installer artifact
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem dist -File -Filter "Aevoren-Bot-*.exe")
+          if ($installers.Count -ne 1) { throw "Expected one Windows NSIS installer, found $($installers.Count)" }
+          if ($installers[0].Length -le 0) { throw "Windows installer is empty" }
+      - name: Install and launch Windows package in isolation
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem dist -File -Filter "Aevoren-Bot-*.exe")[0]
+          $installDir = Join-Path $env:RUNNER_TEMP "Aevoren Bot"
+          Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -Wait -NoNewWindow
+          $app = Join-Path $installDir "Aevoren Bot.exe"
+          if (!(Test-Path $app)) { throw "NSIS installer did not produce the application executable" }
+          $dataDir = Join-Path $env:RUNNER_TEMP "aevoren-windows-smoke-data"
+          $env:AEVOREN_BOT_FAKE_PROVIDER = "1"
+          $env:AEVOREN_BOT_TEST_HIDDEN = "1"
+          $env:AEVOREN_BOT_USER_DATA_DIR = $dataDir
+          $child = Start-Process -FilePath $app -ArgumentList @("--disable-gpu") -PassThru
+          Start-Sleep -Seconds 8
+          if ($child.HasExited) { throw "Installed Windows application exited during startup" }
+          Stop-Process -Id $child.Id -Force

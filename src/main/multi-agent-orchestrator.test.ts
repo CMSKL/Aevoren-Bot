@@ -11,6 +11,7 @@ import type { ChatMessage, ModelEvent, ModelProvider, ModelRunContext } from "./
 import { ScriptedFakeModelProvider } from "./model";
 import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
+import { DecisionService, FakeDecisionProvider } from "./decision-service";
 
 const repositories: AppRepository[] = [];
 const temporaryDirectories: string[] = [];
@@ -37,6 +38,7 @@ function harness(
   providerFactory: (fixture: Pick<Harness, "repository" | "bots" | "detail">) => ModelProvider,
   memberCount = 3,
   filename = ":memory:",
+  decisionFactory?: (fixture: Pick<Harness, "repository" | "bots" | "detail">) => DecisionService,
 ): Harness {
   const repository = new AppRepository(filename);
   repositories.push(repository);
@@ -49,6 +51,7 @@ function harness(
   });
   const detail = repository.createRoom({ memberBotIds: bots.map((bot) => bot.id), name: "M2 Room" });
   const provider = providerFactory({ repository, bots, detail });
+  const decisions = decisionFactory?.({ repository, bots, detail });
   const roomEvents = vi.fn();
   const executor = new RuntimeExecutor(
     repository,
@@ -56,6 +59,10 @@ function harness(
     { transcript: vi.fn(), runtime: vi.fn() },
     false,
     provider,
+    undefined,
+    undefined,
+    undefined,
+    decisions,
   );
   const coordinator = new RoomCoordinator(repository, executor, { roomRuntime: roomEvents, transcript: vi.fn() });
   return { repository, bots, detail, coordinator, executor, roomEvents };
@@ -209,7 +216,11 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
           reason: "草稿明确要求 Agent B 立即复核。",
         };
       },
-    }), 2);
+    }), 2, ":memory:", ({ repository }) => new DecisionService(repository, new FakeDecisionProvider(() => ({
+      answers: { action: { value: "handoff", confidence: 0.86 } },
+      modelVersion: "fake-decision-1",
+      requestId: "handoff-shadow",
+    })), true));
 
     const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
     await waitForBatch(value.repository, sent.batchId, ["completed"]);
@@ -226,6 +237,8 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       task: "通过 结构化转交 复核当前结果。",
       state: "accepted",
     });
+    await vi.waitFor(() => expect(value.repository.listDecisionJournals()[0]?.state).toBe("completed"));
+    expect(value.repository.listDecisionJournals()[0]?.answers.existingContinuation?.value).toMatchObject({ action: "handoff" });
     expect(JSON.stringify(value.repository.listTranscript(value.detail.session.id))).not.toContain("handoff_to_agent");
   });
 
@@ -1372,6 +1385,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
   });
 
   it("re-arms the persisted root deadline when an interrupted coordinated root is explicitly continued", async () => {
+    const deadlineMs = process.platform === "win32" ? 5_000 : 250;
     const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-m2-root-deadline-rearm-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
@@ -1385,7 +1399,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       maxTurns: 8,
       maxHops: 6,
       maxTargetsPerTurn: 2,
-      deadlineAt: new Date(Date.now() + 250).toISOString(),
+      deadlineAt: new Date(Date.now() + deadlineMs).toISOString(),
       initialTurns: [{ agentId: bots[0]!.id, nonce: "initial-a" }],
     });
     initial.transitionRoomRun(created.run.id, "running");
@@ -1396,7 +1410,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     reopened.recoverInterruptedRooms();
     const provider = new ScriptedFakeModelProvider(() => [
       { type: "started", requestId: "continued-a" },
-      { type: "delay", milliseconds: 350, ignoreAbort: true },
+      { type: "delay", milliseconds: deadlineMs + 500, ignoreAbort: true },
       { type: "delta", text: "TOO_LATE" },
       { type: "completed", finishReason: "stop" },
     ]);
@@ -1409,7 +1423,12 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     );
     const coordinator = new RoomCoordinator(reopened, executor, { roomRuntime: vi.fn(), transcript: vi.fn() });
     coordinator.continue(created.run.id);
-    await waitForBatch(reopened, created.run.id, ["partial"]);
+    await vi.waitFor(
+      () => expect(reopened.getRoomRun(created.run.id).state).toBe("partial"),
+      { timeout: deadlineMs + 2_000, interval: 50 },
+    );
+    await coordinator.shutdown();
+    await executor.shutdown();
 
     const latest = reopened.listAgentTurns(created.run.id).at(-1)!;
     expect(reopened.getRoomRun(created.run.id)).toMatchObject({ state: "partial", windingDown: true });

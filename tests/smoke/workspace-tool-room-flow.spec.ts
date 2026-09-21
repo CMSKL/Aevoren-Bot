@@ -93,7 +93,7 @@ test("routes approved workspace tools through one Room speaker and recovers a pe
     await expect(page.getByTestId("workspace-tool-activity").nth(0)).toContainText("执行完成");
     await expect(page.getByTestId("workspace-tool-activity").nth(1)).toContainText("已拒绝");
     await expect(page.getByTestId("workspace-tool-activity").nth(2)).toContainText("确认已过期");
-    await expect(page.getByTestId("workspace-tool-activity").nth(2).getByRole("button")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-tool-activity").nth(2).locator(".expandable-trace-actions button")).toHaveCount(0);
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 740));
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(390);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

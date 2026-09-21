@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import type { PromptManifest } from "@shared/contracts";
+import type { AttachmentDraft, PromptManifest } from "@shared/contracts";
 import { AppRepository, MIGRATIONS } from "./database";
 import { AevorenBotError } from "./errors";
 
@@ -84,8 +84,10 @@ describe("AppRepository", () => {
       sourceAppVersion: "0.1.0",
       targetAppVersion: "0.2.0-beta.1",
     });
-    expect(statSync(backupDirectory).mode & 0o777).toBe(0o700);
-    expect(statSync(String(metadata.databaseBackup)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(backupDirectory).mode & 0o777).toBe(0o700);
+      expect(statSync(String(metadata.databaseBackup)).mode & 0o777).toBe(0o600);
+    }
     const backup = new DatabaseSync(String(metadata.databaseBackup), { readOnly: true });
     expect(backup.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
     expect(backup.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: sourceSchemaVersion });
@@ -464,6 +466,72 @@ describe("AppRepository", () => {
       expect.objectContaining<Partial<AevorenBotError>>({ code: "MESSAGE_NONCE_CONFLICT" }),
     );
     expect(repository.listTranscript(session.id)).toHaveLength(1);
+  });
+
+  it("persists attachment metadata, includes content in prompts, and detects attachment conflicts", () => {
+    const repository = memoryRepository();
+    const { session } = repository.createBot();
+    const attachment: AttachmentDraft = {
+      id: crypto.randomUUID(),
+      name: "brief.md",
+      mimeType: "text/markdown",
+      size: 16,
+      sha256: "34fc1b8daebc49b0787a099b0e71ca7ee9c253a1012fe263af11543b5faddba6",
+      kind: "text",
+      content: "# attached brief",
+    };
+    const nonce = crypto.randomUUID();
+    repository.prepareMessage({ sessionId: session.id, clientNonce: nonce, text: "阅读附件", attachments: [attachment] });
+    expect(repository.listTranscript(session.id)[0]?.attachments).toEqual([{
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      sha256: attachment.sha256,
+      kind: "text",
+    }]);
+    expect(repository.listPromptEntries(session.id)[0]?.attachmentContents?.[0]?.content).toBe(attachment.content);
+    expect(() => repository.prepareMessage({
+      sessionId: session.id,
+      clientNonce: nonce,
+      text: "阅读附件",
+      attachments: [{ ...attachment, content: "different" }],
+    })).toThrowError(expect.objectContaining({ code: "ATTACHMENT_INVALID" }));
+  });
+
+  it("persists the same attachment contract for a Room trigger message", () => {
+    const repository = memoryRepository();
+    const first = repository.createBot().bot;
+    const second = repository.createBot().bot;
+    const room = repository.createRoom({ memberBotIds: [first.id, second.id] });
+    const content = "room attachment";
+    const attachment: AttachmentDraft = {
+      id: crypto.randomUUID(),
+      name: "room.txt",
+      mimeType: "text/plain",
+      size: Buffer.byteLength(content),
+      sha256: "3784a2d7c76837737cb66c0569921d20a3671f44bc60dbefc9029c4804c3e7a5",
+      kind: "text",
+      content,
+    };
+    const created = repository.createRoomRunWithInitialTurns({
+      roomId: room.room.id,
+      sessionId: room.session.id,
+      clientNonce: crypto.randomUUID(),
+      text: "请阅读群聊附件",
+      attachments: [attachment],
+      membershipVersion: room.room.membershipVersion,
+      maxTurns: 2,
+      maxHops: 1,
+      maxTargetsPerTurn: 1,
+      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+      initialTurns: [{ agentId: first.id, nonce: crypto.randomUUID() }],
+      routingMode: "explicit",
+      routingReason: null,
+    });
+    expect(created.disposition).toBe("created");
+    expect(repository.listTranscript(room.session.id)[0]?.attachments?.[0]?.name).toBe("room.txt");
+    expect(repository.listPromptEntries(room.session.id)[0]?.attachmentContents?.[0]?.content).toBe(content);
   });
 
   it("recovers pre-acceptance and uncertain sends without auto-resending", () => {

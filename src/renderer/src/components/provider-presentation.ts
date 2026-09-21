@@ -39,7 +39,7 @@ export function providerStateLabel(provider: ProviderInstanceInfo): string {
 }
 
 export function providerSubtitle(provider: ProviderInstanceInfo): string {
-  if (provider.driverKind === "openai-compatible") return "兼容 API · 手动兜底";
+  if (provider.driverKind === "openai-compatible") return "兼容 OpenAI API · 手动配置";
   if (provider.driverKind === "ollama-cli") return "本地模型引擎";
   if (provider.driverKind === "acp-cli") return `${provider.access === "local" ? "本地" : "云端"} ACP 引擎`;
   return `${provider.access === "local" ? "本地" : "云端"} CLI`;
