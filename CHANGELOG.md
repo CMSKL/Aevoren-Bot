@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.4] - 2026-09-21
+
+### Fixed
+
+- Forced structured Room owner and continuation tool calls for OpenAI-compatible Providers.
+- Normalized whitespace-only completion tasks without relaxing validation for actual Handoff content, preventing valid no-mention replies from ending as partial with `MODEL_ROUTER_INVALID`.
+
 ## [0.3.0-beta.3] - 2026-09-21
 
 ### Changed
@@ -39,5 +46,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - OAuth tokens, client credentials, Provider keys, and MCP Headers remain encrypted behind Electron `safeStorage`.
 - Background Memory capture considers only the current human message and blocks likely credentials before persistence.
 
+[0.3.0-beta.4]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.2...v0.3.0-beta.3
 [0.3.0-beta.2]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.2.0-beta.7...v0.3.0-beta.2
