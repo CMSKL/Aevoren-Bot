@@ -21,7 +21,8 @@ import type { ProviderResolver, RuntimeProviderInstance } from "./providers/cont
 const OPENAI_INSTANCE_ID = "openai-compatible.default";
 const CODEX_INSTANCE_ID = "codex.default";
 const CLAUDE_INSTANCE_ID = "claude.default";
-const FIRST_PHASE_PROVIDER_IDS = new Set([OPENAI_INSTANCE_ID, CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID]);
+const FIRST_PHASE_PROVIDER_ORDER = [CODEX_INSTANCE_ID, OPENAI_INSTANCE_ID, CLAUDE_INSTANCE_ID] as const;
+const FIRST_PHASE_PROVIDER_IDS = new Set<string>(FIRST_PHASE_PROVIDER_ORDER);
 
 const OPENAI_CAPABILITIES: ProviderCapabilities = {
   roomOwnerSelection: true,
@@ -622,8 +623,10 @@ export class ProviderService implements ProviderResolver {
     for (const instance of this.instances.values()) await instance.dispose();
     this.instances.clear();
     this.descriptions.clear();
-    for (const configuration of this.repository.listProviderInstanceConfigs()) {
-      if (!FIRST_PHASE_PROVIDER_IDS.has(configuration.id)) continue;
+    const configurations = new Map(this.repository.listProviderInstanceConfigs().map((configuration) => [configuration.id, configuration]));
+    for (const id of FIRST_PHASE_PROVIDER_ORDER) {
+      const configuration = configurations.get(id);
+      if (!configuration) continue;
       this.instances.set(configuration.id, this.createRuntime(configuration));
     }
   }

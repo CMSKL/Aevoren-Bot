@@ -65,7 +65,7 @@ test("boots Main, Preload and Renderer and completes Windows core IPC flows", as
         room.data.some((entry) => entry.role === "assistant" && entry.status === "completed");
     }, fixture)).toBe(true);
 
-    await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="设置"]')?.click());
+    await page.evaluate(() => document.querySelector<HTMLButtonElement>(".sidebar-settings-button")?.click());
     await expect.poll(() => page.locator(".settings-dialog").count()).toBe(1);
     expect(await page.locator(".settings-dialog").textContent()).toContain("模型与 CLI");
     expect(await page.locator("html").getAttribute("data-theme")).toBe("dark");
