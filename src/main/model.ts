@@ -1084,7 +1084,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
               },
             },
           }],
-          tool_choice: "auto",
+          tool_choice: { type: "function", function: { name: ROOM_OWNER_TOOL_NAME } },
           ...(isOfficialDeepSeekApi(this.baseUrl) ? { thinking: { type: "disabled" } } : {}),
         }),
         signal,
@@ -1205,7 +1205,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
               },
             },
           ],
-          tool_choice: "auto",
+          tool_choice: { type: "function", function: { name: ROOM_CONTINUATION_TOOL_NAME } },
           ...(isOfficialDeepSeekApi(this.baseUrl) ? { thinking: { type: "disabled" } } : {}),
         }),
         signal,
@@ -1263,7 +1263,10 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       typeof values.reason !== "string" || values.reason.trim().length === 0 || values.reason.length > MAX_ROUTING_REASON_LENGTH
     ) throw new AevorenBotError("MODEL_ROUTER_INVALID");
     if (values.action === "complete") {
-      if (values.toAgentId !== "__complete__" || values.task !== "") throw new AevorenBotError("MODEL_ROUTER_INVALID");
+      // Some OpenAI-compatible providers preserve a formatting space for a
+      // semantically empty string. Normalize whitespace only; any actual task
+      // content still fails closed for a completed route.
+      if (values.toAgentId !== "__complete__" || values.task.trim() !== "") throw new AevorenBotError("MODEL_ROUTER_INVALID");
       return { action: "complete", reason: values.reason.trim() };
     }
     if (!allowedIds.has(values.toAgentId) || values.task.trim().length === 0) throw new AevorenBotError("MODEL_ROUTER_INVALID");
