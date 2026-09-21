@@ -1,7 +1,7 @@
 {
   "name": "aevoren-bot",
   "productName": "Aevoren Bot",
-  "version": "0.3.0-beta.1",
+  "version": "0.3.0-beta.2",
   "license": "Apache-2.0",
   "private": true,
   "description": "Aevoren Bot is a reliable local desktop workspace for persistent AI bots.",

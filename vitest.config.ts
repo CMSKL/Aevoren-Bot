@@ -13,7 +13,7 @@ export default defineConfig({
     // Windows CI runs SQLite migration fixtures under Defender and can take
     // several times longer than macOS/Linux. Keep the default tight locally,
     // but give those real filesystem migrations enough time to finish.
-    testTimeout: process.platform === "win32" ? 30_000 : 5_000,
+    testTimeout: process.platform === "win32" ? 60_000 : 5_000,
     coverage: {
       reporter: ["text", "html"],
     },

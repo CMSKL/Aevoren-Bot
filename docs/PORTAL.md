@@ -21,6 +21,7 @@ Aevoren Bot is an open-source, local-first desktop workspace for persistent AI B
 | Install from source or understand data isolation | [Installation](INSTALLATION.md) |
 | Use Bots, Rooms, Memory, tools, and Routines | [User guide](USER_GUIDE.md) |
 | Configure model CLIs, MCP, Workspace, and environment overrides | [Configuration](CONFIGURATION.md) |
+| Understand reviewed Memory capture and scope rules | [Memory architecture](MEMORY.md) |
 | Diagnose a reproducible problem | [Troubleshooting](TROUBLESHOOTING.md) and [Support](../SUPPORT.md) |
 | Contribute code or documentation | [Contributing](../CONTRIBUTING.md) |
 | Report a security issue | [Security policy](../SECURITY.md) |
@@ -31,7 +32,7 @@ Aevoren Bot is an open-source, local-first desktop workspace for persistent AI B
 
 ## Product boundaries
 
-Aevoren Bot does not currently provide cloud sync, multi-user accounts, billing, unrestricted shell execution, arbitrary Workspace file writing, remote desktop, automatic Memory synthesis, or write-capable MCP tools. Users can explicitly export a completed reply as a bounded Markdown artifact through the system save dialog. External actions remain explicit, scoped, and approval-gated.
+Aevoren Bot does not currently provide cloud sync, multi-user accounts, billing, unrestricted shell execution, arbitrary Workspace file writing, remote desktop, unreviewed automatic Memory writes, or write-capable MCP tools. Users can explicitly export a completed reply as a bounded Markdown artifact through the system save dialog. External actions remain explicit, scoped, and approval-gated.
 
 Forks may reuse the source under Apache-2.0. The Aevoren Bot name, Logo, and official release identity are separate project identifiers; modified distributions should use their own name and visual identity and must not imply official endorsement.
 
