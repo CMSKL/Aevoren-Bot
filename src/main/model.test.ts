@@ -581,7 +581,7 @@ describe("Room owner selector", () => {
     const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<string, unknown>;
     expect(request).toMatchObject({
       stream: false,
-      tool_choice: "auto",
+      tool_choice: { type: "function", function: { name: "select_room_owner" } },
     });
     expect(JSON.stringify(request)).not.toContain("SECRET_API_KEY");
     expect(JSON.stringify(request)).not.toContain("instructions");
@@ -682,11 +682,11 @@ describe("Room continuation selector", () => {
     const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
       messages: Array<{ content: string }>;
       tools: Array<{ function: { name: string } }>;
-      tool_choice: string;
+      tool_choice: { type: string; function: { name: string } };
       thinking: unknown;
     };
     expect(request.tools.map((tool) => tool.function.name)).toEqual(["select_room_continuation"]);
-    expect(request.tool_choice).toBe("auto");
+    expect(request.tool_choice).toEqual({ type: "function", function: { name: "select_room_continuation" } });
     expect(request.thinking).toEqual({ type: "disabled" });
     expect(request.messages[0]!.content).toContain("等待用户批准/输入");
     expect(JSON.stringify(request)).not.toContain("SECRET_API_KEY");
@@ -701,7 +701,7 @@ describe("Room continuation selector", () => {
           arguments: JSON.stringify({
             action: "complete",
             toAgentId: "__complete__",
-            task: "",
+            task: " ",
             reason: "必须先等待用户批准。",
           }),
         },
@@ -715,6 +715,31 @@ describe("Room continuation selector", () => {
       roster,
       new AbortController().signal,
     )).resolves.toEqual({ action: "complete", reason: "必须先等待用户批准。" });
+  });
+
+  it("rejects actual task content when a completed route is claimed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [{
+        type: "function",
+        function: {
+          name: "select_room_continuation",
+          arguments: JSON.stringify({
+            action: "complete",
+            toAgentId: "__complete__",
+            task: "稍后继续执行",
+            reason: "当前结束。",
+          }),
+        },
+      }] } }],
+    }), { status: 200 })));
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "model", "key");
+
+    await expect(provider.selectRoomContinuation(
+      "当前先结束。",
+      executorBotId,
+      roster,
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
   });
 
   it("fails closed when the selector returns a nonmember target", async () => {
