@@ -78,7 +78,9 @@ jobs:
       - run: pnpm build
       - name: Run Windows Electron smoke tests
         env:
-          AEVOREN_BOT_TEST_HIDDEN: "0"
+          # GitHub-hosted Windows runners have no interactive desktop. The
+          # Playwright Electron connection still exercises the full Renderer.
+          AEVOREN_BOT_TEST_HIDDEN: "1"
         run: pnpm exec playwright test tests/smoke/app.spec.ts tests/smoke/attachments.spec.ts tests/smoke/settings.spec.ts tests/smoke/rooms.spec.ts --grep "creates, persists|attaches a bounded|uses one sidebar|creates and manages"
       - run: pnpm package:win
       - name: Verify unsigned Windows installer artifact
