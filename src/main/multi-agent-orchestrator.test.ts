@@ -1423,7 +1423,12 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     );
     const coordinator = new RoomCoordinator(reopened, executor, { roomRuntime: vi.fn(), transcript: vi.fn() });
     coordinator.continue(created.run.id);
-    await waitForBatch(reopened, created.run.id, ["partial"]);
+    await vi.waitFor(
+      () => expect(reopened.getRoomRun(created.run.id).state).toBe("partial"),
+      { timeout: deadlineMs + 2_000, interval: 50 },
+    );
+    await coordinator.shutdown();
+    await executor.shutdown();
 
     const latest = reopened.listAgentTurns(created.run.id).at(-1)!;
     expect(reopened.getRoomRun(created.run.id)).toMatchObject({ state: "partial", windingDown: true });
