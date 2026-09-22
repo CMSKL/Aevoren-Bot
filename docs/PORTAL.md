@@ -32,7 +32,7 @@ Aevoren Bot is an open-source, local-first desktop workspace for persistent AI B
 
 ## Product boundaries
 
-Aevoren Bot does not currently provide cloud sync, multi-user accounts, billing, unrestricted shell execution, arbitrary Workspace file writing, remote desktop, unreviewed automatic Memory writes, or write-capable MCP tools. Users can explicitly export a completed reply as a bounded Markdown artifact through the system save dialog. External actions remain explicit, scoped, and approval-gated.
+Aevoren Bot does not currently provide cloud sync, multi-user accounts, billing, unrestricted shell execution, arbitrary file overwrite/delete, remote desktop, unreviewed automatic Memory writes, or write-capable MCP tools. Explicitly writable Workspaces permit only new UTF-8 Markdown/CSV artifacts, and completed replies can also be exported through the system save dialog. External actions remain scoped and approval-gated.
 
 Forks may reuse the source under Apache-2.0. The Aevoren Bot name, Logo, and official release identity are separate project identifiers; modified distributions should use their own name and visual identity and must not imply official endorsement.
 

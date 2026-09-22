@@ -140,7 +140,7 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await createRoom(page, ["研究员", "评审员", "执行员"]);
 
     await expect(page.getByRole("heading", { name: "研究员、评审员、执行员" })).toBeVisible();
-    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("自动选择最合适的 Bot；也可输入 @ 临时指定", { exact: true })).toBeVisible();
     await page.getByLabel("消息").fill("请依次给出分析。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
@@ -165,12 +165,12 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await page.getByLabel("选择要添加的 Bot").selectOption({ label: "观察员" });
     await page.getByRole("button", { name: "添加", exact: true }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(3);
-    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("自动选择最合适的 Bot；也可输入 @ 临时指定", { exact: true })).toBeVisible();
     await page.locator(".bot-row").filter({ hasText: "观察员" }).click();
     await expect(page.getByRole("heading", { name: "观察员" })).toBeVisible();
     await page.locator(".bot-row").filter({ hasText: "产品协作室" }).click();
     await expect(page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
-    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("自动选择最合适的 Bot；也可输入 @ 临时指定", { exact: true })).toBeVisible();
     await page.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
 
     await page.screenshot({ path: "/tmp/aevoren-bot-room-desktop-light.png", fullPage: true });
@@ -479,7 +479,7 @@ test("reconciles a completed Room Runtime and exposes Continue for only the unst
     await expect(launched.page.getByTestId("room-batch-state")).toContainText("partial");
     await expect(launched.page.locator(".room-turn-state.turn-completed")).toContainText("先行者：completed");
     await expect(launched.page.locator(".room-turn-state.turn-interrupted")).toContainText("收尾者：interrupted");
-    await expect(launched.page.getByRole("button", { name: "重试" })).toHaveCount(0);
+    await expect(launched.page.getByRole("button", { name: "重试", exact: true })).toHaveCount(0);
     await launched.page.getByRole("button", { name: "继续未开始成员" }).click();
     await expect(launched.page.getByTestId("room-batch-state")).toContainText("completed");
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
@@ -519,7 +519,7 @@ test("offers a Turn retry when a Room member fails before Provider acceptance", 
     await expect(launched.page.getByTestId("room-batch-state")).toContainText("partial");
     const failedTurn = launched.page.locator(".room-turn-state.turn-failed");
     await expect(failedTurn).toContainText("前置失败成员");
-    await failedTurn.getByRole("button", { name: "重试", exact: true }).click();
+    await launched.page.locator(".composer-run-status").getByRole("button", { name: "重试此步骤", exact: true }).click();
     await expect(launched.page.getByTestId("room-batch-state")).toContainText("completed");
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
     await application.close();

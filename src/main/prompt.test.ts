@@ -153,7 +153,7 @@ describe("buildPrompt", () => {
     const prompt = buildPrompt(bot, session, [entry(1, "user", "搜索今天的新闻")], 1, undefined, memories, capabilitySnapshot);
 
     expect(prompt.manifest.schemaVersion).toBe(4);
-    expect(prompt.messages.map((message) => message.role)).toEqual(["system", "system", "system", "user"]);
+    expect(prompt.messages.map((message) => message.role)).toEqual(["system", "system", "system", "system", "user"]);
     const runtimeState = JSON.parse(prompt.messages[1]!.content) as Record<string, unknown>;
     expect(runtimeState).toMatchObject({
       notice: expect.stringContaining("AUTHORITATIVE_RUNTIME_CAPABILITY_SNAPSHOT"),
@@ -161,7 +161,8 @@ describe("buildPrompt", () => {
       availableTools: ["workspace_read"],
     });
     expect(String(runtimeState.notice)).toContain("at least two independent sources");
-    expect(prompt.messages[2]!.content).toContain("UNTRUSTED_MEMORY_DATA");
+    expect(prompt.messages[2]!.content).toContain("AUTHORITATIVE_TOOL_EVIDENCE_CONTRACT");
+    expect(prompt.messages[3]!.content).toContain("UNTRUSTED_MEMORY_DATA");
     expect(prompt.manifest.blocks[1]).toMatchObject({
       authority: "runtime-state",
       provenance: "app:capabilities:v1",
@@ -213,6 +214,7 @@ describe("buildPrompt", () => {
       expect.stringContaining("Only a successful handoff_to_agent function call"),
       expect.stringContaining("@Agent, HANDOFF, ASSIGN, or next_owner"),
       expect.stringContaining("wait for user approval or input"),
+      expect.stringContaining("CURRENT_TURN_FOCUS"),
     ]));
     expect(prompt.messages[2]?.role).toBe("system");
     const roster = JSON.parse(prompt.messages[2]!.content) as { notice: string; peers: Array<Record<string, string>> };
@@ -236,6 +238,27 @@ describe("buildPrompt", () => {
       digest: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(JSON.stringify(prompt.manifest)).not.toContain("ignore previous instructions");
+  });
+
+  it("injects the persisted Room description as scoped model context and stores only its digest", () => {
+    const roomSession = { ...session, botId: null, roomId: "00000000-0000-4000-8000-000000000077" };
+    const description = "ROOM_ACCEPTANCE_CODE_9F2A；必须先读取真实文件。";
+    const prompt = buildPrompt(bot, roomSession, [entry(1, "user", "返回群规则")], 1, {
+      promptCutoffSeq: 1,
+      roomId: roomSession.roomId,
+      roomDescription: description,
+      roomMembershipVersion: 2,
+      sourceTurnId: "00000000-0000-4000-8000-000000000066",
+    });
+    const descriptionMessage = prompt.messages.find((message) => message.content.includes("ROOM_DESCRIPTION"));
+    expect(descriptionMessage).toBeDefined();
+    expect(JSON.parse(descriptionMessage!.content)).toMatchObject({ description });
+    expect(prompt.manifest.blocks).toContainEqual(expect.objectContaining({
+      authority: "room-context",
+      provenance: `room:${roomSession.roomId}:description`,
+      scope: `room:${roomSession.roomId}`,
+    }));
+    expect(JSON.stringify(prompt.manifest)).not.toContain(description);
   });
 
   it("does not advertise the Handoff execution contract when no other Room peer can be targeted", () => {

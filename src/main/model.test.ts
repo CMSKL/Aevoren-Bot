@@ -92,6 +92,20 @@ describe("parseOpenAiStream", () => {
     ]);
   });
 
+  it("normalizes bounded defaults for a root workspace list", async () => {
+    const workspaceId = crypto.randomUUID();
+    const payload = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{
+      index: 0, id: "list-root", type: "function", function: { name: "workspace_list", arguments: JSON.stringify({ workspaceId }) },
+    }] }, finish_reason: "tool_calls" }] })}\n\n`;
+    expect(await collect(parseOpenAiStream(
+      streamFrom([payload]), new AbortController().signal, DEFAULT_PROVIDER_TIMEOUTS,
+      undefined, new Set([workspaceId]),
+    ))).toEqual([
+      { type: "workspace-tool", toolCallId: "list-root", tool: { kind: "workspace-list", workspaceId, path: "", maxEntries: 100 }, providerToolName: "workspace_list" },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
   it("parses one bounded network tool only when the provider context enables it", async () => {
     const args = JSON.stringify({ location: "上海" });
     const payload = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "weather-1", type: "function", function: { name: "weather_current", arguments: args } }] }, finish_reason: "tool_calls" }] })}\n\n`;
@@ -152,29 +166,132 @@ describe("parseOpenAiStream", () => {
     ]);
   });
 
-  it("fails closed for out-of-scope and mixed workspace tool calls", async () => {
+  it("fails closed for out-of-scope workspace calls and accepts a validated mixed batch", async () => {
     const allowedWorkspaceId = crypto.randomUUID();
     const outsideWorkspaceId = crypto.randomUUID();
     const target = crypto.randomUUID();
-    const cases = [
-      [{ index: 0, id: "read", type: "function", function: { name: "workspace_read", arguments: JSON.stringify({ workspaceId: outsideWorkspaceId, path: "secret", maxBytes: 10 }) } }],
-      [
+    const outside = streamFrom([
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "read", type: "function", function: { name: "workspace_read", arguments: JSON.stringify({ workspaceId: outsideWorkspaceId, path: "secret", maxBytes: 10 }) } }] }, finish_reason: "tool_calls" }] })}\n\n`,
+    ]);
+    await expect(collect(parseOpenAiStream(
+      outside, new AbortController().signal, DEFAULT_PROVIDER_TIMEOUTS,
+      new Set([target]), new Set([allowedWorkspaceId]),
+    ))).rejects.toMatchObject({ code: "MODEL_WORKSPACE_TOOL_INVALID" });
+
+    const mixed = streamFrom([
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [
         { index: 0, id: "read", type: "function", function: { name: "workspace_read", arguments: JSON.stringify({ workspaceId: allowedWorkspaceId, path: "safe", maxBytes: 10 }) } },
         { index: 1, id: "handoff", type: "function", function: { name: "handoff_to_agent", arguments: JSON.stringify({ toAgentId: target, task: "review", contextRefs: [], visibility: "room" }) } },
-      ],
-    ];
-    for (const toolCalls of cases) {
-      const stream = streamFrom([
-        `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: toolCalls }, finish_reason: "tool_calls" }] })}\n\n`,
-      ]);
-      await expect(collect(parseOpenAiStream(
-        stream,
-        new AbortController().signal,
-        DEFAULT_PROVIDER_TIMEOUTS,
-        new Set([target]),
-        new Set([allowedWorkspaceId]),
-      ))).rejects.toMatchObject({ code: "MODEL_WORKSPACE_TOOL_INVALID" });
-    }
+      ] }, finish_reason: "tool_calls" }] })}\n\n`,
+    ]);
+    expect(await collect(parseOpenAiStream(
+      mixed, new AbortController().signal, DEFAULT_PROVIDER_TIMEOUTS,
+      new Set([target]), new Set([allowedWorkspaceId]),
+    ))).toEqual([
+      { type: "workspace-tool", toolCallId: "read", tool: { kind: "workspace-read", workspaceId: allowedWorkspaceId, path: "safe", maxBytes: 10 }, providerToolName: "workspace_read" },
+      { type: "handoff", toolCallId: "handoff", toAgentId: target, task: "review", contextRefs: [], visibility: "room" },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
+  it("normalizes a provider limit alias for bounded workspace tools", async () => {
+    const workspaceId = crypto.randomUUID();
+    const payload = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{
+      index: 0,
+      id: "search-with-limit",
+      type: "function",
+      function: { name: "workspace_search", arguments: JSON.stringify({ workspaceId, query: "handoff", limit: 12 }) },
+    }] }, finish_reason: "tool_calls" }] })}\n\n`;
+    expect(await collect(parseOpenAiStream(
+      streamFrom([payload]),
+      new AbortController().signal,
+      DEFAULT_PROVIDER_TIMEOUTS,
+      undefined,
+      new Set([workspaceId]),
+    ))).toEqual([
+      {
+        type: "workspace-tool",
+        toolCallId: "search-with-limit",
+        tool: { kind: "workspace-search", workspaceId, path: "", query: "handoff", maxMatches: 12 },
+        providerToolName: "workspace_search",
+      },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
+  it("normalizes the observed maxResults alias for workspace search", async () => {
+    const workspaceId = crypto.randomUUID();
+    const payload = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{
+      index: 0,
+      id: "search-with-max-results",
+      type: "function",
+      function: { name: "workspace_search", arguments: JSON.stringify({ workspaceId, query: "approval", maxResults: 7 }) },
+    }] }, finish_reason: "tool_calls" }] })}\n\n`;
+    expect(await collect(parseOpenAiStream(
+      streamFrom([payload]),
+      new AbortController().signal,
+      DEFAULT_PROVIDER_TIMEOUTS,
+      undefined,
+      new Set([workspaceId]),
+    ))).toEqual([
+      {
+        type: "workspace-tool",
+        toolCallId: "search-with-max-results",
+        tool: { kind: "workspace-search", workspaceId, path: "", query: "approval", maxMatches: 7 },
+        providerToolName: "workspace_search",
+      },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
+  it("ignores a validated expectedSha256 hint without changing create-only workspace write semantics", async () => {
+    const workspaceId = crypto.randomUUID();
+    const payload = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{
+      index: 0,
+      id: "write-with-digest-hint",
+      type: "function",
+      function: { name: "workspace_write", arguments: JSON.stringify({ workspaceId, path: "brief.md", content: "real content", expectedSha256: "a".repeat(64) }) },
+    }] }, finish_reason: "tool_calls" }] })}\n\n`;
+    expect(await collect(parseOpenAiStream(
+      streamFrom([payload]),
+      new AbortController().signal,
+      DEFAULT_PROVIDER_TIMEOUTS,
+      undefined,
+      new Set([workspaceId]),
+    ))).toEqual([
+      {
+        type: "workspace-tool",
+        toolCallId: "write-with-digest-hint",
+        tool: { kind: "workspace-write", workspaceId, path: "brief.md", content: "real content" },
+        providerToolName: "workspace_write",
+      },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
+  it("accepts a bounded text_measure countMode hint while returning the canonical computation request", async () => {
+    const workspaceId = crypto.randomUUID();
+    const payload = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{
+      index: 0,
+      id: "measure-with-mode",
+      type: "function",
+      function: { name: "text_measure", arguments: JSON.stringify({ text: "真实文本", countMode: "all", mode: "nonWhitespaceCharacters", nonWhitespaceOnly: true, workspaceId }) },
+    }] }, finish_reason: "tool_calls" }] })}\n\n`;
+    expect(await collect(parseOpenAiStream(
+      streamFrom([payload]),
+      new AbortController().signal,
+      DEFAULT_PROVIDER_TIMEOUTS,
+      undefined,
+      new Set([workspaceId]),
+    ))).toEqual([
+      {
+        type: "computation-tool",
+        toolCallId: "measure-with-mode",
+        tool: { kind: "text-measure", text: "真实文本" },
+        providerToolName: "text_measure",
+      },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
   });
 
   it("ignores usage-only and nonzero-choice events", async () => {
@@ -201,11 +318,39 @@ describe("parseOpenAiStream", () => {
     ]);
   });
 
+  it("maps one exact unique Room member name to its authoritative Bot id", async () => {
+    const target = crypto.randomUUID();
+    const workspaceId = crypto.randomUUID();
+    const fromAgentId = crypto.randomUUID();
+    const stream = streamFrom([
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{
+        index: 0,
+        id: "handoff-by-name",
+        type: "function",
+        function: { name: "handoff_to_agent", arguments: JSON.stringify({ fromAgentId, toAgentId: "内容主笔", targetRole: "内容主笔", workspaceId, content: "撰写批准后的草稿" }) },
+      }] }, finish_reason: "tool_calls" }] })}\n\n`,
+    ]);
+    expect(await collect(parseOpenAiStream(
+      stream,
+      new AbortController().signal,
+      DEFAULT_PROVIDER_TIMEOUTS,
+      new Set([target]),
+      new Set([workspaceId]),
+      false,
+      undefined,
+      false,
+      new Map([["内容主笔", target]]),
+    ))).toEqual([
+      { type: "handoff", toolCallId: "handoff-by-name", toAgentId: target, task: "撰写批准后的草稿", contextRefs: [], visibility: "room" },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
   it.each([
     ["missing id", [{ index: 0, type: "function", function: { name: "handoff_to_agent", arguments: "{}" } }]],
     ["unknown function", [{ index: 0, id: "call", type: "function", function: { name: "other_tool", arguments: "{}" } }]],
     ["invalid json", [{ index: 0, id: "call", type: "function", function: { name: "handoff_to_agent", arguments: "{" } }]],
-    ["too many calls", Array.from({ length: 3 }, (_, index) => ({ index, id: `call-${index}`, type: "function", function: { name: "handoff_to_agent", arguments: "{}" } }))],
+    ["too many calls", Array.from({ length: 9 }, (_, index) => ({ index, id: `call-${index}`, type: "function", function: { name: "handoff_to_agent", arguments: "{}" } }))],
   ])("fails closed for %s", async (_name, toolCalls) => {
     const stream = streamFrom([
       `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: toolCalls }, finish_reason: "tool_calls" }] })}\n\n`,
@@ -221,7 +366,6 @@ describe("parseOpenAiStream", () => {
   it.each([
     ["extra key", (target: string) => ({ toAgentId: target, task: "task", contextRefs: [], visibility: "room", extra: true })],
     ["bad visibility", (target: string) => ({ toAgentId: target, task: "task", contextRefs: [], visibility: "direct" })],
-    ["nonmember target", () => ({ toAgentId: crypto.randomUUID(), task: "task", contextRefs: [], visibility: "room" })],
     ["non-string refs", (target: string) => ({ toAgentId: target, task: "task", contextRefs: [1], visibility: "room" })],
     ["duplicate refs", (target: string) => ({ toAgentId: target, task: "task", contextRefs: ["entry", "entry"], visibility: "room" })],
     ["too many refs", (target: string) => ({ toAgentId: target, task: "task", contextRefs: Array.from({ length: 65 }, (_, index) => `entry-${index}`), visibility: "room" })],
@@ -237,6 +381,31 @@ describe("parseOpenAiStream", () => {
       DEFAULT_PROVIDER_TIMEOUTS,
       new Set([target]),
     ))).rejects.toMatchObject({ code: "MODEL_HANDOFF_INVALID" });
+  });
+
+  it("returns a structured tool rejection for a nonmember Handoff target without accepting it", async () => {
+    const allowedTarget = crypto.randomUUID();
+    const rejectedTarget = crypto.randomUUID();
+    const argumentsValue = JSON.stringify({ toAgentId: rejectedTarget, task: "继续处理", contextRefs: [], visibility: "room" });
+    const stream = streamFrom([
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "bad-target", type: "function", function: { name: "handoff_to_agent", arguments: argumentsValue } }] }, finish_reason: "tool_calls" }] })}\n\n`,
+    ]);
+    expect(await collect(parseOpenAiStream(
+      stream,
+      new AbortController().signal,
+      DEFAULT_PROVIDER_TIMEOUTS,
+      new Set([allowedTarget]),
+    ))).toEqual([
+      {
+        type: "tool-rejection",
+        toolCallId: "bad-target",
+        providerToolName: "handoff_to_agent",
+        arguments: argumentsValue,
+        code: "HANDOFF_TARGET_INVALID",
+        safeMessage: expect.stringContaining("toAgentId"),
+      },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
   });
 
   it("rejects any tool call when no coordinated-room roster was supplied", async () => {
@@ -425,7 +594,7 @@ describe("parseOpenAiStream", () => {
       },
     });
     expect(request.tools?.[0]?.function.description).toContain(targetId);
-    expect(request.tools?.[0]?.function.description).not.toContain("评审员");
+    expect(request.tools?.[0]?.function.description).toContain("评审员");
     expect(request).not.toHaveProperty("thinking");
     expect(JSON.stringify(request)).not.toContain("SECRET_AGENT_INSTRUCTIONS");
   });
@@ -508,7 +677,7 @@ describe("parseOpenAiStream", () => {
     await collect(provider.run([{ role: "user", content: "inspect" }], new AbortController().signal, {
       executorBotId: crypto.randomUUID(),
       executionKey: "workspace-run",
-      workspaces: [{ id: workspaceId, name: "private-local-name" }],
+      workspaces: [{ id: workspaceId, name: "private-local-name", writeEnabled: false, automationEnabled: false }],
     }));
     const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
       tools: Array<{ function: { name: string; parameters: unknown } }>;
@@ -519,6 +688,26 @@ describe("parseOpenAiStream", () => {
     expect(JSON.stringify(request)).toContain("UNTRUSTED_WORKSPACE_LABEL_DATA");
     expect(JSON.stringify(request)).toContain("private-local-name");
     expect(JSON.stringify(request.tools)).not.toContain("workspace-write");
+  });
+
+  it("advertises create-only Markdown writing only for an explicitly writable Workspace", async () => {
+    const workspaceId = crypto.randomUUID();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      streamFrom(['data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n']),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "test-model", "test-key");
+    await collect(provider.run([{ role: "user", content: "write" }], new AbortController().signal, {
+      executorBotId: crypto.randomUUID(),
+      executionKey: "workspace-write-run",
+      workspaces: [{ id: workspaceId, name: "content-team", writeEnabled: true, automationEnabled: true }],
+    }));
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
+      tools: Array<{ function: { name: string; parameters: unknown } }>;
+    };
+    expect(request.tools.map((tool) => tool.function.name)).toContain("workspace_write");
+    expect(JSON.stringify(request.tools.find((tool) => tool.function.name === "workspace_write"))).toContain(workspaceId);
   });
 
   it("uses the locked P0-B timeout defaults", () => {

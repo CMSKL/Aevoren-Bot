@@ -15,12 +15,14 @@ type SettingsDialogProps = {
   launchAtLogin: boolean;
   launchAtLoginSupported: boolean;
   launchAtLoginStatus: LoginItemStatus;
+  autoApprovePublicReadTools: boolean;
   updateState: UpdateState | null;
   restartBlocked: boolean;
   activeBotId: string | null;
   onClose(): void;
   onThemeChange(theme: AppearanceTheme): Promise<AppError | null>;
   onLaunchAtLoginChange(enabled: boolean): Promise<AppError | null>;
+  onAutoApprovePublicReadToolsChange(enabled: boolean): Promise<AppError | null>;
   onCheckUpdate(): void;
   onRetryUpdate(): void;
   onInstallUpdate(): void;
@@ -60,12 +62,14 @@ export function SettingsDialog({
   launchAtLogin,
   launchAtLoginSupported,
   launchAtLoginStatus,
+  autoApprovePublicReadTools,
   updateState,
   restartBlocked,
   activeBotId,
   onClose,
   onThemeChange,
   onLaunchAtLoginChange,
+  onAutoApprovePublicReadToolsChange,
   onCheckUpdate,
   onRetryUpdate,
   onInstallUpdate,
@@ -75,12 +79,15 @@ export function SettingsDialog({
   const [themeError, setThemeError] = useState<AppError | null>(null);
   const [launchPending, setLaunchPending] = useState(false);
   const [launchError, setLaunchError] = useState<AppError | null>(null);
+  const [toolApprovalPending, setToolApprovalPending] = useState(false);
+  const [toolApprovalError, setToolApprovalError] = useState<AppError | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const close = useCallback((): void => {
     setSection("general");
     setThemeError(null);
     setLaunchError(null);
+    setToolApprovalError(null);
     onClose();
   }, [onClose]);
 
@@ -114,6 +121,15 @@ export function SettingsDialog({
     const error = await onLaunchAtLoginChange(enabled);
     setLaunchError(error);
     setLaunchPending(false);
+  }
+
+  async function changeAutoApprovePublicReadTools(enabled: boolean): Promise<void> {
+    if (toolApprovalPending || enabled === autoApprovePublicReadTools) return;
+    setToolApprovalPending(true);
+    setToolApprovalError(null);
+    const error = await onAutoApprovePublicReadToolsChange(enabled);
+    setToolApprovalError(error);
+    setToolApprovalPending(false);
   }
 
   const progress = Math.round(updateState?.progress?.percent ?? 0);
@@ -153,6 +169,23 @@ export function SettingsDialog({
               </label>
             </div>
             {themeError ? <div className="dialog-error" role="alert">{themeError.safeMessage}</div> : null}
+            <h3>工具自动化</h3>
+            <div className="settings-card">
+              <label className="settings-row">
+                <span>
+                  <strong>自动批准公开只读工具</strong>
+                  <small>仅限网页搜索、公开 HTTPS 抓取、天气和时间；文件、剪贴板、MCP 与外部写操作不包含在内</small>
+                </span>
+                <input
+                  aria-label="自动批准公开只读工具"
+                  type="checkbox"
+                  checked={autoApprovePublicReadTools}
+                  disabled={toolApprovalPending}
+                  onChange={(event) => void changeAutoApprovePublicReadTools(event.target.checked)}
+                />
+              </label>
+            </div>
+            {toolApprovalError ? <div className="dialog-error" role="alert">{toolApprovalError.safeMessage}</div> : null}
             <h3>后台与启动</h3>
             <div className="settings-card">
               <label className="settings-row">

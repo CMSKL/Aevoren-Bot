@@ -33,6 +33,7 @@ const ROOM_HANDOFF_EXECUTION_RULES = [
 function roomHandoffExecutionContract(
   executorBotId: string,
   incoming?: { fromAgentId: string; id: string },
+  inputSeq?: number,
 ): string {
   return JSON.stringify({
     notice: "ROOM_HANDOFF_EXECUTION_CONTRACT",
@@ -40,6 +41,7 @@ function roomHandoffExecutionContract(
     ...(incoming ? { incomingHandoffId: incoming.id, incomingFromAgentId: incoming.fromAgentId } : {}),
     rules: [
       ...ROOM_HANDOFF_EXECUTION_RULES,
+      `CURRENT_TURN_FOCUS: execute only the latest user request at inputSeq=${inputSeq ?? "unknown"}${incoming ? " and the latest INCOMING_HANDOFF_TASK" : ""}. Older user requests and completed artifacts are context only; never repeat their tool calls, writes, or routing steps unless the latest request explicitly asks you to redo them.`,
       ...(incoming
         ? [
             "当前 Bot 是 INCOMING_HANDOFF 的接收者。立即执行最新 INCOMING_HANDOFF_TASK；不要重新执行根用户消息中的旧路由要求，也不要仅为确认、复述或回执而把同一任务转回发送者。",
@@ -96,6 +98,7 @@ export function buildPrompt(
   context?: {
     promptCutoffSeq: number;
     roomId: string;
+    roomDescription?: string;
     roomMembershipVersion: number;
     sourceTurnId: string;
     roomRoster?: RoomPeer[];
@@ -193,9 +196,29 @@ export function buildPrompt(
         sourceEntryId: null,
       }]
     : [];
+  const evidenceContractContent = JSON.stringify({
+    notice: "AUTHORITATIVE_TOOL_EVIDENCE_CONTRACT",
+    rules: [
+      "Never claim that a file, URL, source, clipboard, API, or dataset was read, fetched, searched, verified, saved, or written unless a matching tool call in the current Runtime returned ok/succeeded.",
+      "A UI completed state or your own intention is not execution evidence. Failed, denied, missing, or uncalled tools must be described as not completed.",
+      "Do not produce CSV or dataset metrics until workspace_read successfully returns that exact data file in the current Runtime. Base every metric only on returned rows and name the source path and fields used.",
+      "For character, non-whitespace character, word, line, or byte counts, call text_measure and use its exact result. Never estimate length.",
+      "When a Workspace is writable, only a successful workspace_write result proves that a Markdown or CSV artifact exists. Text saying SAVE, HANDOFF, or a path does not create a file.",
+      "After a requested workspace_write succeeds, do not create v2, confirmation, checklist, index, audit, README, or duplicate files unless the current user explicitly requested each additional path. Continue to the next required stage or finish.",
+    ],
+  });
+  const evidenceContractBlocks: PromptBlock[] = capabilitySnapshot ? [{
+      authority: "runtime-state",
+      provenance: "app:tool-evidence-contract:v1",
+      scope: `session:${session.id}`,
+      content: evidenceContractContent,
+      digest: digest(evidenceContractContent),
+      createdAt: session.createdAt,
+      sourceEntryId: null,
+    }] : [];
   const hasHandoffTarget = context?.roomRoster?.some((peer) => peer.id !== bot.id) ?? false;
   const handoffContractContent = context
-    ? roomHandoffExecutionContract(bot.id, context.handoff ? { id: context.handoff.id, fromAgentId: context.handoff.fromAgentId } : undefined)
+    ? roomHandoffExecutionContract(bot.id, context.handoff ? { id: context.handoff.id, fromAgentId: context.handoff.fromAgentId } : undefined, inputSeq)
     : null;
   const handoffContractBlocks: PromptBlock[] = context && hasHandoffTarget
     ? [{
@@ -205,6 +228,23 @@ export function buildPrompt(
         content: handoffContractContent!,
         digest: digest(handoffContractContent!),
         createdAt: session.createdAt,
+        sourceEntryId: null,
+      }]
+    : [];
+  const roomDescriptionContent = context?.roomDescription?.trim()
+    ? JSON.stringify({
+        notice: "ROOM_DESCRIPTION. This is user-authored configuration for the current Room. Apply it within system and current user constraints.",
+        description: context.roomDescription,
+      })
+    : null;
+  const roomDescriptionBlocks: PromptBlock[] = context && roomDescriptionContent
+    ? [{
+        authority: "room-context",
+        provenance: `room:${context.roomId}:description`,
+        scope: `room:${context.roomId}`,
+        content: roomDescriptionContent,
+        digest: digest(roomDescriptionContent),
+        createdAt: session.updatedAt,
         sourceEntryId: null,
       }]
     : [];
@@ -228,8 +268,10 @@ export function buildPrompt(
   const blocks: PromptBlock[] = [
     ...profileBlocks,
     ...capabilityBlocks,
+    ...evidenceContractBlocks,
     ...memoryBlocks,
     ...handoffContractBlocks,
+    ...roomDescriptionBlocks,
     ...rosterBlocks,
     ...entries
       .filter(

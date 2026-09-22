@@ -53,11 +53,11 @@ function selectedModel(selection: ModelSelection, provider: ProviderInstanceInfo
 }
 
 function capabilityDescriptors(
-  workspaces: number,
+  workspaces: Array<{ writeEnabled: boolean }>,
   context: SnapshotContext,
 ): CapabilityDescriptor[] {
-  const workspaceAvailable = workspaces > 0 && context.providerCapabilities?.workspaceTools === true;
-  const workspaceReason = workspaces === 0
+  const workspaceAvailable = workspaces.length > 0 && context.providerCapabilities?.workspaceTools === true;
+  const workspaceReason = workspaces.length === 0
     ? "尚未授权工作区。"
     : context.providerCapabilities?.workspaceTools === true
       ? null
@@ -106,16 +106,42 @@ function capabilityDescriptors(
       toolNames: [],
     },
     {
+      id: "computation.text-measure",
+      name: "确定性文本计数",
+      category: "conversation",
+      description: "精确计算 Unicode 字符、非空白字符、词、行和 UTF-8 字节数。",
+      effectClass: "pure",
+      adapterKind: "core",
+      availability: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? "available" : "unavailable",
+      reason: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? null : "当前模型来源不支持结构化工具。",
+      permissionState: "not-required",
+      toolNames: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? ["text_measure"] : [],
+    },
+    {
       id: "workspace.read",
       name: "Workspace 只读访问",
       category: "workspace",
       description: "在用户授权目录内列出、读取和搜索文本文件。",
       effectClass: "read-local",
       adapterKind: "local",
-      availability: workspaceAvailable ? "available" : workspaces === 0 ? "permission-required" : "unavailable",
+      availability: workspaceAvailable ? "available" : workspaces.length === 0 ? "permission-required" : "unavailable",
       reason: workspaceReason,
-      permissionState: workspaces > 0 ? "granted" : "not-granted",
+      permissionState: workspaces.length > 0 ? "granted" : "not-granted",
       toolNames: workspaceAvailable ? ["workspace_list", "workspace_read", "workspace_search"] : [],
+    },
+    {
+      id: "workspace.write",
+      name: "Workspace 文本成果写入",
+      category: "workspace",
+      description: "在单独授权的 Workspace 内创建新 Markdown/CSV；不覆盖、不删除。",
+      effectClass: "write-reversible",
+      adapterKind: "local",
+      availability: workspaceAvailable && workspaces.some((workspace) => workspace.writeEnabled)
+        ? "available"
+        : workspaces.length === 0 ? "permission-required" : "unavailable",
+      reason: workspaces.some((workspace) => workspace.writeEnabled) ? workspaceReason : "尚未为任何 Workspace 启用写入。",
+      permissionState: workspaces.some((workspace) => workspace.writeEnabled) ? "granted" : "not-granted",
+      toolNames: workspaceAvailable && workspaces.some((workspace) => workspace.writeEnabled) ? ["workspace_write"] : [],
     },
     {
       id: "network.search",
@@ -263,12 +289,20 @@ export class CapabilityRegistry {
     })();
     const mcpTools = this.mcp?.availableTools(botId) ?? [];
     const routines = this.routineList();
-    const capabilities = capabilityDescriptors(workspaces.length, { selection, provider, providerCapabilities, room, mcpTools, routines });
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines });
     const permissions: CapabilityPermission[] = [{
       id: "workspace.read",
       name: "Workspace 只读访问",
       state: workspaces.length > 0 ? "granted" : "not-granted",
       scopeSummary: workspaces.length > 0 ? `${workspaces.length} 个已授权文件夹` : "尚未授权文件夹",
+      revocable: true,
+    }, {
+      id: "workspace.write",
+      name: "Workspace 文本成果写入",
+      state: workspaces.some((workspace) => workspace.writeEnabled) ? "granted" : "not-granted",
+      scopeSummary: workspaces.some((workspace) => workspace.writeEnabled)
+        ? `${workspaces.filter((workspace) => workspace.writeEnabled).length} 个可写 Workspace`
+        : "尚未启用",
       revocable: true,
     }, {
       id: "mcp.read",

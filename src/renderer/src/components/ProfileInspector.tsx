@@ -278,129 +278,80 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
         </div>
       </header>
 
-      <label className="field">
-        <span>名称</span>
-        <input ref={nameInputRef} value={draft.name} maxLength={80} placeholder="Bob" onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
-      </label>
-      <div className="field provider-selection-field">
-        <span>模型供应商</span>
-        <select
-          aria-label="模型供应商"
-          value={bot.modelSelection.providerInstanceId}
-          disabled={modelSaving || providers.length === 0}
-          onChange={(event) => {
+      <section className="inspector-group" aria-labelledby="bot-basic-settings">
+        <h3 id="bot-basic-settings">基础信息</h3>
+        <label className="field">
+          <span>名称</span>
+          <input ref={nameInputRef} value={draft.name} maxLength={80} placeholder="Bob" onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
+        </label>
+        <label className="field">
+          <span>标签（可选）</span>
+          <input value={draft.label} maxLength={120} placeholder="研究、市场、行政" onChange={(event) => update("label", event.target.value)} onBlur={() => void flush()} />
+        </label>
+        <label className="field">
+          <span>描述</span>
+          <textarea value={draft.description} maxLength={2_000} rows={5} placeholder="详细说明用途和工作方式" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
+        </label>
+      </section>
+
+      <section className="inspector-group" aria-labelledby="bot-model-settings">
+        <h3 id="bot-model-settings">模型</h3>
+        <div className="field provider-selection-field">
+          <span>模型供应商</span>
+          <select aria-label="模型供应商" value={bot.modelSelection.providerInstanceId} disabled={modelSaving || providers.length === 0} onChange={(event) => {
             const provider = providers.find((candidate) => candidate.id === event.target.value);
             if (!provider) return;
             setModelDraft(provider.models.default);
-            void updateModelSelection({
-              providerInstanceId: provider.id,
-              modelId: provider.models.default,
-            });
-          }}
-        >
-          {providers.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.displayName}{provider.status === "available" ? "" : "（不可用）"}
-            </option>
-          ))}
-        </select>
-        {selectedProvider?.reason ? <small>{selectedProvider.reason}</small> : null}
-      </div>
-      <label className="field provider-selection-field">
-        <span>模型</span>
-        <input
-          aria-label="Bot 模型"
-          list={`provider-models-${bot.id}`}
-          value={modelDraft}
-          disabled={modelSaving || !selectedProvider}
-          placeholder={selectedProvider?.models.default || "输入模型 ID"}
-          onChange={(event) => setModelDraft(event.target.value)}
-          onBlur={() => {
-            const modelId = modelDraft.trim();
-            if (!modelId) {
-              setModelDraft(bot.modelSelection.modelId);
-              return;
-            }
-            if (modelId === bot.modelSelection.modelId) return;
-            void updateModelSelection({ providerInstanceId: bot.modelSelection.providerInstanceId, modelId });
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-        />
-        <datalist id={`provider-models-${bot.id}`}>
-          {selectedProvider?.models.options.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-        </datalist>
-      </label>
-      <div className="field mcp-access-field">
-        <span>MCP 访问</span>
-        <select
-          aria-label="MCP 访问范围"
-          value={bot.mcpServerIds == null ? "all" : "custom"}
-          disabled={mcpSaving}
-          onChange={(event) => void updateMcpSelection(
-            event.target.value === "all" ? null : mcpServers.filter((server) => server.enabled).map((server) => server.id),
-          )}
-        >
-          <option value="all">全部已启用 Server</option>
-          <option value="custom">自定义 Server</option>
-        </select>
-        <small>{bot.mcpServerIds == null ? "自动使用全部已启用的只读 MCP 工具" : `已选择 ${bot.mcpServerIds.length} 个 Server`}</small>
-        {bot.mcpServerIds != null ? <div className="mcp-access-list">
-          {mcpServers.map((server) => {
-            const checked = bot.mcpServerIds?.includes(server.id) ?? false;
-            return <label key={server.id}>
-              <input
-                type="checkbox"
-                checked={checked}
-                disabled={mcpSaving || !server.enabled && !checked}
-                onChange={() => void updateMcpSelection(checked
-                  ? (bot.mcpServerIds ?? []).filter((id) => id !== server.id)
-                  : [...(bot.mcpServerIds ?? []), server.id])}
-              />
-              <span>{server.name}</span>
-              <small>{server.enabled ? server.status : "未启用"}</small>
-            </label>;
-          })}
-        </div> : null}
-      </div>
-      <div className="field mcp-access-field">
-        <span>项目 Memory</span>
-        <small>只注入明确绑定的 Workspace 长期状态</small>
-        <div className="mcp-access-list">
-          {workspaces.length === 0 ? <small>尚未授权 Workspace</small> : workspaces.map((workspace) => {
-            const selected = (bot.memoryWorkspaceIds ?? []).includes(workspace.id);
-            return <label key={workspace.id}>
-              <input
-                type="checkbox"
-                checked={selected}
-                disabled={memoryScopeSaving}
-                onChange={() => void updateMemoryWorkspaceSelection(selected
-                  ? (bot.memoryWorkspaceIds ?? []).filter((id) => id !== workspace.id)
-                  : [...(bot.memoryWorkspaceIds ?? []), workspace.id])}
-              />
-              <span>{workspace.name}</span>
-              <small>{selected ? "已绑定" : "未绑定"}</small>
-            </label>;
-          })}
+            void updateModelSelection({ providerInstanceId: provider.id, modelId: provider.models.default });
+          }}>
+            {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.displayName}{provider.status === "available" ? "" : "（不可用）"}</option>)}
+          </select>
+          {selectedProvider?.reason ? <small>{selectedProvider.reason}</small> : null}
         </div>
-      </div>
-      <label className="field">
-        <span>标签（可选）</span>
-        <input value={draft.label} maxLength={120} placeholder="研究、市场、行政" onChange={(event) => update("label", event.target.value)} onBlur={() => void flush()} />
-      </label>
-      <label className="field">
-        <span>描述</span>
-        <textarea value={draft.description} maxLength={2_000} rows={5} placeholder="详细说明用途和工作方式" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
-      </label>
-      {bot.instructions.trim() ? (
-        <label className="field field-grow">
-          <span>Instructions</span>
-          <textarea value={draft.instructions} maxLength={20_000} rows={10} onChange={(event) => update("instructions", event.target.value)} onBlur={() => void flush()} />
+        <label className="field provider-selection-field">
+          <span>模型</span>
+          <input aria-label="Bot 模型" list={`provider-models-${bot.id}`} value={modelDraft} disabled={modelSaving || !selectedProvider} placeholder={selectedProvider?.models.default || "输入模型 ID"} onChange={(event) => setModelDraft(event.target.value)} onBlur={() => {
+            const modelId = modelDraft.trim();
+            if (!modelId) return setModelDraft(bot.modelSelection.modelId);
+            if (modelId !== bot.modelSelection.modelId) void updateModelSelection({ providerInstanceId: bot.modelSelection.providerInstanceId, modelId });
+          }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+          <datalist id={`provider-models-${bot.id}`}>{selectedProvider?.models.options.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist>
         </label>
-      ) : null}
+      </section>
+
+      <details className="inspector-advanced">
+        <summary>高级设置</summary>
+        <div className="inspector-advanced-content">
+          <section className="permission-explainer">
+            <strong>文件访问</strong>
+            <p>由“工作区”授权决定 Bot 可以读取或新建哪些文件；它不会自动把内容注入长期记忆。</p>
+            <span>{workspaces.length > 0 ? `已授权 ${workspaces.length} 个工作区` : "尚未授权工作区"}</span>
+          </section>
+          <div className="field mcp-access-field">
+            <span>外部工具（MCP）</span>
+            <select aria-label="MCP 访问范围" value={bot.mcpServerIds == null ? "all" : "custom"} disabled={mcpSaving} onChange={(event) => void updateMcpSelection(event.target.value === "all" ? null : mcpServers.filter((server) => server.enabled).map((server) => server.id))}>
+              <option value="all">全部已启用服务</option>
+              <option value="custom">自定义服务</option>
+            </select>
+            <small>{bot.mcpServerIds == null ? "自动使用全部已启用的只读外部工具" : `已选择 ${bot.mcpServerIds.length} 个服务`}</small>
+            {bot.mcpServerIds != null ? <div className="mcp-access-list">{mcpServers.map((server) => {
+              const checked = bot.mcpServerIds?.includes(server.id) ?? false;
+              return <label key={server.id}><input type="checkbox" checked={checked} disabled={mcpSaving || !server.enabled && !checked} onChange={() => void updateMcpSelection(checked ? (bot.mcpServerIds ?? []).filter((id) => id !== server.id) : [...(bot.mcpServerIds ?? []), server.id])} /><span>{server.name}</span><small>{server.enabled ? server.status : "未启用"}</small></label>;
+            })}</div> : null}
+          </div>
+          <div className="field mcp-access-field">
+            <span>工作区记忆注入</span>
+            <small>只把明确绑定的工作区长期状态加入模型上下文；不等同于文件访问授权。</small>
+            <div className="mcp-access-list">{workspaces.length === 0 ? <small>尚未授权工作区</small> : workspaces.map((workspace) => {
+              const selected = (bot.memoryWorkspaceIds ?? []).includes(workspace.id);
+              return <label key={workspace.id}><input type="checkbox" checked={selected} disabled={memoryScopeSaving} onChange={() => void updateMemoryWorkspaceSelection(selected ? (bot.memoryWorkspaceIds ?? []).filter((id) => id !== workspace.id) : [...(bot.memoryWorkspaceIds ?? []), workspace.id])} /><span>{workspace.name}</span><small>{selected ? "已注入" : "未注入"}</small></label>;
+            })}</div>
+          </div>
+          {bot.instructions.trim() ? <label className="field field-grow"><span>高级指令</span><textarea aria-label="Instructions" value={draft.instructions} maxLength={20_000} rows={10} onChange={(event) => update("instructions", event.target.value)} onBlur={() => void flush()} /></label> : null}
+          <MemoryPanel ref={memoryPanelRef} botId={bot.id} onError={onError} />
+        </div>
+      </details>
       {status === "failed" ? <button className="secondary-button full-width" type="button" onClick={() => void flush()}>重试保存</button> : null}
-      <MemoryPanel ref={memoryPanelRef} botId={bot.id} onError={onError} />
     </aside>
   );
 });

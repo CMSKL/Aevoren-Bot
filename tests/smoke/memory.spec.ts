@@ -31,6 +31,13 @@ function selectBot(page: Page, name: string) {
   return page.locator(".bot-row").filter({ hasText: name });
 }
 
+async function openAdvancedSettings(page: Page): Promise<void> {
+  const details = page.locator("details.inspector-advanced");
+  if (!await details.evaluate((element) => (element as HTMLDetailsElement).open)) {
+    await details.locator("summary").click();
+  }
+}
+
 test("creates, flushes, restores and lays out explicit Memory without touching daily data", async () => {
   test.setTimeout(45_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-memory-ui-"));
@@ -45,6 +52,7 @@ test("creates, flushes, restores and lays out explicit Memory without touching d
     });
 
     await createBot(page, "Memory Bot A");
+    await openAdvancedSettings(page);
     const undeclaredFieldResult = await page.evaluate(async () => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       const bots = await api.bots.list();
@@ -70,6 +78,7 @@ test("creates, flushes, restores and lays out explicit Memory without touching d
     launched = await launch(userDataDir);
     application = launched.application;
     page = launched.page;
+    await openAdvancedSettings(page);
     await expect(page.getByLabel("Memory 1")).toHaveValue("默认使用简体中文，并优先给出结论");
 
     await page.getByRole("button", { name: "删除 Memory" }).click();
@@ -82,6 +91,7 @@ test("creates, flushes, restores and lays out explicit Memory without touching d
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 640));
     await page.getByRole("button", { name: "打开 Bot 设置" }).click();
     await expect(page.locator(".inspector")).toBeVisible();
+    await openAdvancedSettings(page);
     await page.waitForTimeout(220);
     const compactLayout = await page.locator(".inspector").evaluate((inspector) => {
       const panel = inspector.querySelector<HTMLElement>(".memory-panel");
@@ -110,6 +120,7 @@ test("creates, flushes, restores and lays out explicit Memory without touching d
     await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
     await expect(page.locator(".inspector")).not.toBeVisible();
     await page.getByRole("button", { name: "打开 Bot 设置" }).click();
+    await openAdvancedSettings(page);
     await expect(page.getByLabel("Memory 1")).toHaveValue("关闭详情前保存的已有 Memory");
     await expect(page.getByLabel("Memory 2")).toHaveValue("关闭详情前创建的新 Memory");
 
@@ -138,6 +149,7 @@ test("blocks Bot switching on a stale Memory version and preserves the draft", a
     const page = launched.page;
 
     await createBot(page, "Memory Bot A");
+    await openAdvancedSettings(page);
     await page.getByLabel("新增 Memory").fill("初始事实");
     await page.getByRole("button", { name: "添加 Memory" }).click();
     await createBot(page, "Memory Bot B");

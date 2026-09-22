@@ -51,6 +51,7 @@ let quitRequested = false;
 let rendererReady = false;
 let rendererEverReady = false;
 let pendingClose = false;
+const savedArtifactPaths = new Set<string>();
 let closeConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
 let shutdownPromise: Promise<void> | null = null;
 
@@ -362,6 +363,10 @@ app.whenReady().then(async () => {
     routineService,
     updateService,
     async pickWorkspaceRoot() {
+      const testPath = process.env.AEVOREN_BOT_TEST_HIDDEN === "1"
+        ? process.env.AEVOREN_BOT_WORKSPACE_TEST_PATH?.trim()
+        : undefined;
+      if (testPath) return testPath;
       if (!mainWindow || mainWindow.isDestroyed()) return null;
       const result = await dialog.showOpenDialog(mainWindow, {
         title: "选择工作区文件夹",
@@ -386,7 +391,11 @@ app.whenReady().then(async () => {
     },
     async saveArtifact(input) {
       const testPath = process.env.AEVOREN_BOT_TEST_HIDDEN === "1" ? process.env.AEVOREN_BOT_ARTIFACT_TEST_PATH : undefined;
-      if (testPath) return writeArtifact(testPath, input);
+      if (testPath) {
+        const saved = await writeArtifact(testPath, input);
+        savedArtifactPaths.add(saved.path);
+        return saved;
+      }
       if (!mainWindow || mainWindow.isDestroyed()) return null;
       const result = await dialog.showSaveDialog(mainWindow, {
         title: "保存结果文件",
@@ -395,7 +404,20 @@ app.whenReady().then(async () => {
         filters: [{ name: "Markdown", extensions: ["md"] }],
         properties: ["createDirectory"],
       });
-      return result.canceled || !result.filePath ? null : writeArtifact(result.filePath, input);
+      if (result.canceled || !result.filePath) return null;
+      const saved = await writeArtifact(result.filePath, input);
+      savedArtifactPaths.add(saved.path);
+      return saved;
+    },
+    revealArtifact(path) {
+      if (!savedArtifactPaths.has(path)) return false;
+      if (!hideTestWindow) shell.showItemInFolder(path);
+      return true;
+    },
+    async revealWorkspaceTarget(input) {
+      const target = await workspaceService.resolveExistingTarget(input.workspaceId, input.path, "file");
+      if (!hideTestWindow) shell.showItemInFolder(target.canonicalPath);
+      return true;
     },
     forceFakeProvider,
     rendererReady() {

@@ -28,6 +28,8 @@ test("uses one sidebar settings entry and preserves general and model configurat
     await expect(page.getByRole("dialog", { name: "设置" })).toBeVisible();
     await page.getByLabel("外观主题").selectOption("dark");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await page.getByLabel("自动批准公开只读工具").click();
+    await expect(page.getByLabel("自动批准公开只读工具")).toBeChecked();
     await expect(page.getByLabel("登录时启动")).toBeDisabled();
     await expect(page.getByText(/(?:仅打包版 macOS \/ Windows 支持；开发测试不会注册系统启动项|当前仅 macOS 打包版支持；Windows 启动任务适配尚未启用)/u)).toBeVisible();
     await page.screenshot({ path: "/tmp/aevoren-settings-general-1182x804.png" });
@@ -107,6 +109,10 @@ test("uses one sidebar settings entry and preserves general and model configurat
       value: "dark",
       encrypted: 0,
     });
+    expect(database.prepare("SELECT value, encrypted FROM app_settings WHERE key = 'tools.autoApprovePublicRead'").get()).toEqual({
+      value: "true",
+      encrypted: 0,
+    });
     const storedKey = database.prepare("SELECT value, encrypted FROM app_settings WHERE key = 'provider.openai-compatible.default.apiKey'").get() as { value: string; encrypted: number };
     expect(storedKey.encrypted).toBe(1);
     expect(storedKey.value).not.toContain("settings-smoke-secret");
@@ -128,6 +134,7 @@ test("uses one sidebar settings entry and preserves general and model configurat
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await expect(page.getByLabel("外观主题")).toHaveValue("dark");
+    await expect(page.getByLabel("自动批准公开只读工具")).toBeChecked();
     await page.getByRole("button", { name: "模型与 CLI", exact: true }).click();
     await page.getByLabel("管理 API").click();
     await expect(page.getByLabel("Base URL")).toHaveValue("https://example.com/v1");

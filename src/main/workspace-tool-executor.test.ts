@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -150,6 +150,60 @@ describe("WorkspaceToolExecutor", () => {
     expect(parsed).toEqual({ text: "你好，", truncated: true });
     expect(JSON.stringify(value.getToolInvocation(fixture.invocation.id))).not.toContain("你好");
     expect(result.invocation.resultMetadata).toEqual({ kind: "workspace-read", bytes: 9, truncated: true });
+  });
+
+  it("creates one approved Markdown file only after Workspace write permission and never overwrites it", async () => {
+    const root = temporaryDirectory("aevoren-tool-write-");
+    mkdirSync(join(root, "01-inbox"));
+    const value = repository();
+    const blocked = await approvedInvocation(value, root, {
+      kind: "workspace-write",
+      path: "01-inbox/leads.md",
+      content: "# 真实线索\n",
+    });
+    await expect(new WorkspaceToolExecutor(value, blocked.service).execute(blocked.invocation.id)).rejects.toMatchObject({
+      code: "WORKSPACE_WRITE_NOT_ENABLED",
+    });
+    expect(existsSync(join(root, "01-inbox", "leads.md"))).toBe(false);
+
+    const current = value.getWorkspace(blocked.workspace.id);
+    value.updateWorkspacePermissions(current.id, current.version, { writeEnabled: true, automationEnabled: false });
+    const created = await approvedInvocation(value, root, {
+      kind: "workspace-write",
+      path: "01-inbox/leads.md",
+      content: "# 真实线索\n",
+    });
+    const result = await new WorkspaceToolExecutor(value, created.service).execute(created.invocation.id);
+    expect(JSON.parse(result.content)).toMatchObject({ ok: true, path: "01-inbox/leads.md", created: true });
+    expect(readFileSync(join(root, "01-inbox", "leads.md"), "utf8")).toBe("# 真实线索\n");
+    expect(result.invocation).toMatchObject({ state: "succeeded", effectClass: "write-reversible" });
+
+    const conflict = await approvedInvocation(value, root, {
+      kind: "workspace-write",
+      path: "01-inbox/leads.md",
+      content: "替换内容",
+    });
+    await expect(new WorkspaceToolExecutor(value, conflict.service).execute(conflict.invocation.id)).rejects.toMatchObject({
+      code: "WORKSPACE_WRITE_CONFLICT",
+    });
+    expect(readFileSync(join(root, "01-inbox", "leads.md"), "utf8")).toBe("# 真实线索\n");
+  });
+
+  it("blocks likely credentials before creating a shared artifact", async () => {
+    const root = temporaryDirectory("aevoren-tool-write-secret-");
+    const value = repository();
+    const service = new WorkspaceService(value);
+    const registered = await service.registerRoot(root);
+    value.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: false });
+    const fixture = await approvedInvocation(value, root, {
+      kind: "workspace-write",
+      path: "secret.md",
+      content: "api_key = sk-test-secret-value-123456789",
+    });
+    await expect(new WorkspaceToolExecutor(value, fixture.service).execute(fixture.invocation.id)).rejects.toMatchObject({
+      code: "WORKSPACE_WRITE_SECRET_BLOCKED",
+    });
+    expect(existsSync(join(root, "secret.md"))).toBe(false);
   });
 
   it("rejects binary files with a stable terminal failure and no result content", async () => {

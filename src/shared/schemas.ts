@@ -105,11 +105,21 @@ export const workspaceMutationSchema = z.object({
   id: workspaceIdSchema,
   expectedVersion: z.number().int().positive(),
 }).strict();
+export const workspacePermissionsSchema = z.object({
+  id: workspaceIdSchema,
+  expectedVersion: z.number().int().positive(),
+  writeEnabled: z.boolean(),
+  automationEnabled: z.boolean(),
+}).strict();
+export const workspaceRevealSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  path: z.string().min(1).max(1_024),
+}).strict();
 export const workspaceRelativePathSchema = z
   .string()
   .max(1_024)
   .superRefine((value, context) => {
-    if (value.startsWith("/") || value.includes("\\") || value.includes("\0")) {
+    if (value.startsWith("/") || value.startsWith("./") || value.includes("\\") || value.includes("\0")) {
       context.addIssue({ code: "custom", message: "Path must be relative and use POSIX separators" });
       return;
     }
@@ -118,37 +128,47 @@ export const workspaceRelativePathSchema = z
     }
   })
   .transform((value) => value.normalize("NFC"));
+const workspaceDirectoryPathSchema = z.preprocess(
+  (value) => value === "." ? "" : value,
+  workspaceRelativePathSchema,
+);
 export const workspaceToolRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("workspace-list"),
     workspaceId: workspaceIdSchema,
-    path: workspaceRelativePathSchema,
-    maxEntries: z.number().int().min(1).max(500),
+    path: workspaceDirectoryPathSchema.default(""),
+    maxEntries: z.number().int().min(1).max(500).default(100),
   }).strict(),
   z.object({
     kind: z.literal("workspace-read"),
     workspaceId: workspaceIdSchema,
     path: workspaceRelativePathSchema,
-    maxBytes: z.number().int().min(1).max(1_048_576),
+    maxBytes: z.number().int().min(1).max(1_048_576).default(1_048_576),
   }).strict(),
   z.object({
     kind: z.literal("workspace-search"),
     workspaceId: workspaceIdSchema,
-    path: workspaceRelativePathSchema,
+    path: workspaceDirectoryPathSchema.default(""),
     query: z.string().trim().min(1).max(500),
-    maxMatches: z.number().int().min(1).max(200),
+    maxMatches: z.number().int().min(1).max(200).default(50),
+  }).strict(),
+  z.object({
+    kind: z.literal("workspace-write"),
+    workspaceId: workspaceIdSchema,
+    path: workspaceRelativePathSchema.refine((value) => value.length > 0 && /\.(?:md|csv)$/iu.test(value), "Only Markdown or CSV files are writable"),
+    content: z.string().min(1).max(262_144),
   }).strict(),
 ]);
 export const networkToolRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("web-search"),
     query: z.string().trim().min(1).max(500),
-    maxResults: z.number().int().min(1).max(10),
+    maxResults: z.number().int().min(1).max(10).default(5),
   }).strict(),
   z.object({
     kind: z.literal("web-fetch"),
     url: z.string().trim().url().max(2_048),
-    maxCharacters: z.number().int().min(1).max(100_000),
+    maxCharacters: z.number().int().min(1).max(100_000).default(50_000),
   }).strict(),
   z.object({
     kind: z.literal("weather-current"),
@@ -174,7 +194,11 @@ export const deviceToolRequestSchema = z.object({
   kind: z.literal("clipboard-read"),
   maxCharacters: z.number().int().min(1).max(20_000),
 }).strict();
-export const toolRequestSchema = z.union([workspaceToolRequestSchema, networkToolRequestSchema, mcpToolRequestSchema, deviceToolRequestSchema]);
+export const computationToolRequestSchema = z.object({
+  kind: z.literal("text-measure"),
+  text: z.string().max(100_000),
+}).strict();
+export const toolRequestSchema = z.union([workspaceToolRequestSchema, networkToolRequestSchema, mcpToolRequestSchema, deviceToolRequestSchema, computationToolRequestSchema]);
 export const toolInvocationCommandSchema = z.object({
   runtimeRunId: runIdSchema,
   toolCallId: z.string().trim().min(1).max(200),
@@ -203,6 +227,7 @@ export const artifactSaveSchema = z.object({
   name: z.string().trim().min(1).max(160),
   content: z.string().max(2 * 1_048_576),
 }).strict();
+export const artifactRevealSchema = z.string().min(1).max(4_096);
 export const messageAttachmentsSchema = z.array(attachmentDraftSchema).max(6).superRefine((attachments, context) => {
   const total = attachments.reduce((sum, attachment) => sum + new TextEncoder().encode(attachment.content).byteLength, 0);
   if (total > 4 * 1_048_576) context.addIssue({ code: "custom", message: "Attachments are too large" });
@@ -374,5 +399,6 @@ export const routineMutationSchema = z.object({ id: routineIdSchema, expectedVer
 export const generalSettingsSchema = z.object({
   theme: z.enum(["system", "light", "dark"]).optional(),
   memoryCaptureEnabled: z.boolean().optional(),
+  autoApprovePublicReadTools: z.boolean().optional(),
   launchAtLogin: z.boolean().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one general setting is required");

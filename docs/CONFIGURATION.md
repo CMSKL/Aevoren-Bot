@@ -44,7 +44,9 @@ The **Add Web Search** preset creates a disabled Exa Search MCP configuration. A
 
 ## Workspace access
 
-Workspace access is opt-in and read-only. Aevoren Bot can list, search, and read bounded UTF-8 files only under roots selected by the user. It does not gain write, delete, shell, or unrestricted filesystem access.
+Workspace access is opt-in. By default Aevoren Bot can only list, search, and read bounded UTF-8 files under roots selected by the user. Per Workspace, the user may additionally enable create-only UTF-8 Markdown/CSV artifacts and may persist automatic approval for those bounded Workspace tools. Writes reject traversal, symlink parents, secrets, oversized content, unsupported extensions, existing targets, overwrite, delete, rename, shell, and unrestricted filesystem access. Every attempt remains in the Tool Journal.
+
+**Settings → General → Automatically approve public read-only tools** separately covers only bounded public web search/fetch, weather, and time. It does not authorize Workspace, clipboard, MCP, external writes, or computer control.
 
 ## Message attachments
 

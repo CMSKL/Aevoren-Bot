@@ -3,6 +3,7 @@ import { IPC } from "@shared/channels";
 import {
   approvalResolutionSchema,
   artifactSaveSchema,
+  artifactRevealSchema,
   batchIdSchema,
   botHiddenSchema,
   botIdSchema,
@@ -47,6 +48,8 @@ import {
   toolSessionScopeSchema,
   turnIdSchema,
   workspaceMutationSchema,
+  workspacePermissionsSchema,
+  workspaceRevealSchema,
 } from "@shared/schemas";
 import { apiResult, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
@@ -77,6 +80,8 @@ type IpcDependencies = {
   pickWorkspaceRoot(): Promise<string | null>;
   pickAttachments(): Promise<import("@shared/contracts").AttachmentDraft[]>;
   saveArtifact(input: import("@shared/contracts").ArtifactSaveInput): Promise<import("@shared/contracts").ArtifactSaveResult | null>;
+  revealArtifact(path: string): boolean;
+  revealWorkspaceTarget(input: { workspaceId: string; path: string }): Promise<boolean>;
   forceFakeProvider: boolean;
   rendererReady(): void;
   confirmClose(canClose: boolean): void;
@@ -111,6 +116,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
 
   handle(IPC.attachmentsPick, () => dependencies.pickAttachments());
   handle(IPC.artifactsSave, (_event, input: unknown) => dependencies.saveArtifact(artifactSaveSchema.parse(input)));
+  handle(IPC.artifactsReveal, (_event, path: unknown) => dependencies.revealArtifact(artifactRevealSchema.parse(path)));
   handle(IPC.capabilitiesGetSnapshot, (_event, input: unknown) =>
     dependencies.capabilityRegistry.getSnapshot(capabilitySnapshotInputSchema.parse(input)),
   );
@@ -152,6 +158,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.conversationsDeleteBatch, (_event, input: unknown) =>
     repository.deleteConversations(conversationBatchDeleteSchema.parse(input)),
   );
+  handle(IPC.teamsCreateContentTeam, () => repository.createContentTeamTemplate());
   handle(IPC.botsList, () => repository.listBots());
   handle(IPC.botsCreate, () => repository.createBot());
   handle(IPC.botsUpdate, (_event, input: unknown) => {
@@ -232,6 +239,11 @@ export function registerIpc(dependencies: IpcDependencies): void {
     const rootPath = await dependencies.pickWorkspaceRoot();
     return rootPath ? workspaceService.registerRoot(rootPath) : null;
   });
+  handle(IPC.workspacesUpdatePermissions, (_event, input: unknown) => {
+    const parsed = workspacePermissionsSchema.parse(input);
+    return repository.updateWorkspacePermissions(parsed.id, parsed.expectedVersion, parsed);
+  });
+  handle(IPC.workspacesReveal, (_event, input: unknown) => dependencies.revealWorkspaceTarget(workspaceRevealSchema.parse(input)));
   handle(IPC.workspacesRemove, (_event, input: unknown) => {
     const parsed = workspaceMutationSchema.parse(input);
     return repository.removeWorkspace(parsed.id, parsed.expectedVersion);

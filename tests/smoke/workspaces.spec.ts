@@ -1,6 +1,6 @@
 import { removeTestDirectory } from "./test-cleanup";
 import { expect, test, _electron as electron, type ElectronApplication } from "@playwright/test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,6 +14,7 @@ test("shows only public Workspace identity and revokes access without touching d
   const databasePath = join(userDataDir, "aevoren-bot.sqlite");
   const repository = new AppRepository(databasePath);
   const registered = await new WorkspaceService(repository).registerRoot(workspaceRoot);
+  writeFileSync(join(workspaceRoot, "delivery.md"), "# Real delivery\n", "utf8");
   repository.close();
   let application: ElectronApplication | undefined;
   try {
@@ -24,6 +25,7 @@ test("shows only public Workspace identity and revokes access without touching d
         ...process.env,
         AEVOREN_BOT_USER_DATA_DIR: userDataDir,
         AEVOREN_BOT_FAKE_PROVIDER: "1",
+        AEVOREN_BOT_TEST_HIDDEN: "1",
       },
     });
     const page = await application.firstWindow();
@@ -36,12 +38,27 @@ test("shows only public Workspace identity and revokes access without touching d
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText(registered.workspace.name, { exact: true })).toBeVisible();
     await expect(dialog).not.toContainText(workspaceRoot);
+    await dialog.getByLabel("允许 Bot 新建 Markdown/CSV").check();
+    await dialog.getByLabel("自动批准此工作区的受限工具").check();
+    await expect(dialog.getByLabel("允许 Bot 新建 Markdown/CSV")).toBeChecked();
+    await expect(dialog.getByLabel("自动批准此工作区的受限工具")).toBeChecked();
 
     const publicResult = await page.evaluate(() => (
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.workspaces.list()
     ));
-    expect(publicResult).toMatchObject({ ok: true, data: [{ id: registered.workspace.id, name: registered.workspace.name }] });
+    expect(publicResult).toMatchObject({
+      ok: true,
+      data: [{ id: registered.workspace.id, name: registered.workspace.name, writeEnabled: true, automationEnabled: true }],
+    });
     expect(JSON.stringify(publicResult)).not.toContain(workspaceRoot);
+    const revealResult = await page.evaluate(({ workspaceId }) => (
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.workspaces.reveal({ workspaceId, path: "delivery.md" })
+    ), { workspaceId: registered.workspace.id });
+    expect(revealResult).toEqual({ ok: true, data: true });
+    const unsafeReveal = await page.evaluate(({ workspaceId }) => (
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.workspaces.reveal({ workspaceId, path: "../outside.md" })
+    ), { workspaceId: registered.workspace.id });
+    expect(unsafeReveal).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 640));
     const compactLayout = await dialog.evaluate((element) => {

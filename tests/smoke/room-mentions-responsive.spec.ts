@@ -60,7 +60,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     });
     await page.locator(".bot-row").filter({ hasText: seeded.roomName }).click();
     await expect(page.getByRole("heading", { name: seeded.roomName })).toBeVisible();
-    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("自动选择最合适的 Bot；也可输入 @ 临时指定", { exact: true })).toBeVisible();
 
     const input = page.getByLabel("消息");
     await input.fill("@");
@@ -121,7 +121,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await mention(page, "执");
     await mention(page, "评");
     await expect(page.locator(".mention-chip")).toHaveCount(2);
-    await expect(page.getByText("将调用 2 个被 @ 的 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("将只调用 2 个指定 Bot", { exact: true })).toBeVisible();
     await input.fill("两位一起复核。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(3);
@@ -151,7 +151,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
 
     await mention(page, "all");
     await expect(page.getByRole("button", { name: "移除 @所有人" })).toBeVisible();
-    await expect(page.getByText("已 @所有人，将调用 3 个 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("将按成员顺序调用全部 3 个 Bot", { exact: true })).toBeVisible();
     await input.fill("显式通知所有人。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(7);
@@ -167,7 +167,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await expect(page.locator("article.message-user")).toHaveCount(4);
     await page.screenshot({ path: "/tmp/aevoren-bot-room-mention-invalid.png", fullPage: true });
     await invalidMention.click();
-    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("自动选择最合适的 Bot；也可输入 @ 临时指定", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
     await input.fill("");
     await page.getByLabel("选择要添加的 Bot").selectOption({ label: seeded.botNames[0] });

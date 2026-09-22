@@ -85,6 +85,8 @@ export type MemoryProposal = {
 export type Workspace = {
   id: string;
   name: string;
+  writeEnabled: boolean;
+  automationEnabled: boolean;
   version: number;
   removedAt: string | null;
   createdAt: string;
@@ -94,6 +96,12 @@ export type Workspace = {
 export type WorkspaceRegistrationResult = {
   disposition: "registered" | "duplicate" | "restored";
   workspace: Workspace;
+};
+
+export type TeamTemplateCreateResult = {
+  disposition: "created" | "existing";
+  bots: Bot[];
+  room: RoomDetail;
 };
 
 export type Session = {
@@ -401,6 +409,12 @@ export type WorkspaceToolRequest =
       path: string;
       query: string;
       maxMatches: number;
+    }
+  | {
+      kind: "workspace-write";
+      workspaceId: string;
+      path: string;
+      content: string;
     };
 
 export type NetworkToolRequest =
@@ -436,7 +450,12 @@ export type DeviceToolRequest = {
   maxCharacters: number;
 };
 
-export type ToolRequest = WorkspaceToolRequest | NetworkToolRequest | McpToolRequest | DeviceToolRequest;
+export type ComputationToolRequest = {
+  kind: "text-measure";
+  text: string;
+};
+
+export type ToolRequest = WorkspaceToolRequest | NetworkToolRequest | McpToolRequest | DeviceToolRequest | ComputationToolRequest;
 
 export type McpTransportKind = "stdio" | "streamable-http";
 export type McpServerStatus = "disabled" | "connecting" | "available" | "unavailable" | "needs-auth";
@@ -821,6 +840,7 @@ export type LoginItemStatus = "unsupported" | "not-registered" | "enabled" | "re
 export type GeneralSettings = {
   theme: AppearanceTheme;
   memoryCaptureEnabled: boolean;
+  autoApprovePublicReadTools: boolean;
   launchAtLogin: boolean;
   launchAtLoginSupported: boolean;
   launchAtLoginStatus: LoginItemStatus;
@@ -829,6 +849,7 @@ export type GeneralSettings = {
 export type SaveGeneralSettings = {
   theme?: AppearanceTheme;
   memoryCaptureEnabled?: boolean;
+  autoApprovePublicReadTools?: boolean;
   launchAtLogin?: boolean;
 };
 
@@ -1040,6 +1061,7 @@ export interface AevorenBotApi {
   };
   artifacts: {
     save(input: ArtifactSaveInput): Promise<ApiResult<ArtifactSaveResult | null>>;
+    reveal(path: string): Promise<ApiResult<boolean>>;
   };
   capabilities: {
     getSnapshot(input?: { botId?: string }): Promise<ApiResult<CapabilitySnapshot>>;
@@ -1066,6 +1088,9 @@ export interface AevorenBotApi {
   conversations: {
     deleteBatch(input: ConversationBatchDeleteInput): Promise<ApiResult<ConversationBatchDeleteResult>>;
   };
+  teams: {
+    createContentTeam(): Promise<ApiResult<TeamTemplateCreateResult>>;
+  };
   bots: {
     list(): Promise<ApiResult<Bot[]>>;
     create(): Promise<ApiResult<{ bot: Bot; session: Session }>>;
@@ -1090,6 +1115,8 @@ export interface AevorenBotApi {
   workspaces: {
     list(): Promise<ApiResult<Workspace[]>>;
     add(): Promise<ApiResult<WorkspaceRegistrationResult | null>>;
+    updatePermissions(input: { id: string; expectedVersion: number; writeEnabled: boolean; automationEnabled: boolean }): Promise<ApiResult<Workspace>>;
+    reveal(input: { workspaceId: string; path: string }): Promise<ApiResult<boolean>>;
     remove(input: { id: string; expectedVersion: number }): Promise<ApiResult<Workspace>>;
   };
   tools: {

@@ -67,7 +67,7 @@ textarea:focus-visible {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 320px;
+  grid-template-columns: 280px minmax(0, 1fr) 400px;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -168,9 +168,9 @@ textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  min-height: 28px;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
   padding: 0;
   border-radius: 6px;
   color: var(--text-muted);
@@ -543,6 +543,157 @@ textarea:focus-visible {
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--chat-bg);
+}
+
+.brief-approval-card {
+  width: min(420px, 100%);
+  min-width: 0;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-bg);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 8%, transparent);
+  animation: brief-card-enter 300ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.brief-approval-heading {
+  display: grid;
+  gap: 4px;
+  padding: 13px 14px 10px;
+}
+
+.brief-approval-heading > span {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 680;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.brief-approval-heading strong {
+  color: var(--text);
+  font-size: 13px;
+  letter-spacing: -0.1px;
+}
+
+.brief-approval-heading p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.brief-candidate-options {
+  display: grid;
+  padding: 0 8px 9px;
+  gap: 2px;
+}
+
+.brief-candidate-options label {
+  display: grid;
+  min-width: 0;
+  min-height: 42px;
+  grid-template-columns: auto 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.brief-candidate-options label:hover {
+  background: var(--surface-soft);
+}
+
+.brief-candidate-options label.selected {
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border));
+  background: var(--surface-selected);
+}
+
+.brief-candidate-options input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.brief-option-letter {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.brief-candidate-options label.selected .brief-option-letter {
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.brief-option-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.brief-option-copy strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 630;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brief-option-copy small {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.brief-approval-actions {
+  display: flex;
+  min-height: 45px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-soft) 46%, var(--panel-bg));
+}
+
+.brief-approval-actions > div {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.brief-approval-actions .primary-button,
+.brief-approval-actions .secondary-button,
+.brief-approval-actions .text-button {
+  min-height: 30px;
+  margin: 0;
+  padding-inline: 10px;
+  border-radius: 999px;
+  font-size: 10px;
+}
+
+.brief-abandon {
+  color: var(--danger);
+}
+
+@keyframes brief-card-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .conversation-header {
@@ -978,7 +1129,7 @@ textarea:focus-visible {
   margin: 2px 0 0;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1124,7 +1275,7 @@ textarea:focus-visible {
 
 .message-meta time {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .message-avatar {
@@ -1136,8 +1287,36 @@ textarea:focus-visible {
   border: 0;
   border-radius: 50%;
   color: #111111;
-  background: var(--speaker);
+  background: hsl(var(--role-hue, 38) 68% 54%);
   box-shadow: var(--shadow-bubble);
+}
+
+.superseded-attempt-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.message-superseded .message-bubble {
+  opacity: 0.7;
+}
+
+.message-superseded .message-meta,
+.message-superseded .message-tools {
+  opacity: 0.78;
+}
+
+.superseded-attempt-details {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.superseded-attempt-details > summary {
+  cursor: pointer;
 }
 
 .message-avatar svg {
@@ -1263,10 +1442,6 @@ textarea:focus-visible {
 
 .message-assistant.message-group-continuation .message-bubble {
   border-top-left-radius: 7px;
-}
-
-.message-group-has-next .entry-note.success {
-  display: none;
 }
 
 .user-message-body {
@@ -1471,11 +1646,7 @@ textarea:focus-visible {
 .entry-note {
   margin-top: 6px;
   color: var(--text-muted);
-  font-size: 10px;
-}
-
-.entry-note.success {
-  display: none;
+  font-size: 11px;
 }
 
 .streaming-indicator span {
@@ -1500,6 +1671,218 @@ textarea:focus-visible {
 
 .entry-note.success {
   color: var(--success);
+}
+
+.execution-evidence {
+  display: flex;
+  margin-top: 7px;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.execution-evidence > span {
+  display: inline-flex;
+  min-height: 23px;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--panel-bg);
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.execution-evidence > span.verified {
+  border-color: color-mix(in srgb, var(--success) 25%, var(--border));
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 6%, var(--panel-bg));
+}
+
+.execution-evidence i,
+.artifact-status-row i {
+  font-style: normal;
+  font-weight: 750;
+}
+
+.execution-evidence small {
+  color: var(--text-muted);
+  font-size: 8px;
+}
+
+.artifact-status-bar,
+.run-status-card,
+.handoff-event-card,
+.message-priority-summary {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-bg);
+}
+
+.artifact-status-bar > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.artifact-status-row {
+  display: flex;
+  min-width: 0;
+  min-height: 35px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 9px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.artifact-status-row > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.artifact-status-row code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-status-row.saved i,
+.artifact-status-row.saved strong {
+  color: var(--success);
+}
+
+.artifact-status-row.failed i,
+.artifact-status-row.failed strong {
+  color: var(--danger);
+}
+
+.artifact-status-row .text-button {
+  min-height: 28px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding-inline: 5px;
+}
+
+.run-status-card {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px;
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger) 5%, var(--panel-bg));
+}
+
+.run-status-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  font-weight: 780;
+}
+
+.run-status-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.run-status-card header strong {
+  font-size: 12px;
+}
+
+.run-status-card header span {
+  color: var(--danger);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.run-status-card p {
+  margin: 4px 0 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.run-status-card dl {
+  display: grid;
+  margin: 0;
+  gap: 4px;
+}
+
+.run-status-card dl > div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 10px;
+}
+
+.run-status-card dt {
+  color: var(--text-muted);
+}
+
+.run-status-card dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.run-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.run-status-actions details {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.run-status-actions code {
+  display: block;
+  margin-top: 5px;
+}
+
+.long-message-view.collapsed {
+  min-width: min(540px, 100%);
+}
+
+.message-priority-summary {
+  margin: 0;
+  padding: 10px 11px;
+  background: color-mix(in srgb, var(--success) 4%, var(--panel-bg));
+}
+
+.message-priority-summary > strong {
+  font-size: 11px;
+}
+
+.message-priority-summary ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.long-message-toggle {
+  margin: 8px 0 0;
 }
 
 .text-button {
@@ -2082,6 +2465,201 @@ textarea:focus-visible {
   background: var(--surface-soft);
   font-size: 9px;
   line-height: 1.35;
+}
+
+.handoff-event-card {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 9px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--border-strong);
+}
+
+.handoff-event-card.tone-success {
+  border-left-color: var(--success);
+}
+
+.handoff-event-card.tone-danger {
+  border-left-color: var(--danger);
+}
+
+.handoff-event-card.tone-warning {
+  border-left-color: var(--warning);
+}
+
+.handoff-event-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-soft);
+  font-size: 16px;
+}
+
+.handoff-event-copy {
+  min-width: 0;
+}
+
+.handoff-event-copy header,
+.handoff-event-copy footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.handoff-event-copy header strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.handoff-event-copy header time {
+  margin-left: auto;
+}
+
+.handoff-event-copy p {
+  margin: 5px 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+
+.handoff-event-copy footer {
+  gap: 10px;
+}
+
+.room-routing-control {
+  display: flex;
+  width: min(720px, 100%);
+  margin: 0 auto 5px;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.composer-run-status {
+  width: min(720px, 100%);
+  margin: 0 auto 8px;
+}
+
+.composer-run-status .run-status-card {
+  margin-top: 0;
+}
+
+.room-batch-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.room-batch-context > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.continue-room-button {
+  margin-top: 6px;
+}
+
+.room-routing-control > div {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.room-routing-control button {
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.room-routing-control button.selected {
+  color: var(--text);
+  background: var(--panel-bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.inspector-group {
+  display: grid;
+  gap: 11px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--panel-bg) 96%, var(--surface-soft));
+}
+
+.inspector-group h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.inspector-group .field {
+  margin: 0;
+}
+
+.inspector-advanced {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--panel-bg);
+}
+
+.inspector-advanced > summary {
+  padding: 12px 14px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.inspector-advanced-content {
+  display: grid;
+  gap: 13px;
+  padding: 0 14px 14px;
+}
+
+.permission-explainer {
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.permission-explainer strong,
+.permission-explainer p,
+.permission-explainer span {
+  display: block;
+}
+
+.permission-explainer strong {
+  font-size: 11px;
+}
+
+.permission-explainer p,
+.permission-explainer span {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .room-handoff-route,
@@ -2856,12 +3434,12 @@ textarea:focus-visible {
 
 .settings-dialog.settings-hub {
   display: grid;
-  width: min(900px, calc(100vw - 48px));
+  width: min(1040px, calc(100vw - 48px));
   height: min(700px, calc(100vh - 60px));
   min-height: 480px;
   padding: 0;
   overflow: hidden;
-  grid-template-columns: 198px minmax(0, 1fr);
+  grid-template-columns: 210px minmax(0, 1fr);
 }
 
 .settings-nav {
@@ -2924,9 +3502,9 @@ textarea:focus-visible {
   top: 16px;
   float: right;
   display: grid;
-  width: 30px;
-  height: 30px;
-  margin: 16px 16px -46px 0;
+  width: 36px;
+  height: 36px;
+  margin: 14px 14px -50px 0;
   padding: 0;
   place-items: center;
   border: 0;
@@ -4062,6 +4640,23 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.workspace-permission-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.workspace-permission-toggle input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .workspace-copy strong {
   font-size: 12px;
   font-weight: 650;
@@ -4078,14 +4673,30 @@ textarea:focus-visible {
 }
 
 .icon-button {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border: 0;
   border-radius: 6px;
   color: var(--text-muted);
   background: transparent;
   font-size: 22px;
   cursor: pointer;
+}
+
+.capability-technical-details {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.capability-technical-details summary {
+  cursor: pointer;
+}
+
+.capability-technical-details code {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  font-size: 9px;
 }
 
 .icon-button:hover {
@@ -4316,7 +4927,7 @@ textarea:focus-visible {
     inset-block: 0;
     right: 0;
     z-index: 40;
-    width: 320px;
+    width: min(440px, calc(100vw - 52px));
     visibility: hidden;
     box-shadow: 0 18px 55px rgba(10, 18, 30, 0.28);
     transform: translateX(104%);
@@ -4585,6 +5196,61 @@ textarea:focus-visible {
 }
 
 @media (max-width: 620px) {
+  .brief-approval-card {
+    width: 100%;
+  }
+
+  .brief-approval-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .brief-approval-actions > div {
+    width: 100%;
+  }
+
+  .brief-approval-actions > div .primary-button {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .brief-approval-actions > .brief-abandon {
+    align-self: flex-start;
+  }
+
+  .artifact-status-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .artifact-status-row > span {
+    width: 100%;
+  }
+
+  .artifact-status-row .text-button {
+    margin-left: 22px;
+  }
+
+  .run-status-card dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+  }
+
+  .room-routing-control {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .room-routing-control > div {
+    width: 100%;
+  }
+
+  .room-routing-control button {
+    flex: 1;
+  }
+
   .settings-modal-backdrop {
     padding: 8px;
   }
@@ -4727,6 +5393,18 @@ textarea:focus-visible {
 }
 
 @media (max-width: 300px) {
+  .inspector {
+    padding-inline: 6px;
+  }
+
+  .inspector-group {
+    padding: 6px;
+  }
+
+  .inspector-advanced-content {
+    padding: 0 9px 9px;
+  }
+
   .settings-nav {
     padding-right: 42px;
     overflow-x: hidden;

@@ -69,6 +69,7 @@ import type {
   ToolInvocationState,
   ToolPrepareResult,
   ToolRequest,
+  TeamTemplateCreateResult,
   Workspace,
   WorkspaceRegistrationResult,
 } from "@shared/contracts";
@@ -1327,7 +1328,7 @@ export const MIGRATIONS = [
         executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
         action_kind TEXT NOT NULL CHECK (action_kind IN (
           'workspace-list', 'workspace-read', 'workspace-search',
-          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read'
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure'
         )),
         effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote')),
         workspace_id TEXT,
@@ -1355,7 +1356,7 @@ export const MIGRATIONS = [
         command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
         tool_kind TEXT NOT NULL CHECK (tool_kind IN (
           'workspace-list', 'workspace-read', 'workspace-search',
-          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read'
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure'
         )),
         effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote')),
         workspace_id TEXT,
@@ -1517,6 +1518,87 @@ export const MIGRATIONS = [
         ON memory_proposals(state, created_at DESC, id DESC);
       CREATE INDEX memory_proposals_by_bot
         ON memory_proposals(bot_id, state, created_at DESC, id DESC);
+    `,
+  },
+  {
+    version: 23,
+    foreignKeysOff: true,
+    sql: `
+      ALTER TABLE workspaces ADD COLUMN write_enabled INTEGER NOT NULL DEFAULT 0 CHECK (write_enabled IN (0, 1));
+      ALTER TABLE workspaces ADD COLUMN automation_enabled INTEGER NOT NULL DEFAULT 0 CHECK (automation_enabled IN (0, 1));
+
+      CREATE TABLE approval_requests_v23 (
+        id TEXT PRIMARY KEY,
+        tool_invocation_id TEXT NOT NULL UNIQUE
+          REFERENCES tool_invocations_v23(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        action_kind TEXT NOT NULL CHECK (action_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        target_digest TEXT NOT NULL CHECK (length(target_digest) = 64),
+        arguments_digest TEXT NOT NULL CHECK (length(arguments_digest) = 64),
+        requested_scope TEXT NOT NULL CHECK (requested_scope = 'once'),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'allowed', 'denied', 'expired', 'cancelled')),
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('allow-once', 'deny')),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE tool_invocations_v23 (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 600000),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded', 'failed',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests_v23(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      INSERT INTO approval_requests_v23 SELECT * FROM approval_requests;
+      INSERT INTO tool_invocations_v23 SELECT * FROM tool_invocations;
+      DROP TABLE tool_invocations;
+      DROP TABLE approval_requests;
+      ALTER TABLE approval_requests_v23 RENAME TO approval_requests;
+      ALTER TABLE tool_invocations_v23 RENAME TO tool_invocations;
+      CREATE INDEX tool_invocations_by_session ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime ON tool_invocations(runtime_run_id, created_at, id);
+      CREATE INDEX approval_requests_pending ON approval_requests(state, expires_at, created_at, id);
     `,
   },
 ] as const;
@@ -1743,6 +1825,8 @@ type WorkspaceRow = {
   name: string;
   canonical_root: string;
   canonical_root_digest: string;
+  write_enabled: number;
+  automation_enabled: number;
   version: number;
   removed_at: string | null;
   created_at: string;
@@ -2155,6 +2239,8 @@ function toWorkspace(row: WorkspaceRow): Workspace {
   return {
     id: row.id,
     name: row.name,
+    writeEnabled: row.write_enabled === 1,
+    automationEnabled: row.automation_enabled === 1,
     version: Number(row.version),
     removedAt: row.removed_at,
     createdAt: row.created_at,
@@ -2442,7 +2528,8 @@ function canonicalToolCommand(input: ToolInvocationCommand): string {
 }
 
 function toolEffectClass(tool: ToolRequest): CapabilityEffectClass {
-  if (tool.kind === "time-now") return "pure";
+  if (tool.kind === "time-now" || tool.kind === "text-measure") return "pure";
+  if (tool.kind === "workspace-write") return "write-reversible";
   if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "mcp-call") return "read-remote";
   return "read-local";
 }
@@ -2452,6 +2539,7 @@ function toolWorkspaceId(tool: ToolRequest): string | null {
     case "workspace-list":
     case "workspace-read":
     case "workspace-search":
+    case "workspace-write":
       return tool.workspaceId;
     default:
       return null;
@@ -2463,6 +2551,7 @@ function toolTargetPath(tool: ToolRequest): string {
     case "workspace-list":
     case "workspace-read":
     case "workspace-search":
+    case "workspace-write":
       return tool.path;
     case "web-search":
       return tool.query;
@@ -2476,6 +2565,8 @@ function toolTargetPath(tool: ToolRequest): string {
       return `${tool.serverId}:${tool.toolName}`;
     case "clipboard-read":
       return "clipboard";
+    case "text-measure":
+      return "text";
   }
 }
 
@@ -3300,6 +3391,25 @@ export class AppRepository {
     return { workspace: toWorkspace(row), rootPath: row.canonical_root };
   }
 
+  updateWorkspacePermissions(
+    id: string,
+    expectedVersion: number,
+    permissions: { writeEnabled: boolean; automationEnabled: boolean },
+  ): Workspace {
+    const result = this.database
+      .prepare(
+        `UPDATE workspaces
+         SET write_enabled = ?, automation_enabled = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND version = ? AND removed_at IS NULL`,
+      )
+      .run(permissions.writeEnabled ? 1 : 0, permissions.automationEnabled ? 1 : 0, now(), id, expectedVersion);
+    if (Number(result.changes) !== 1) {
+      const current = this.getWorkspace(id, true);
+      throw new AevorenBotError("WORKSPACE_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+    }
+    return this.getWorkspace(id);
+  }
+
   removeWorkspace(id: string, expectedVersion: number): Workspace {
     const timestamp = now();
     const updated = this.database
@@ -3911,6 +4021,95 @@ export class AppRepository {
       )
       .all(roomId) as RoomMemberRow[];
     return rows.map((row) => ({ roomId: row.room_id, botId: row.bot_id, position: row.position, bot: toBot(row) }));
+  }
+
+  createContentTeamTemplate(): TeamTemplateCreateResult {
+    const settingKey = "template.content-team.roomId";
+    const existingRoomId = this.getSetting(settingKey)?.value;
+    if (existingRoomId) {
+      try {
+        const room = this.getRoomDetail(existingRoomId);
+        return { disposition: "existing", bots: room.members.map((member) => member.bot), room };
+      } catch {
+        // The prior template was deleted; create a fresh atomic instance below.
+      }
+    }
+    const roles = [
+      {
+        name: "情报侦察员",
+        label: "一手信息研究",
+        description: "检索并核验一手来源，形成可追溯线索。",
+        instructions: "你负责一手信息研究。必须通过真实 web_search/web_fetch 获取来源；没有成功工具记录不得声称已抓取或核验。将验收通过的线索使用 workspace_write 新建到 01-inbox，包含来源 URL、抓取时间、事实/观点/假设、缺口与风险；不得覆盖已有文件。每次任务只创建用户指定的一个正式线索文件，成功后不得再创建 v2、确认、索引或审计文件。完成后使用结构化 handoff 交给选题策划师。",
+      },
+      {
+        name: "选题策划师",
+        label: "选题评估与 Brief",
+        description: "基于真实线索和账号风格产出互斥选题 Brief。",
+        instructions: "你负责选题策划。先通过真实 workspace_read 读取上游线索与 voice.md，再产出 3 个互斥候选；没有成功读取不得生成或声称已读。使用 workspace_write 新建用户指定的唯一 Brief 到 02-briefs；第一次写入成功后立即停止写文件，不得创建 v2、清单、索引、README、审计或确认文件。等待用户批准后才能结构化 handoff 给内容主笔。",
+      },
+      {
+        name: "内容主笔",
+        label: "多平台内容写作",
+        description: "根据批准的 Brief 和风格材料生成候选稿。",
+        instructions: "你负责内容写作。只有收到批准后的结构化 handoff 才启动；先真实读取 Brief 与 voice.md。用 text_measure 记录初稿长度，不得估算；主笔阶段最多修订测量 6 次，然后写入当前最佳草稿并交给事实编辑，由事实编辑负责最终长度收敛。只创建用户指定的一个正式草稿文件；workspace_write 成功后不得创建副本或确认文件，随后结构化 handoff 给事实编辑。",
+      },
+      {
+        name: "事实编辑",
+        label: "事实核验与风格审校",
+        description: "复核事实、来源、数字、引语、上下文和长度。",
+        instructions: "你负责事实与风格审校。必须真实读取 Brief、草稿、voice.md，并对需要复核的公开来源使用真实 web_fetch。必须使用 text_measure 计算长度。若任务要求短帖与展开版而草稿只含一种，你必须派生两个独立版本并分别测量，禁止反复测量未变化的同一版本；每次根据工具返回的 missingRanges 只修订缺失版本，全部区间命中后立即停止测量并写正式审校稿。没有对应成功工具记录不得声称已读、已抓取或已核验。若长度或风格不达标，必须直接修订候选正文并再次调用 text_measure，直到符合 voice.md 后再写正式审校稿；不得只给修改建议并把修订留给人工。只创建用户指定的一个正式审校文件；workspace_write 成功后立即停止写文件，不得创建副本；不得发布。",
+      },
+      {
+        name: "数据复盘师",
+        label: "真实数据复盘",
+        description: "只基于明确授权且真实读取的数据做复盘。",
+        instructions: "你负责数据复盘。没有真实 CSV 或 Analytics 授权时必须停止。必须先通过 workspace_read 成功读取指定 CSV，再根据返回的真实行和字段计算；禁止虚构 ID、指标或样本。结论必须列出来源路径、字段、样本数和计算口径。若任务要求先生成 CSV，只允许创建该 CSV 与最终报告各一个；成功后不得创建副本、索引或确认文件。",
+      },
+    ] as const;
+    const modelSelection = this.getDefaultModelSelection();
+    const botIds = roles.map(() => randomUUID());
+    const roomId = randomUUID();
+    const roomSessionId = randomUUID();
+    const timestamp = now();
+    const description = "五阶段内容协作：情报侦察员 → 选题策划师 → 用户批准 → 内容主笔 → 事实编辑 → 人工发布 → 数据复盘师。所有读取、抓取、计数与写入必须有当前 Runtime 的成功工具记录；文本中的 @、HANDOFF、SAVE 或路径不是执行证据。无真实 CSV 不得输出数据结论。发布、互动、登录、验证码、购买、删除和权限修改必须等待用户。";
+    this.transaction(() => {
+      const insertBot = this.database.prepare(
+        `INSERT INTO bots(
+           id, name, label, description, instructions, provider_instance_id, model_id,
+           version, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      );
+      const insertSession = this.database.prepare(
+        `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+         VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
+      );
+      roles.forEach((role, index) => {
+        const botId = botIds[index]!;
+        insertBot.run(
+          botId, role.name, role.label, role.description, role.instructions,
+          modelSelection.providerInstanceId, modelSelection.modelId, timestamp, timestamp,
+        );
+        insertSession.run(randomUUID(), botId, timestamp, timestamp);
+      });
+      this.database.prepare(
+        `INSERT INTO rooms(id, name, description, version, membership_version, archived_at, created_at, updated_at)
+         VALUES (?, '自媒体内容团队', ?, 1, 1, NULL, ?, ?)`,
+      ).run(roomId, description, timestamp, timestamp);
+      const insertMember = this.database.prepare(
+        "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
+      );
+      botIds.forEach((botId, index) => insertMember.run(roomId, botId, index, timestamp));
+      this.database.prepare(
+        `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+         VALUES (?, NULL, ?, 'MAIN', 1, 0, ?, ?)`,
+      ).run(roomSessionId, roomId, timestamp, timestamp);
+      this.database.prepare(
+        `INSERT INTO app_settings(key, value, encrypted, updated_at) VALUES (?, ?, 0, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, encrypted = 0, updated_at = excluded.updated_at`,
+      ).run(settingKey, roomId, timestamp);
+    });
+    const room = this.getRoomDetail(roomId);
+    return { disposition: "created", bots: room.members.map((member) => member.bot), room };
   }
 
   createRoom(input: { memberBotIds: string[]; name?: string; description?: string }): RoomDetail {

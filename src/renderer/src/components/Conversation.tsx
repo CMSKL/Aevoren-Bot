@@ -1,6 +1,7 @@
-import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type {
   AppError,
+  ArtifactSaveResult,
   AttachmentDraft,
   ApprovalRequest,
   ApprovalResolution,
@@ -19,6 +20,7 @@ import type {
 } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
+import { shouldShowBriefApproval } from "../brief-approval-state";
 import { initialRoomRouteAgentIds, latestRoomTurnsByLogicalTurn, roomHandoffProgress } from "../room-runtime-state";
 import {
   EVERYONE_MENTION_ID,
@@ -30,10 +32,19 @@ import {
   type ActiveMentionQuery,
   type RoomMention,
 } from "../room-mentions";
-import { AssistantMarkdown } from "./AssistantMarkdown";
 import { AttachmentIcon, BotIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
 import { HeaderModelPicker } from "./HeaderModelPicker";
 import { ExpandableTrace, type ExpandableTraceKind, type ExpandableTraceTone } from "./ExpandableTrace";
+import {
+  ArtifactStatusBar,
+  BriefApprovalCard,
+  ExecutionEvidenceBar,
+  HandoffEventCard,
+  LongMessageView,
+  RunFailureCard,
+  type ArtifactSaveState,
+  type WorkflowAction,
+} from "./CollaborationFeedback";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
@@ -60,11 +71,6 @@ const handoffRejectionMessages: Record<string, string> = {
   RUNTIME_STATE_INVALID: "当前运行状态不允许继续转交。",
 };
 
-function summarizeHandoffTask(task: string): string {
-  const compact = task.replace(/\s+/g, " ").trim();
-  return compact.length > 120 ? `${compact.slice(0, 119)}…` : compact;
-}
-
 type HandoffDisplay = RoomHandoffView & {
   fromName: string;
   toName: string;
@@ -82,8 +88,10 @@ type TranscriptItemProps = {
   run: RuntimeRun | null;
   canRegenerate: boolean;
   canRetryRoomTurn: boolean;
+  busy: boolean;
   groupedWithPrevious: boolean;
   groupedWithNext: boolean;
+  isSuperseded: boolean;
   speakerDisplayName: string | null;
   routeDisplayNames: string[];
   routeMode: UserRoomRoutingMode | "legacy" | null;
@@ -92,12 +100,18 @@ type TranscriptItemProps = {
   handoffRejections: HandoffRejectionDisplay[];
   toolInvocations: ToolInvocation[];
   approvalsByInvocation: ReadonlyMap<string, ApprovalRequest>;
+  artifactSaveState: ArtifactSaveState;
+  showBriefApproval: boolean;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onRetryRoomTurn(turnId: string): void;
   onOpenSpeaker(botId: string): void;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
-  onSaveArtifact(entry: TranscriptEntry): Promise<void>;
+  onSaveArtifact(entry: TranscriptEntry): void;
+  onRevealArtifact(path: string): void;
+  onRevealWorkspaceArtifact(workspaceId: string, path: string): void;
+  onOpenWorkspaces(): void;
+  onWorkflowAction(action: WorkflowAction): void;
 };
 
 const toolStateLabels: Record<ToolInvocation["state"], string> = {
@@ -119,11 +133,13 @@ function toolActionLabel(invocation: ToolInvocation): string {
   if (invocation.toolKind === "workspace-list") return "查看目录";
   if (invocation.toolKind === "workspace-read") return "读取文件";
   if (invocation.toolKind === "workspace-search") return "搜索文件";
+  if (invocation.toolKind === "workspace-write") return "新建文件";
   if (invocation.toolKind === "web-search") return "联网搜索";
   if (invocation.toolKind === "web-fetch") return "读取网页";
   if (invocation.toolKind === "weather-current") return "查询当前天气";
-  if (invocation.toolKind === "mcp-call") return `MCP · ${invocation.arguments.kind === "mcp-call" ? invocation.arguments.toolName : "Tool"}`;
+  if (invocation.toolKind === "mcp-call") return `外部工具 · ${invocation.arguments.kind === "mcp-call" ? invocation.arguments.toolName : "工具"}`;
   if (invocation.toolKind === "clipboard-read") return "读取剪贴板";
+  if (invocation.toolKind === "text-measure") return "精确计算文本长度";
   return "查询当前时间";
 }
 
@@ -250,8 +266,10 @@ const TranscriptItem = memo(function TranscriptItem({
   run,
   canRegenerate,
   canRetryRoomTurn,
+  busy,
   groupedWithPrevious,
   groupedWithNext,
+  isSuperseded,
   speakerDisplayName,
   routeDisplayNames,
   routeMode,
@@ -260,12 +278,18 @@ const TranscriptItem = memo(function TranscriptItem({
   handoffRejections,
   toolInvocations,
   approvalsByInvocation,
+  artifactSaveState,
+  showBriefApproval,
   onRetryMessage,
   onRetryRun,
   onRetryRoomTurn,
   onOpenSpeaker,
   onResolveApproval,
   onSaveArtifact,
+  onRevealArtifact,
+  onRevealWorkspaceArtifact,
+  onOpenWorkspaces,
+  onWorkflowAction,
 }: TranscriptItemProps): React.JSX.Element {
   const failedBeforeAcceptance = entry.sendState === "failed-before-acceptance";
   const interrupted = run?.state === "interrupted";
@@ -275,17 +299,22 @@ const TranscriptItem = memo(function TranscriptItem({
     ? sanitizeRoomSpeakerOutput(entry.body, entry.status === "streaming")
     : entry.body;
   const longAssistant = entry.role === "assistant" && assistantBody.length > 160;
+  const collapsibleAssistant = entry.role === "assistant" && entry.status === "completed" && assistantBody.length > 900;
   const hasVisibleBody = entry.role === "user" || assistantBody.trim().length > 0;
   const speakerName = entry.role === "assistant" ? speakerDisplayName ?? entry.speakerNameSnapshot ?? "Aevoren Bot" : "你";
 
   return (
     <article
-      className={`message message-${entry.role}${longAssistant ? " message-long" : ""}${groupedWithPrevious ? " message-group-continuation" : ""}${groupedWithNext ? " message-group-has-next" : ""}`}
+      className={`message message-${entry.role}${longAssistant ? " message-long" : ""}${groupedWithPrevious ? " message-group-continuation" : ""}${groupedWithNext ? " message-group-has-next" : ""}${isSuperseded ? " message-superseded" : ""}`}
       data-status={entry.status}
     >
       <div className="message-row">
         {entry.role === "assistant" ? (
-          <span className={`message-avatar${groupedWithPrevious ? " message-avatar-placeholder" : ""}`} aria-hidden="true">
+          <span
+            className={`message-avatar${groupedWithPrevious ? " message-avatar-placeholder" : ""}`}
+            aria-hidden="true"
+            style={entry.speakerBotId ? { "--role-hue": [...entry.speakerBotId].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 360 } as CSSProperties : undefined}
+          >
             {groupedWithPrevious ? null : <BotIcon />}
           </span>
         ) : null}
@@ -298,6 +327,7 @@ const TranscriptItem = memo(function TranscriptItem({
               <time>{timeFormatter.format(new Date(entry.createdAt))}</time>
             </header>
           ) : null}
+          {isSuperseded ? <div className="superseded-attempt-note"><span aria-hidden="true">↻</span>较早失败版本，已由后续重试替代</div> : null}
           {hasVisibleBody ? <div className={`message-bubble${longAssistant ? " message-bubble-long" : ""}`}>
             {entry.role === "user" && (routeDisplayNames.length > 0 || routeMode === "automatic") ? (
               <div className="message-route" aria-label={`响应 Bot：${routeDisplayNames.join("、")}`}>
@@ -307,7 +337,7 @@ const TranscriptItem = memo(function TranscriptItem({
               </div>
             ) : null}
           {entry.role === "assistant"
-              ? <AssistantMarkdown body={assistantBody} />
+              ? <LongMessageView body={assistantBody} collapsible={collapsibleAssistant} />
               : <p className="user-message-body">{entry.body}</p>}
             {entry.attachments && entry.attachments.length > 0 ? (
               <div className="message-attachments" aria-label="消息附件">
@@ -324,14 +354,16 @@ const TranscriptItem = memo(function TranscriptItem({
           {handoffs.length > 0 ? (
             <div className="message-handoffs" aria-label="Agent 任务转交" data-testid="room-handoff-list">
               {handoffs.map((handoff) => (
-                <div className={`room-handoff-row handoff-${handoff.state} handoff-tone-${handoff.progress.tone}`} key={handoff.id}>
-                  <span className="room-handoff-route">{handoff.fromName}<span aria-hidden="true">→</span>{handoff.toName}</span>
-                  <span className="room-handoff-task" title={handoff.task}>{summarizeHandoffTask(handoff.task)}</span>
-                  <span className="room-handoff-status">
-                    <span>投递：{handoff.progress.deliveryLabel}</span>
-                    {handoff.progress.executionLabel ? <span>执行：{handoff.progress.executionLabel}</span> : null}
-                  </span>
-                </div>
+                <HandoffEventCard
+                  key={handoff.id}
+                  fromName={handoff.fromName}
+                  toName={handoff.toName}
+                  task={handoff.task}
+                  delivery={handoff.progress.deliveryLabel}
+                  execution={handoff.progress.executionLabel}
+                  tone={handoff.progress.tone}
+                  createdAt={handoff.createdAt}
+                />
               ))}
             </div>
           ) : null}
@@ -357,12 +389,25 @@ const TranscriptItem = memo(function TranscriptItem({
               ))}
             </div>
           ) : null}
+          {entry.role === "assistant" && ["completed", "failed", "cancelled"].includes(entry.status) ? (
+            <ExecutionEvidenceBar body={assistantBody} invocations={toolInvocations} />
+          ) : null}
           {entry.status === "streaming"
             ? <div className="streaming-indicator">正在生成<span /></div>
             : null}
           {entry.role === "assistant" && entry.status === "completed"
-            ? <div className="entry-note success">已完成 <button type="button" className="text-button" onClick={() => void onSaveArtifact(entry)}>保存为 Markdown</button></div>
+            ? <ArtifactStatusBar
+                writes={toolInvocations}
+                saveState={artifactSaveState}
+                onSave={() => onSaveArtifact(entry)}
+                onReveal={onRevealArtifact}
+                onRevealWorkspace={onRevealWorkspaceArtifact}
+                onOpenWorkspaces={onOpenWorkspaces}
+              />
             : null}
+          {showBriefApproval ? (
+            <BriefApprovalCard body={assistantBody} busy={busy} onAction={onWorkflowAction} />
+          ) : null}
           {cancelled ? (
             <div className="entry-note warning">
               {entry.role === "assistant" ? "回复已停止。" : "消息已取消。"}
@@ -374,26 +419,23 @@ const TranscriptItem = memo(function TranscriptItem({
               ) : null}
             </div>
           ) : null}
-          {failed ? (
+          {failed && entry.role === "assistant" ? (
+            canRetryRoomTurn ? null : isSuperseded ? (
+              <details className="superseded-attempt-details">
+                <summary>查看较早失败详情</summary>
+                <RunFailureCard step={speakerName} errorCode={run?.lastErrorCode} invocations={toolInvocations} canRetry={false} onRetry={() => undefined} />
+              </details>
+            ) : <RunFailureCard
+              step={speakerName}
+              errorCode={run?.lastErrorCode}
+              invocations={toolInvocations}
+              canRetry={Boolean(canRegenerate && run)}
+              onRetry={() => { if (canRegenerate && run) onRetryRun(run.id); }}
+            />
+          ) : failed ? (
             <div className={"entry-note " + (interrupted || entry.sendState === "interrupted-unknown" ? "warning" : "error")}>
-              {entry.role === "assistant"
-                ? interrupted
-                  ? "运行被应用中断，没有自动重新发送。"
-                  : "回复生成失败，已保留可用的部分内容。"
-                : entry.sendState === "interrupted-unknown"
-                  ? "应用中断，模型可能已接受该消息；不会自动重发。"
-                  : "消息未成功发送。"}
-              {failedBeforeAcceptance && entry.clientNonce ? (
-                <button type="button" className="text-button" onClick={() => onRetryMessage(entry.clientNonce!)}>
-                  安全重试发送
-                </button>
-              ) : null}
-              {canRegenerate && run ? (
-                <button type="button" className="text-button" onClick={() => onRetryRun(run.id)}>重新生成回复</button>
-              ) : null}
-              {canRetryRoomTurn && entry.sourceTurnId ? (
-                <button type="button" className="text-button" onClick={() => onRetryRoomTurn(entry.sourceTurnId!)}>重试此成员</button>
-              ) : null}
+              {entry.sendState === "interrupted-unknown" ? "应用中断，模型可能已接受该消息；不会自动重发。" : "消息未成功发送。"}
+              {failedBeforeAcceptance && entry.clientNonce ? <button type="button" className="text-button" onClick={() => onRetryMessage(entry.clientNonce!)}>安全重试发送</button> : null}
             </div>
           ) : null}
         </div>
@@ -425,13 +467,15 @@ type ConversationProps = {
   onBotUpdated(bot: Bot): void;
   onError(error: AppError | null): void;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
-  onSaveArtifact(entry: TranscriptEntry): Promise<void>;
+  onSaveArtifact(entry: TranscriptEntry): Promise<ArtifactSaveResult | null>;
+  onRevealArtifact(path: string): Promise<boolean>;
+  onRevealWorkspaceArtifact(workspaceId: string, path: string): Promise<boolean>;
   onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode, attachments?: AttachmentDraft[]): Promise<boolean>;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onCancelRun(runId: string): void;
   onCancelRoomBatch(batchId: string): void;
-  onRetryRoomTurn(turnId: string): void;
+  onRetryRoomTurn(turnId: string): Promise<boolean>;
   onContinueRoomBatch(batchId: string): void;
   onOpenSpeaker(botId: string): void;
 };
@@ -460,6 +504,8 @@ export function Conversation({
   onError,
   onResolveApproval,
   onSaveArtifact,
+  onRevealArtifact,
+  onRevealWorkspaceArtifact,
   onSend,
   onRetryMessage,
   onRetryRun,
@@ -472,6 +518,9 @@ export function Conversation({
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [roomMentions, setRoomMentions] = useState<RoomMention[]>([]);
+  const [routingPreference, setRoutingPreference] = useState<UserRoomRoutingMode>("automatic");
+  const [artifactStates, setArtifactStates] = useState<Record<string, ArtifactSaveState>>({});
+  const [retriedTurnIds, setRetriedTurnIds] = useState<Set<string>>(() => new Set());
   const [mentionQuery, setMentionQuery] = useState<ActiveMentionQuery | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const transcriptRef = useRef<HTMLElement>(null);
@@ -488,6 +537,7 @@ export function Conversation({
   const invalidRoomMentions = roomMentions.filter((mention) => mention.kind === "bot" && !memberBotIds.includes(mention.id));
   const hasInvalidRoomMentions = invalidRoomMentions.length > 0;
   const targetBotIds = room ? resolveRoomTargetIds(roomMentions, memberBotIds) : [];
+  const explicitRoutingBlocked = Boolean(room && routingPreference === "explicit" && targetBotIds.length === 0);
   const subjectName = bot?.name ?? room?.room.name ?? "Aevoren Bot";
   const latestUserNonce = useMemo(
     () => entries.toReversed().find((entry) => entry.role === "user")?.clientNonce ?? null,
@@ -497,8 +547,8 @@ export function Conversation({
     () => new Map(runs.filter((run) => run.assistantEntryId).map((run) => [run.assistantEntryId, run])),
     [runs],
   );
+  const runsById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);
   const toolsByAssistant = useMemo(() => {
-    const runsById = new Map(runs.map((run) => [run.id, run]));
     const result = new Map<string, ToolInvocation[]>();
     for (const invocation of toolInvocations) {
       const assistantEntryId = runsById.get(invocation.runtimeRunId)?.assistantEntryId;
@@ -506,7 +556,15 @@ export function Conversation({
       result.set(assistantEntryId, [...(result.get(assistantEntryId) ?? []), invocation]);
     }
     return result;
-  }, [runs, toolInvocations]);
+  }, [runsById, toolInvocations]);
+  const briefApprovalEntryId = useMemo(() => {
+    if (!room || !shouldShowBriefApproval(toolInvocations, entries)) return null;
+    const latestBriefWrite = toolInvocations
+      .filter((invocation) => invocation.toolKind === "workspace-write" && invocation.state === "succeeded" && invocation.targetPath.startsWith("02-briefs/"))
+      .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .at(-1);
+    return latestBriefWrite ? runsById.get(latestBriefWrite.runtimeRunId)?.assistantEntryId ?? null : null;
+  }, [entries, room, runsById, toolInvocations]);
   const approvalsByInvocation = useMemo(
     () => new Map(approvalRequests.map((approval) => [approval.toolInvocationId, approval])),
     [approvalRequests],
@@ -515,6 +573,9 @@ export function Conversation({
     if (!latestBatch) return [];
     return latestRoomTurnsByLogicalTurn(roomTurns, latestBatch.id);
   }, [latestBatch, roomTurns]);
+  const latestFailedTurn = latestTurns.toReversed().find((turn) => ["failed", "cancelled", "interrupted"].includes(turn.state)) ?? null;
+  const latestFailedRun = latestFailedTurn?.runtimeRunId ? runsById.get(latestFailedTurn.runtimeRunId) ?? null : null;
+  const latestFailedTools = latestFailedRun ? toolInvocations.filter((invocation) => invocation.runtimeRunId === latestFailedRun.id) : [];
   const roomTurnState = useMemo(() => {
     const byId = new Map(roomTurns.map((turn) => [turn.id, turn]));
     const latestByLogicalTurn = new Map<string, RoomTurn>();
@@ -620,22 +681,64 @@ export function Conversation({
     composerInputRef.current?.setSelectionRange(caret, caret);
   }, [draft, roomMentions]);
 
+  async function saveArtifact(entry: TranscriptEntry): Promise<void> {
+    setArtifactStates((current) => ({ ...current, [entry.id]: { state: "saving" } }));
+    try {
+      const result = await onSaveArtifact(entry);
+      setArtifactStates((current) => ({
+        ...current,
+        [entry.id]: result ? { state: "saved", result } : { state: "unsaved", message: "已取消保存" },
+      }));
+    } catch {
+      setArtifactStates((current) => ({ ...current, [entry.id]: { state: "failed", message: "请重试或更换保存位置" } }));
+    }
+  }
+
+  async function revealArtifact(path: string, entryId: string): Promise<void> {
+    const revealed = await onRevealArtifact(path);
+    if (!revealed) {
+      setArtifactStates((current) => ({ ...current, [entryId]: { ...current[entryId], state: "failed", message: "无法打开该文件位置" } }));
+    }
+  }
+
+  function handleWorkflowAction(action: WorkflowAction): void {
+    if (!room || busy) return;
+    const planner = room.members.find((member) => member.bot.name === "选题策划师");
+    const targetIds = planner ? [planner.botId] : [];
+    const text = action.kind === "approve"
+      ? `APPROVED：批准候选 ${action.candidate}，请交给内容主笔继续生成草稿。`
+      : action.kind === "return"
+        ? "RETURN：退回补证。请检查当前 Brief 的证据缺口，并结构化交给情报侦察员补充后重新提交。"
+        : "放弃本轮 Brief，本次任务停止，不再交给下游 Bot。";
+    void onSend(text, targetIds, targetIds.length > 0 ? "explicit" : "automatic");
+  }
+
+  async function retryRoomTurn(turnId: string): Promise<void> {
+    if (await onRetryRoomTurn(turnId)) {
+      setRetriedTurnIds((current) => new Set(current).add(turnId));
+    }
+  }
+
   async function submit(): Promise<void> {
     const text = draft.trim();
-    if (!text || (!bot && !room) || busy || hasInvalidRoomMentions) return;
+    if (!text || (!bot && !room) || busy || hasInvalidRoomMentions || explicitRoutingBlocked) return;
     followTranscriptTailRef.current = true;
     const routingMode: UserRoomRoutingMode | undefined = !room
       ? undefined
-      : effectiveRoomMentions.length === 0
-        ? "automatic"
-        : effectiveRoomMentions.some((mention) => mention.kind === "everyone")
-          ? "everyone"
-          : "explicit";
-    const accepted = await onSend(text, room ? targetBotIds : undefined, routingMode, attachments);
+      : routingPreference;
+    const routedTargetIds = !room
+      ? undefined
+      : routingPreference === "everyone"
+        ? memberBotIds
+        : routingPreference === "explicit"
+          ? targetBotIds
+          : [];
+    const accepted = await onSend(text, routedTargetIds, routingMode, attachments);
     if (accepted) {
       setDraft("");
       setAttachments([]);
       setRoomMentions([]);
+      setRoutingPreference("automatic");
       setMentionQuery(null);
       dismissedMentionRef.current = null;
     }
@@ -669,6 +772,7 @@ export function Conversation({
         ? { kind: "everyone", id: EVERYONE_MENTION_ID }
         : { kind: "bot", id: itemId, label: selectedItem.label },
     ));
+    setRoutingPreference(itemId === EVERYONE_MENTION_ID ? "everyone" : "explicit");
     pendingComposerCaretRef.current = nextDraft.caret;
     setDraft(nextDraft.text);
     setMentionQuery(null);
@@ -743,8 +847,10 @@ export function Conversation({
               run={run}
               canRegenerate={canRegenerate}
               canRetryRoomTurn={canRetryRoomTurn}
+              busy={busy}
               groupedWithPrevious={entries[index - 1]?.role === entry.role && entries[index - 1]?.speakerBotId === entry.speakerBotId}
               groupedWithNext={entries[index + 1]?.role === entry.role && entries[index + 1]?.speakerBotId === entry.speakerBotId}
+              isSuperseded={Boolean(sourceTurn && (retriedTurnIds.has(sourceTurn.id) || roomTurnState.latestByLogicalTurn.get(`${sourceTurn.batchId}:${sourceTurn.logicalTurnId}`)?.id !== sourceTurn.id))}
               speakerDisplayName={entry.speakerBotId
                 ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? snapshotIdentities.get(entry.speakerBotId) ?? null
                 : null}
@@ -761,12 +867,18 @@ export function Conversation({
               handoffRejections={handoffRejectionsByAssistantEntry.get(entry.id) ?? []}
               toolInvocations={toolsByAssistant.get(entry.id) ?? []}
               approvalsByInvocation={approvalsByInvocation}
+              artifactSaveState={artifactStates[entry.id] ?? { state: "unsaved" }}
+              showBriefApproval={entry.id === briefApprovalEntryId}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
-              onRetryRoomTurn={onRetryRoomTurn}
+              onRetryRoomTurn={(turnId) => void retryRoomTurn(turnId)}
               onOpenSpeaker={onOpenSpeaker}
               onResolveApproval={onResolveApproval}
-              onSaveArtifact={onSaveArtifact}
+              onSaveArtifact={(targetEntry) => void saveArtifact(targetEntry)}
+              onRevealArtifact={(path) => void revealArtifact(path, entry.id)}
+              onRevealWorkspaceArtifact={(workspaceId, path) => void onRevealWorkspaceArtifact(workspaceId, path)}
+              onOpenWorkspaces={onOpenWorkspaces}
+              onWorkflowAction={handleWorkflowAction}
             />
           );
         })}
@@ -779,7 +891,24 @@ export function Conversation({
         {!submitting && liveState && liveState.state !== "idle"
           ? <div className={"send-state runtime-" + liveState.state}>{liveLabels[liveState.state]}</div>
           : null}
-        {room && latestBatch ? (
+        {room && latestBatch && latestFailedTurn ? (
+          <div className="composer-run-status" data-testid="room-batch-state">
+            <div className="room-batch-context">
+              <strong>本批状态：{latestBatch.state}</strong>
+              <div>{latestTurns.map((turn) => <span className={`room-turn-state turn-${turn.state}`} key={turn.id}>{roomMemberIdentities.get(turn.memberBotId)?.inline ?? turn.memberNameSnapshot}：{turn.state}</span>)}</div>
+            </div>
+            <RunFailureCard
+              step={roomMemberIdentities.get(latestFailedTurn.memberBotId)?.inline ?? latestFailedTurn.memberNameSnapshot}
+              errorCode={latestFailedTurn.lastErrorCode ?? latestFailedRun?.lastErrorCode}
+              invocations={latestFailedTools}
+              canRetry={!busy}
+              onRetry={() => void retryRoomTurn(latestFailedTurn.id)}
+            />
+            {["interrupted", "partial"].includes(latestBatch.state) && latestTurns.some((turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null) ? (
+              <button className="secondary-button continue-room-button" type="button" disabled={busy} onClick={() => onContinueRoomBatch(latestBatch.id)}>继续未开始成员</button>
+            ) : null}
+          </div>
+        ) : room && latestBatch ? (
           <div className={`room-batch-state batch-${latestBatch.state}`} data-testid="room-batch-state">
             <span>{latestBatch.state === "running" ? `正在按顺序执行 ${latestTurns.length} 个协作回合` : `本批状态：${latestBatch.state}`}</span>
             {latestTurns.map((turn) => (
@@ -795,14 +924,39 @@ export function Conversation({
             ) : null}
           </div>
         ) : null}
-        {room ? <div className={`room-routing-hint${hasInvalidRoomMentions ? " invalid" : ""}`} role={hasInvalidRoomMentions ? "alert" : undefined}>
+        {room ? <div className="room-routing-control" aria-label="响应方式">
+          <span>响应方式</span>
+          <div role="group" aria-label="群聊路由模式">
+            {([
+              ["automatic", "自动"],
+              ["explicit", "指定 Bot"],
+              ["everyone", "全员"],
+            ] as const).map(([mode, label]) => (
+              <button
+                type="button"
+                key={mode}
+                className={routingPreference === mode ? "selected" : ""}
+                aria-pressed={routingPreference === mode}
+                disabled={busy}
+                onClick={() => {
+                  setRoutingPreference(mode);
+                  if (mode !== "explicit") setRoomMentions([]);
+                  setMentionQuery(null);
+                }}
+              >{label}</button>
+            ))}
+          </div>
+        </div> : null}
+        {room ? <div className={`room-routing-hint${hasInvalidRoomMentions || explicitRoutingBlocked ? " invalid" : ""}`} role={hasInvalidRoomMentions || explicitRoutingBlocked ? "alert" : undefined}>
           {hasInvalidRoomMentions
             ? `${invalidRoomMentions.map((mention) => mention.kind === "bot" ? `@${mention.label}` : "").join("、")} 已不在群聊，请移除后重新选择`
-            : effectiveRoomMentions.length === 0
-            ? "未 @ 时，自动选择最合适的 Bot"
-            : effectiveRoomMentions.some((mention) => mention.kind === "everyone")
-              ? `已 @所有人，将调用 ${room.members.length} 个 Bot`
-              : `将调用 ${targetBotIds.length} 个被 @ 的 Bot`}
+            : routingPreference === "automatic"
+              ? "自动选择最合适的 Bot；也可输入 @ 临时指定"
+              : routingPreference === "everyone"
+                ? `将按成员顺序调用全部 ${room.members.length} 个 Bot`
+                : targetBotIds.length === 0
+                  ? "请输入 @ 并选择要响应的 Bot"
+                  : `将只调用 ${targetBotIds.length} 个指定 Bot`}
         </div> : null}
         <div className="composer">
           {room && mentionQuery ? (
@@ -866,7 +1020,11 @@ export function Conversation({
                     aria-label={`移除 @${label}`}
                     aria-invalid={invalid || undefined}
                     disabled={busy}
-                    onClick={() => setRoomMentions((current) => current.filter((item) => item.id !== mention.id))}
+                    onClick={() => setRoomMentions((current) => {
+                      const next = current.filter((item) => item.id !== mention.id);
+                      if (next.length === 0) setRoutingPreference("automatic");
+                      return next;
+                    })}
                   >@{label}<span aria-hidden="true">×</span></button>
                 );
               })}
@@ -924,6 +1082,7 @@ export function Conversation({
                 if (event.key === "Backspace" && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0 && draft.length === 0 && roomMentions.length > 0) {
                   event.preventDefault();
                   setRoomMentions((current) => current.slice(0, -1));
+                  if (roomMentions.length === 1) setRoutingPreference("automatic");
                   return;
                 }
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -951,7 +1110,7 @@ export function Conversation({
               className="send-button"
               type="button"
               onClick={() => void submit()}
-              disabled={(!bot && !room) || !draft.trim() || busy || hasInvalidRoomMentions}
+              disabled={(!bot && !room) || !draft.trim() || busy || hasInvalidRoomMentions || explicitRoutingBlocked}
               aria-label="发送"
             >
               <SendIcon />

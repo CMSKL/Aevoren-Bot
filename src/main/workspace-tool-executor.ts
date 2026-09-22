@@ -1,21 +1,23 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, readdir } from "node:fs/promises";
+import { link, lstat, open, readdir, realpath, unlink } from "node:fs/promises";
 import { join, posix } from "node:path";
 import type { Stats } from "node:fs";
-import type { DeviceToolRequest, NetworkToolRequest, ToolInvocation, ToolRequest, WorkspaceToolRequest } from "@shared/contracts";
+import type { ComputationToolRequest, DeviceToolRequest, NetworkToolRequest, ToolInvocation, ToolRequest, WorkspaceToolRequest } from "@shared/contracts";
 import type { AppRepository } from "./database";
 import { AevorenBotError } from "./errors";
 import type { WorkspaceService } from "./workspace-service";
 import type { NetworkToolExecutor } from "./network-tool-executor";
 import type { McpService } from "./mcp-service";
 import type { DeviceToolExecutor } from "./device-tool-executor";
+import { containsLikelySecret } from "./memory-safety";
 
 const MAX_SEARCH_FILES = 2_000;
 const MAX_SEARCH_BYTES = 20 * 1_048_576;
 const MAX_SEARCH_FILE_BYTES = 1_048_576;
 const MAX_SEARCH_DURATION_MS = 5_000;
 const MAX_PREVIEW_CHARACTERS = 240;
+const MAX_WRITE_BYTES = 256 * 1_024;
 
 type ResultMetadata = Record<string, string | number | boolean | null>;
 
@@ -109,7 +111,7 @@ export class WorkspaceToolExecutor {
 
     this.repository.transitionToolInvocation(id, "dispatching");
     try {
-      if (initial.workspaceId) {
+      if (initial.workspaceId && initial.toolKind !== "workspace-write") {
         const targetType = initial.toolKind === "workspace-read" ? "file" : "directory";
         await this.workspaceService.resolveExistingTarget(initial.workspaceId, initial.targetPath, targetType);
       }
@@ -150,6 +152,7 @@ export class WorkspaceToolExecutor {
       if (!this.deviceTools) throw new AevorenBotError("TOOL_EXECUTION_FAILED");
       return this.deviceTools.run(tool as DeviceToolRequest, signal);
     }
+    if (tool.kind === "text-measure") return this.measureText(tool as ComputationToolRequest);
     switch (tool.kind) {
       case "workspace-list":
         return this.list(tool, signal);
@@ -157,7 +160,20 @@ export class WorkspaceToolExecutor {
         return this.read(tool, signal);
       case "workspace-search":
         return this.search(tool, signal);
+      case "workspace-write":
+        return this.write(tool, signal);
     }
+  }
+
+  private measureText(tool: ComputationToolRequest): { content: string; metadata: ResultMetadata } {
+    const characters = [...tool.text].length;
+    const nonWhitespaceCharacters = [...tool.text].filter((character) => !/\s/u.test(character)).length;
+    const words = [...new Intl.Segmenter("zh-CN", { granularity: "word" }).segment(tool.text)]
+      .filter((segment) => segment.isWordLike).length;
+    const lines = tool.text.length === 0 ? 0 : tool.text.split(/\r?\n/u).length;
+    const utf8Bytes = Buffer.byteLength(tool.text, "utf8");
+    const result = { characters, nonWhitespaceCharacters, words, lines, utf8Bytes };
+    return { content: JSON.stringify(result), metadata: { kind: tool.kind, ...result } };
   }
 
   private async list(
@@ -281,6 +297,49 @@ export class WorkspaceToolExecutor {
       content: JSON.stringify({ matches, truncated }),
       metadata: { kind: tool.kind, files, matches: matches.length, truncated },
     };
+  }
+
+  private async write(
+    tool: Extract<WorkspaceToolRequest, { kind: "workspace-write" }>,
+    signal: AbortSignal,
+  ): Promise<{ content: string; metadata: ResultMetadata }> {
+    checkCancellation(signal);
+    const bytes = Buffer.byteLength(tool.content, "utf8");
+    if (bytes < 1 || bytes > MAX_WRITE_BYTES) throw new AevorenBotError("WORKSPACE_WRITE_FAILED");
+    if (containsLikelySecret(tool.content)) throw new AevorenBotError("WORKSPACE_WRITE_SECRET_BLOCKED");
+    const target = await this.workspaceService.resolveNewTextTarget(tool.workspaceId, tool.path);
+    const temporaryPath = join(target.canonicalParent, `.aevoren-${randomUUID()}.tmp`);
+    const noFollowFlag = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      handle = await open(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag, 0o600);
+      await handle.writeFile(tool.content, "utf8");
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      checkCancellation(signal);
+      await link(temporaryPath, target.canonicalPath);
+      await unlink(temporaryPath);
+      const canonical = await realpath(target.canonicalPath);
+      if (canonical !== target.canonicalPath) throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+      const written = await lstat(canonical);
+      if (!written.isFile() || written.isSymbolicLink() || written.size !== bytes) {
+        throw new AevorenBotError("WORKSPACE_WRITE_FAILED");
+      }
+      const sha256 = digestResult(tool.content);
+      return {
+        content: JSON.stringify({ ok: true, path: tool.path, bytes, sha256, created: true }),
+        metadata: { kind: tool.kind, path: tool.path, bytes, sha256, created: true },
+      };
+    } catch (error) {
+      if (handle) await handle.close().catch(() => undefined);
+      await unlink(temporaryPath).catch(() => undefined);
+      if (error instanceof AevorenBotError) throw error;
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST") {
+        throw new AevorenBotError("WORKSPACE_WRITE_CONFLICT");
+      }
+      throw new AevorenBotError("WORKSPACE_WRITE_FAILED");
+    }
   }
 
   private async readText(

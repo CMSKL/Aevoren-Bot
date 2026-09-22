@@ -53,7 +53,7 @@ test("connects one disabled-by-default stdio MCP server, exposes only its read-o
     await page.getByLabel("消息").fill("调用只读 MCP 工具");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     const activity = page.getByTestId("workspace-tool-activity").last();
-    await expect(activity).toContainText("MCP");
+    await expect(activity).toContainText("外部工具");
     await expect(activity.getByLabel("联网查询确认")).toContainText("外部只读数据服务");
     await activity.getByRole("button", { name: "仅允许一次" }).click();
     await expect(activity).toContainText("执行完成");

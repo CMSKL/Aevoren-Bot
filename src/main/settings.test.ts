@@ -14,13 +14,16 @@ describe("GeneralSettingsService", () => {
     repositories.push(repository);
     const service = new GeneralSettingsService(repository);
     expect(service.getConfiguration()).toEqual({
-      theme: "system", memoryCaptureEnabled: true, launchAtLogin: false, launchAtLoginSupported: false, launchAtLoginStatus: "unsupported",
+      theme: "system", memoryCaptureEnabled: true, autoApprovePublicReadTools: false,
+      launchAtLogin: false, launchAtLoginSupported: false, launchAtLoginStatus: "unsupported",
     });
     expect(service.saveConfiguration({ theme: "dark" })).toMatchObject({ theme: "dark" });
     expect(new GeneralSettingsService(repository).getConfiguration()).toMatchObject({ theme: "dark" });
     expect(repository.getSetting("appearance.theme")).toMatchObject({ value: "dark", encrypted: false });
     expect(service.saveConfiguration({ memoryCaptureEnabled: false })).toMatchObject({ memoryCaptureEnabled: false });
     expect(repository.getSetting("memory.capture.enabled")).toMatchObject({ value: "false", encrypted: false });
+    expect(service.saveConfiguration({ autoApprovePublicReadTools: true })).toMatchObject({ autoApprovePublicReadTools: true });
+    expect(repository.getSetting("tools.autoApprovePublicRead")).toMatchObject({ value: "true", encrypted: false });
   });
 
   it("falls back safely when a stored theme is unknown", () => {
