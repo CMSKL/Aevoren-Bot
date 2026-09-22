@@ -48,7 +48,7 @@ test("routes one no-mention request through the real selector with at most two P
     const page = await application.firstWindow();
     await page.locator(".bot-row").filter({ hasText: roomName }).click();
     await expect(page.getByRole("heading", { name: roomName })).toBeVisible();
-    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("自动选择最合适的 Bot；也可输入 @ 临时指定", { exact: true })).toBeVisible();
 
     await page.getByLabel("消息").fill("请分析本季度财务预算、成本结构和费用控制重点，并用一句话回答。");
     await page.getByRole("button", { name: "发送", exact: true }).click();

@@ -54,6 +54,15 @@ export class WorkspaceToolCoordinator {
     }
     if (this.waiters.has(prepared.approval.id)) throw new AevorenBotError("TOOL_IDEMPOTENCY_CONFLICT");
     void this.recordToolShadow(prepared.invocation, prepared.approval);
+    const autoApprovePublicRead = this.repository.getSetting("tools.autoApprovePublicRead")?.value === "true" &&
+      ["web-search", "web-fetch", "weather-current", "time-now"].includes(prepared.invocation.toolKind);
+    if (
+      prepared.invocation.toolKind === "text-measure" ||
+      autoApprovePublicRead ||
+      prepared.invocation.workspaceId && this.repository.getWorkspace(prepared.invocation.workspaceId).automationEnabled
+    ) {
+      return this.executeAutomatically(prepared.approval.id, signal);
+    }
     return new Promise<WorkspaceToolOutcome>((resolve, reject) => {
       const abort = (): void => {
         const waiter = this.waiters.get(prepared.approval.id);
@@ -74,6 +83,30 @@ export class WorkspaceToolCoordinator {
       this.emitCurrent(prepared.approval.id);
       if (signal.aborted) abort();
     });
+  }
+
+  private async executeAutomatically(approvalId: string, signal: AbortSignal): Promise<WorkspaceToolOutcome> {
+    const pending = this.repository.getApprovalRequest(approvalId);
+    this.emitCurrent(approvalId);
+    const decided = this.repository.resolveToolApproval(approvalId, pending.version, "allow-once");
+    this.emitCurrent(approvalId);
+    try {
+      const result = await this.executor.execute(decided.invocation.id, signal);
+      const current = { invocation: result.invocation, approval: this.repository.getApprovalRequest(approvalId) };
+      void this.recordToolResultShadow(current.invocation, current.approval, result.content);
+      this.emitCurrent(approvalId);
+      return { toolCallId: result.invocation.toolCallId, tool: result.invocation.arguments, content: result.content };
+    } catch (error) {
+      const appError = asAppError(error);
+      const current = this.repository.getToolInvocation(decided.invocation.id);
+      this.emitCurrent(approvalId);
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      return {
+        toolCallId: current.toolCallId,
+        tool: current.arguments,
+        content: JSON.stringify({ ok: false, error: { code: appError.code } }),
+      };
+    }
   }
 
   private async recordToolShadow(

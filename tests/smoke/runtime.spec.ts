@@ -122,11 +122,11 @@ test("regenerates a failed accepted run without duplicating its user entry", asy
     application = launched.application;
     const page = launched.page;
     await createAndSend(page, "retry accepted runtime");
-    await expect(page.getByText("回复生成失败，已保留可用的部分内容。")).toBeVisible();
+    await expect(page.getByText("模型回复未完整完成，系统已保留可验证结果。")).toBeVisible();
     await page.waitForTimeout(30_000);
     await expect(page.locator('article.message-assistant[data-status="failed"]')).toHaveCount(1);
-    await expect(page.getByRole("button", { name: "重新生成回复" })).toHaveCount(1);
-    await page.getByRole("button", { name: "重新生成回复" }).click();
+    await expect(page.getByRole("button", { name: "重试此步骤" })).toHaveCount(1);
+    await page.getByRole("button", { name: "重试此步骤" }).click();
     await expect(page.getByText("正在重新生成", { exact: true })).toBeVisible();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
     await application.close();
@@ -369,11 +369,17 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "tools", "transcript", "updates", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "teams", "tools", "transcript", "updates", "workspaces",
     ]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations,
     ).toSorted())).toEqual(["deleteBatch"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.artifacts,
+    ).toSorted())).toEqual(["reveal", "save"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.workspaces,
+    ).toSorted())).toEqual(["add", "list", "remove", "reveal", "updatePermissions"]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.providers,
     ).toSorted())).toEqual(["list", "refresh", "saveCli", "saveOpenAiCompatible", "scan", "test"]);

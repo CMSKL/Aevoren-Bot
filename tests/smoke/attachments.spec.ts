@@ -33,8 +33,7 @@ test("attaches a bounded text file to a direct message and restores its metadata
     await expect(page.locator("article.message-user")).toContainText("requirements.md");
     await expect(page.locator("article.message-user .message-attachment")).toContainText("1 KB");
     await expect(page.locator("article.message-assistant")).toHaveAttribute("data-status", "completed");
-    const saveButton = page.locator(".entry-note.success .text-button");
-    await saveButton.evaluate((button) => (button as HTMLButtonElement).click());
+    await page.getByRole("button", { name: "保存为 Markdown", exact: true }).click();
     expect(readFileSync(artifactPath, "utf8")).toContain("## 背景");
 
     const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });

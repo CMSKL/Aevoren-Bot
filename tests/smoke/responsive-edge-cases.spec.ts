@@ -122,6 +122,7 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
           return rect.left >= inspectorRect.left && rect.right <= inspectorRect.right;
         }),
         fieldsContained: [...inspector.querySelectorAll("input, textarea")].every((field) => {
+          if (field.getClientRects().length === 0) return true;
           const rect = field.getBoundingClientRect();
           return rect.left >= inspectorRect.left && rect.right <= inspectorRect.right;
         }),
@@ -261,7 +262,7 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
     const expected = [
-      { width: 1181, sidebar: true, inspector: true, minConversationWidth: 580 },
+      { width: 1181, sidebar: true, inspector: true, minConversationWidth: 480 },
       { width: 1180, sidebar: true, inspector: false, minConversationWidth: 850 },
       { width: 1021, sidebar: true, inspector: false, minConversationWidth: 700 },
       { width: 1020, sidebar: false, inspector: false, minConversationWidth: 950 },

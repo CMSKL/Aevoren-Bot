@@ -26,7 +26,7 @@ Maintainers will acknowledge a complete report as soon as practical, reproduce i
 
 - Renderer code is sandboxed and receives only typed Preload capabilities.
 - Secrets are stored through Electron `safeStorage` and are never returned to the Renderer after saving.
-- Workspace, clipboard, network, and trusted read-only MCP tools require explicit approval.
+- Workspace, clipboard, network, and trusted read-only MCP tools are approval-gated. Users may explicitly persist only bounded Workspace automation and public read-only network approval; create-only Workspace writes cannot overwrite or delete files.
 - Third-party MCP metadata and web content are untrusted input.
 - Release builds must be signed, notarized, checksummed, and produced by the tagged GitHub Actions workflow.
 

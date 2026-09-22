@@ -8,6 +8,7 @@ const api: AevorenBotApi = {
   },
   artifacts: {
     save: (input) => ipcRenderer.invoke(IPC.artifactsSave, input),
+    reveal: (path) => ipcRenderer.invoke(IPC.artifactsReveal, path),
   },
   capabilities: {
     getSnapshot: (input) => ipcRenderer.invoke(IPC.capabilitiesGetSnapshot, input),
@@ -34,6 +35,9 @@ const api: AevorenBotApi = {
   conversations: {
     deleteBatch: (input) => ipcRenderer.invoke(IPC.conversationsDeleteBatch, input),
   },
+  teams: {
+    createContentTeam: () => ipcRenderer.invoke(IPC.teamsCreateContentTeam),
+  },
   bots: {
     list: () => ipcRenderer.invoke(IPC.botsList),
     create: () => ipcRenderer.invoke(IPC.botsCreate),
@@ -58,6 +62,8 @@ const api: AevorenBotApi = {
   workspaces: {
     list: () => ipcRenderer.invoke(IPC.workspacesList),
     add: () => ipcRenderer.invoke(IPC.workspacesAdd),
+    updatePermissions: (input) => ipcRenderer.invoke(IPC.workspacesUpdatePermissions, input),
+    reveal: (input) => ipcRenderer.invoke(IPC.workspacesReveal, input),
     remove: (input) => ipcRenderer.invoke(IPC.workspacesRemove, input),
   },
   tools: {

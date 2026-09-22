@@ -10,6 +10,7 @@ type NewBotChooserProps = {
   onClose(): void;
   onCreate(): void;
   onCreateRoom(botIds: string[]): void;
+  onCreateContentTeam(): void;
   onSelect(bot: Bot): void;
 };
 
@@ -20,6 +21,7 @@ export function NewBotChooser({
   onClose,
   onCreate,
   onCreateRoom,
+  onCreateContentTeam,
   onSelect,
 }: NewBotChooserProps): React.JSX.Element {
   const [query, setQuery] = useState("");
@@ -104,6 +106,15 @@ export function NewBotChooser({
           >
             <span className="recipient-option-icon"><RoomIcon /></span>
             <span className="recipient-option-copy"><strong>创建群聊</strong><small>选择 2～6 个现有 Bot</small></span>
+          </button>
+          <button
+            className="recipient-option"
+            type="button"
+            disabled={creating}
+            onClick={onCreateContentTeam}
+          >
+            <span className="recipient-option-icon"><RoomIcon /></span>
+            <span className="recipient-option-copy"><strong>一键创建内容团队</strong><small>创建研究、策划、写作、审校、复盘 5 个 Bot 与群聊</small></span>
           </button>
           {filteredBots.map((bot) => {
             const identity = botIdentities.get(bot.id)!;

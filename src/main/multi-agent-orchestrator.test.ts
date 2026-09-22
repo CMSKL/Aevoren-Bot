@@ -242,6 +242,41 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     expect(JSON.stringify(value.repository.listTranscript(value.detail.session.id))).not.toContain("handoff_to_agent");
   });
 
+  it("feeds a rejected Handoff target back to the provider and accepts a corrected retry in the same Runtime", async () => {
+    let sourceRounds = 0;
+    const value = harness(({ bots }) => ({
+      async *run(_messages, _signal, context) {
+        yield { type: "started", requestId: randomUUID() } as const;
+        if (context!.executorBotId === bots[0]!.id) {
+          sourceRounds += 1;
+          if (sourceRounds === 1) {
+            yield {
+              type: "tool-rejection",
+              toolCallId: "bad-self-target",
+              providerToolName: "handoff_to_agent",
+              arguments: JSON.stringify({ toAgentId: bots[0]!.id, task: "请 Agent B 继续" }),
+              code: "HANDOFF_TARGET_INVALID",
+              safeMessage: "请选择其他 Bot。",
+            } as const;
+          } else {
+            yield handoff(bots[1]!.id, "继续处理");
+          }
+        } else {
+          yield { type: "delta", text: "B_DONE" } as const;
+        }
+        yield { type: "completed", finishReason: "tool_calls" } as const;
+      },
+      testConnection: async () => {},
+    }), 2);
+
+    const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
+    await waitForBatch(value.repository, sent.batchId, ["completed"]);
+
+    expect(sourceRounds).toBe(2);
+    expect(value.repository.listHandoffs(sent.batchId)).toMatchObject([{ state: "accepted", toAgentId: value.bots[1]!.id }]);
+    expect(value.repository.listAgentTurns(sent.batchId).map((turn) => turn.memberNameSnapshot)).toEqual(["Agent A", "Agent B"]);
+  });
+
   it("does not let a rejected Provider Handoff suppress the structured continuation fallback", async () => {
     const value = harness(({ bots }) => ({
       async *run(_messages, _signal, context) {
@@ -283,7 +318,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     expect(value.repository.listHandoffs(sent.batchId)[0]).toMatchObject({ toAgentId: value.bots[1]!.id, state: "accepted" });
   });
 
-  it("does not continue past a structured human-approval decision", async () => {
+  it("does not ask the continuation model or continue past an explicit human-approval gate", async () => {
     let continuationChecks = 0;
     const value = harness(() => ({
       async *run() {
@@ -301,9 +336,58 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
     await waitForBatch(value.repository, sent.batchId, ["completed"]);
 
-    expect(continuationChecks).toBe(1);
+    expect(continuationChecks).toBe(0);
     expect(value.repository.listAgentTurns(sent.batchId)).toHaveLength(1);
     expect(value.repository.listHandoffs(sent.batchId)).toHaveLength(0);
+  });
+
+  it("enforces the content-team human approval gate before planner-to-writer Handoff", async () => {
+    const value = harness(({ bots }) => new ScriptedFakeModelProvider(({ context }) => (
+      context!.executorBotId === bots[0]!.id
+        ? [
+            { type: "started", requestId: "planner" },
+            handoff(bots[1]!.id, "撰写候选稿"),
+            { type: "completed", finishReason: "tool_calls" },
+          ]
+        : completedSteps("WRITER_DONE")
+    )), 2);
+    value.bots[0] = value.repository.updateBot(value.bots[0]!.id, value.bots[0]!.version, { name: "选题策划师" });
+    value.bots[1] = value.repository.updateBot(value.bots[1]!.id, value.bots[1]!.version, { name: "内容主笔" });
+
+    const blocked = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id, "请产出候选并等待用户批准"));
+    await waitForBatch(value.repository, blocked.batchId, ["completed"]);
+    expect(value.repository.listHandoffs(blocked.batchId)).toEqual([]);
+    expect(value.repository.listHandoffRejections(blocked.batchId)).toMatchObject([{ errorCode: "HUMAN_APPROVAL_REQUIRED" }]);
+
+    const approved = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id, "APPROVED：选择第一个候选，请转交内容主笔"));
+    await waitForBatch(value.repository, approved.batchId, ["completed"]);
+    expect(value.repository.listHandoffs(approved.batchId)).toMatchObject([{ state: "accepted", toAgentId: value.bots[1]!.id }]);
+    expect(value.repository.listAgentTurns(approved.batchId).map((turn) => turn.memberNameSnapshot)).toEqual(["选题策划师", "内容主笔"]);
+  });
+
+  it("rejects a planner acknowledgement Handoff while waiting for approval but permits an explicit evidence RETURN", async () => {
+    let mode: "acknowledgement" | "return" = "acknowledgement";
+    const value = harness(({ bots }) => new ScriptedFakeModelProvider(({ context }) => (
+      context!.executorBotId === bots[0]!.id
+        ? [
+            { type: "started", requestId: mode },
+            handoff(bots[1]!.id, mode === "return" ? "RETURN：退回上游补充证据来源。" : "回执：阶段已完成，当前等待人工批准。"),
+            { type: "completed", finishReason: "tool_calls" },
+          ]
+        : completedSteps("SCOUT_DONE")
+    )), 2);
+    value.bots[0] = value.repository.updateBot(value.bots[0]!.id, value.bots[0]!.version, { name: "选题策划师" });
+    value.bots[1] = value.repository.updateBot(value.bots[1]!.id, value.bots[1]!.version, { name: "情报侦察员" });
+
+    const acknowledgement = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id, "生成候选后等待人工批准"));
+    await waitForBatch(value.repository, acknowledgement.batchId, ["completed"]);
+    expect(value.repository.listHandoffs(acknowledgement.batchId)).toEqual([]);
+    expect(value.repository.listHandoffRejections(acknowledgement.batchId)).toMatchObject([{ errorCode: "HUMAN_APPROVAL_REQUIRED" }]);
+
+    mode = "return";
+    const returned = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id, "发现上游证据缺失，需正式退回"));
+    await waitForBatch(value.repository, returned.batchId, ["completed"]);
+    expect(value.repository.listHandoffs(returned.batchId)).toMatchObject([{ state: "accepted", toAgentId: value.bots[1]!.id }]);
   });
 
   it("reuses the persisted root policy/nonces for exact duplicates without another provider call", async () => {

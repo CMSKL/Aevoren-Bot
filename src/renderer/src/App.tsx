@@ -88,6 +88,7 @@ export function App(): React.JSX.Element {
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
   const [launchAtLoginStatus, setLaunchAtLoginStatus] = useState<LoginItemStatus>("unsupported");
+  const [autoApprovePublicReadTools, setAutoApprovePublicReadTools] = useState(false);
   const newBotButtonRef = useRef<HTMLButtonElement>(null);
   const profileRef = useRef<ProfileInspectorHandle>(null);
   const roomRef = useRef<RoomInspectorHandle>(null);
@@ -170,6 +171,7 @@ export function App(): React.JSX.Element {
         setLaunchAtLogin(result.data.launchAtLogin);
         setLaunchAtLoginSupported(result.data.launchAtLoginSupported);
         setLaunchAtLoginStatus(result.data.launchAtLoginStatus);
+        setAutoApprovePublicReadTools(result.data.autoApprovePublicReadTools);
       }
     });
     return () => {
@@ -434,6 +436,36 @@ export function App(): React.JSX.Element {
       }
       setRooms((current) => [...current, result.data.room]);
       await openRoom(result.data.room, false);
+    } finally {
+      chooserActionRef.current = null;
+      setCreatingBot(false);
+    }
+  }
+
+  async function createContentTeam(): Promise<void> {
+    if (chooserActionRef.current) return;
+    chooserActionRef.current = "create";
+    setCreatingBot(true);
+    try {
+      if (!(await flushActive())) return;
+      setCreateError(null);
+      const result = await window.aevorenBot.teams.createContentTeam();
+      if (!result.ok) {
+        setCreateError(result.error);
+        return;
+      }
+      setBots((current) => {
+        const next = new Map(current.map((bot) => [bot.id, bot]));
+        result.data.bots.forEach((bot) => next.set(bot.id, bot));
+        return [...next.values()];
+      });
+      setRooms((current) => {
+        const next = new Map(current.map((room) => [room.id, room]));
+        next.set(result.data.room.room.id, result.data.room.room);
+        return [...next.values()];
+      });
+      setNewBotOpen(false);
+      await openRoom(result.data.room.room, false);
     } finally {
       chooserActionRef.current = null;
       setCreatingBot(false);
@@ -845,7 +877,28 @@ export function App(): React.JSX.Element {
             name: `${title}-${stamp}.md`,
             content: entry.body,
           });
-          if (!result.ok) setError(result.error);
+          if (!result.ok) {
+            setError(result.error);
+            throw new Error(result.error.code);
+          }
+          if (result.data) setCloseNotice("Markdown 已保存。");
+          return result.data;
+        }}
+        onRevealArtifact={async (path) => {
+          const result = await window.aevorenBot.artifacts.reveal(path);
+          if (!result.ok) {
+            setError(result.error);
+            return false;
+          }
+          return result.data;
+        }}
+        onRevealWorkspaceArtifact={async (workspaceId, path) => {
+          const result = await window.aevorenBot.workspaces.reveal({ workspaceId, path });
+          if (!result.ok) {
+            setError(result.error);
+            return false;
+          }
+          return result.data;
         }}
         onBotUpdated={updateBot}
         onError={setError}
@@ -881,7 +934,38 @@ export function App(): React.JSX.Element {
         }}
         onCancelRun={(runId) => void window.aevorenBot.runtime.cancel(runId).then((result) => { if (!result.ok) setError(result.error); })}
         onCancelRoomBatch={(batchId) => void window.aevorenBot.roomRuntime.cancel(batchId).then((result) => { if (!result.ok) setError(result.error); })}
-        onRetryRoomTurn={(turnId) => void window.aevorenBot.roomRuntime.retryTurn(turnId).then((result) => { if (!result.ok) setError(result.error); })}
+        onRetryRoomTurn={async (turnId) => {
+          const result = await window.aevorenBot.roomRuntime.retryTurn(turnId);
+          if (!result.ok) {
+            setError(result.error);
+            return false;
+          }
+          setRoomTurns((current) => [...current.filter((turn) => turn.id !== result.data.id), result.data]
+            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)));
+          const roomId = selectedRoomIdRef.current;
+          if (roomId) {
+            void (async () => {
+              for (let attempt = 0; attempt < 120; attempt += 1) {
+                if (selectedRoomIdRef.current !== roomId) return;
+                let snapshot: Awaited<ReturnType<typeof window.aevorenBot.roomRuntime.getSnapshot>>;
+                try {
+                  snapshot = await window.aevorenBot.roomRuntime.getSnapshot(roomId);
+                } catch {
+                  return;
+                }
+                if (!snapshot.ok) return;
+                setRoomBatches(snapshot.data.batches);
+                setRoomTurns(snapshot.data.turns);
+                setRoomHandoffs(snapshot.data.handoffs);
+                setRoomHandoffRejections(snapshot.data.rejections);
+                const retried = snapshot.data.turns.find((turn) => turn.id === result.data.id);
+                if (retried && ["completed", "failed", "cancelled", "interrupted"].includes(retried.state)) return;
+                await new Promise((resolve) => setTimeout(resolve, 250));
+              }
+            })();
+          }
+          return true;
+        }}
         onContinueRoomBatch={(batchId) => void window.aevorenBot.roomRuntime.continue(batchId).then((result) => { if (!result.ok) setError(result.error); })}
         onOpenSpeaker={(botId) => {
           const bot = bots.find((item) => item.id === botId);
@@ -919,6 +1003,7 @@ export function App(): React.JSX.Element {
         launchAtLogin={launchAtLogin}
         launchAtLoginSupported={launchAtLoginSupported}
         launchAtLoginStatus={launchAtLoginStatus}
+        autoApprovePublicReadTools={autoApprovePublicReadTools}
         updateState={updateState}
         restartBlocked={updateRestartBlocked}
         activeBotId={selectedBot?.id ?? null}
@@ -935,6 +1020,12 @@ export function App(): React.JSX.Element {
           setLaunchAtLogin(result.data.launchAtLogin);
           setLaunchAtLoginSupported(result.data.launchAtLoginSupported);
           setLaunchAtLoginStatus(result.data.launchAtLoginStatus);
+          return null;
+        }}
+        onAutoApprovePublicReadToolsChange={async (enabled) => {
+          const result = await window.aevorenBot.settings.saveGeneral({ autoApprovePublicReadTools: enabled });
+          if (!result.ok) return result.error;
+          setAutoApprovePublicReadTools(result.data.autoApprovePublicReadTools);
           return null;
         }}
         onCheckUpdate={() => void window.aevorenBot.updates.check().then((result) => {
@@ -967,6 +1058,7 @@ export function App(): React.JSX.Element {
           }}
           onCreate={() => void createBot()}
           onCreateRoom={(botIds) => void createRoom(botIds)}
+          onCreateContentTeam={() => void createContentTeam()}
           onSelect={(bot) => {
             if (chooserActionRef.current) return;
             chooserActionRef.current = "select";

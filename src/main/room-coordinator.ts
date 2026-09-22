@@ -27,7 +27,7 @@ const SHUTDOWN_DRAIN_MS = 2_000;
 const DEFAULT_MAX_TURNS = 8;
 const DEFAULT_MAX_HOPS = 6;
 const DEFAULT_MAX_TARGETS_PER_TURN = 2;
-const DEFAULT_ROOT_DEADLINE_MS = 5 * 60_000;
+const DEFAULT_ROOT_DEADLINE_MS = 15 * 60_000;
 const ROOM_ROUTER_TIMEOUT_MS = 30_000;
 const INTERNAL_HANDOFF_TOOL_NAME = /\bhandoff_to_agent\b/giu;
 
@@ -53,6 +53,7 @@ const EXPECTED_HANDOFF_REJECTIONS = new Set([
   "HANDOFF_TARGET_CONFLICT",
   "HANDOFF_CYCLE",
   "HANDOFF_CONTEXT_INVALID",
+  "HUMAN_APPROVAL_REQUIRED",
   "RUNTIME_STATE_INVALID",
 ]);
 
@@ -346,6 +347,7 @@ export class RoomCoordinator {
           },
           room: {
             id: room.id,
+            description: room.description,
             membershipVersion: batch.membershipVersion,
             sourceTurnId: turn.id,
             ...(roomRoster ? { roster: roomRoster } : {}),
@@ -672,6 +674,14 @@ export class RoomCoordinator {
       }
       if (event.visibility !== "room") throw new AevorenBotError("INVALID_REQUEST");
       const source = this.repository.getRoomTurn(fromTurnId);
+      const sourceBot = this.repository.getBot(source.memberBotId);
+      const targetBot = this.repository.getBot(event.toAgentId);
+      if (sourceBot.name === "选题策划师") {
+        const rootRequest = this.repository.getUserMessage(this.repository.getRoomRun(runId).clientNonce).body;
+        const approved = /\bAPPROVED\b|(?:我|用户)?(?:已|明确)?批准(?:候选|选题|方案|第)|选择.{0,8}(?:候选|选题|方案|第)/iu.test(rootRequest);
+        const explicitEvidenceReturn = targetBot.name === "情报侦察员" && /\bRETURN\b|退回|补充(?:证据|线索|来源)|上游.{0,12}(?:修正|补充)/iu.test(event.task);
+        if (!approved && !explicitEvidenceReturn) throw new AevorenBotError("HUMAN_APPROVAL_REQUIRED");
+      }
       const created = this.repository.createHandoff({
         runId,
         fromTurnId,

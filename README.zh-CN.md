@@ -21,7 +21,8 @@ Aevoren Bot 是一个本地优先的 macOS AI Bot 工作台，用于持久化 Bo
 - 自动发现 Codex CLI、Claude Code、Ollama 和支持的 ACP CLI，并提供 OpenAI-compatible 兜底。
 - Codex App Server Dynamic Tools，通过显式 Approval 和 Tool Journal 边界接入。
 - User、Bot、Workspace 作用域的显式 Memory，模型不能静默写入长期 Memory。
-- 用户授权的只读 Workspace 列表/读取/搜索和有界剪贴板访问。
+- 用户授权的 Workspace 列表/读取/搜索，以及可选的仅新建 Markdown/CSV 成果；绝不覆盖已有文件。
+- 内容团队只在需要用户决策时显示 Brief 批准/退回/放弃操作，并提供结构化失败恢复、真实执行证据与交付文件状态；模型文字不会被当作工具成功。
 - 只读时间、天气、有限 Wikipedia 搜索、安全的公开 HTTPS 页面读取和经过审查的 MCP 工具。
 - MCP stdio 和 Streamable HTTP，支持 OAuth 2.1/PKCE、加密凭据、Bot 作用域、精确工具审查和一次性审批。
 - 一次性、间隔和 cron Routine，包含历史、通知、后台窗口行为和可选 macOS 登录启动。
@@ -70,7 +71,7 @@ Fake Provider 是确定性的，不需要账号或 API Key。源码构建、数�
 
 - Renderer 使用 Context Isolation、Sandbox、无 Node Integration 和无 WebView。
 - Preload 只暴露声明并经过 Schema 校验的能力，不暴露原始 IPC、SQLite、Shell 或无限制文件系统。
-- Workspace、剪贴板、网络和受信任的只读 MCP 调用需要明确审批。
+- Workspace 必须明确授权；用户可选择持久允许有界 Workspace 自动化及公开只读联网工具。剪贴板和受信任 MCP 仍逐次审批。
 - 远程 URL 拒绝内嵌凭据、不安全协议、私网地址、危险重定向和超大响应。
 - 第三方 MCP 的 `readOnlyHint` 不会被自动信任；具体工具名称必须经过用户审查。
 - Web、MCP、CLI 和模型输出都被视为不可信数据，不能覆盖系统或用户权限。
@@ -102,7 +103,7 @@ Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac
 
 应用数据存储在 Electron 的 user-data 目录。Aevoren Bot 会在 SQLite 中保存 Bot、Room、Transcript、显式 Memory、设置、Tool Journal 元数据和 Routine 历史；密钥值通过 `safeStorage` 单独存储。
 
-模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远程桌面、无限制 Shell、任意文件写入、未经审核的自动 Memory 写入或可写 MCP 工具。
+模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远程桌面、无限制 Shell、任意文件覆盖/删除、未经审核的自动 Memory 写入或可写 MCP 工具。Workspace 写入只允许在明确开启的根目录中新建 UTF-8 Markdown/CSV。
 
 ## 文档、贡献和支持
 

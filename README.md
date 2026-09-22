@@ -22,7 +22,8 @@ Aevoren Bot is a local-first desktop workspace for persistent AI Bots and determ
 - First-phase model support for a manually configured OpenAI-compatible API, automatically discovered Claude Code, and automatically discovered Codex CLI.
 - Codex App Server Dynamic Tools routed through Aevoren's explicit Approval and Tool Journal boundary.
 - User-, Bot-, and Workspace-scoped long-term Memory with non-blocking reviewed capture; model suggestions stay pending until the user accepts them.
-- User-authorized, read-only Workspace list/read/search and bounded clipboard access.
+- User-authorized Workspace list/read/search plus opt-in, create-only Markdown/CSV artifacts; existing files cannot be overwritten.
+- Content teams expose contextual Brief decisions, structured failure recovery, verified execution evidence, and delivery-file status; model text alone never appears as successful tool execution.
 - Read-only time, weather, public web search, safe public HTTPS page reading, and reviewed MCP tools.
 - MCP stdio and Streamable HTTP support with OAuth 2.1/PKCE, encrypted credentials, per-Bot scope, exact tool review, and one-time approval.
 - One-time, interval, and cron Routines with history, notifications, background window behavior, and optional macOS login startup.
@@ -72,7 +73,7 @@ Saved API keys and OAuth credentials are encrypted by Electron `safeStorage` and
 
 - Renderer processes use context isolation, sandboxing, no Node integration, and no WebView.
 - The Preload exposes only declared, schema-validated capabilities; it does not expose raw IPC, SQLite, shell, or unrestricted filesystem APIs.
-- Workspace, clipboard, network, and trusted read-only MCP calls require explicit approval.
+- Workspace access is explicit; users may optionally persist bounded Workspace automation and public read-only network approval. Clipboard and trusted MCP calls remain per-call approvals.
 - Remote URLs reject embedded credentials, unsafe schemes, private-network targets, redirects, and oversized responses.
 - Third-party MCP `readOnlyHint` metadata is not trusted automatically; exact tool names require user review.
 - Web, MCP, CLI, and model output is treated as untrusted data and does not override system or user authority.
@@ -106,7 +107,7 @@ For Windows x64 source validation, use `pnpm package:win`. This creates an unsig
 
 Application data is stored locally in Electron's user-data directory. Aevoren Bot stores Bots, Rooms, transcripts, explicit Memory, settings, Tool Journal metadata, and Routine history in SQLite. Secret values are stored separately through `safeStorage`.
 
-Models and enabled external services receive only the context and tool inputs required for the user's request. Aevoren Bot does not provide cloud sync, multi-user accounts, billing, remote desktop, unrestricted shell, arbitrary Workspace file writing, unreviewed automatic Memory writes, or write-capable MCP tools in the current release line. Users can explicitly export a completed reply as a bounded Markdown artifact through the system save dialog.
+Models and enabled external services receive only the context and tool inputs required for the user's request. Aevoren Bot does not provide cloud sync, multi-user accounts, billing, remote desktop, unrestricted shell, arbitrary file overwrite/delete, unreviewed automatic Memory writes, or write-capable MCP tools in the current release line. Workspace writes are limited to new UTF-8 Markdown/CSV files in explicitly writable roots. Users can also export a completed reply through the system save dialog.
 
 ## Contributing and support
 

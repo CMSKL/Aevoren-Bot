@@ -4,6 +4,7 @@ import { AevorenBotError } from "./errors";
 
 const APPEARANCE_THEME_KEY = "appearance.theme";
 const MEMORY_CAPTURE_ENABLED_KEY = "memory.capture.enabled";
+const AUTO_APPROVE_PUBLIC_READ_TOOLS_KEY = "tools.autoApprovePublicRead";
 
 export type LoginItemController = {
   supported: boolean;
@@ -21,8 +22,9 @@ export class GeneralSettingsService {
     const theme = this.repository.getSetting(APPEARANCE_THEME_KEY)?.value;
     const appearance = theme === "light" || theme === "dark" ? theme : "system";
     const memoryCaptureEnabled = this.repository.getSetting(MEMORY_CAPTURE_ENABLED_KEY)?.value !== "false";
+    const autoApprovePublicReadTools = this.repository.getSetting(AUTO_APPROVE_PUBLIC_READ_TOOLS_KEY)?.value === "true";
     if (!this.loginItem?.supported) {
-      return { theme: appearance, memoryCaptureEnabled, launchAtLogin: false, launchAtLoginSupported: false, launchAtLoginStatus: "unsupported" };
+      return { theme: appearance, memoryCaptureEnabled, autoApprovePublicReadTools, launchAtLogin: false, launchAtLoginSupported: false, launchAtLoginStatus: "unsupported" };
     }
     try {
       const current = this.loginItem.get();
@@ -32,12 +34,13 @@ export class GeneralSettingsService {
       return {
         theme: appearance,
         memoryCaptureEnabled,
+        autoApprovePublicReadTools,
         launchAtLogin: current.openAtLogin,
         launchAtLoginSupported: true,
         launchAtLoginStatus: status,
       };
     } catch {
-      return { theme: appearance, memoryCaptureEnabled, launchAtLogin: false, launchAtLoginSupported: true, launchAtLoginStatus: "not-found" };
+      return { theme: appearance, memoryCaptureEnabled, autoApprovePublicReadTools, launchAtLogin: false, launchAtLoginSupported: true, launchAtLoginStatus: "not-found" };
     }
   }
 
@@ -45,6 +48,9 @@ export class GeneralSettingsService {
     if (input.theme !== undefined) this.repository.setSetting(APPEARANCE_THEME_KEY, input.theme, false);
     if (input.memoryCaptureEnabled !== undefined) {
       this.repository.setSetting(MEMORY_CAPTURE_ENABLED_KEY, String(input.memoryCaptureEnabled), false);
+    }
+    if (input.autoApprovePublicReadTools !== undefined) {
+      this.repository.setSetting(AUTO_APPROVE_PUBLIC_READ_TOOLS_KEY, String(input.autoApprovePublicReadTools), false);
     }
     if (input.launchAtLogin !== undefined) {
       if (!this.loginItem?.supported) throw new AevorenBotError("SYSTEM_SETTING_UNAVAILABLE");

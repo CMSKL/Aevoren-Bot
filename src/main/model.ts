@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PromptMessage } from "./prompt";
-import type { DeviceToolRequest, McpToolInfo, McpToolRequest, NetworkToolRequest, WorkspaceToolRequest } from "@shared/contracts";
-import { deviceToolRequestSchema, mcpToolRequestSchema, networkToolRequestSchema, workspaceToolRequestSchema } from "@shared/schemas";
+import type { ComputationToolRequest, DeviceToolRequest, McpToolInfo, McpToolRequest, NetworkToolRequest, WorkspaceToolRequest } from "@shared/contracts";
+import { computationToolRequestSchema, deviceToolRequestSchema, mcpToolRequestSchema, networkToolRequestSchema, workspaceToolRequestSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
 
 export type ChatMessage = PromptMessage | {
@@ -62,6 +62,8 @@ export type ModelEvent =
   | ({ type: "network-tool"; toolCallId: string; tool: NetworkToolRequest } & ModelToolResponder)
   | ({ type: "mcp-tool"; toolCallId: string; tool: McpToolRequest } & ModelToolResponder)
   | ({ type: "device-tool"; toolCallId: string; tool: DeviceToolRequest } & ModelToolResponder)
+  | ({ type: "computation-tool"; toolCallId: string; tool: ComputationToolRequest } & ModelToolResponder)
+  | { type: "tool-rejection"; toolCallId: string; providerToolName: string; arguments: string; code: string; safeMessage: string }
   | { type: "completed"; finishReason: string };
 
 export type ModelRunContext = {
@@ -78,10 +80,13 @@ export type ModelRunContext = {
     visibility: "room" | "direct";
     createdAt: string;
   };
-  workspaces?: Array<{ id: string; name: string }>;
+  workspaces?: Array<{ id: string; name: string; writeEnabled: boolean; automationEnabled: boolean }>;
   networkTools?: boolean;
   mcpTools?: McpToolInfo[];
   deviceTools?: boolean;
+  requireToolCall?: boolean;
+  textMeasureTools?: boolean;
+  requiredToolNames?: string[];
 };
 
 export type ProviderTimeouts = {
@@ -346,6 +351,7 @@ const WORKSPACE_TOOL_NAMES = {
   "workspace-list": "workspace_list",
   "workspace-read": "workspace_read",
   "workspace-search": "workspace_search",
+  "workspace-write": "workspace_write",
 } as const;
 const NETWORK_TOOL_NAMES = {
   "web-search": "web_search",
@@ -354,12 +360,13 @@ const NETWORK_TOOL_NAMES = {
   "time-now": "time_now",
 } as const;
 const DEVICE_TOOL_NAMES = { "clipboard-read": "clipboard_read" } as const;
+const COMPUTATION_TOOL_NAMES = { "text-measure": "text_measure" } as const;
 const MAX_ROUTER_RESPONSE_LENGTH = 100_000;
 const MAX_ROUTING_REASON_LENGTH = 240;
-const MAX_TOOL_ARGUMENTS_LENGTH = 100_000;
+const MAX_TOOL_ARGUMENTS_LENGTH = 300_000;
 const MAX_HANDOFF_CONTEXT_REFS = 64;
 const MAX_HANDOFF_CONTEXT_REF_LENGTH = 200;
-const MAX_HANDOFF_TOOL_CALLS = 2;
+const MAX_STRUCTURED_TOOL_CALLS = 8;
 
 function validToolCallId(value: string): boolean {
   return value.trim().length > 0 && value.length <= 200;
@@ -394,7 +401,7 @@ function appendToolCallDelta(value: unknown, pending: Map<number, PendingToolCal
     current.arguments += chunk.function?.arguments ?? "";
     if (current.id.length > 500 || current.name.length > 200 || current.arguments.length > MAX_TOOL_ARGUMENTS_LENGTH) invalidHandoff();
     pending.set(index, current);
-    if (pending.size > MAX_HANDOFF_TOOL_CALLS) invalidHandoff();
+    if (pending.size > MAX_STRUCTURED_TOOL_CALLS) invalidHandoff();
   }
 }
 
@@ -405,95 +412,178 @@ function finalizeToolCalls(
   allowNetworkTools = false,
   allowedMcpTools?: ReadonlyMap<string, McpToolInfo>,
   allowDeviceTools = false,
+  handoffTargetAliases?: ReadonlyMap<string, string>,
 ): ModelEvent[] {
   if (pending.size === 0) return [];
   const calls = [...pending.values()].toSorted((left, right) => left.index - right.index);
   const workspaceNames = new Set(Object.values(WORKSPACE_TOOL_NAMES));
-  const workspaceCalls = calls.filter((call) => workspaceNames.has(call.name as (typeof WORKSPACE_TOOL_NAMES)[keyof typeof WORKSPACE_TOOL_NAMES]));
-  if (workspaceCalls.length > 0) {
-    if (!allowedWorkspaceIds || calls.length !== 1 || workspaceCalls.length !== 1) {
-      throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
-    }
-    const call = workspaceCalls[0]!;
-    if (!validToolCallId(call.id) || !call.arguments) throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(call.arguments);
-    } catch {
-      throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
-    }
-    const kind = (Object.entries(WORKSPACE_TOOL_NAMES).find(([, name]) => name === call.name)?.[0] ?? "") as WorkspaceToolRequest["kind"];
-    const tool = workspaceToolRequestSchema.safeParse({ kind, ...(parsed as object) });
-    if (!tool.success || !allowedWorkspaceIds.has(tool.data.workspaceId)) {
-      throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
-    }
-    return [{ type: "workspace-tool", toolCallId: call.id, tool: tool.data, providerToolName: call.name }];
-  }
   const networkNames = new Set(Object.values(NETWORK_TOOL_NAMES));
-  const networkCalls = calls.filter((call) => networkNames.has(call.name as (typeof NETWORK_TOOL_NAMES)[keyof typeof NETWORK_TOOL_NAMES]));
-  if (networkCalls.length > 0) {
-    if (!allowNetworkTools || calls.length !== 1 || networkCalls.length !== 1) {
-      throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
-    }
-    const call = networkCalls[0]!;
-    if (!validToolCallId(call.id) || !call.arguments) throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(call.arguments);
-    } catch {
-      throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
-    }
-    const kind = (Object.entries(NETWORK_TOOL_NAMES).find(([, name]) => name === call.name)?.[0] ?? "") as NetworkToolRequest["kind"];
-    const tool = networkToolRequestSchema.safeParse({ kind, ...(parsed as object) });
-    if (!tool.success) throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
-    return [{ type: "network-tool", toolCallId: call.id, tool: tool.data, providerToolName: call.name }];
-  }
-  const mcpCalls = calls.filter((call) => allowedMcpTools?.has(call.name));
-  if (mcpCalls.length > 0) {
-    if (!allowedMcpTools || calls.length !== 1 || mcpCalls.length !== 1) {
-      throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
-    }
-    const call = mcpCalls[0]!;
-    const definition = allowedMcpTools.get(call.name);
-    if (!definition || !definition.readOnly || !validToolCallId(call.id) || !call.arguments) {
-      throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(call.arguments);
-    } catch {
-      throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
-    }
-    const tool = mcpToolRequestSchema.safeParse({
-      kind: "mcp-call",
-      serverId: definition.serverId,
-      toolName: definition.name,
-      arguments: parsed,
-      readOnly: true,
-    });
-    if (!tool.success) throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
-    return [{
-      type: "mcp-tool",
-      toolCallId: call.id,
-      tool: tool.data,
-      providerToolName: call.name,
-    }];
-  }
-  const deviceCalls = calls.filter((call) => call.name === DEVICE_TOOL_NAMES["clipboard-read"]);
-  if (deviceCalls.length > 0) {
-    if (!allowDeviceTools || calls.length !== 1 || deviceCalls.length !== 1) throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
-    const call = deviceCalls[0]!;
-    let parsed: unknown;
-    try { parsed = JSON.parse(call.arguments); } catch { throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID"); }
-    const tool = deviceToolRequestSchema.safeParse({ kind: "clipboard-read", ...(parsed as object) });
-    if (!validToolCallId(call.id) || !tool.success) {
-      throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
-    }
-    return [{ type: "device-tool", toolCallId: call.id, tool: tool.data, providerToolName: call.name }];
-  }
-  if (!allowedTargetIds) invalidHandoff();
   return calls.map((call) => {
-    if (!validToolCallId(call.id) || call.name !== HANDOFF_TOOL_NAME || !call.arguments) invalidHandoff();
+    if (workspaceNames.has(call.name as (typeof WORKSPACE_TOOL_NAMES)[keyof typeof WORKSPACE_TOOL_NAMES])) {
+      if (!allowedWorkspaceIds || !validToolCallId(call.id) || !call.arguments) {
+        throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
+      }
+      let parsed: unknown;
+      try { parsed = JSON.parse(call.arguments); } catch { throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID"); }
+      const kind = (Object.entries(WORKSPACE_TOOL_NAMES).find(([, name]) => name === call.name)?.[0] ?? "") as WorkspaceToolRequest["kind"];
+      const normalizedParsed = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? { ...(parsed as Record<string, unknown>) }
+        : parsed;
+      if (normalizedParsed && typeof normalizedParsed === "object" && !Array.isArray(normalizedParsed) && "limit" in normalizedParsed) {
+        const normalizedRecord = normalizedParsed as Record<string, unknown>;
+        if (kind === "workspace-list" && normalizedRecord.maxEntries === undefined) normalizedRecord.maxEntries = normalizedRecord.limit;
+        if (kind === "workspace-read" && normalizedRecord.maxBytes === undefined) normalizedRecord.maxBytes = normalizedRecord.limit;
+        if (kind === "workspace-search" && normalizedRecord.maxMatches === undefined) normalizedRecord.maxMatches = normalizedRecord.limit;
+        delete normalizedRecord.limit;
+      }
+      if (normalizedParsed && typeof normalizedParsed === "object" && !Array.isArray(normalizedParsed) && "maxResults" in normalizedParsed) {
+        const normalizedRecord = normalizedParsed as Record<string, unknown>;
+        if (kind === "workspace-search" && normalizedRecord.maxMatches === undefined) normalizedRecord.maxMatches = normalizedRecord.maxResults;
+        delete normalizedRecord.maxResults;
+      }
+      if (normalizedParsed && typeof normalizedParsed === "object" && !Array.isArray(normalizedParsed) && "expectedSha256" in normalizedParsed) {
+        const normalizedRecord = normalizedParsed as Record<string, unknown>;
+        if (
+          kind !== "workspace-write" ||
+          typeof normalizedRecord.expectedSha256 !== "string" ||
+          !/^[a-f0-9]{64}$/iu.test(normalizedRecord.expectedSha256)
+        ) {
+          throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
+        }
+        delete normalizedRecord.expectedSha256;
+      }
+      const tool = workspaceToolRequestSchema.safeParse({ kind, ...(normalizedParsed as object) });
+      if (!tool.success || !allowedWorkspaceIds.has(tool.data.workspaceId)) {
+        const parsedKeys = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? Object.keys(parsed).toSorted() : [];
+        console.warn("[model-tool-validation] workspace tool rejected", {
+          toolName: call.name,
+          argumentCharacters: call.arguments.length,
+          argumentKeys: parsedKeys,
+          issuePaths: tool.success ? ["workspaceId"] : tool.error.issues.map((issue) => issue.path.join(".")),
+        });
+        throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
+      }
+      return { type: "workspace-tool" as const, toolCallId: call.id, tool: tool.data, providerToolName: call.name };
+    }
+    if (networkNames.has(call.name as (typeof NETWORK_TOOL_NAMES)[keyof typeof NETWORK_TOOL_NAMES])) {
+      if (!allowNetworkTools || !validToolCallId(call.id) || !call.arguments) {
+        let argumentKeys: string[] = [];
+        try {
+          const diagnosticArguments = JSON.parse(call.arguments) as unknown;
+          if (diagnosticArguments && typeof diagnosticArguments === "object" && !Array.isArray(diagnosticArguments)) {
+            argumentKeys = Object.keys(diagnosticArguments).toSorted();
+          }
+        } catch {
+          // Malformed arguments are represented by the empty key list.
+        }
+        console.warn("[model-tool-validation] network tool rejected", {
+          reason: !allowNetworkTools ? "not-allowed" : "invalid-call-envelope",
+          toolName: call.name,
+          argumentCharacters: call.arguments.length,
+          argumentKeys,
+        });
+        throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+      }
+      let parsed: unknown;
+      try { parsed = JSON.parse(call.arguments); } catch { throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID"); }
+      const kind = (Object.entries(NETWORK_TOOL_NAMES).find(([, name]) => name === call.name)?.[0] ?? "") as NetworkToolRequest["kind"];
+      const tool = networkToolRequestSchema.safeParse({ kind, ...(parsed as object) });
+      if (!tool.success) {
+        const parsedKeys = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? Object.keys(parsed).toSorted() : [];
+        console.warn("[model-tool-validation] network tool rejected", {
+          toolName: call.name,
+          argumentCharacters: call.arguments.length,
+          argumentKeys: parsedKeys,
+          issuePaths: tool.error.issues.map((issue) => issue.path.join(".")),
+        });
+        throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+      }
+      return { type: "network-tool" as const, toolCallId: call.id, tool: tool.data, providerToolName: call.name };
+    }
+    const definition = allowedMcpTools?.get(call.name);
+    if (definition) {
+      if (!definition.readOnly || !validToolCallId(call.id) || !call.arguments) {
+        throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+      }
+      let parsed: unknown;
+      try { parsed = JSON.parse(call.arguments); } catch { throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID"); }
+      const tool = mcpToolRequestSchema.safeParse({
+        kind: "mcp-call",
+        serverId: definition.serverId,
+        toolName: definition.name,
+        arguments: parsed,
+        readOnly: true,
+      });
+      if (!tool.success) throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+      return { type: "mcp-tool" as const, toolCallId: call.id, tool: tool.data, providerToolName: call.name };
+    }
+    if (call.name === DEVICE_TOOL_NAMES["clipboard-read"]) {
+      if (!allowDeviceTools || !validToolCallId(call.id)) {
+        console.warn("[model-tool-validation] device tool rejected", { toolName: call.name, reason: !allowDeviceTools ? "not-allowed" : "invalid-call-id" });
+        throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+      }
+      let parsed: unknown;
+      try { parsed = JSON.parse(call.arguments); } catch { throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID"); }
+      const tool = deviceToolRequestSchema.safeParse({ kind: "clipboard-read", ...(parsed as object) });
+      if (!tool.success) {
+        console.warn("[model-tool-validation] device tool rejected", { toolName: call.name, issuePaths: tool.error.issues.map((issue) => issue.path.join(".")) });
+        throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+      }
+      return { type: "device-tool" as const, toolCallId: call.id, tool: tool.data, providerToolName: call.name };
+    }
+    if (call.name === COMPUTATION_TOOL_NAMES["text-measure"]) {
+      if (!validToolCallId(call.id)) throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+      let parsed: unknown;
+      try { parsed = JSON.parse(call.arguments); } catch { throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID"); }
+      const normalizedParsed = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? { ...(parsed as Record<string, unknown>) }
+        : parsed;
+      if (normalizedParsed && typeof normalizedParsed === "object" && !Array.isArray(normalizedParsed) && "countMode" in normalizedParsed) {
+        const normalizedRecord = normalizedParsed as Record<string, unknown>;
+        if (typeof normalizedRecord.countMode !== "string" || normalizedRecord.countMode.length > 100) {
+          throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+        }
+        delete normalizedRecord.countMode;
+      }
+      if (normalizedParsed && typeof normalizedParsed === "object" && !Array.isArray(normalizedParsed) && "mode" in normalizedParsed) {
+        const normalizedRecord = normalizedParsed as Record<string, unknown>;
+        if (typeof normalizedRecord.mode !== "string" || normalizedRecord.mode.length > 100) {
+          throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+        }
+        delete normalizedRecord.mode;
+      }
+      if (normalizedParsed && typeof normalizedParsed === "object" && !Array.isArray(normalizedParsed) && "nonWhitespaceOnly" in normalizedParsed) {
+        const normalizedRecord = normalizedParsed as Record<string, unknown>;
+        if (typeof normalizedRecord.nonWhitespaceOnly !== "boolean") {
+          throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+        }
+        delete normalizedRecord.nonWhitespaceOnly;
+      }
+      if (normalizedParsed && typeof normalizedParsed === "object" && !Array.isArray(normalizedParsed) && "workspaceId" in normalizedParsed) {
+        const normalizedRecord = normalizedParsed as Record<string, unknown>;
+        if (typeof normalizedRecord.workspaceId !== "string" || !allowedWorkspaceIds?.has(normalizedRecord.workspaceId)) {
+          throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+        }
+        delete normalizedRecord.workspaceId;
+      }
+      const tool = computationToolRequestSchema.safeParse({ kind: "text-measure", ...(normalizedParsed as object) });
+      if (!tool.success) {
+        const parsedKeys = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? Object.keys(parsed).toSorted() : [];
+        console.warn("[model-tool-validation] computation tool rejected", { toolName: call.name, argumentKeys: parsedKeys, issuePaths: tool.error.issues.map((issue) => issue.path.join(".")) });
+        throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+      }
+      return { type: "computation-tool" as const, toolCallId: call.id, tool: tool.data, providerToolName: call.name };
+    }
+    if (!allowedTargetIds || !validToolCallId(call.id) || call.name !== HANDOFF_TOOL_NAME || !call.arguments) {
+      console.warn("[model-tool-validation] handoff rejected", {
+        reason: "invalid-call-envelope",
+        toolName: call.name,
+        hasAllowedTargets: Boolean(allowedTargetIds),
+        validCallId: validToolCallId(call.id),
+        hasArguments: Boolean(call.arguments),
+      });
+      invalidHandoff();
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(call.arguments);
@@ -503,25 +593,64 @@ function finalizeToolCalls(
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) invalidHandoff();
     const values = parsed as Record<string, unknown>;
     const keys = Object.keys(values).toSorted();
-    if (keys.join("\0") !== ["contextRefs", "task", "toAgentId", "visibility"].toSorted().join("\0")) invalidHandoff();
+    if (keys.some((key) => !["content", "contextRefs", "fromAgentId", "message", "summary", "targetRole", "task", "toAgentId", "visibility", "workspaceId"].includes(key))) {
+      console.warn("[model-tool-validation] handoff rejected", { reason: "extra-keys", argumentKeys: keys });
+      invalidHandoff();
+    }
+    const contextRefs = values.contextRefs ?? [];
+    const visibility = values.visibility ?? "room";
+    const task = values.task ?? values.message ?? values.summary ?? values.content;
+    const workspaceId = values.workspaceId;
+    const fromAgentId = values.fromAgentId;
+    const rawTarget = typeof values.toAgentId === "string" ? values.toAgentId.trim().replace(/^@/u, "") : "";
+    const embeddedTargetIds = [...allowedTargetIds].filter((id) => rawTarget.includes(id));
+    const targetId = allowedTargetIds.has(rawTarget)
+      ? rawTarget
+      : handoffTargetAliases?.get(rawTarget) ?? (embeddedTargetIds.length === 1 ? embeddedTargetIds[0]! : rawTarget);
     if (
       typeof values.toAgentId !== "string" ||
-      !allowedTargetIds.has(values.toAgentId) ||
-      typeof values.task !== "string" ||
-      values.task.trim().length === 0 ||
-      values.task.length > 20_000 ||
-      values.visibility !== "room" ||
-      !Array.isArray(values.contextRefs) ||
-      values.contextRefs.length > MAX_HANDOFF_CONTEXT_REFS ||
-      values.contextRefs.some((reference) => typeof reference !== "string" || reference.trim().length === 0 || reference.length > MAX_HANDOFF_CONTEXT_REF_LENGTH) ||
-      new Set(values.contextRefs).size !== values.contextRefs.length
-    ) invalidHandoff();
+      typeof task !== "string" ||
+      task.trim().length === 0 ||
+      task.length > 20_000 ||
+      visibility !== "room" ||
+      !Array.isArray(contextRefs) ||
+      contextRefs.length > MAX_HANDOFF_CONTEXT_REFS ||
+      contextRefs.some((reference) => typeof reference !== "string" || reference.trim().length === 0 || reference.length > MAX_HANDOFF_CONTEXT_REF_LENGTH) ||
+      new Set(contextRefs).size !== contextRefs.length ||
+      workspaceId !== undefined && (typeof workspaceId !== "string" || !allowedWorkspaceIds?.has(workspaceId)) ||
+      fromAgentId !== undefined && (typeof fromAgentId !== "string" || fromAgentId.length > 200)
+    ) {
+      console.warn("[model-tool-validation] handoff rejected", {
+        reason: "invalid-values",
+        targetValue: rawTarget.slice(0, 120),
+        targetAllowed: allowedTargetIds.has(targetId),
+        taskType: typeof task,
+        taskCharacters: typeof task === "string" ? task.length : null,
+        hasTask: typeof values.task === "string",
+        hasMessage: typeof values.message === "string",
+        taskMessageConflict: typeof values.task === "string" && typeof values.message === "string" && values.task.trim() !== values.message.trim(),
+        visibility,
+        contextRefCount: Array.isArray(contextRefs) ? contextRefs.length : null,
+        workspaceAllowed: workspaceId === undefined ? null : typeof workspaceId === "string" && Boolean(allowedWorkspaceIds?.has(workspaceId)),
+      });
+      invalidHandoff();
+    }
+    if (!allowedTargetIds.has(targetId)) {
+      return {
+        type: "tool-rejection" as const,
+        toolCallId: call.id,
+        providerToolName: call.name,
+        arguments: call.arguments,
+        code: "HANDOFF_TARGET_INVALID",
+        safeMessage: "目标 Bot 不在当前 Room 的可转交候选中。请从 handoff_to_agent 函数定义的 toAgentId 枚举中选择其他 Bot 后重试。",
+      };
+    }
     return {
       type: "handoff" as const,
       toolCallId: call.id,
-      toAgentId: values.toAgentId,
-      task: values.task.trim(),
-      contextRefs: values.contextRefs,
+      toAgentId: targetId,
+      task: task.trim(),
+      contextRefs,
       visibility: "room" as const,
     };
   });
@@ -536,6 +665,17 @@ export type StructuredModelToolDefinition = {
 export function structuredModelToolDefinitions(context?: ModelRunContext): StructuredModelToolDefinition[] {
   const workspaces = context?.workspaces?.length ? context.workspaces : [];
   const definitions: StructuredModelToolDefinition[] = [];
+  if (context?.textMeasureTools) {
+    definitions.push({
+      name: COMPUTATION_TOOL_NAMES["text-measure"],
+      description: "Calculate exact Unicode character, non-whitespace character, word, line and UTF-8 byte counts. Use this instead of estimating length.",
+      inputSchema: {
+        type: "object", additionalProperties: false,
+        properties: { text: { type: "string", maxLength: 100_000 } },
+        required: ["text"],
+      },
+    });
+  }
   if (workspaces.length > 0) {
     definitions.push({
       name: WORKSPACE_TOOL_NAMES["workspace-list"],
@@ -543,7 +683,7 @@ export function structuredModelToolDefinitions(context?: ModelRunContext): Struc
       inputSchema: {
         type: "object", additionalProperties: false,
         properties: { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id) }, path: { type: "string", maxLength: 1_024 }, maxEntries: { type: "integer", minimum: 1, maximum: 500 } },
-        required: ["workspaceId", "path", "maxEntries"],
+        required: ["workspaceId"],
       },
     }, {
       name: WORKSPACE_TOOL_NAMES["workspace-read"],
@@ -551,7 +691,7 @@ export function structuredModelToolDefinitions(context?: ModelRunContext): Struc
       inputSchema: {
         type: "object", additionalProperties: false,
         properties: { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id) }, path: { type: "string", minLength: 1, maxLength: 1_024 }, maxBytes: { type: "integer", minimum: 1, maximum: 1_048_576 } },
-        required: ["workspaceId", "path", "maxBytes"],
+        required: ["workspaceId", "path"],
       },
     }, {
       name: WORKSPACE_TOOL_NAMES["workspace-search"],
@@ -559,9 +699,24 @@ export function structuredModelToolDefinitions(context?: ModelRunContext): Struc
       inputSchema: {
         type: "object", additionalProperties: false,
         properties: { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id) }, path: { type: "string", maxLength: 1_024 }, query: { type: "string", minLength: 1, maxLength: 500 }, maxMatches: { type: "integer", minimum: 1, maximum: 200 } },
-        required: ["workspaceId", "path", "query", "maxMatches"],
+        required: ["workspaceId", "query"],
       },
     });
+    if (workspaces.some((workspace) => workspace.writeEnabled)) {
+      definitions.push({
+        name: WORKSPACE_TOOL_NAMES["workspace-write"],
+        description: "Create one new UTF-8 Markdown or CSV file in an explicitly writable Workspace. Existing files cannot be overwritten.",
+        inputSchema: {
+          type: "object", additionalProperties: false,
+          properties: {
+            workspaceId: { type: "string", enum: workspaces.filter((workspace) => workspace.writeEnabled).map(({ id }) => id) },
+            path: { type: "string", minLength: 1, maxLength: 1_024, pattern: "\\.(?:md|csv)$" },
+            content: { type: "string", minLength: 1, maxLength: 262_144 },
+          },
+          required: ["workspaceId", "path", "content"],
+        },
+      });
+    }
   }
   if (context?.networkTools) {
     definitions.push({
@@ -570,7 +725,7 @@ export function structuredModelToolDefinitions(context?: ModelRunContext): Struc
       inputSchema: {
         type: "object", additionalProperties: false,
         properties: { query: { type: "string", minLength: 1, maxLength: 500 }, maxResults: { type: "integer", minimum: 1, maximum: 10 } },
-        required: ["query", "maxResults"],
+        required: ["query"],
       },
     }, {
       name: NETWORK_TOOL_NAMES["web-fetch"],
@@ -578,7 +733,7 @@ export function structuredModelToolDefinitions(context?: ModelRunContext): Struc
       inputSchema: {
         type: "object", additionalProperties: false,
         properties: { url: { type: "string", format: "uri", maxLength: 2_048 }, maxCharacters: { type: "integer", minimum: 1, maximum: 100_000 } },
-        required: ["url", "maxCharacters"],
+        required: ["url"],
       },
     }, {
       name: NETWORK_TOOL_NAMES["weather-current"],
@@ -624,7 +779,7 @@ export function parseStructuredModelToolCall(
   name: string,
   argumentsValue: unknown,
   context?: ModelRunContext,
-): Extract<ModelEvent, { type: "workspace-tool" | "network-tool" | "mcp-tool" | "device-tool" }> {
+): Extract<ModelEvent, { type: "workspace-tool" | "network-tool" | "mcp-tool" | "device-tool" | "computation-tool" }> {
   const definitions = new Set(structuredModelToolDefinitions(context).map((definition) => definition.name));
   const serializedArguments = JSON.stringify(argumentsValue) ?? "";
   if (
@@ -651,10 +806,10 @@ export function parseStructuredModelToolCall(
     context?.mcpTools?.length ? new Map(context.mcpTools.filter((tool) => tool.readOnly).map((tool) => [tool.namespacedName, tool])) : undefined,
     context?.deviceTools === true,
   )[0];
-  if (!event || !["workspace-tool", "network-tool", "mcp-tool", "device-tool"].includes(event.type)) {
+  if (!event || !["workspace-tool", "network-tool", "mcp-tool", "device-tool", "computation-tool"].includes(event.type)) {
     throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
   }
-  return event as Extract<ModelEvent, { type: "workspace-tool" | "network-tool" | "mcp-tool" | "device-tool" }>;
+  return event as Extract<ModelEvent, { type: "workspace-tool" | "network-tool" | "mcp-tool" | "device-tool" | "computation-tool" }>;
 }
 
 function decodeSseEvent(
@@ -665,6 +820,7 @@ function decodeSseEvent(
   allowNetworkTools = false,
   allowedMcpTools?: ReadonlyMap<string, McpToolInfo>,
   allowDeviceTools = false,
+  handoffTargetAliases?: ReadonlyMap<string, string>,
 ): DecodedSse {
   const data = event
     .split(/\r?\n/)
@@ -674,7 +830,7 @@ function decodeSseEvent(
   if (!data) return { events: [{ type: "activity" }], terminal: false };
   if (data === "[DONE]") {
     return {
-      events: [...finalizeToolCalls(pendingToolCalls, allowedTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools), { type: "completed", finishReason: "done" }],
+      events: [...finalizeToolCalls(pendingToolCalls, allowedTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases), { type: "completed", finishReason: "done" }],
       terminal: true,
     };
   }
@@ -703,7 +859,7 @@ function decodeSseEvent(
     appendToolCallDelta(choice.delta.tool_calls, pendingToolCalls);
   }
   if (typeof choice?.finish_reason === "string" && choice.finish_reason.length > 0) {
-    events.push(...finalizeToolCalls(pendingToolCalls, allowedTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools));
+    events.push(...finalizeToolCalls(pendingToolCalls, allowedTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases));
     events.push({ type: "completed", finishReason: choice.finish_reason });
     return { events, terminal: true };
   }
@@ -749,6 +905,7 @@ export async function* parseOpenAiStream(
   allowNetworkTools = false,
   allowedMcpTools?: ReadonlyMap<string, McpToolInfo>,
   allowDeviceTools = false,
+  handoffTargetAliases?: ReadonlyMap<string, string>,
 ): AsyncIterable<ModelEvent> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -773,7 +930,7 @@ export async function* parseOpenAiStream(
       buffer = events.pop() ?? "";
       for (const rawEvent of events) {
         sawEvent = true;
-        const decoded = decodeSseEvent(rawEvent, pendingToolCalls, allowedHandoffTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools);
+        const decoded = decodeSseEvent(rawEvent, pendingToolCalls, allowedHandoffTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases);
         for (const modelEvent of decoded.events) yield modelEvent;
         if (decoded.terminal) {
           terminal = true;
@@ -784,7 +941,7 @@ export async function* parseOpenAiStream(
     }
     if (!terminal && buffer.trim()) {
       sawEvent = true;
-      const decoded = decodeSseEvent(buffer, pendingToolCalls, allowedHandoffTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools);
+      const decoded = decodeSseEvent(buffer, pendingToolCalls, allowedHandoffTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases);
       for (const modelEvent of decoded.events) yield modelEvent;
       terminal = decoded.terminal;
     }
@@ -830,6 +987,21 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     let response: Response;
     const roomRoster = context?.roomId && context.roomRoster?.length ? context.roomRoster : undefined;
     const handoffTargets = roomRoster?.filter((member) => member.id !== context?.executorBotId);
+    const handoffTargetAliases = (() => {
+      if (!handoffTargets) return undefined;
+      const candidates = handoffTargets.flatMap((member) => [
+        member.name.trim(),
+        member.label.trim(),
+        `${member.name.trim()}（${member.label.trim()}）`,
+        `${member.name.trim()} (${member.label.trim()})`,
+        `${member.name.trim()} Bot`,
+      ]
+        .filter(Boolean)
+        .map((alias) => ({ alias, id: member.id })));
+      const counts = new Map<string, number>();
+      candidates.forEach(({ alias }) => counts.set(alias, (counts.get(alias) ?? 0) + 1));
+      return new Map(candidates.filter(({ alias }) => counts.get(alias) === 1).map(({ alias, id }) => [alias, id]));
+    })();
     const workspaces = context?.workspaces?.length ? context.workspaces : undefined;
     const networkTools = context?.networkTools ? [
       {
@@ -840,7 +1012,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
           parameters: {
             type: "object", additionalProperties: false,
             properties: { query: { type: "string", minLength: 1, maxLength: 500 }, maxResults: { type: "integer", minimum: 1, maximum: 10 } },
-            required: ["query", "maxResults"],
+            required: ["query"],
           },
         },
       },
@@ -855,7 +1027,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
               url: { type: "string", format: "uri", maxLength: 2048 },
               maxCharacters: { type: "integer", minimum: 1, maximum: 100000 },
             },
-            required: ["url", "maxCharacters"],
+            required: ["url"],
           },
         },
       },
@@ -903,21 +1075,45 @@ export class OpenAiCompatibleProvider implements ModelProvider {
         },
       },
     }] : [];
+    const computationTools = context?.textMeasureTools ? [{
+      type: "function",
+      function: {
+        name: COMPUTATION_TOOL_NAMES["text-measure"],
+        description: "Calculate exact Unicode character, non-whitespace character, word, line and UTF-8 byte counts. Never estimate these values.",
+        parameters: {
+          type: "object", additionalProperties: false,
+          properties: {
+            text: { type: "string", maxLength: 100_000 },
+            countMode: { type: "string", maxLength: 100, description: "Optional compatibility hint; the tool always returns every supported exact count." },
+            mode: { type: "string", maxLength: 100, description: "Compatibility alias for countMode." },
+            nonWhitespaceOnly: { type: "boolean", description: "Optional compatibility hint; the tool still returns every supported exact count." },
+            ...(workspaces ? { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id), description: "Optional current Workspace context; no file is read." } } : {}),
+          },
+          required: ["text"],
+        },
+      },
+    }] : [];
     const handoffTool = handoffTargets?.length ? {
       type: "function",
       function: {
         name: HANDOFF_TOOL_NAME,
-        description: `Transfer a focused subtask to another agent in this room. Available agent IDs: ${handoffTargets.map((member) => member.id).join(", ")}.`,
+        description: `Transfer a focused subtask to another agent in this room. Use the exact UUID after '=': ${handoffTargets.map((member) => `${member.name}=${member.id}`).join("; ")}.`,
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
             toAgentId: { type: "string", enum: handoffTargets.map((member) => member.id) },
             task: { type: "string", minLength: 1, maxLength: 20_000 },
+            message: { type: "string", minLength: 1, maxLength: 20_000, description: "Compatibility alias for task." },
+            summary: { type: "string", minLength: 1, maxLength: 20_000, description: "Optional task summary." },
+            content: { type: "string", minLength: 1, maxLength: 20_000, description: "Compatibility alias for task." },
+            fromAgentId: { type: "string", maxLength: 200, description: "Compatibility metadata only. The runtime always records the real sender." },
+            targetRole: { type: "string", maxLength: 200, description: "Optional display-only target label. Routing always uses toAgentId." },
+            ...(workspaces ? { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id), description: "Optional current Workspace context. It does not affect routing." } } : {}),
             contextRefs: { type: "array", maxItems: 0, items: { type: "string" }, description: "Must be an empty array; transcript entry IDs are not exposed to the model." },
             visibility: { type: "string", enum: ["room"] },
           },
-          required: ["toAgentId", "task", "contextRefs", "visibility"],
+          required: ["toAgentId"],
         },
       },
     } : undefined;
@@ -930,7 +1126,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
           parameters: {
             type: "object", additionalProperties: false,
             properties: { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id) }, path: { type: "string", maxLength: 1_024 }, maxEntries: { type: "integer", minimum: 1, maximum: 500 } },
-            required: ["workspaceId", "path", "maxEntries"],
+            required: ["workspaceId"],
           },
         },
       },
@@ -942,7 +1138,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
           parameters: {
             type: "object", additionalProperties: false,
             properties: { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id) }, path: { type: "string", minLength: 1, maxLength: 1_024 }, maxBytes: { type: "integer", minimum: 1, maximum: 1_048_576 } },
-            required: ["workspaceId", "path", "maxBytes"],
+            required: ["workspaceId", "path"],
           },
         },
       },
@@ -954,10 +1150,26 @@ export class OpenAiCompatibleProvider implements ModelProvider {
           parameters: {
             type: "object", additionalProperties: false,
             properties: { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id) }, path: { type: "string", maxLength: 1_024 }, query: { type: "string", minLength: 1, maxLength: 500 }, maxMatches: { type: "integer", minimum: 1, maximum: 200 } },
-            required: ["workspaceId", "path", "query", "maxMatches"],
+            required: ["workspaceId", "query"],
           },
         },
       },
+      ...(workspaces.some((workspace) => workspace.writeEnabled) ? [{
+        type: "function",
+        function: {
+          name: WORKSPACE_TOOL_NAMES["workspace-write"],
+          description: "Create one new UTF-8 Markdown or CSV file inside an explicitly writable workspace. Existing files cannot be overwritten. The successful tool result is the only proof that a file was written.",
+          parameters: {
+            type: "object", additionalProperties: false,
+            properties: {
+              workspaceId: { type: "string", enum: workspaces.filter((workspace) => workspace.writeEnabled).map(({ id }) => id) },
+              path: { type: "string", minLength: 1, maxLength: 1_024, pattern: "\\.(?:md|csv)$" },
+              content: { type: "string", minLength: 1, maxLength: 262_144 },
+            },
+            required: ["workspaceId", "path", "content"],
+          },
+        },
+      }] : []),
     ] : [];
     const requestMessages: ChatMessage[] = workspaces ? [
       {
@@ -969,7 +1181,20 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       },
       ...messages,
     ] : messages;
-    const tools = [...(handoffTool ? [handoffTool] : []), ...workspaceTools, ...networkTools, ...mcpTools, ...deviceTools];
+    const tools = [...(handoffTool ? [handoffTool] : []), ...workspaceTools, ...networkTools, ...mcpTools, ...deviceTools, ...computationTools];
+    const availableToolNames = new Set(tools.map((tool) => tool.function.name));
+    const completedToolNames = new Set(messages.flatMap((message) =>
+      message.role === "assistant" && "tool_calls" in message
+        ? message.tool_calls.map((call) => call.function.name)
+        : [],
+    ));
+    const remainingRequiredTools = (context?.requiredToolNames ?? [])
+      .filter((name) => availableToolNames.has(name) && !completedToolNames.has(name));
+    const toolChoice = remainingRequiredTools.length === 1
+      ? { type: "function", function: { name: remainingRequiredTools[0]! } }
+      : remainingRequiredTools.length > 1 || context?.requireToolCall && completedToolNames.size === 0
+        ? "required"
+        : "auto";
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
@@ -981,7 +1206,10 @@ export class OpenAiCompatibleProvider implements ModelProvider {
           model: this.modelId,
           messages: requestMessages,
           stream: true,
-          ...(tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
+          ...(tools.length > 0 ? {
+            tools,
+            tool_choice: toolChoice,
+          } : {}),
           ...(tools.length > 0 && isOfficialDeepSeekApi(this.baseUrl) ? { thinking: { type: "disabled" } } : {}),
         }),
         signal: controller.signal,
@@ -1005,6 +1233,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       networkTools.length > 0,
       context?.mcpTools ? new Map(context.mcpTools.filter((tool) => tool.readOnly).map((tool) => [tool.namespacedName, tool])) : undefined,
       deviceTools.length > 0,
+      handoffTargetAliases,
     );
   }
 
