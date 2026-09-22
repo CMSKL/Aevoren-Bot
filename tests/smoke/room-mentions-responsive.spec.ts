@@ -60,11 +60,11 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     });
     await page.locator(".bot-row").filter({ hasText: seeded.roomName }).click();
     await expect(page.getByRole("heading", { name: seeded.roomName })).toBeVisible();
-    await expect(page.getByText("自动选择最合适的 Bot；也可输入 @ 临时指定", { exact: true })).toBeVisible();
+    await expect(page.getByText("Host 自动选择首位 Bot，并仅在真实工件完成后接力", { exact: true })).toBeVisible();
 
     const input = page.getByLabel("消息");
     await input.fill("@");
-    const options = page.getByRole("option");
+    const options = page.getByRole("listbox", { name: "提及 Bot" }).getByRole("option");
     await expect(options).toHaveCount(4);
     await expect(options.nth(0)).toContainText("所有人");
     await expect(options.nth(1)).toContainText(seeded.botNames[0]!);
@@ -167,7 +167,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await expect(page.locator("article.message-user")).toHaveCount(4);
     await page.screenshot({ path: "/tmp/aevoren-bot-room-mention-invalid.png", fullPage: true });
     await invalidMention.click();
-    await expect(page.getByText("自动选择最合适的 Bot；也可输入 @ 临时指定", { exact: true })).toBeVisible();
+    await expect(page.getByText("Host 自动选择首位 Bot，并仅在真实工件完成后接力", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
     await input.fill("");
     await page.getByLabel("选择要添加的 Bot").selectOption({ label: seeded.botNames[0] });

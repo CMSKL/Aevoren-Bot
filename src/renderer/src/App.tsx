@@ -5,6 +5,7 @@ import type {
   ApprovalRequest,
   AttachmentDraft,
   Bot,
+  BriefApprovalCommand,
   ConversationBatchDeleteInput,
   LoginItemStatus,
   Room,
@@ -778,6 +779,25 @@ export function App(): React.JSX.Element {
     return true;
   }
 
+  async function approveBrief(command: BriefApprovalCommand): Promise<boolean> {
+    if (submitting || selectedRoom?.room.id !== command.roomId) return false;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await window.aevorenBot.rooms.approveBrief(command);
+      if (!result.ok) {
+        setError(result.error);
+        return false;
+      }
+      return true;
+    } catch {
+      setError({ domain: "runtime", code: "BRIEF_APPROVAL_FAILED", retryable: true, safeMessage: "批准未能提交，请稍后重试。" });
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function handleArchived(room: Room): void {
     setRooms((current) => current.map((item) => item.id === room.id ? room : item));
     selectedRoomIdRef.current = null;
@@ -918,6 +938,7 @@ export function App(): React.JSX.Element {
           return true;
         }}
         onSend={sendMessage}
+        onApproveBrief={approveBrief}
         onRetryMessage={(clientNonce) => {
           setSubmitting(true);
           void window.aevorenBot.messages.retry(clientNonce).then((result) => {

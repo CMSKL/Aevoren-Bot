@@ -2,6 +2,7 @@ import type {
   AppError,
   Bot,
   CapabilityPromptSnapshot,
+  ExecutionEvidenceReceipt,
   ModelSelection,
   RuntimeEvent,
   RuntimeRoute,
@@ -54,8 +55,10 @@ export type RuntimeExecutionInput = {
     membershipVersion: number;
     sourceTurnId: string;
     roster?: RoomPeer[];
+    orchestrationEnabled?: boolean;
   };
   incomingHandoff?: ModelRunContext["incomingHandoff"];
+  executionReceipt?: ExecutionEvidenceReceipt;
   onRunCreated?(run: RuntimeRun): void;
   onDispatchStart?(): void;
   onProviderStarted?(requestId: string): void;
@@ -65,6 +68,7 @@ export type RuntimeExecutionInput = {
 export type RuntimeExecutionResult = {
   run: RuntimeRun;
   error?: AppError;
+  handoffError?: AppError;
   providerStarted: boolean;
 };
 
@@ -83,6 +87,7 @@ type ActiveRun = {
   modelSelection: ModelSelection;
   attribution?: RuntimeExecutionInput["attribution"];
   providerContext: ModelRunContext;
+  executorBotName: string;
   onDispatchStart?: RuntimeExecutionInput["onDispatchStart"];
   onProviderStarted?: RuntimeExecutionInput["onProviderStarted"];
   onHandoff?: RuntimeExecutionInput["onHandoff"];
@@ -95,7 +100,9 @@ type ActiveRun = {
   abortReason: AbortReason | null;
   providerStarted: boolean;
   handoffEmitted: boolean;
+  handoffError: AppError | null;
   evidenceRequestText: string;
+  rootRequirements: string;
   maxWorkspaceWrites: number | null;
   maxToolRounds: number;
   maxTextMeasures: number | null;
@@ -110,6 +117,7 @@ const DELTA_FLUSH_CHARS = 512;
 const SHUTDOWN_DRAIN_MS = 2_000;
 const MAX_TOOL_ROUNDS = 16;
 const MAX_MEASUREMENT_TOOL_ROUNDS = 32;
+const CONTENT_TEAM_ROLES = new Set(["情报侦察员", "选题策划师", "内容主笔", "事实编辑", "数据复盘师"]);
 
 function claimsWorkspaceRead(body: string): boolean {
   return /(?:已|已经|成功|完成|真实).{0,16}(?:读取|打开|解析).{0,32}(?:文件|CSV|工作区)|(?:文件|CSV).{0,16}(?:已读取|读取成功)|(?:workspace_read).{0,20}(?:成功|完成|已调用)|\b(?:file|csv|draft|brief|profile)\s+(?:was\s+)?read\b|\b(?:loaded|parsed)\s+(?:the\s+)?(?:file|csv)\b/iu.test(body);
@@ -120,7 +128,7 @@ function claimsRemoteEvidence(body: string): boolean {
 }
 
 function claimsWorkspaceWrite(body: string): boolean {
-  return /(?:已|已经|成功|完成|真实).{0,16}(?:写入|保存|落盘|生成).{0,32}(?:文件|Markdown|工作区)|(?:workspace_write).{0,20}(?:成功|完成|已调用)|\b(?:wrote|saved|created)\s+(?:the\s+)?(?:file|markdown)\b/iu.test(body);
+  return /(?:已|已经|成功|完成|真实).{0,16}(?:写入|保存|落盘|生成).{0,32}(?:文件|Markdown|工作区|草稿|审校稿|Brief|报告)|(?:文件|Markdown|草稿|审校稿|Brief|报告).{0,20}(?:已|已经|成功|完成|真实).{0,8}(?:写入|保存|落盘|生成)|(?:workspace_write).{0,20}(?:成功|完成|已调用)|\b(?:wrote|saved|created)\s+(?:the\s+)?(?:file|markdown|draft|brief|report)\b/iu.test(body);
 }
 
 function requestsCsvAnalysis(value: string): boolean {
@@ -178,7 +186,12 @@ function configuredTextMeasureLimit(bot: Bot): number | null {
 
 function requiredMeasurementRanges(bot: Bot, request: string): Array<{ min: number; max: number }> {
   if (bot.name !== "事实编辑") return [];
-  const ranges = [...request.matchAll(/(\d{1,6})\s*[–—-]\s*(\d{1,6})/gu)]
+  // Do not treat UUID/path fragments such as `a281-46c4` as text-length
+  // requirements. A range must have a semantic length/version label before
+  // it or an explicit unit after it.
+  const labelled = [...request.matchAll(/(?:短帖|展开版|短版|长版|短文|长文|正文|版本|字符数|字数|长度|非空白字符|word count|character count|range)[^\d\r\n]{0,24}(\d{1,6})\s*[–—-]\s*(\d{1,6})/giu)];
+  const unitBound = [...request.matchAll(/(\d{1,6})\s*[–—-]\s*(\d{1,6})\s*(?:个)?(?:非空白字符|字符|字|词|words?|characters?)/giu)];
+  const ranges = [...labelled, ...unitBound]
     .map((match) => ({ min: Number(match[1]), max: Number(match[2]) }))
     .filter((range) => Number.isInteger(range.min) && Number.isInteger(range.max) && range.min >= 0 && range.max > range.min && range.max <= 1_000_000);
   return [...new Map(ranges.map((range) => [`${range.min}:${range.max}`, range])).values()];
@@ -227,8 +240,10 @@ export class RuntimeExecutor {
             roomDescription: input.room.description ?? "",
             roomMembershipVersion: input.room.membershipVersion,
             sourceTurnId: input.room.sourceTurnId,
+            orchestrationEnabled: input.room.orchestrationEnabled,
             ...(input.room.roster ? { roomRoster: input.room.roster } : {}),
             ...(input.incomingHandoff ? { handoff: input.incomingHandoff } : {}),
+            ...(input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
           }
         : undefined,
       this.repository.listRuntimeMemories(bot.id),
@@ -255,7 +270,9 @@ export class RuntimeExecutor {
       throw error;
     }
     const evidenceRequestText = input.incomingHandoff?.task ?? user.body;
+    const rootRequirements = input.executionReceipt?.taskRequirements.text ?? user.body;
     const evidenceToolNames = new Set(input.room && !input.incomingHandoff ? [] : requiredToolNames(evidenceRequestText));
+    if (input.executionReceipt?.artifacts.length) evidenceToolNames.add("workspace_read");
     if (bot.name === "事实编辑" && /审校|审查|review/iu.test(evidenceRequestText)) {
       evidenceToolNames.add("workspace_write");
     }
@@ -265,6 +282,16 @@ export class RuntimeExecutor {
     const allowDeviceTools = providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsDeviceTools(evidenceRequestText));
     if (/text_measure/iu.test(bot.instructions) && /写|草稿|审校|长度|draft|review/iu.test(evidenceRequestText)) {
       evidenceToolNames.add("text_measure");
+    }
+    if (input.room?.orchestrationEnabled) {
+      const requiredByRole: Record<string, string[]> = {
+        情报侦察员: ["web_fetch", "workspace_write"],
+        选题策划师: ["workspace_read", "workspace_write"],
+        内容主笔: ["workspace_read", "text_measure", "workspace_write"],
+        事实编辑: ["workspace_read", "web_fetch", "text_measure", "workspace_write"],
+        数据复盘师: ["workspace_read", "workspace_write"],
+      };
+      for (const name of requiredByRole[bot.name] ?? []) evidenceToolNames.add(name);
     }
     const active: ActiveRun = {
       controller: new AbortController(),
@@ -280,16 +307,18 @@ export class RuntimeExecutor {
         ...(input.room ? { roomId: input.room.id, sourceTurnId: input.room.sourceTurnId } : {}),
         ...(input.room?.roster ? { roomRoster: input.room.roster } : {}),
         ...(input.incomingHandoff ? { incomingHandoff: input.incomingHandoff } : {}),
+        ...(input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
         workspaces: providerCapabilities?.workspaceTools === true
           ? this.repository.listWorkspaces().map(({ id, name, writeEnabled, automationEnabled }) => ({ id, name, writeEnabled, automationEnabled }))
           : [],
         networkTools: allowNetworkTools,
         mcpTools: allowMcpTools ? this.mcpTools?.availableTools(bot.id) ?? [] : [],
         deviceTools: allowDeviceTools,
-        requireToolCall: requiresToolCall(evidenceRequestText),
+        requireToolCall: requiresToolCall(evidenceRequestText) || Boolean(input.executionReceipt?.artifacts.length),
         textMeasureTools: evidenceToolNames.has("text_measure"),
         requiredToolNames: [...evidenceToolNames],
       },
+      executorBotName: bot.name,
       onDispatchStart: input.onDispatchStart,
       onProviderStarted: input.onProviderStarted,
       onHandoff: input.onHandoff,
@@ -302,13 +331,15 @@ export class RuntimeExecutor {
       abortReason: null,
       providerStarted: false,
       handoffEmitted: false,
+      handoffError: null,
       evidenceRequestText,
+      rootRequirements,
       maxWorkspaceWrites: configuredWorkspaceWriteLimit(bot.instructions),
       maxToolRounds: requestsExactMeasurement(evidenceRequestText) ? MAX_MEASUREMENT_TOOL_ROUNDS : MAX_TOOL_ROUNDS,
       maxTextMeasures: configuredTextMeasureLimit(bot),
-      completeAfterSuccessfulWorkspaceWrite: bot.name === "选题策划师" && isWaitingForHumanApproval(evidenceRequestText, ""),
+      completeAfterSuccessfulWorkspaceWrite: bot.name === "选题策划师" && (Boolean(input.onHandoff) || isWaitingForHumanApproval(evidenceRequestText, "")),
       forceCompleteAfterToolRound: false,
-      requiredMeasurementRanges: requiredMeasurementRanges(bot, evidenceRequestText),
+      requiredMeasurementRanges: requiredMeasurementRanges(bot, `${rootRequirements}\n${evidenceRequestText}`),
     };
     this.active.set(run.id, active);
     this.emitRuntime(run);
@@ -432,9 +463,10 @@ export class RuntimeExecutor {
       const provider = this.createProvider(active.modelSelection);
       let toolRounds = 0;
       let completed = false;
+      const pendingHandoffs = new Map<string, Extract<ModelEvent, { type: "handoff" }>>();
       while (!completed) {
         const roundActions: Array<
-          | { kind: "handoff"; event: Extract<ModelEvent, { type: "handoff" }>; accepted: boolean }
+          | { kind: "handoff"; event: Extract<ModelEvent, { type: "handoff" }> }
           | { kind: "tool"; call: Extract<ChatMessage, { role: "assistant" }>["tool_calls"][number]; result: Extract<ChatMessage, { role: "tool" }> }
         > = [];
         let roundToolCount = 0;
@@ -509,9 +541,10 @@ export class RuntimeExecutor {
               reason: "provider structured Handoff",
             }, roster);
           }
-          const accepted = active.onHandoff(event) !== false;
-          active.handoffEmitted = accepted || active.handoffEmitted;
-          roundActions.push({ kind: "handoff", event, accepted });
+          const previous = pendingHandoffs.get(event.toolCallId);
+          if (previous && JSON.stringify(previous) !== JSON.stringify(event)) throw new AevorenBotError("MODEL_HANDOFF_INVALID");
+          pendingHandoffs.set(event.toolCallId, event);
+          roundActions.push({ kind: "handoff", event });
           run = this.repository.touchRuntimeRun(runId);
           this.emitRuntime(run);
           this.armStaleTimer(active);
@@ -544,6 +577,58 @@ export class RuntimeExecutor {
         }
         if (event.type === "workspace-tool" || event.type === "network-tool" || event.type === "mcp-tool" || event.type === "device-tool" || event.type === "computation-tool") {
           if (!active.providerStarted || !this.workspaceTools) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          if (active.forceCompleteAfterToolRound) {
+            roundToolCount += 1;
+            const functionName = event.providerToolName ?? event.tool.kind.replaceAll("-", "_");
+            const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
+            roundActions.push({
+              kind: "tool",
+              call: {
+                id: event.toolCallId,
+                type: "function",
+                function: { name: functionName, arguments: JSON.stringify(argumentsValue) },
+              },
+              result: {
+                role: "tool",
+                tool_call_id: event.toolCallId,
+                content: JSON.stringify({
+                  ok: false,
+                  code: "TASK_STAGE_ALREADY_COMPLETE",
+                  safeMessage: "Brief 已成功写入，本阶段已经完成。后续工具调用已停止，等待用户批准。",
+                }),
+              },
+            });
+            continue;
+          }
+          if (event.type === "workspace-tool" && event.tool.kind === "workspace-write" && active.executorBotName === "数据复盘师") {
+            const validation = this.validateCsvReport(active, event.tool.content);
+            if (!validation.ok) {
+              if (roundToolCount === 0) {
+                if (toolRounds >= active.maxToolRounds) throw new AevorenBotError("TOOL_ROUND_LIMIT_EXCEEDED");
+                toolRounds += 1;
+              }
+              roundToolCount += 1;
+              roundActions.push({
+                kind: "tool",
+                call: {
+                  id: event.toolCallId,
+                  type: "function",
+                  function: { name: event.providerToolName ?? "workspace_write", arguments: JSON.stringify({ workspaceId: event.tool.workspaceId, path: event.tool.path, content: event.tool.content }) },
+                },
+                result: {
+                  role: "tool",
+                  tool_call_id: event.toolCallId,
+                  content: JSON.stringify({
+                    ok: false,
+                    code: "DATA_SUMMARY_MISMATCH",
+                    safeMessage: validation.reason,
+                    expectedMetrics: validation.expected,
+                  }),
+                },
+              });
+              continue;
+            }
+          }
           if (event.type === "workspace-tool" && event.tool.kind === "workspace-write" && active.requiredMeasurementRanges.length > 0) {
             const measuredValues = this.repository.listToolInvocations(active.sessionId)
               .filter((invocation) => invocation.runtimeRunId === active.runId && invocation.toolKind === "text-measure" && invocation.state === "succeeded")
@@ -583,6 +668,14 @@ export class RuntimeExecutor {
             }
           }
           if (event.type === "workspace-tool" && event.tool.kind === "workspace-write") {
+            this.assertReceiptReads(active);
+            if (active.executorBotName === "数据复盘师") {
+              const hasCsv = this.repository.listToolInvocations(active.sessionId).some((tool) =>
+                tool.runtimeRunId === active.runId && tool.toolKind === "workspace-read" && tool.state === "succeeded" &&
+                tool.targetPath.toLowerCase().endsWith(".csv") && tool.resultMetadata?.truncated === false,
+              );
+              if (!hasCsv) throw new AevorenBotError("DATA_EVIDENCE_REQUIRED", undefined, true, { requirement: "csv-read-before-report-write" });
+            }
             const alreadyProduced = this.repository.listToolInvocations(active.sessionId).some((invocation) => (
               invocation.toolKind === "workspace-write" &&
               invocation.state === "succeeded" &&
@@ -728,6 +821,7 @@ export class RuntimeExecutor {
           if (
             event.type === "workspace-tool" &&
             event.tool.kind === "workspace-write" &&
+            event.tool.path.startsWith("02-briefs/") &&
             active.completeAfterSuccessfulWorkspaceWrite &&
             toolOutcomeSucceeded(outcome.content)
           ) {
@@ -797,7 +891,7 @@ export class RuntimeExecutor {
                   result: {
                     role: "tool" as const,
                     tool_call_id: action.event.toolCallId,
-                    content: JSON.stringify({ ok: true, accepted: action.accepted }),
+                    content: JSON.stringify({ ok: true, accepted: false, status: "deferred-until-source-completed" }),
                   },
                 });
             active.messages.push({
@@ -809,6 +903,13 @@ export class RuntimeExecutor {
             break;
           }
           this.assertToolEvidence(active);
+          // A provider can still fail after announcing a handoff. Only commit its
+          // successor after the complete source result and tool evidence passed.
+          for (const handoff of pendingHandoffs.values()) {
+            const accepted = active.onHandoff?.(handoff) !== false;
+            active.handoffEmitted = accepted || active.handoffEmitted;
+          }
+          pendingHandoffs.clear();
           const continuation = await this.selectRoomContinuation(provider, active);
           if (continuation?.action === "handoff") {
             const accepted = active.onHandoff?.({
@@ -842,7 +943,11 @@ export class RuntimeExecutor {
       if (!["completed", "failed", "cancelled", "interrupted"].includes(current.state)) {
         throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
       }
-      return { run: current, providerStarted: active.providerStarted };
+      return {
+        run: current,
+        ...(active.handoffError ? { handoffError: active.handoffError } : {}),
+        providerStarted: active.providerStarted,
+      };
     } catch (error) {
       const appError = this.handleFailure(active, error);
       return { run: this.repository.getRuntimeRun(runId), error: appError, providerStarted: active.providerStarted };
@@ -886,6 +991,7 @@ export class RuntimeExecutor {
   }
 
   private assertToolEvidence(active: ActiveRun): void {
+    this.assertReceiptReads(active);
     const succeeded = this.repository.listToolInvocations(active.sessionId)
       .filter((invocation) => invocation.runtimeRunId === active.runId && invocation.state === "succeeded");
     const hasKind = (...kinds: Array<(typeof succeeded)[number]["toolKind"]>): boolean =>
@@ -901,7 +1007,10 @@ export class RuntimeExecutor {
       throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "workspace-write" });
     }
     if (
-      requestsCsvAnalysis(active.evidenceRequestText) && containsDataConclusion(active.body) &&
+      (active.executorBotName === "数据复盘师"
+        ? requestsCsvAnalysis(active.rootRequirements)
+        : !CONTENT_TEAM_ROLES.has(active.executorBotName) && requestsCsvAnalysis(active.evidenceRequestText)) &&
+      containsDataConclusion(active.body) &&
       !succeeded.some((invocation) => invocation.toolKind === "workspace-read" && invocation.targetPath.toLocaleLowerCase("en-US").endsWith(".csv"))
     ) {
       throw new AevorenBotError("DATA_EVIDENCE_REQUIRED", undefined, true, { requirement: "workspace-read-csv" });
@@ -912,6 +1021,63 @@ export class RuntimeExecutor {
     if (active.providerContext.requireToolCall && succeeded.length === 0 && !explicitlyUnable) {
       throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "successful-tool-call" });
     }
+  }
+
+  private assertReceiptReads(active: ActiveRun): void {
+    const receipt = active.providerContext.executionReceipt;
+    if (!receipt) return;
+    const required = receipt.artifacts.filter((artifact) => artifact.sourceRuntimeRunId === receipt.sourceRuntimeRunId);
+    const reads = this.repository.listToolInvocations(active.sessionId).filter((tool) => (
+      tool.runtimeRunId === active.runId && tool.toolKind === "workspace-read" && tool.state === "succeeded"
+    ));
+    for (const artifact of required) {
+      if (!reads.some((read) => read.workspaceId === artifact.workspaceId && read.targetPath === artifact.path &&
+        read.resultMetadata?.truncated === false && read.resultMetadata.sha256 === artifact.sha256)) {
+        throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "verified-upstream-artifact-read" });
+      }
+    }
+  }
+
+  private validateCsvReport(active: ActiveRun, content: string):
+    | { ok: true }
+    | { ok: false; reason: string; expected: Record<string, number> } {
+    const csvRead = this.repository.listToolInvocations(active.sessionId).toReversed().find((tool) =>
+      tool.runtimeRunId === active.runId && tool.toolKind === "workspace-read" && tool.state === "succeeded" &&
+      tool.targetPath.toLowerCase().endsWith(".csv") && tool.resultMetadata?.truncated === false &&
+      typeof tool.resultMetadata.csvRowCount === "number" && typeof tool.resultMetadata.csvNumericSums === "string",
+    );
+    if (!csvRead) return { ok: false, reason: "写入复盘报告前必须完整读取 CSV 并取得 Host 计算的 csvSummary。", expected: {} };
+    let sums: Record<string, number>;
+    try {
+      sums = JSON.parse(String(csvRead.resultMetadata!.csvNumericSums)) as Record<string, number>;
+    } catch {
+      return { ok: false, reason: "CSV 汇总结果无效，请重新读取真实 CSV。", expected: {} };
+    }
+    const expected: Record<string, number> = {};
+    if (/\basset_count\b/iu.test(active.rootRequirements)) expected.asset_count = Number(csvRead.resultMetadata!.csvRowCount);
+    for (const [column, sum] of Object.entries(sums)) {
+      const key = `total_${column}`;
+      if (active.rootRequirements.includes(key)) expected[key] = sum;
+    }
+    if (Object.keys(expected).length === 0) return { ok: true };
+    const requestsDerivedMetrics = /(?:占比|百分比|增长率|转化率|换算|MiB|MB|GiB|GB|elapsed|percentage|ratio|conversion)/iu.test(active.rootRequirements);
+    if (!requestsDerivedMetrics && /(?:≈|约\s*\d|\d+(?:\.\d+)?\s*(?:MiB|MB|GiB|GB)|\d+(?:\.\d+)?%)/u.test(content)) {
+      return {
+        ok: false,
+        reason: "原始任务未要求单位换算、百分比或耗时推算。请删除这些心算派生值，只保留 expectedMetrics 与真实字段口径后重新写入。",
+        expected,
+      };
+    }
+    const candidates = [...content.matchAll(/```json\s*([\s\S]*?)```/giu)].flatMap((match) => {
+      try {
+        const parsed = JSON.parse(match[1]!) as unknown;
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? [parsed as Record<string, unknown>] : [];
+      } catch { return []; }
+    });
+    const valid = candidates.some((candidate) => Object.entries(expected).every(([key, value]) => candidate[key] === value));
+    return valid
+      ? { ok: true }
+      : { ok: false, reason: "报告中的确定性指标与 Host 从真实 CSV 计算的结果不一致。请使用 expectedMetrics 原值修正 JSON 和正文后重新写入。", expected };
   }
 
   private scheduleFlush(active: ActiveRun): void {
@@ -947,24 +1113,65 @@ export class RuntimeExecutor {
     active: ActiveRun,
   ): Promise<RoomContinuationDecision | null> {
     const roster = active.providerContext.roomRoster;
-    const selector = provider.selectRoomContinuation;
     if (
       active.handoffEmitted ||
       !active.onHandoff ||
-      !selector ||
-      !roster ||
-      isWaitingForHumanApproval(active.evidenceRequestText, active.body) ||
-      !mentionsAnotherRoomPeer(active.body, active.providerContext.executorBotId, roster)
+      !roster
     ) return null;
-    const continuation = await selector.call(
-      provider,
-      active.body,
-      active.providerContext.executorBotId,
-      roster,
-      active.controller.signal,
-    );
-    void this.recordHandoffShadow(active, continuation, roster);
-    return continuation;
+    const deterministic = this.contentTeamContinuation(active, roster);
+    if (deterministic) {
+      void this.recordHandoffShadow(active, deterministic, roster);
+      return deterministic;
+    }
+    if (CONTENT_TEAM_ROLES.has(active.executorBotName)) return null;
+    if (isWaitingForHumanApproval(active.evidenceRequestText, active.body)) return null;
+    const selector = provider.selectRoomContinuation;
+    if (!selector || !mentionsAnotherRoomPeer(active.body, active.providerContext.executorBotId, roster)) return null;
+    try {
+      const continuation = await selector.call(
+        provider,
+        active.body,
+        active.providerContext.executorBotId,
+        roster,
+        active.controller.signal,
+      );
+      void this.recordHandoffShadow(active, continuation, roster);
+      return continuation;
+    } catch (error) {
+      active.handoffError = asAppError(error);
+      return null;
+    }
+  }
+
+  private contentTeamContinuation(active: ActiveRun, roster: readonly RoomPeer[]): RoomContinuationDecision | null {
+    if (["内容主笔", "事实编辑"].includes(active.executorBotName) && !active.providerContext.executionReceipt?.approvedBrief) return null;
+    const transition = (() => {
+      if (active.executorBotName === "情报侦察员") return { target: "选题策划师", prefix: "01-inbox/", next: "读取已验证线索和 voice.md，生成三个互斥候选并写入唯一 Brief；随后等待用户批准。" };
+      if (active.executorBotName === "内容主笔") return { target: "事实编辑", prefix: "03-drafts/", next: "读取已批准 Brief、当前草稿和 voice.md，使用 web_fetch 复核公开来源，完成事实、风格与长度审校并写入唯一审校稿。" };
+      if (active.executorBotName === "事实编辑" && requestsCsvAnalysis(active.rootRequirements)) return { target: "数据复盘师", prefix: "04-review/", next: "读取审校稿；只处理原始任务明确授权的 CSV。只有成功读取该 CSV 后才能写入复盘报告，并逐字采用 Host 返回的 csvSummary 指标。不得心算或追加未经用户要求和确定性工具验证的换算、占比或派生指标；没有 CSV 时明确停止。不得发布或执行任何外部写操作。" };
+      return null;
+    })();
+    if (!transition) return null;
+    const targets = roster.filter((peer) => peer.name === transition.target);
+    if (targets.length !== 1) return null;
+    const target = targets[0]!;
+    const writes = this.repository.listToolInvocations(active.sessionId).filter((invocation) => (
+      invocation.runtimeRunId === active.runId &&
+      invocation.toolKind === "workspace-write" &&
+      invocation.state === "succeeded" &&
+      invocation.workspaceId !== null &&
+      invocation.targetPath.startsWith(transition.prefix)
+    ));
+    const artifact = writes.at(-1);
+    if (!artifact?.workspaceId) return null;
+    return {
+      action: "handoff",
+      toAgentId: target.id,
+      task: `当前阶段任务：先使用 workspace_read 读取 workspaceId=${artifact.workspaceId} path=${artifact.targetPath}。${transition.next} 使用交接凭证中的原始任务确定本阶段输出路径与要求。其他阶段的批准或停止规则仅在对应阶段生效；不要重复执行上游任务。`,
+      contextRefs: [],
+      visibility: "room",
+      reason: `${active.executorBotName} 已产生 ${artifact.targetPath}，按内容团队规则进入 ${transition.target}。`,
+    };
   }
 
   private async recordHandoffShadow(

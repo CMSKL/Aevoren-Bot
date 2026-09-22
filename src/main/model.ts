@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { PromptMessage } from "./prompt";
-import type { ComputationToolRequest, DeviceToolRequest, McpToolInfo, McpToolRequest, NetworkToolRequest, WorkspaceToolRequest } from "@shared/contracts";
+import type { ComputationToolRequest, DeviceToolRequest, ExecutionEvidenceReceipt, McpToolInfo, McpToolRequest, NetworkToolRequest, WorkspaceToolRequest } from "@shared/contracts";
 import { computationToolRequestSchema, deviceToolRequestSchema, mcpToolRequestSchema, networkToolRequestSchema, workspaceToolRequestSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
 
@@ -80,6 +80,7 @@ export type ModelRunContext = {
     visibility: "room" | "direct";
     createdAt: string;
   };
+  executionReceipt?: ExecutionEvidenceReceipt;
   workspaces?: Array<{ id: string; name: string; writeEnabled: boolean; automationEnabled: boolean }>;
   networkTools?: boolean;
   mcpTools?: McpToolInfo[];
@@ -286,6 +287,16 @@ export class FakeModelProvider implements ModelProvider {
       return;
     }
     const workspace = context?.workspaces?.[0];
+    const receiptArtifact = context?.executionReceipt?.artifacts[0];
+    if (receiptArtifact && !toolResult) {
+      yield {
+        type: "workspace-tool",
+        toolCallId: `fake-receipt-read-${context.executionKey}`,
+        tool: { kind: "workspace-read", workspaceId: receiptArtifact.workspaceId, path: receiptArtifact.path, maxBytes: 65_536 },
+      };
+      yield { type: "completed", finishReason: "tool_calls" };
+      return;
+    }
     if (workspace && ["list", "read", "search"].includes(fakeWorkspaceKind ?? "")) {
       const path = process.env.AEVOREN_BOT_FAKE_WORKSPACE_PATH ?? "";
       const tool: WorkspaceToolRequest = fakeWorkspaceKind === "read"
@@ -420,11 +431,25 @@ function finalizeToolCalls(
   const networkNames = new Set(Object.values(NETWORK_TOOL_NAMES));
   return calls.map((call) => {
     if (workspaceNames.has(call.name as (typeof WORKSPACE_TOOL_NAMES)[keyof typeof WORKSPACE_TOOL_NAMES])) {
-      if (!allowedWorkspaceIds || !validToolCallId(call.id) || !call.arguments) {
-        throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
+      if (!validToolCallId(call.id)) throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
+      const rejectWorkspace = (code: string, safeMessage: string): ModelEvent => ({
+        type: "tool-rejection",
+        toolCallId: call.id,
+        providerToolName: call.name,
+        arguments: call.arguments,
+        code,
+        safeMessage,
+      });
+      if (!allowedWorkspaceIds) {
+        return rejectWorkspace("WORKSPACE_TOOL_UNAVAILABLE", "当前 Runtime 没有可用工作区。请停止文件操作并说明缺少工作区授权。");
+      }
+      if (!call.arguments) {
+        return rejectWorkspace("WORKSPACE_TOOL_ARGUMENTS_INVALID", "工作区工具缺少参数。请按照函数 Schema 补齐参数后重试。");
       }
       let parsed: unknown;
-      try { parsed = JSON.parse(call.arguments); } catch { throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID"); }
+      try { parsed = JSON.parse(call.arguments); } catch {
+        return rejectWorkspace("WORKSPACE_TOOL_ARGUMENTS_INVALID", "工作区工具参数不是有效 JSON。请重新生成一次完整参数。");
+      }
       const kind = (Object.entries(WORKSPACE_TOOL_NAMES).find(([, name]) => name === call.name)?.[0] ?? "") as WorkspaceToolRequest["kind"];
       const normalizedParsed = parsed && typeof parsed === "object" && !Array.isArray(parsed)
         ? { ...(parsed as Record<string, unknown>) }
@@ -448,7 +473,7 @@ function finalizeToolCalls(
           typeof normalizedRecord.expectedSha256 !== "string" ||
           !/^[a-f0-9]{64}$/iu.test(normalizedRecord.expectedSha256)
         ) {
-          throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
+          return rejectWorkspace("WORKSPACE_TOOL_ARGUMENTS_INVALID", "expectedSha256 仅支持 64 位 SHA-256；请修正或移除该参数后重试。");
         }
         delete normalizedRecord.expectedSha256;
       }
@@ -461,7 +486,12 @@ function finalizeToolCalls(
           argumentKeys: parsedKeys,
           issuePaths: tool.success ? ["workspaceId"] : tool.error.issues.map((issue) => issue.path.join(".")),
         });
-        throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
+        return rejectWorkspace(
+          tool.success ? "WORKSPACE_SCOPE_INVALID" : "WORKSPACE_TOOL_ARGUMENTS_INVALID",
+          tool.success
+            ? "目标工作区不在当前 Runtime 的授权范围内。请从函数定义提供的 workspaceId 中选择后重试。"
+            : "工作区工具参数不符合函数 Schema。请仅使用声明的字段、类型和边界后重试。",
+        );
       }
       return { type: "workspace-tool" as const, toolCallId: call.id, tool: tool.data, providerToolName: call.name };
     }
@@ -687,7 +717,7 @@ export function structuredModelToolDefinitions(context?: ModelRunContext): Struc
       },
     }, {
       name: WORKSPACE_TOOL_NAMES["workspace-read"],
-      description: "Read bounded UTF-8 text from a file inside an explicitly registered workspace. User approval is required.",
+      description: "Read bounded UTF-8 text from a file inside an explicitly registered workspace. Complete CSV reads also return deterministic rowCount and numeric column sums; use those exact values. User approval is required.",
       inputSchema: {
         type: "object", additionalProperties: false,
         properties: { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id) }, path: { type: "string", minLength: 1, maxLength: 1_024 }, maxBytes: { type: "integer", minimum: 1, maximum: 1_048_576 } },
@@ -985,23 +1015,6 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       this.timeouts.connectMs,
     );
     let response: Response;
-    const roomRoster = context?.roomId && context.roomRoster?.length ? context.roomRoster : undefined;
-    const handoffTargets = roomRoster?.filter((member) => member.id !== context?.executorBotId);
-    const handoffTargetAliases = (() => {
-      if (!handoffTargets) return undefined;
-      const candidates = handoffTargets.flatMap((member) => [
-        member.name.trim(),
-        member.label.trim(),
-        `${member.name.trim()}（${member.label.trim()}）`,
-        `${member.name.trim()} (${member.label.trim()})`,
-        `${member.name.trim()} Bot`,
-      ]
-        .filter(Boolean)
-        .map((alias) => ({ alias, id: member.id })));
-      const counts = new Map<string, number>();
-      candidates.forEach(({ alias }) => counts.set(alias, (counts.get(alias) ?? 0) + 1));
-      return new Map(candidates.filter(({ alias }) => counts.get(alias) === 1).map(({ alias, id }) => [alias, id]));
-    })();
     const workspaces = context?.workspaces?.length ? context.workspaces : undefined;
     const networkTools = context?.networkTools ? [
       {
@@ -1093,30 +1106,6 @@ export class OpenAiCompatibleProvider implements ModelProvider {
         },
       },
     }] : [];
-    const handoffTool = handoffTargets?.length ? {
-      type: "function",
-      function: {
-        name: HANDOFF_TOOL_NAME,
-        description: `Transfer a focused subtask to another agent in this room. Use the exact UUID after '=': ${handoffTargets.map((member) => `${member.name}=${member.id}`).join("; ")}.`,
-        parameters: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            toAgentId: { type: "string", enum: handoffTargets.map((member) => member.id) },
-            task: { type: "string", minLength: 1, maxLength: 20_000 },
-            message: { type: "string", minLength: 1, maxLength: 20_000, description: "Compatibility alias for task." },
-            summary: { type: "string", minLength: 1, maxLength: 20_000, description: "Optional task summary." },
-            content: { type: "string", minLength: 1, maxLength: 20_000, description: "Compatibility alias for task." },
-            fromAgentId: { type: "string", maxLength: 200, description: "Compatibility metadata only. The runtime always records the real sender." },
-            targetRole: { type: "string", maxLength: 200, description: "Optional display-only target label. Routing always uses toAgentId." },
-            ...(workspaces ? { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id), description: "Optional current Workspace context. It does not affect routing." } } : {}),
-            contextRefs: { type: "array", maxItems: 0, items: { type: "string" }, description: "Must be an empty array; transcript entry IDs are not exposed to the model." },
-            visibility: { type: "string", enum: ["room"] },
-          },
-          required: ["toAgentId"],
-        },
-      },
-    } : undefined;
     const workspaceTools = workspaces ? [
       {
         type: "function",
@@ -1134,7 +1123,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
         type: "function",
         function: {
           name: WORKSPACE_TOOL_NAMES["workspace-read"],
-          description: "Read bounded UTF-8 text from a file inside an explicitly registered workspace. User approval is required.",
+          description: "Read bounded UTF-8 text from a file inside an explicitly registered workspace. Complete CSV reads also return deterministic rowCount and numeric column sums; use those exact values. User approval is required.",
           parameters: {
             type: "object", additionalProperties: false,
             properties: { workspaceId: { type: "string", enum: workspaces.map(({ id }) => id) }, path: { type: "string", minLength: 1, maxLength: 1_024 }, maxBytes: { type: "integer", minimum: 1, maximum: 1_048_576 } },
@@ -1181,11 +1170,18 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       },
       ...messages,
     ] : messages;
-    const tools = [...(handoffTool ? [handoffTool] : []), ...workspaceTools, ...networkTools, ...mcpTools, ...deviceTools, ...computationTools];
+    const tools = [...workspaceTools, ...networkTools, ...mcpTools, ...deviceTools, ...computationTools];
     const availableToolNames = new Set(tools.map((tool) => tool.function.name));
+    const rejectedToolCallIds = new Set(messages.flatMap((message) => {
+      if (message.role !== "tool") return [];
+      try {
+        const parsed = JSON.parse(message.content) as { ok?: unknown };
+        return parsed.ok === false ? [message.tool_call_id] : [];
+      } catch { return []; }
+    }));
     const completedToolNames = new Set(messages.flatMap((message) =>
       message.role === "assistant" && "tool_calls" in message
-        ? message.tool_calls.map((call) => call.function.name)
+        ? message.tool_calls.filter((call) => !rejectedToolCallIds.has(call.id)).map((call) => call.function.name)
         : [],
     ));
     const remainingRequiredTools = (context?.requiredToolNames ?? [])
@@ -1228,12 +1224,12 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       response.body,
       signal,
       this.timeouts,
-      handoffTargets ? new Set(handoffTargets.map((member) => member.id)) : undefined,
+      undefined,
       workspaces ? new Set(workspaces.map(({ id }) => id)) : undefined,
       networkTools.length > 0,
       context?.mcpTools ? new Map(context.mcpTools.filter((tool) => tool.readOnly).map((tool) => [tool.namespacedName, tool])) : undefined,
       deviceTools.length > 0,
-      handoffTargetAliases,
+      undefined,
     );
   }
 

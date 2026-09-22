@@ -48,6 +48,8 @@ export const IPC = {
   roomsList: "rooms:list",
   roomsCreate: "rooms:create",
   roomsGet: "rooms:get",
+  roomsGetBriefApproval: "rooms:get-brief-approval",
+  roomsApproveBrief: "rooms:approve-brief",
   roomsUpdate: "rooms:update",
   roomsArchive: "rooms:archive",
   roomsSetPinned: "rooms:set-pinned",

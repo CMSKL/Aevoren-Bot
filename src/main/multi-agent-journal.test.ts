@@ -58,6 +58,53 @@ function startSourceTurn(value: AppRepository, runId: string, turnId: string): v
   if (turn.state === "queued") value.transitionAgentTurn(turn.id, "running", { promptCutoffSeq: turn.inputSeq });
 }
 
+function receiptRuntime(value: AppRepository, turnId: string) {
+  const turn = value.getRoomTurn(turnId);
+  const run = value.getRoomRun(turn.runId);
+  startSourceTurn(value, run.id, turn.id);
+  const runtime = value.createRuntimeRun(run.clientNonce, "fake", {
+    schemaVersion: 4,
+    botId: turn.agentId,
+    profileVersion: value.getBot(turn.agentId).version,
+    sessionId: run.sessionId,
+    generation: turn.inputGeneration,
+    inputSeq: turn.inputSeq,
+    promptCutoffSeq: turn.inputSeq,
+    roomId: run.roomId,
+    roomMembershipVersion: run.membershipVersion,
+    executorBotId: turn.agentId,
+    sourceTurnId: turn.id,
+    blocks: [],
+    digest: "journal-only-receipt-fixture",
+  }, { executorBotId: turn.agentId, executionKey: `${run.id}:${turn.logicalTurnId}` });
+  value.attachRoomTurnRuntime(turn.id, runtime.id);
+  value.transitionRuntimeRun(runtime.id, "dispatching");
+  value.transitionRuntimeRun(runtime.id, "running", { providerRequestId: "journal-only" });
+  const assistant = value.createAssistantEntry(run.sessionId, {
+    speakerBotId: turn.agentId, speakerNameSnapshot: turn.memberNameSnapshot, sourceTurnId: turn.id,
+  });
+  value.attachAssistantEntry(runtime.id, assistant.id);
+  return {
+    runtime,
+    write(workspaceId: string, path: string, content: string) {
+      const prepared = value.prepareToolInvocation({
+        runtimeRunId: runtime.id, toolCallId: randomUUID(), idempotencyKey: randomUUID(),
+        tool: { kind: "workspace-write", workspaceId, path, content },
+      });
+      value.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
+      value.transitionToolInvocation(prepared.invocation.id, "dispatching");
+      value.transitionToolInvocation(prepared.invocation.id, "running");
+      const sha256 = createHash("sha256").update(content, "utf8").digest("hex");
+      return value.completeToolInvocation(prepared.invocation.id, sha256, { sha256, bytes: Buffer.byteLength(content, "utf8"), path });
+    },
+    complete() {
+      value.updateTranscriptEntry(assistant.id, "journal fixture complete", "completed");
+      value.transitionRuntimeRun(runtime.id, "completed");
+      value.transitionAgentTurn(turn.id, "completed", { outcome: { kind: "sent" } });
+    },
+  };
+}
+
 function handoffInput(
   runId: string,
   fromTurnId: string,
@@ -169,6 +216,10 @@ function logicalV5Hash(database: DatabaseSync): string {
         ? "id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route, input_generation, input_seq, prompt_cutoff_seq, assistant_entry_id, provider_request_id, prompt_manifest_json, version, last_error_code, created_at, accepted_at, last_activity_at, finished_at"
       : table === "rooms"
         ? "id, name, description, version, membership_version, archived_at, created_at, updated_at"
+      : table === "room_batches"
+        ? "id, room_id, session_id, client_nonce, trigger_message_id, target_digest, routing_mode, routing_reason, state, membership_version, max_turns, max_hops, max_targets_per_turn, deadline_at, is_winding_down, version, created_at, updated_at, finished_at"
+      : table === "room_turns"
+        ? "id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce, hop, origin, input_generation, input_seq, position, attempt_no, version, state, outcome_json, runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at"
         : "*";
     const where = table === "app_settings" ? " WHERE key NOT LIKE 'provider.%'" : "";
     return [table, database.prepare(`SELECT ${columns} FROM ${table}${where} ORDER BY rowid`).all()];
@@ -487,6 +538,239 @@ describe("multi-agent RoomRun journal", () => {
     expect(() => value.createHandoff({ ...input, task: "Other", toAgentId: fixture.bots[2]!.id })).toThrowError(
       expect.objectContaining({ code: "ROOM_MEMBER_INVALID" }),
     );
+  });
+
+  it("persists a digest-verified execution receipt from one completed Runtime for its queued successor", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-execution-receipt-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const value = repository(filename);
+    const fixture = createRunFixture(value);
+    const sourceTurn = fixture.turns[0]!;
+    startSourceTurn(value, fixture.run.id, sourceTurn.id);
+    const manifest: PromptManifest = {
+      schemaVersion: 4,
+      botId: fixture.bots[0]!.id,
+      profileVersion: fixture.bots[0]!.version,
+      sessionId: fixture.detail.session.id,
+      generation: sourceTurn.inputGeneration,
+      inputSeq: sourceTurn.inputSeq,
+      promptCutoffSeq: sourceTurn.inputSeq,
+      roomId: fixture.detail.room.id,
+      roomMembershipVersion: fixture.detail.room.membershipVersion,
+      executorBotId: fixture.bots[0]!.id,
+      sourceTurnId: sourceTurn.id,
+      blocks: [],
+      digest: "receipt-source",
+    };
+    let runtime = value.createRuntimeRun(fixture.input.clientNonce, "fake", manifest, {
+      executorBotId: fixture.bots[0]!.id,
+      executionKey: `${fixture.run.id}:${sourceTurn.logicalTurnId}`,
+    });
+    value.attachRoomTurnRuntime(sourceTurn.id, runtime.id);
+    runtime = value.transitionRuntimeRun(runtime.id, "dispatching");
+    runtime = value.transitionRuntimeRun(runtime.id, "running", { providerRequestId: "receipt-source" });
+    const assistant = value.createAssistantEntry(fixture.detail.session.id, {
+      speakerBotId: fixture.bots[0]!.id,
+      speakerNameSnapshot: fixture.bots[0]!.name,
+      sourceTurnId: sourceTurn.id,
+    });
+    runtime = value.attachAssistantEntry(runtime.id, assistant.id);
+    const handoff = value.createHandoff({
+      runId: fixture.run.id,
+      fromTurnId: sourceTurn.id,
+      toAgentId: fixture.bots[1]!.id,
+      task: "读取上游真实工件后继续",
+      contextRefs: [],
+      visibility: "room",
+      targetTurnNonce: "receipt-target",
+      inputGeneration: sourceTurn.inputGeneration,
+      inputSeq: sourceTurn.inputSeq,
+    });
+    const workspace = value.registerWorkspaceRoot(join(directory, "workspace"), "receipt-workspace").workspace;
+    const content = "# verified brief";
+    const prepared = value.prepareToolInvocation({
+      runtimeRunId: runtime.id,
+      toolCallId: "write-verified-artifact",
+      idempotencyKey: randomUUID(),
+      tool: { kind: "workspace-write", workspaceId: workspace.id, path: "02-briefs/verified.md", content },
+    });
+    value.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
+    value.transitionToolInvocation(prepared.invocation.id, "dispatching");
+    value.transitionToolInvocation(prepared.invocation.id, "running");
+    const sha256 = createHash("sha256").update(content).digest("hex");
+    value.completeToolInvocation(prepared.invocation.id, sha256, { path: "02-briefs/verified.md", sha256, bytes: content.length });
+    value.updateTranscriptEntry(assistant.id, "Brief 已写入。", "completed");
+    value.transitionRuntimeRun(runtime.id, "completed");
+    value.transitionAgentTurn(sourceTurn.id, "completed", { outcome: { kind: "sent" } });
+
+    const receipt = value.createExecutionEvidenceReceipt(handoff.targetTurn.id, runtime.id);
+    expect(receipt).toMatchObject({
+      schemaVersion: 1,
+      targetTurnId: handoff.targetTurn.id,
+      sourceRuntimeRunId: runtime.id,
+      sourceTurnId: sourceTurn.id,
+      sourceAgentId: fixture.bots[0]!.id,
+      artifacts: [{ workspaceId: workspace.id, path: "02-briefs/verified.md", sha256 }],
+      tools: [{ kind: "workspace-write", targetPath: "02-briefs/verified.md" }],
+      digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    expect(value.createExecutionEvidenceReceipt(handoff.targetTurn.id, runtime.id)).toEqual(receipt);
+    value.close();
+    repositories.pop();
+    const reopened = repository(filename);
+    expect(reopened.getExecutionEvidenceReceipt(handoff.targetTurn.id)).toEqual(receipt);
+    expect((reopened.getExecutionEvidenceReceipt(handoff.targetTurn.id)?.tools ?? []).every((tool) => tool.resultDigest.length === 64)).toBe(true);
+  });
+
+  it("commits Brief approval evidence atomically, rejects reused approvals, and binds the exact source invocation", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-approval-atomic-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const value = repository(filename);
+    const fixture = createRunFixture(value);
+    const source = receiptRuntime(value, fixture.turns[0]!.id);
+    const workspace = value.registerWorkspaceRoot(join(directory, "workspace"), "approval").workspace;
+    const brief = source.write(workspace.id, "02-briefs/options.md", "# 候选 A\n真实输入字段");
+    source.complete();
+    value.finishRoomBatchFromTurns(fixture.run.id);
+    const input = prepareRunInput(value, fixture.detail, [fixture.bots[1]!.id]);
+    const approval = {
+      sourceRuntimeRunId: source.runtime.id, briefInvocationId: brief.id,
+      sha256: brief.resultMetadata!.sha256 as string, candidate: "A" as const,
+    };
+    expect(value.isBriefApproved(fixture.detail.session.id, brief.id, approval.sha256)).toBe(false);
+    const audit = new DatabaseSync(filename);
+    try {
+      audit.exec(`CREATE TRIGGER reject_receipt BEFORE UPDATE OF execution_receipt_json ON room_turns
+        BEGIN SELECT RAISE(ABORT, 'injected receipt persistence failure'); END;`);
+      expect(() => value.createApprovedBriefRun(input, approval)).toThrow("injected receipt persistence failure");
+      expect(value.getSend(input.clientNonce)).toBeNull();
+      expect(value.getRoomBatchByNonce(input.clientNonce)).toBeNull();
+      expect(value.listRoomBatches(fixture.detail.room.id)).toHaveLength(1);
+      expect(value.listTranscript(fixture.detail.session.id)).toHaveLength(2);
+      audit.exec("DROP TRIGGER reject_receipt");
+
+      const approved = value.createApprovedBriefRun(input, approval);
+      expect(value.isBriefApproved(fixture.detail.session.id, brief.id, approval.sha256)).toBe(true);
+      expect(value.isBriefApproved(fixture.detail.session.id, brief.id, "0".repeat(64))).toBe(false);
+      const receipt = value.getExecutionEvidenceReceipt(approved.turns[0]!.id)!;
+      expect(receipt).toMatchObject({
+        roomId: fixture.detail.room.id, generation: 1,
+        approvedBrief: { candidate: "A", briefInvocationId: brief.id, sha256: approval.sha256, approvalEntryId: approved.run.triggerMessageId },
+        taskRequirements: { sourceEntryId: fixture.run.triggerMessageId, text: fixture.input.text },
+      });
+      expect(value.createApprovedBriefRun(input, approval).disposition).toBe("duplicate");
+      expect(value.createApprovedBriefRun({ ...input, deadlineAt: new Date(Date.now() + 120_000).toISOString() }, approval).disposition).toBe("duplicate");
+      expect(() => value.createApprovedBriefRun(input, { ...approval, candidate: "B" })).toThrowError(expect.objectContaining({ code: "HANDOFF_CONTEXT_INVALID" }));
+      expect(() => value.createApprovedBriefRun({ ...input, clientNonce: randomUUID() }, approval)).toThrowError(expect.objectContaining({ code: "HANDOFF_CONTEXT_INVALID" }));
+      expect(value.listRoomBatches(fixture.detail.room.id)).toHaveLength(2);
+      expect(value.getExecutionEvidenceReceipt(approved.turns[0]!.id)).toEqual(receipt);
+    } finally {
+      audit.close();
+    }
+  });
+
+  it("preserves original task and independently verifiable tool provenance through multiple Runtime handoffs", () => {
+    const value = repository();
+    const fixture = createRunFixture(value);
+    const workspace = value.registerWorkspaceRoot(join(tmpdir(), randomUUID()), "chain").workspace;
+    const first = receiptRuntime(value, fixture.turns[0]!.id);
+    const firstArtifact = first.write(workspace.id, "01-inbox/research.md", "# Source evidence");
+    const next = value.createHandoff({
+      ...handoffInput(fixture.run.id, fixture.turns[0]!.id, fixture.bots[1]!.id, fixture.run.triggerMessageId),
+      task: "Create Brief from research evidence", contextRefs: [],
+    });
+    first.complete();
+    value.createExecutionEvidenceReceipt(next.targetTurn.id, first.runtime.id);
+    const second = receiptRuntime(value, next.targetTurn.id);
+    const secondArtifact = second.write(workspace.id, "02-briefs/options.md", "# Brief options");
+    const final = value.createHandoff({
+      ...handoffInput(fixture.run.id, next.targetTurn.id, fixture.bots[0]!.id, fixture.run.triggerMessageId),
+      task: "Validate the generated Brief", contextRefs: [],
+    });
+    second.complete();
+    const receipt = value.createExecutionEvidenceReceipt(final.targetTurn.id, second.runtime.id);
+    expect(receipt.tools.map((tool) => [tool.invocationId, tool.sourceRuntimeRunId])).toEqual([
+      [firstArtifact.id, first.runtime.id], [secondArtifact.id, second.runtime.id],
+    ]);
+    expect(receipt.artifacts.map((artifact) => artifact.path)).toEqual(["01-inbox/research.md", "02-briefs/options.md"]);
+    expect(receipt.taskRequirements).toEqual({ sourceEntryId: fixture.run.triggerMessageId, text: fixture.input.text });
+    expect(value.getExecutionEvidenceReceipt(final.targetTurn.id)).toEqual(receipt);
+  });
+
+  it("rejects copied or recomputed receipts and receipts from a previous session generation", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-receipt-tamper-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    const value = repository(filename);
+    const fixture = createRunFixture(value);
+    const source = receiptRuntime(value, fixture.turns[0]!.id);
+    const workspace = value.registerWorkspaceRoot(join(directory, "workspace"), "scope").workspace;
+    source.write(workspace.id, "01-inbox/source.md", "# Evidence");
+    const next = value.createHandoff({
+      ...handoffInput(fixture.run.id, fixture.turns[0]!.id, fixture.bots[1]!.id, fixture.run.triggerMessageId),
+      contextRefs: [],
+    });
+    source.complete();
+    const receipt = value.createExecutionEvidenceReceipt(next.targetTurn.id, source.runtime.id);
+    const audit = new DatabaseSync(filename);
+    const update = (data: typeof receipt): void => {
+      const { digest: originalDigest, ...unsigned } = data;
+      expect(originalDigest).toMatch(/^[a-f0-9]{64}$/u);
+      const digest = createHash("sha256").update(JSON.stringify(unsigned), "utf8").digest("hex");
+      audit.prepare("UPDATE room_turns SET execution_receipt_json = ? WHERE id = ?")
+        .run(JSON.stringify({ ...unsigned, digest }), next.targetTurn.id);
+    };
+    try {
+      update({ ...receipt, tools: receipt.tools.map((tool) => ({ ...tool, targetPath: "forged.md" })) });
+      expect(() => value.getExecutionEvidenceReceipt(next.targetTurn.id)).toThrowError(expect.objectContaining({ code: "HANDOFF_CONTEXT_INVALID" }));
+      update({ ...receipt, targetTurnId: fixture.turns[0]!.id });
+      expect(() => value.getExecutionEvidenceReceipt(next.targetTurn.id)).toThrowError(expect.objectContaining({ code: "HANDOFF_CONTEXT_INVALID" }));
+      update(receipt);
+      const originalMetadata = JSON.stringify(receipt.tools[0]!.resultMetadata);
+      audit.prepare("UPDATE tool_invocations SET result_metadata_json = ? WHERE id = ?")
+        .run(JSON.stringify({ ...receipt.tools[0]!.resultMetadata, bytes: 999 }), receipt.tools[0]!.invocationId);
+      expect(() => value.getExecutionEvidenceReceipt(next.targetTurn.id)).toThrowError(expect.objectContaining({ code: "HANDOFF_CONTEXT_INVALID" }));
+      audit.prepare("UPDATE tool_invocations SET result_metadata_json = ? WHERE id = ?")
+        .run(originalMetadata, receipt.tools[0]!.invocationId);
+      audit.prepare("UPDATE sessions SET generation = generation + 1 WHERE id = ?").run(fixture.detail.session.id);
+      expect(() => value.getExecutionEvidenceReceipt(next.targetTurn.id)).toThrowError(expect.objectContaining({ code: "HANDOFF_CONTEXT_INVALID" }));
+      expect(value.findLatestCompletedWorkspaceArtifact(fixture.detail.session.id, "01-inbox/")).toBeNull();
+    } finally {
+      audit.close();
+    }
+  });
+
+  it("does not approve an older Brief when a newer write failed or its Runtime has not completed", () => {
+    const value = repository();
+    const fixture = createRunFixture(value);
+    const source = receiptRuntime(value, fixture.turns[0]!.id);
+    const workspace = value.registerWorkspaceRoot(join(tmpdir(), randomUUID()), "latest").workspace;
+    const oldBrief = source.write(workspace.id, "02-briefs/first.md", "# first");
+    source.complete();
+    value.finishRoomBatchFromTurns(fixture.run.id);
+    expect(value.findLatestCompletedWorkspaceArtifact(fixture.detail.session.id, "02-briefs/")).not.toBeNull();
+    const next = value.createRoomRunWithInitialTurns(prepareRunInput(value, fixture.detail, [fixture.bots[0]!.id]));
+    const newer = receiptRuntime(value, next.turns[0]!.id);
+    const invocation = value.prepareToolInvocation({
+      runtimeRunId: newer.runtime.id, toolCallId: randomUUID(), idempotencyKey: randomUUID(),
+      tool: { kind: "workspace-write", workspaceId: workspace.id, path: "02-briefs/newer.md", content: "newer" },
+    });
+    expect(value.findLatestCompletedWorkspaceArtifact(fixture.detail.session.id, "02-briefs/")).toBeNull();
+    value.resolveToolApproval(invocation.approval.id, invocation.approval.version, "allow-once");
+    value.transitionToolInvocation(invocation.invocation.id, "dispatching");
+    value.transitionToolInvocation(invocation.invocation.id, "running");
+    value.failToolInvocation(invocation.invocation.id, "WORKSPACE_WRITE_FAILED");
+    newer.complete();
+    value.finishRoomBatchFromTurns(next.run.id);
+    expect(value.findLatestCompletedWorkspaceArtifact(fixture.detail.session.id, "02-briefs/")).toBeNull();
+    const approvalInput = prepareRunInput(value, fixture.detail, [fixture.bots[1]!.id]);
+    expect(() => value.createApprovedBriefRun(approvalInput, {
+      sourceRuntimeRunId: source.runtime.id, briefInvocationId: oldBrief.id,
+      sha256: oldBrief.resultMetadata!.sha256 as string, candidate: "A",
+    })).toThrowError(expect.objectContaining({ code: "HANDOFF_CONTEXT_INVALID" }));
+    expect(value.getSend(approvalInput.clientNonce)).toBeNull();
   });
 
   it("journals a Handoff rejection idempotently without storing provider task or raw tool-call content", () => {

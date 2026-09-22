@@ -60,7 +60,7 @@ function createV6Fixture(): string {
     INSERT INTO room_batches VALUES(
       '${RUN_ID}', '${ROOM_ID}', '${SESSION_ID}', 'nonce', 'entry', 'targets', 'automatic',
       'SECRET_ROUTING_REASON', 'completed', 1, 8, 3, 2, '2026-01-02T00:00:00.000Z', 0, 1,
-      '${timestamp}', '${timestamp}', '2026-01-01T00:00:06.000Z'
+      '${timestamp}', '${timestamp}', '2026-01-01T00:00:06.000Z', 1
     );
     INSERT INTO runtime_runs VALUES(
       'runtime-a', '${SESSION_ID}', 'nonce', '${RUN_ID}:turn-a', '${BOT_A}', 1, 'completed', 'openai-compatible',
@@ -75,12 +75,12 @@ function createV6Fixture(): string {
     INSERT INTO room_turns VALUES(
       'turn-a', '${RUN_ID}', '${BOT_A}', 'SECRET_BOT_PROFILE', 'turn-a', NULL, 'turn-a-nonce',
       0, 'initial', 1, 1, 0, 1, 1, 'completed', '{"kind":"sent"}', 'runtime-a', 1, NULL,
-      '${timestamp}', '2026-01-01T00:00:03.000Z', '2026-01-01T00:00:03.000Z'
+      '${timestamp}', '2026-01-01T00:00:03.000Z', '2026-01-01T00:00:03.000Z', NULL
     );
     INSERT INTO room_turns VALUES(
       'turn-b', '${RUN_ID}', '${BOT_B}', 'Agent B', 'turn-b', 'turn-a', 'turn-b-nonce',
       1, 'handoff', 1, 1, 1, 1, 1, 'failed', '{"kind":"error"}', 'runtime-b', 1, 'PROVIDER_ERROR',
-      '${timestamp}', '2026-01-01T00:00:05.000Z', '2026-01-01T00:00:05.000Z'
+      '${timestamp}', '2026-01-01T00:00:05.000Z', '2026-01-01T00:00:05.000Z', NULL
     );
     INSERT INTO agent_handoffs VALUES(
       'handoff', '${RUN_ID}', 'turn-a', 'turn-a', '${BOT_B}', 'turn-b', 'SECRET_HANDOFF_TASK',

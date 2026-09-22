@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.6] - 2026-09-22
+
+### Added
+
+- A task-level artifact shelf that collects Tool Journal-backed Workspace outputs and keeps their verified path, type, size, and reveal action available from the conversation header.
+- Tamper-evident cross-Runtime execution receipts that carry the approved Brief, original task, verified tool results, artifact paths and SHA-256 digests into each automatic content-team handoff.
+- A real-Provider content-team acceptance flow covering research, planning, human Brief approval, writing, fact review and CSV-backed analytics without manual routing or file handoff.
+
+### Changed
+
+- Consecutive successful tool calls now collapse into one reversible activity run, while active, approval-gated, and failed steps remain individually visible.
+- Room response mode now lives in the conversation header; structured `@Bot` mentions remain the per-message routing override.
+- Workspace outputs render as compact artifact cards, and manual reply export is presented separately instead of appearing as an unsaved artifact.
+- Completed Room runs and normal Agent handoffs use compact receipts so the terminal answer, required decision, and saved outputs remain the visual focus.
+- Content-team continuation is controlled by the Host from successful journalled artifacts; model text and provider-emitted role mentions cannot silently start another Agent.
+
+### Fixed
+
+- Invalid but recoverable Workspace tool arguments now return a corrective tool result to the model instead of discarding other valid calls or failing the whole Runtime.
+- Brief approval recognizes annotated headings, vertical separators, emphasized fields and provider-generated title annotations while remaining bound to the exact saved file digest.
+- Text-length enforcement no longer mistakes numeric UUID fragments for requested character ranges.
+- CSV reports reject mismatched Host metrics and unrequested mental-arithmetic conversions, percentages or elapsed-time estimates before the file is written.
+
 ## [0.3.0-beta.5] - 2026-09-22
 
 ### Added
@@ -66,6 +89,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - OAuth tokens, client credentials, Provider keys, and MCP Headers remain encrypted behind Electron `safeStorage`.
 - Background Memory capture considers only the current human message and blocks likely credentials before persistence.
 
+[0.3.0-beta.6]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.5...v0.3.0-beta.6
 [0.3.0-beta.5]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.4...v0.3.0-beta.5
 [0.3.0-beta.4]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.2...v0.3.0-beta.3

@@ -65,14 +65,12 @@ test("runs and restores a visible A-to-B fake handoff without responsive overflo
     launched.page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     await openRoom(launched.page, seeded.roomName);
     const input = launched.page.getByLabel("消息");
-    await input.fill("@策划");
-    await expect(launched.page.getByRole("listbox", { name: "提及 Bot" })).toBeVisible();
-    await input.press("Enter");
-    await input.fill("先规划，再转交评审。");
+    await input.fill("请由策划角色先规划，再自动转交评审角色。");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
 
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
     await expect(launched.page.locator("article.message-assistant .message-bubble")).toHaveCount(1);
+    await expect(launched.page.locator("article.message-user").last()).toContainText("自动选择");
     await expect(launched.page.locator("article.message-user").last().locator(".message-route-chip")).toHaveText(["@协作员 · 策划"]);
     const handoff = launched.page.getByTestId("room-handoff-list");
     await expect(handoff).toContainText(seeded.fromName);

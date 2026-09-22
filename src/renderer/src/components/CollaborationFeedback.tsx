@@ -1,10 +1,11 @@
-import { memo, useState } from "react";
-import type { ArtifactSaveResult, ToolInvocation } from "@shared/contracts";
+import { memo, useEffect, useId, useMemo, useState } from "react";
+import type { ArtifactSaveResult, BriefApprovalView, ToolInvocation } from "@shared/contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { briefCandidateOptions, type BriefCandidate } from "../brief-approval-state";
+import { conversationArtifacts, type ConversationArtifact } from "../conversation-view-model";
 
 export type WorkflowAction =
-  | { kind: "approve"; candidate: "A" | "B" | "C" }
+  | { kind: "approve"; candidate: "A" | "B" | "C"; sourceRuntimeRunId: string; briefInvocationId: string; sha256: string }
   | { kind: "return" }
   | { kind: "abandon" };
 
@@ -15,53 +16,115 @@ export type ArtifactSaveState = {
 };
 
 export const BriefApprovalCard = memo(function BriefApprovalCard({
-  body,
+  roomId,
+  sourceRuntimeRunId,
+  briefInvocationId,
   busy,
   onAction,
 }: {
-  body: string;
+  roomId: string;
+  sourceRuntimeRunId: string;
+  briefInvocationId: string;
   busy: boolean;
-  onAction(action: WorkflowAction): void;
-}): React.JSX.Element {
+  onAction(action: WorkflowAction): Promise<boolean>;
+}): React.JSX.Element | null {
   const [candidate, setCandidate] = useState<BriefCandidate | null>(null);
-  const options = briefCandidateOptions(body);
+  const [request, setRequest] = useState(0);
+  const [view, setView] = useState<{ request: number; data: BriefApprovalView | null } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [actionFailed, setActionFailed] = useState(false);
+  const radioName = useId();
+  const data = view?.request === request ? view.data : null;
+  const loading = view?.request !== request;
+  const options = useMemo(() => data ? briefCandidateOptions(data.content) : [], [data]);
+  const disabled = busy || submitting || submitted;
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.aevorenBot.rooms.getBriefApproval({ roomId, sourceRuntimeRunId }).then((result) => {
+      if (cancelled) return;
+      const verified = result.ok && result.data.sourceRuntimeRunId === sourceRuntimeRunId && result.data.briefInvocationId === briefInvocationId;
+      setView({ request, data: verified ? result.data : null });
+    }).catch(() => {
+      if (!cancelled) setView({ request, data: null });
+    });
+    return () => { cancelled = true; };
+  }, [roomId, sourceRuntimeRunId, briefInvocationId, request]);
+
+  async function submit(action: WorkflowAction): Promise<void> {
+    if (disabled) return;
+    setSubmitting(true);
+    setActionFailed(false);
+    try {
+      const accepted = await onAction(action);
+      setSubmitted(accepted);
+      setActionFailed(!accepted);
+    } catch {
+      setActionFailed(true);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (data?.approved) return null;
+  if (submitted) return <div className="brief-decision-status" role="status">决定已提交，正在更新协作状态。</div>;
   return (
-    <section className="brief-approval-card" aria-label="Brief 审批" data-testid="brief-approval-card">
+    <section className="brief-approval-card" aria-label="Brief 审批" aria-busy={loading || submitting} data-testid="brief-approval-card">
       <header className="brief-approval-heading">
         <span>需要你的决定</span>
         <strong>批准哪个 Brief 候选？</strong>
-        <p>选择后确认，系统才会交给内容主笔继续执行。</p>
+        <p>以下内容来自已保存的 Brief。选择后确认，系统才会交给内容主笔继续执行。</p>
+        {data ? <code className="brief-source-path" title={data.path}>{data.path}</code> : null}
       </header>
+      {loading ? <p className="brief-load-status" role="status">正在核对已保存的 Brief…</p> : !data ? (
+        <div className="brief-load-status" role="alert">
+          <p>暂时无法核对这份 Brief，请重新读取后再批准。</p>
+          <button type="button" className="secondary-button" onClick={() => { setCandidate(null); setRequest((value) => value + 1); }}>重新读取 Brief</button>
+        </div>
+      ) : options.length === 0 ? <p className="brief-load-status" role="status">已读取文件，但未找到包含标题的候选项。请退回补充清晰的候选内容后再批准。</p> : null}
       <div className="brief-candidate-options" role="radiogroup" aria-label="Brief 候选">
         {options.map((option) => (
           <label className={candidate === option.id ? "selected" : ""} key={option.id}>
             <input
               type="radio"
-              name="brief-candidate"
+              name={radioName}
+              aria-label={`候选 ${option.id}：${option.title}`}
               value={option.id}
               checked={candidate === option.id}
-              disabled={busy}
+              disabled={disabled}
               onChange={() => setCandidate(option.id)}
             />
             <span className="brief-option-letter">{option.id}</span>
             <span className="brief-option-copy">
-              <strong>{option.label}</strong>
-              {option.label === `候选 ${option.id}` ? null : <small>候选 {option.id}</small>}
+              <strong>{option.title}</strong>
+              <small>角度：{option.angle ?? "文件未标注"}</small>
+              {candidate === option.id ? (
+                <span className="brief-option-details">
+                  <span><b>证据</b><span>{option.evidence ?? "文件未标注"}</span></span>
+                  <span><b>风险</b><span>{option.risk ?? "文件未标注"}</span></span>
+                  <span><b>推荐</b><span>{option.recommendation ?? "文件未标注推荐理由"}</span></span>
+                </span>
+              ) : null}
             </span>
           </label>
         ))}
       </div>
+      {data ? <details className="brief-source-details"><summary>查看已保存的 Brief 原文</summary><AssistantMarkdown body={data.content} /></details> : null}
+      {actionFailed ? <p className="brief-load-status" role="alert">本次决定未能提交，候选内容仍保留。请重试。</p> : null}
       <footer className="brief-approval-actions">
-        <button type="button" className="text-button brief-abandon" disabled={busy} onClick={() => onAction({ kind: "abandon" })}>放弃本轮</button>
+        <button type="button" className="text-button brief-abandon" disabled={disabled} onClick={() => void submit({ kind: "abandon" })}>放弃本轮</button>
         <div>
-          <button type="button" className="secondary-button" disabled={busy} onClick={() => onAction({ kind: "return" })}>退回补证</button>
+          <button type="button" className="secondary-button" disabled={disabled} onClick={() => void submit({ kind: "return" })}>退回补证</button>
           <button
             type="button"
             className="primary-button"
-            disabled={busy || candidate === null}
-            onClick={() => { if (candidate) onAction({ kind: "approve", candidate }); }}
+            disabled={disabled || !data || !options.some((option) => option.id === candidate)}
+            onClick={() => {
+              if (data && candidate) void submit({ kind: "approve", candidate, sourceRuntimeRunId: data.sourceRuntimeRunId, briefInvocationId: data.briefInvocationId, sha256: data.sha256 });
+            }}
           >
-            {busy ? "正在提交…" : "批准并交给主笔"}
+            {submitting ? "正在提交…" : "批准并交给主笔"}
           </button>
         </div>
       </footer>
@@ -180,28 +243,79 @@ export const ArtifactStatusBar = memo(function ArtifactStatusBar({
   onRevealWorkspace(workspaceId: string, path: string): void;
   onOpenWorkspaces(): void;
 }): React.JSX.Element {
-  const savedWrites = writes.filter((item) => item.toolKind === "workspace-write" && item.state === "succeeded");
+  const artifacts = conversationArtifacts(writes);
+  if (artifacts.length === 0) {
+    return (
+      <div className={`reply-export-action state-${saveState.state}`}>
+        {saveState.state === "saved" && saveState.result ? (
+          <>
+            <span>回复已导出</span>
+            <button type="button" className="text-button" onClick={() => onReveal(saveState.result!.path)}>打开所在位置</button>
+          </>
+        ) : (
+          <button type="button" className="text-button" disabled={saveState.state === "saving"} onClick={onSave}>
+            {saveState.state === "saving" ? "保存中…" : saveState.state === "failed" ? "重试保存为 Markdown" : "保存为 Markdown"}
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
     <section className="artifact-status-bar" aria-label="交付物状态">
-      <header><span aria-hidden="true">▣</span><strong>交付物</strong></header>
-      {savedWrites.map((item) => (
-        <div className="artifact-status-row saved" key={item.id}>
-          <span><i aria-hidden="true">✓</i><strong>已保存</strong><code>{item.targetPath}</code></span>
-          <button type="button" className="text-button" onClick={() => item.workspaceId ? onRevealWorkspace(item.workspaceId, item.targetPath) : onOpenWorkspaces()}>{item.workspaceId ? "打开文件位置" : "查看工作区"}</button>
-        </div>
-      ))}
+      <header><span aria-hidden="true">▣</span><strong>{artifacts.length} 个成果</strong><small>已由工具真实保存</small></header>
+      <div className="artifact-card-list">
+        {artifacts.map((artifact) => (
+          <ArtifactCard
+            artifact={artifact}
+            key={artifact.id}
+            onOpen={() => artifact.invocation.workspaceId
+              ? onRevealWorkspace(artifact.invocation.workspaceId, artifact.invocation.targetPath)
+              : onOpenWorkspaces()}
+          />
+        ))}
+      </div>
       {saveState.state === "saved" && saveState.result ? (
-        <div className="artifact-status-row saved">
-          <span><i aria-hidden="true">✓</i><strong>已导出</strong><code>{saveState.result.path}</code></span>
+        <div className="reply-export-action state-saved">
+          <span>回复已导出</span>
           <button type="button" className="text-button" onClick={() => onReveal(saveState.result!.path)}>打开所在位置</button>
         </div>
       ) : (
-        <div className={`artifact-status-row ${saveState.state}`}>
-          <span><i aria-hidden="true">{saveState.state === "failed" ? "!" : saveState.state === "saving" ? "…" : "○"}</i><strong>{saveState.state === "saving" ? "保存中" : saveState.state === "failed" ? "保存失败" : "未导出"}</strong>{saveState.message ? <small>{saveState.message}</small> : null}</span>
+        <div className={`reply-export-action state-${saveState.state}`}>
+          {saveState.message ? <span>{saveState.message}</span> : <span>需要时可单独导出这条回复</span>}
           <button type="button" className="text-button" disabled={saveState.state === "saving"} onClick={onSave}>{saveState.state === "failed" ? "重试保存" : "保存为 Markdown"}</button>
         </div>
       )}
     </section>
+  );
+});
+
+function formatArtifactBytes(bytes: number | null): string | null {
+  if (bytes === null) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+export const ArtifactCard = memo(function ArtifactCard({
+  artifact,
+  onOpen,
+}: {
+  artifact: ConversationArtifact;
+  onOpen(): void;
+}): React.JSX.Element {
+  const size = formatArtifactBytes(artifact.bytes);
+  return (
+    <article className="artifact-card">
+      <span className="artifact-card-mark" aria-hidden="true">{artifact.extension ?? "FILE"}</span>
+      <span className="artifact-card-copy">
+        <strong>{artifact.name}</strong>
+        <code>{artifact.invocation.targetPath}</code>
+        <small><span className="artifact-state-dot" aria-hidden="true" />已保存{size ? ` · ${size}` : ""}</small>
+      </span>
+      <button type="button" className="secondary-button" aria-label="打开文件位置" onClick={onOpen}>
+        <span className="artifact-open-label">打开文件位置</span>
+        <span className="artifact-open-label-short" aria-hidden="true">打开</span>
+      </button>
+    </article>
   );
 });
 

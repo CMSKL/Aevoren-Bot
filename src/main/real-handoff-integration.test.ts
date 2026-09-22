@@ -22,7 +22,7 @@ function response(events: unknown[]): Response {
 }
 
 describe("real Provider handoff integration", () => {
-  it("routes one parsed A-to-B tool call through the central coordinator without persisting tool payload", async () => {
+  it("routes one A-to-B continuation through the Host without exposing a Handoff tool to either Agent", async () => {
     const repository = new AppRepository(":memory:");
     repositories.push(repository);
     const createdA = repository.createBot();
@@ -46,17 +46,23 @@ describe("real Provider handoff integration", () => {
     const fetchMock = vi.fn().mockImplementation(() => {
       callCount += 1;
       if (callCount === 1) {
-        const argumentsValue = JSON.stringify({
-          toAgentId: botB.id,
-          task: "复核当前方案",
-          contextRefs: [],
-          visibility: "room",
-        });
         return Promise.resolve(response([
-          { choices: [{ index: 0, delta: { content: "A 已完成初稿。" } }] },
-          { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "tool-a-b", type: "function", function: { name: "handoff_to_agent", arguments: argumentsValue } }] }, finish_reason: "tool_calls" }] },
+          { choices: [{ index: 0, delta: { content: "A 已完成初稿，请评审员立即复核当前方案。" }, finish_reason: "stop" }] },
         ]));
       }
+      if (callCount === 2) return Promise.resolve(new Response(JSON.stringify({
+        choices: [{
+          message: {
+            tool_calls: [{
+              type: "function",
+              function: {
+                name: "select_room_continuation",
+                arguments: JSON.stringify({ action: "handoff", toAgentId: botB.id, task: "复核当前方案", reason: "当前结果明确要求评审员立即复核。" }),
+              },
+            }],
+          },
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } }));
       return Promise.resolve(response([
         { choices: [{ index: 0, delta: { content: "B 已完成复核。" }, finish_reason: "stop" }] },
       ]));
@@ -76,7 +82,7 @@ describe("real Provider handoff integration", () => {
     });
     await vi.waitFor(() => expect(repository.getRoomRun(sent.batchId).state).toBe("completed"));
 
-    expect(callCount).toBe(2);
+    expect(callCount).toBe(3);
     expect(repository.listAgentTurns(sent.batchId).map((turn) => [turn.agentId, turn.origin, turn.state])).toEqual([
       [botA.id, "initial", "completed"],
       [botB.id, "handoff", "completed"],
@@ -101,22 +107,23 @@ describe("real Provider handoff integration", () => {
       "version",
     ]);
     const transcript = JSON.stringify(repository.listTranscript(detail.session.id));
-    expect(transcript).not.toContain("tool-a-b");
-    expect(transcript).not.toContain("复核当前方案");
+    expect(transcript).not.toContain("handoff_to_agent");
+    expect(transcript).not.toContain("select_room_continuation");
     const requestBodies = fetchMock.mock.calls.map((call) => JSON.parse((call[1] as RequestInit).body as string));
-    expect(requestBodies).toHaveLength(2);
-    expect(requestBodies.every((body) => body.tools?.length === 1)).toBe(true);
-    expect(JSON.stringify(requestBodies[0]?.tools)).not.toContain("PLAN_SECRET");
-    expect(JSON.stringify(requestBodies[0]?.tools)).not.toContain("REVIEW_SECRET");
-    expect(JSON.stringify(requestBodies[0]?.tools)).not.toContain("OPERATIONS_SECRET");
+    expect(requestBodies).toHaveLength(3);
+    expect(requestBodies[0]).not.toHaveProperty("tools");
+    expect(requestBodies[1]?.tools).toHaveLength(1);
+    expect(requestBodies[1]?.tools?.[0]?.function?.name).toBe("select_room_continuation");
+    expect(requestBodies[2]).not.toHaveProperty("tools");
+    expect(JSON.stringify(requestBodies)).not.toContain("handoff_to_agent");
     const rosterMessage = (requestBodies[0]?.messages as Array<{ role: string; content: string }>).find((message) =>
       message.role === "system" && message.content.includes("UNTRUSTED_ROOM_PEER_DATA")
     );
     const handoffContractMessage = (requestBodies[0]?.messages as Array<{ role: string; content: string }>).find((message) =>
       message.role === "system" && message.content.includes("ROOM_HANDOFF_EXECUTION_CONTRACT")
     );
-    expect(handoffContractMessage?.content).toContain("Only a successful handoff_to_agent function call");
-    expect(handoffContractMessage?.content).toContain("@Agent, HANDOFF, ASSIGN, or next_owner");
+    expect(handoffContractMessage?.content).toContain("Only Aevoren Host");
+    expect(handoffContractMessage?.content).toContain("@Agent, HANDOFF, ASSIGN, next_owner");
     expect(handoffContractMessage?.content).toContain("wait for user approval or input");
     expect(rosterMessage?.content).toContain(`"id":"${botB.id}"`);
     expect(rosterMessage?.content).toContain('"label":"评审角色"');

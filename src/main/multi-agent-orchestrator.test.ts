@@ -121,14 +121,14 @@ function expectRoomHandoffContractMessage(message: ChatMessage, incomingFromAgen
   const parsed = JSON.parse(message.content) as { notice: string; rules: string[]; incomingFromAgentId?: string };
   expect(parsed.notice).toBe("ROOM_HANDOFF_EXECUTION_CONTRACT");
   expect(parsed.rules).toEqual(expect.arrayContaining([
-    expect.stringContaining("Only a successful handoff_to_agent function call"),
-    expect.stringContaining("never starts another agent"),
+    expect.stringContaining("Only Aevoren Host"),
+    expect.stringContaining("descriptive only"),
   ]));
   if (incomingFromAgentId) {
     expect(parsed.incomingFromAgentId).toBe(incomingFromAgentId);
     expect(parsed.rules).toEqual(expect.arrayContaining([
       expect.stringContaining("INCOMING_HANDOFF"),
-      expect.stringContaining("distinct next step"),
+      expect.stringContaining("Host, not the model"),
     ]));
   }
 }
@@ -172,6 +172,37 @@ function errors(roomEvents: ReturnType<typeof vi.fn>): Array<{ code: string; det
 }
 
 describe("M2 bounded Fake multi-Agent orchestrator", () => {
+  it("keeps explicit and everyone routes fixed while automatic orchestration remains a separate mode", async () => {
+    let continuationCalls = 0;
+    const value = harness(({ bots }) => ({
+      async *run(_messages, _signal, context) {
+        yield { type: "started", requestId: randomUUID() } as const;
+        yield { type: "delta", text: `ASSIGN：请 ${bots.find((bot) => bot.id !== context!.executorBotId)!.name} 立即继续。` } as const;
+        yield { type: "completed", finishReason: "stop" } as const;
+      },
+      testConnection: async () => {},
+      async selectRoomContinuation() {
+        continuationCalls += 1;
+        return { action: "complete" as const, reason: "fixed routes do not continue" };
+      },
+    }), 2);
+    const explicit = await value.coordinator.routeAndSend(command(value.detail, value.bots[0]!.id));
+    await waitForBatch(value.repository, explicit.batchId, ["completed"]);
+    const everyoneCommand = command(value.detail, value.bots[0]!.id, "ALL_CONFIRMATION");
+    everyoneCommand.targetBotIds = value.bots.map((bot) => bot.id);
+    everyoneCommand.routingMode = "everyone";
+    const everyone = await value.coordinator.routeAndSend(everyoneCommand);
+    await waitForBatch(value.repository, everyone.batchId, ["completed"]);
+
+    expect(continuationCalls).toBe(0);
+    expect(value.repository.getRoomRun(explicit.batchId).orchestrationEnabled).toBe(false);
+    expect(value.repository.getRoomRun(everyone.batchId).orchestrationEnabled).toBe(false);
+    expect(value.repository.listHandoffs(explicit.batchId)).toEqual([]);
+    expect(value.repository.listHandoffs(everyone.batchId)).toEqual([]);
+    expect(value.repository.listAgentTurns(explicit.batchId)).toHaveLength(1);
+    expect(value.repository.listAgentTurns(everyone.batchId)).toHaveLength(2);
+  });
+
   it("runs only the initially mentioned Agent when no structured Handoff is emitted", async () => {
     const calls: string[] = [];
     const value = harness(() => new ScriptedFakeModelProvider(({ context }) => {
@@ -359,10 +390,13 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     expect(value.repository.listHandoffs(blocked.batchId)).toEqual([]);
     expect(value.repository.listHandoffRejections(blocked.batchId)).toMatchObject([{ errorCode: "HUMAN_APPROVAL_REQUIRED" }]);
 
-    const approved = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id, "APPROVED：选择第一个候选，请转交内容主笔"));
-    await waitForBatch(value.repository, approved.batchId, ["completed"]);
-    expect(value.repository.listHandoffs(approved.batchId)).toMatchObject([{ state: "accepted", toAgentId: value.bots[1]!.id }]);
-    expect(value.repository.listAgentTurns(approved.batchId).map((turn) => turn.memberNameSnapshot)).toEqual(["选题策划师", "内容主笔"]);
+    for (const text of ["APPROVED：选择第一个候选，请转交内容主笔", "并未 APPROVED，请不要批准候选 A", "引用上轮‘批准候选 A’，本轮不批准"]) {
+      const unverified = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id, text));
+      await waitForBatch(value.repository, unverified.batchId, ["completed"]);
+      expect(value.repository.listHandoffs(unverified.batchId)).toEqual([]);
+      expect(value.repository.listHandoffRejections(unverified.batchId)).toMatchObject([{ errorCode: "HUMAN_APPROVAL_REQUIRED" }]);
+      expect(value.repository.listAgentTurns(unverified.batchId).map((turn) => turn.memberNameSnapshot)).toEqual(["选题策划师"]);
+    }
   });
 
   it("rejects a planner acknowledgement Handoff while waiting for approval but permits an explicit evidence RETURN", async () => {
@@ -479,13 +513,17 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     const persistedHandoff = value.repository.listHandoffs(sent.batchId)[0]!;
     expect(persistedHandoff).toMatchObject({ state: "accepted", targetTurnId: turns[1]!.id });
     expect(turns[1]!.nonce).toBe("TOOL_CALL_SECRET");
-    expect(bMessages).toHaveLength(5);
+    expect(bMessages).toHaveLength(6);
     expect(bMessages[0]).toEqual({ role: "system", content: "PROFILE_B" });
-    expectRoomHandoffContractMessage(bMessages[1]!, value.bots[0]!.id);
-    expectRoomRosterMessage(bMessages[2]!, value.bots);
-    expect(bMessages[3]).toEqual({ role: "user", content: "ROOT_QUESTION" });
-    expect(bMessages[4]?.role).toBe("user");
-    expect(JSON.parse(bMessages[4]!.content)).toMatchObject({
+    expect(JSON.parse(bMessages[1]!.content)).toMatchObject({
+      notice: expect.stringContaining("AUTHORITATIVE_EXECUTION_HANDOFF_RECEIPT"),
+      receipt: { sourceRuntimeRunId: expect.any(String), sourceAgentId: value.bots[0]!.id, tools: [], artifacts: [] },
+    });
+    expectRoomHandoffContractMessage(bMessages[2]!, value.bots[0]!.id);
+    expectRoomRosterMessage(bMessages[3]!, value.bots);
+    expect(bMessages[4]).toEqual({ role: "user", content: "ROOT_QUESTION" });
+    expect(bMessages[5]?.role).toBe("user");
+    expect(JSON.parse(bMessages[5]!.content)).toMatchObject({
       notice: "INCOMING_HANDOFF_TASK",
       fromAgentId: value.bots[0]!.id,
       task: "HANDOFF_TASK_FOR_B",
@@ -573,16 +611,20 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     )!;
     expect(bTurn.promptCutoffSeq).toBe(aEntry.seq);
     expect(cTurn).toMatchObject({ inputSeq: bTurn.promptCutoffSeq, promptCutoffSeq: bTurn.promptCutoffSeq });
-    expect(cMessages).toHaveLength(6);
+    expect(cMessages).toHaveLength(7);
     expect(cMessages[0]).toEqual({ role: "system", content: "PROFILE_C" });
-    expectRoomHandoffContractMessage(cMessages[1]!, value.bots[1]!.id);
-    expectRoomRosterMessage(cMessages[2]!, value.bots);
-    expect(cMessages.slice(3, 5)).toEqual([
+    expect(JSON.parse(cMessages[1]!.content)).toMatchObject({
+      notice: expect.stringContaining("AUTHORITATIVE_EXECUTION_HANDOFF_RECEIPT"),
+      receipt: { sourceAgentId: value.bots[1]!.id },
+    });
+    expectRoomHandoffContractMessage(cMessages[2]!, value.bots[1]!.id);
+    expectRoomRosterMessage(cMessages[3]!, value.bots);
+    expect(cMessages.slice(4, 6)).toEqual([
       { role: "user", content: "ROOT_QUESTION" },
       { role: "assistant", content: `[room-speaker id="${value.bots[0]!.id}" name="Agent A"]\nA_AUTHORITY_OUTPUT` },
     ]);
-    expect(cMessages[5]?.role).toBe("user");
-    expect(JSON.parse(cMessages[5]!.content)).toMatchObject({
+    expect(cMessages[6]?.role).toBe("user");
+    expect(JSON.parse(cMessages[6]!.content)).toMatchObject({
       notice: "INCOMING_HANDOFF_TASK",
       fromAgentId: value.bots[1]!.id,
       task: "C_REVIEW_TASK",
@@ -846,18 +888,21 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const calls: string[] = [];
+    let sourcePaused = false;
     const value = harness(({ bots }) => ({
       async *run(_messages, _signal, context) {
         calls.push(context!.executorBotId);
         yield { type: "started", requestId: "a" } as ModelEvent;
         yield handoff(bots[1]!.id, "MEMBERSHIP_CHANGED");
+        sourcePaused = true;
         await gate;
         yield { type: "completed", finishReason: "stop" } as ModelEvent;
       },
       testConnection: async () => {},
     }), 3, filename);
     const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
-    await vi.waitFor(() => expect(value.repository.listHandoffs(sent.batchId)).toHaveLength(1));
+    await vi.waitFor(() => expect(sourcePaused).toBe(true));
+    expect(value.repository.listHandoffs(sent.batchId)).toEqual([]);
     const injector = new DatabaseSync(filename);
     injector.prepare("DELETE FROM room_members WHERE room_id = ? AND bot_id = ?").run(
       value.detail.room.id,
@@ -866,24 +911,27 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     injector.prepare("UPDATE rooms SET membership_version = membership_version + 1 WHERE id = ?").run(value.detail.room.id);
     injector.close();
     release();
-    await waitForBatch(value.repository, sent.batchId, ["partial"]);
+    await waitForBatch(value.repository, sent.batchId, ["completed"]);
 
     expect(calls).toEqual([value.bots[0]!.id]);
-    expect(value.repository.listAgentTurns(sent.batchId).map((turn) => turn.state)).toEqual(["completed", "cancelled"]);
-    expect(value.repository.listHandoffs(sent.batchId)[0]!.state).toBe("cancelled");
+    expect(value.repository.listAgentTurns(sent.batchId).map((turn) => turn.state)).toEqual(["completed"]);
+    expect(value.repository.listHandoffs(sent.batchId)).toEqual([]);
+    expect(value.repository.listHandoffRejections(sent.batchId)).toMatchObject([{ errorCode: "ROOM_MEMBERSHIP_CONFLICT" }]);
     expect(errorCodes(value.roomEvents)).toContain("ROOM_MEMBERSHIP_CONFLICT");
   });
 
-  it("cancels a queued successor and drops ignore-Abort late Handoff/delta/completed events", async () => {
+  it("discards a deferred successor on cancellation and drops ignore-Abort late Handoff/delta/completed events", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const calls: string[] = [];
+    let sourcePaused = false;
     const value = harness(({ bots }) => ({
       async *run(_messages, _signal, context) {
         calls.push(context!.executorBotId);
         yield { type: "started", requestId: "a" } as ModelEvent;
         yield handoff(bots[1]!.id, "QUEUED_B");
         yield { type: "delta", text: "BEFORE_CANCEL" } as ModelEvent;
+        sourcePaused = true;
         await gate;
         yield handoff(bots[2]!.id, "LATE_C");
         yield { type: "delta", text: "LATE_DELTA" } as ModelEvent;
@@ -892,14 +940,15 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       testConnection: async () => {},
     }));
     const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
-    await vi.waitFor(() => expect(value.repository.listHandoffs(sent.batchId)).toHaveLength(1));
+    await vi.waitFor(() => expect(sourcePaused).toBe(true));
+    expect(value.repository.listHandoffs(sent.batchId)).toEqual([]);
     value.coordinator.cancel(sent.batchId);
     release();
     await vi.waitFor(() => expect(value.repository.listAgentTurns(sent.batchId)[0]!.state).toBe("cancelled"));
 
     expect(calls).toEqual([value.bots[0]!.id]);
-    expect(value.repository.listAgentTurns(sent.batchId).map((turn) => turn.state)).toEqual(["cancelled", "cancelled"]);
-    expect(value.repository.listHandoffs(sent.batchId)).toMatchObject([{ state: "cancelled" }]);
+    expect(value.repository.listAgentTurns(sent.batchId).map((turn) => turn.state)).toEqual(["cancelled"]);
+    expect(value.repository.listHandoffs(sent.batchId)).toEqual([]);
     expect(JSON.stringify(value.repository.listTranscript(value.detail.session.id))).not.toContain("LATE_DELTA");
   });
 
@@ -982,8 +1031,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       return [
         { type: "started", requestId: "a" },
         handoff(bots[1]!.id, "DEADLINE_B"),
-        // Leave enough time for the handoff to be persisted before the root
-        // deadline fires, even when the full test suite is running in parallel.
+        // The proposed handoff remains deferred when the source times out.
         { type: "delay", milliseconds: 1_000, ignoreAbort: true },
         handoff(bots[2]!.id, "LATE_DEADLINE_C"),
         { type: "delta", text: "LATE_DEADLINE_DELTA" },
@@ -997,14 +1045,13 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     await waitForBatch(value.repository, sent.batchId, ["partial"]);
     await vi.waitFor(() => expect(value.repository.listAgentTurns(sent.batchId).map((turn) => [turn.state, turn.outcome?.kind])).toEqual([
       ["failed", "timeout"],
-      ["cancelled", "cancelled"],
     ]));
 
     expect(calls).toEqual([value.bots[0]!.id]);
     expect(value.repository.getRoomRun(sent.batchId).windingDown).toBe(true);
     const timedOutRuntime = value.repository.getRuntimeRun(value.repository.listAgentTurns(sent.batchId)[0]!.runtimeRunId!);
     expect(timedOutRuntime).toMatchObject({ state: "failed", lastErrorCode: "MODEL_RUN_TIMEOUT" });
-    expect(value.repository.listHandoffs(sent.batchId)).toMatchObject([{ state: "cancelled" }]);
+    expect(value.repository.listHandoffs(sent.batchId)).toEqual([]);
     expect(errorCodes(value.roomEvents)).toContain("ROOM_RUN_LIMIT_EXCEEDED");
     expect(JSON.stringify(value.repository.listTranscript(value.detail.session.id))).not.toContain("LATE_DEADLINE_DELTA");
   });
@@ -1031,10 +1078,10 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
       command(value.detail, value.bots[0]!.id, "FOREVER_ROOT"),
       { deadlineMs: 5_000 },
     );
-    for (let attempt = 0; attempt < 100 && value.repository.listHandoffs(first.batchId).length === 0; attempt += 1) {
+    for (let attempt = 0; attempt < 100 && !value.repository.listAgentTurns(first.batchId)[0]?.runtimeRunId; attempt += 1) {
       await Promise.resolve();
     }
-    expect(value.repository.listHandoffs(first.batchId)).toHaveLength(1);
+    expect(value.repository.listHandoffs(first.batchId)).toEqual([]);
     expect(value.repository.listAgentTurns(first.batchId)[0]?.runtimeRunId).not.toBeNull();
     await vi.advanceTimersByTimeAsync(5_000);
     for (let attempt = 0; attempt < 100 && value.repository.getRoomRun(first.batchId).state !== "partial"; attempt += 1) {
@@ -1048,9 +1095,8 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     expect(value.repository.getTranscriptEntry(firstRuntime.assistantEntryId!)).toMatchObject({ status: "failed" });
     expect(firstTurns.map((turn) => [turn.state, turn.outcome?.kind])).toEqual([
       ["failed", "timeout"],
-      ["cancelled", "cancelled"],
     ]);
-    expect(value.repository.listHandoffs(first.batchId)).toMatchObject([{ state: "cancelled" }]);
+    expect(value.repository.listHandoffs(first.batchId)).toEqual([]);
     expect(value.repository.getRoomRun(first.batchId)).toMatchObject({ state: "partial", windingDown: true });
     expect(value.repository.getActiveRuntimeRun(value.detail.session.id)).toBeNull();
 
@@ -1246,7 +1292,7 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     }
   });
 
-  it("deduplicates a replayed source Handoff after retry without calling the target twice", async () => {
+  it("defers Handoff until the source succeeds and safely retries without calling the target twice", async () => {
     const calls: string[] = [];
     const provider = new ScriptedFakeModelProvider(({ callIndex, context }) => {
       calls.push(context!.executorBotId);
@@ -1258,8 +1304,8 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
           { type: "failure", error: new AevorenBotError("MODEL_STREAM_TRUNCATED") },
         ];
       }
-      if (callIndex === 1) return completedSteps("B_ONCE");
-      return [{ type: "started", requestId: "a-retry" }, replay, { type: "completed", finishReason: "stop" }];
+      if (callIndex === 1) return [{ type: "started", requestId: "a-retry" }, replay, { type: "completed", finishReason: "stop" }];
+      return completedSteps("B_ONCE");
     });
     const value = harness(() => provider, 2);
     const sent = value.coordinator.sendCoordinated(command(value.detail, value.bots[0]!.id));
@@ -1267,11 +1313,14 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     const failedSource = value.repository.listAgentTurns(sent.batchId).find(
       (turn) => turn.agentId === value.bots[0]!.id && turn.state === "failed",
     )!;
+    expect(value.repository.listHandoffs(sent.batchId)).toEqual([]);
+    expect(value.repository.listAgentTurns(sent.batchId)).toHaveLength(1);
+    expect(calls).toEqual([value.bots[0]!.id]);
     value.coordinator.retryTurn(failedSource.id);
     await waitForBatch(value.repository, sent.batchId, ["completed"]);
-
-    expect(calls).toEqual([value.bots[0]!.id, value.bots[1]!.id, value.bots[0]!.id]);
+    expect(calls).toEqual([value.bots[0]!.id, value.bots[0]!.id, value.bots[1]!.id]);
     expect(value.repository.listHandoffs(sent.batchId)).toHaveLength(1);
+    expect(value.repository.listHandoffs(sent.batchId)[0]).toMatchObject({ state: "accepted" });
     expect(value.repository.getRoomRun(sent.batchId).usedTurns).toBe(2);
     expect(value.repository.listAgentTurns(sent.batchId)).toHaveLength(3);
     expect(value.repository.listAgentTurns(sent.batchId).filter((turn) => turn.agentId === value.bots[1]!.id)).toHaveLength(1);
