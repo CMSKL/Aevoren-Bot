@@ -21,6 +21,41 @@ const MAX_WRITE_BYTES = 256 * 1_024;
 
 type ResultMetadata = Record<string, string | number | boolean | null>;
 
+function summarizeCsv(text: string): { rowCount: number; numericSums: Record<string, number> } | null {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]!;
+    if (quoted) {
+      if (character === '"' && text[index + 1] === '"') { field += '"'; index += 1; }
+      else if (character === '"') quoted = false;
+      else field += character;
+      continue;
+    }
+    if (character === '"' && field.length === 0) quoted = true;
+    else if (character === ",") { row.push(field); field = ""; }
+    else if (character === "\n") { row.push(field.replace(/\r$/u, "")); rows.push(row); row = []; field = ""; }
+    else field += character;
+    if (rows.length > 10_001 || row.length > 200) return null;
+  }
+  if (quoted) return null;
+  if (field.length > 0 || row.length > 0) { row.push(field.replace(/\r$/u, "")); rows.push(row); }
+  while (rows.length > 0 && rows.at(-1)?.every((value) => value === "")) rows.pop();
+  const header = rows.shift();
+  if (!header?.length || new Set(header).size !== header.length || header.some((name) => !name.trim())) return null;
+  const numericSums: Record<string, number> = {};
+  header.forEach((name, column) => {
+    const values = rows.map((values) => values[column] ?? "").filter((value) => value.trim() !== "");
+    if (values.length !== rows.length || values.some((value) => !/^-?\d+(?:\.\d+)?$/u.test(value.trim()))) return;
+    const numbers = values.map(Number);
+    const sum = numbers.reduce((total, value) => total + value, 0);
+    if (numbers.every(Number.isFinite) && Number.isFinite(sum) && Math.abs(sum) <= Number.MAX_SAFE_INTEGER) numericSums[name.trim()] = sum;
+  });
+  return { rowCount: rows.length, numericSums };
+}
+
 export type WorkspaceToolExecutionResult = {
   invocation: ToolInvocation;
   content: string;
@@ -206,9 +241,16 @@ export class WorkspaceToolExecutor {
     signal: AbortSignal,
   ): Promise<{ content: string; metadata: ResultMetadata }> {
     const value = await this.readText(tool.workspaceId, tool.path, tool.maxBytes, signal);
+    const csvSummary = !value.truncated && tool.path.toLowerCase().endsWith(".csv") ? summarizeCsv(value.text) : null;
     return {
-      content: JSON.stringify({ text: value.text, truncated: value.truncated }),
-      metadata: { kind: tool.kind, bytes: value.bytes, truncated: value.truncated },
+      content: JSON.stringify({ text: value.text, truncated: value.truncated, ...(csvSummary ? { csvSummary } : {}) }),
+      metadata: {
+        kind: tool.kind,
+        bytes: value.bytes,
+        truncated: value.truncated,
+        sha256: createHash("sha256").update(value.text, "utf8").digest("hex"),
+        ...(csvSummary ? { csvRowCount: csvSummary.rowCount, csvNumericSums: JSON.stringify(csvSummary.numericSums) } : {}),
+      },
     };
   }
 

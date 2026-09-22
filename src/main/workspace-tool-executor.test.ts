@@ -149,7 +149,30 @@ describe("WorkspaceToolExecutor", () => {
 
     expect(parsed).toEqual({ text: "你好，", truncated: true });
     expect(JSON.stringify(value.getToolInvocation(fixture.invocation.id))).not.toContain("你好");
-    expect(result.invocation.resultMetadata).toEqual({ kind: "workspace-read", bytes: 9, truncated: true });
+    expect(result.invocation.resultMetadata).toEqual({
+      kind: "workspace-read",
+      bytes: 9,
+      truncated: true,
+      sha256: createHash("sha256").update("你好，", "utf8").digest("hex"),
+    });
+  });
+
+  it("returns deterministic row counts and numeric sums for a complete CSV read", async () => {
+    const root = temporaryDirectory("aevoren-tool-csv-summary-");
+    const csv = 'id,size_bytes,download_count\n"A,1",100,2\nB,250,3\n';
+    writeFileSync(join(root, "metrics.csv"), csv, "utf8");
+    const value = repository();
+    const fixture = await approvedInvocation(value, root, { kind: "workspace-read", path: "metrics.csv", maxBytes: 4096 });
+
+    const result = await new WorkspaceToolExecutor(value, fixture.service).execute(fixture.invocation.id);
+    const parsed = JSON.parse(result.content) as { csvSummary: { rowCount: number; numericSums: Record<string, number> } };
+    expect(parsed.csvSummary).toEqual({ rowCount: 2, numericSums: { size_bytes: 350, download_count: 5 } });
+    expect(result.invocation.resultMetadata).toMatchObject({
+      csvRowCount: 2,
+      csvNumericSums: JSON.stringify({ size_bytes: 350, download_count: 5 }),
+      truncated: false,
+      sha256: createHash("sha256").update(csv, "utf8").digest("hex"),
+    });
   });
 
   it("creates one approved Markdown file only after Workspace write permission and never overwrites it", async () => {
@@ -341,3 +364,4 @@ describe("WorkspaceToolExecutor", () => {
     expect(value.getApprovalRequest(fixture.approval.id)).toMatchObject({ state: "cancelled" });
   });
 });
+import { createHash } from "node:crypto";

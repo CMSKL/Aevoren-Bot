@@ -11,12 +11,16 @@ import type {
   RoomTurnState,
   RoomRoutingMode,
   ModelSelection,
+  BriefApprovalCommand,
+  BriefApprovalView,
 } from "@shared/contracts";
 import { digestRoomCommand, type AppRepository } from "./database";
 import { asAppError, AevorenBotError } from "./errors";
 import type { ModelEvent } from "./model";
 import type { RuntimeExecutor, RuntimeExecutionResult } from "./runtime-executor";
 import { choiceQuestion, type DecisionService } from "./decision-service";
+import { readVerifiedArtifact } from "./artifact-evidence";
+import { briefCandidateOptions } from "@shared/brief-candidates";
 
 type RoomCoordinatorEvents = {
   roomRuntime(event: RoomRuntimeEvent): void;
@@ -135,7 +139,7 @@ export class RoomCoordinator {
   }
 
   /** Internal M2 entry point. It is deliberately not exposed through preload or IPC. */
-  sendCoordinated(command: RoomSendCommand, policy: CoordinatedRoomPolicy = {}): RoomSendResult {
+  sendCoordinated(command: RoomSendCommand, policy: CoordinatedRoomPolicy = {}, orchestrationEnabled = true): RoomSendResult {
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const routingMode = command.routingMode;
     if (routingMode === "automatic") throw new AevorenBotError("INVALID_REQUEST");
@@ -162,6 +166,7 @@ export class RoomCoordinator {
           })),
           routingMode,
           routingReason: null,
+          orchestrationEnabled,
         });
     if (prepared.disposition === "duplicate") {
       return {
@@ -174,8 +179,8 @@ export class RoomCoordinator {
     this.events.transcript({ sessionId: command.sessionId, entry: this.repository.getUserMessage(command.clientNonce) });
     const run = this.repository.transitionRoomRun(prepared.run.id, "running");
     this.emit(run);
-    this.armDeadline(run.id, run.deadlineAt);
-    this.startProcessing(run.id, undefined, true);
+    if (orchestrationEnabled) this.armDeadline(run.id, run.deadlineAt);
+    this.startProcessing(run.id, undefined, orchestrationEnabled);
     return { clientNonce: command.clientNonce, batchId: run.id, disposition: "accepted", state: run.state };
   }
 
@@ -203,7 +208,7 @@ export class RoomCoordinator {
       if (existingJournal.bodyDigest !== commandDigest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
       throw new AevorenBotError("ROOM_BATCH_NOT_FOUND");
     }
-    if (routingMode !== "automatic") return this.sendCoordinated(command, policy);
+    if (routingMode !== "automatic") return this.sendCoordinated(command, policy, false);
 
     const promise = this.selectAndSend(command, policy).finally(() => {
       const current = this.routingInFlight.get(command.clientNonce);
@@ -316,9 +321,20 @@ export class RoomCoordinator {
       const promptCutoffSeq = pending.promptCutoffSeq
         ?? (pending.origin === "handoff" ? pending.inputSeq : this.repository.getTranscriptHighWater(batch.sessionId));
       const incomingBeforeDispatch = this.repository.getIncomingHandoff(pending.id);
+      const sourceBeforeDispatch = incomingBeforeDispatch ? this.repository.getRoomTurn(incomingBeforeDispatch.fromTurnId) : null;
+      let executionReceipt: ReturnType<AppRepository["getExecutionEvidenceReceipt"]>;
       const retryModelSelection = this.getRetryModelSelection(pending);
       let turn: RoomTurn;
       try {
+        executionReceipt = this.repository.getExecutionEvidenceReceipt(pending.id);
+        if (!executionReceipt && sourceBeforeDispatch?.runtimeRunId) {
+          executionReceipt = this.repository.createExecutionEvidenceReceipt(pending.id, sourceBeforeDispatch.runtimeRunId);
+        }
+        if (executionReceipt) {
+          for (const artifact of executionReceipt.artifacts) await readVerifiedArtifact(this.repository, artifact);
+          // Reading files is async. Revalidate cancellation/membership/deadline before starting work.
+          this.repository.assertRoomTurnDispatchable(pending.id);
+        }
         if (incomingBeforeDispatch?.state === "queued") {
           this.repository.transitionHandoff(incomingBeforeDispatch.id, "dispatching", incomingBeforeDispatch.version);
         }
@@ -351,6 +367,7 @@ export class RoomCoordinator {
             membershipVersion: batch.membershipVersion,
             sourceTurnId: turn.id,
             ...(roomRoster ? { roster: roomRoster } : {}),
+            orchestrationEnabled: coordinated,
           },
           ...(incoming && source
             ? {
@@ -364,6 +381,7 @@ export class RoomCoordinator {
                 },
               }
             : {}),
+          ...(executionReceipt ? { executionReceipt } : {}),
           ...(coordinated
             ? { onHandoff: (event: Extract<ModelEvent, { type: "handoff" }>) => this.acceptHandoff(batchId, turn.id, event) }
             : {}),
@@ -440,7 +458,7 @@ export class RoomCoordinator {
     this.repository.transitionRoomTurn(turnId, state, {
       errorCode: result.error?.code ?? null,
       outcome: state === "completed"
-        ? { kind: "sent" }
+        ? { kind: "sent", ...(result.handoffError ? { summary: `handoff-failed:${result.handoffError.code}` } : {}) }
         : state === "cancelled"
           ? { kind: "cancelled", ...(result.error ? { errorCode: result.error.code } : {}) }
           : result.error?.code === "MODEL_RUN_TIMEOUT"
@@ -490,6 +508,7 @@ export class RoomCoordinator {
       initialTurns: initialTurns.map((turn) => ({ agentId: turn.agentId, nonce: turn.nonce })),
       routingMode: existing.routingMode,
       routingReason: existing.routingReason,
+      orchestrationEnabled: existing.orchestrationEnabled,
     });
   }
 
@@ -591,6 +610,7 @@ export class RoomCoordinator {
         initialTurns: [{ agentId: values.ownerAgentId, nonce: `initial:${command.clientNonce}:${values.ownerAgentId}` }],
         routingMode: "automatic",
         routingReason: reason,
+        orchestrationEnabled: true,
       });
       if (prepared.disposition === "duplicate") return this.duplicateResult(command, prepared.run);
       this.events.transcript({ sessionId: command.sessionId, entry: this.repository.getUserMessage(command.clientNonce) });
@@ -677,8 +697,7 @@ export class RoomCoordinator {
       const sourceBot = this.repository.getBot(source.memberBotId);
       const targetBot = this.repository.getBot(event.toAgentId);
       if (sourceBot.name === "选题策划师") {
-        const rootRequest = this.repository.getUserMessage(this.repository.getRoomRun(runId).clientNonce).body;
-        const approved = /\bAPPROVED\b|(?:我|用户)?(?:已|明确)?批准(?:候选|选题|方案|第)|选择.{0,8}(?:候选|选题|方案|第)/iu.test(rootRequest);
+        const approved = Boolean(this.repository.getExecutionEvidenceReceipt(source.id)?.approvedBrief);
         const explicitEvidenceReturn = targetBot.name === "情报侦察员" && /\bRETURN\b|退回|补充(?:证据|线索|来源)|上游.{0,12}(?:修正|补充)/iu.test(event.task);
         if (!approved && !explicitEvidenceReturn) throw new AevorenBotError("HUMAN_APPROVAL_REQUIRED");
       }
@@ -784,5 +803,71 @@ export class RoomCoordinator {
 
   private isCoordinated(runId: string): boolean {
     return this.repository.isCoordinatedRoomRun(runId);
+  }
+
+  async getBriefApproval(input: { roomId: string; sourceRuntimeRunId: string }): Promise<BriefApprovalView> {
+    const detail = this.repository.getRoomDetail(input.roomId);
+    const source = this.repository.findLatestCompletedWorkspaceArtifact(detail.session.id, "02-briefs/");
+    if (!source || source.run.id !== input.sourceRuntimeRunId || !source.invocation.workspaceId) {
+      throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    }
+    const sha256 = source.invocation.resultMetadata?.sha256;
+    if (typeof sha256 !== "string") throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const approved = this.repository.isBriefApproved(detail.session.id, source.invocation.id, sha256);
+    const content = approved ? "" : await readVerifiedArtifact(this.repository, {
+      workspaceId: source.invocation.workspaceId,
+      path: source.invocation.targetPath,
+      sha256,
+    });
+    return {
+      approved,
+      sourceRuntimeRunId: source.run.id,
+      briefInvocationId: source.invocation.id,
+      workspaceId: source.invocation.workspaceId,
+      path: source.invocation.targetPath,
+      sha256,
+      content,
+    };
+  }
+
+  async approveBrief(command: BriefApprovalCommand): Promise<RoomSendResult> {
+    if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
+    const detail = this.repository.getRoomDetail(command.roomId);
+    if (detail.room.archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
+    const view = await this.getBriefApproval(command);
+    if (view.briefInvocationId !== command.briefInvocationId || view.sha256 !== command.sha256) {
+      throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+    }
+    // Bind the human decision to an observed candidate in the exact file bytes.
+    if (!briefCandidateOptions(view.content).some((candidate) => candidate.id === command.candidate)) {
+      throw new AevorenBotError("HUMAN_APPROVAL_REQUIRED");
+    }
+    const writers = detail.members.filter((member) => member.bot.name === "内容主笔");
+    if (writers.length !== 1) throw new AevorenBotError("ROOM_MEMBER_INVALID");
+    const writer = writers[0]!;
+    const prepared = this.repository.createApprovedBriefRun({
+      roomId: command.roomId,
+      sessionId: detail.session.id,
+      clientNonce: command.clientNonce,
+      text: `APPROVED：批准候选 ${command.candidate}。已批准文件：${view.path}。请基于该文件和既定任务要求继续生成草稿。`,
+      membershipVersion: detail.room.membershipVersion,
+      maxTurns: DEFAULT_MAX_TURNS,
+      maxHops: DEFAULT_MAX_HOPS,
+      maxTargetsPerTurn: DEFAULT_MAX_TARGETS_PER_TURN,
+      deadlineAt: new Date(Date.now() + DEFAULT_ROOT_DEADLINE_MS).toISOString(),
+      initialTurns: [{ agentId: writer.botId, nonce: `approval:${command.clientNonce}:${writer.botId}` }],
+      routingMode: "automatic",
+      routingReason: `候选 ${command.candidate} 已批准，将已验证的 Brief 交给内容主笔。`,
+      orchestrationEnabled: true,
+    }, command);
+    if (prepared.disposition === "duplicate") return {
+      clientNonce: command.clientNonce, batchId: prepared.run.id, disposition: "duplicate", state: prepared.run.state,
+    };
+    this.events.transcript({ sessionId: detail.session.id, entry: this.repository.getUserMessage(command.clientNonce) });
+    const run = this.repository.transitionRoomRun(prepared.run.id, "running");
+    this.emit(run);
+    this.armDeadline(run.id, run.deadlineAt);
+    this.startProcessing(run.id, undefined, true);
+    return { clientNonce: command.clientNonce, batchId: run.id, disposition: "accepted", state: run.state };
   }
 }

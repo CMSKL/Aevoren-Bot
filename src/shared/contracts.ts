@@ -559,6 +559,65 @@ export type ToolInvocation = {
   finishedAt: string | null;
 };
 
+export type ExecutionEvidenceReceipt = {
+  schemaVersion: 1;
+  id: string;
+  sessionId: string;
+  roomId: string;
+  generation: number;
+  targetTurnId: string;
+  sourceRuntimeRunId: string;
+  sourceTurnId: string | null;
+  sourceAgentId: string;
+  sourceAssistantEntryId: string;
+  sourceCompletedAt: string;
+  taskRequirements: { sourceEntryId: string; text: string };
+  approvedBrief: {
+    candidate: "A" | "B" | "C";
+    approvalEntryId: string;
+    briefInvocationId: string;
+    sha256: string;
+  } | null;
+  tools: Array<{
+    invocationId: string;
+    sourceRuntimeRunId: string;
+    kind: ToolRequest["kind"];
+    workspaceId: string | null;
+    targetPath: string;
+    resultDigest: string;
+    resultMetadata: Record<string, string | number | boolean | null> | null;
+    finishedAt: string;
+  }>;
+  artifacts: Array<{
+    invocationId: string;
+    sourceRuntimeRunId: string;
+    workspaceId: string;
+    path: string;
+    resultDigest: string;
+    sha256: string | null;
+    bytes: number | null;
+    finishedAt: string;
+  }>;
+  digest: string;
+  createdAt: string;
+};
+
+export type BriefApprovalView = {
+  approved: boolean;
+  sourceRuntimeRunId: string;
+  briefInvocationId: string;
+  workspaceId: string;
+  path: string;
+  sha256: string;
+  content: string;
+};
+
+export type BriefApprovalCommand = Pick<BriefApprovalView, "sourceRuntimeRunId" | "briefInvocationId" | "sha256"> & {
+  roomId: string;
+  clientNonce: string;
+  candidate: "A" | "B" | "C";
+};
+
 export type ApprovalState = "pending" | "allowed" | "denied" | "expired" | "cancelled";
 export type ApprovalResolution = "allow-once" | "deny";
 
@@ -660,6 +719,7 @@ export type RoomRun = {
   targetDigest: string;
   routingMode: RoomRoutingMode;
   routingReason: string | null;
+  orchestrationEnabled: boolean;
   state: RoomRunState;
   membershipVersion: number;
   maxTurns: number;
@@ -758,6 +818,7 @@ export type CreateRoomRunInput = {
   initialTurns: InitialAgentTurnInput[];
   routingMode?: RoomRoutingMode;
   routingReason?: string | null;
+  orchestrationEnabled?: boolean;
 };
 
 export type CreateHandoffInput = {
@@ -1135,6 +1196,8 @@ export interface AevorenBotApi {
     getMain(botId: string): Promise<ApiResult<Session>>;
   };
   rooms: {
+    getBriefApproval(input: { roomId: string; sourceRuntimeRunId: string }): Promise<ApiResult<BriefApprovalView>>;
+    approveBrief(input: BriefApprovalCommand): Promise<ApiResult<RoomSendResult>>;
     list(input?: { includeArchived?: boolean }): Promise<ApiResult<Room[]>>;
     create(input: { memberBotIds: string[]; name?: string; description?: string }): Promise<ApiResult<RoomDetail>>;
     get(id: string): Promise<ApiResult<RoomDetail>>;

@@ -14,10 +14,10 @@ This guide describes the supported pre-release workflow. It applies to macOS 13 
 
 - A one-click content team avoids a persistent stage tracker. It shows a compact decision card only while a real Brief is waiting for user input.
 - In that card, choose candidate A/B/C, return the Brief for more evidence, or abandon the run without writing orchestration prompts.
-- Model text, successful tool execution, saved files, and external reads are shown as separate evidence states. Text alone never produces a successful execution badge.
+- Consecutive successful tool calls fold into one reversible activity row. Active, approval-gated, and failed steps stay individually visible; model text alone never produces a successful execution state.
 - The latest failed Room step stays visible above the composer with the failed step, safe reason, preserved evidence, and retry action. Superseded failed attempts collapse after a successful retry.
-- Delivery rows distinguish Workspace artifacts from manual Markdown exports and can reveal a validated saved file location.
-- The Room composer offers Automatic, Specific Bot, and Everyone routing modes; `@` remains a shortcut for Specific Bot.
+- Real Workspace writes render as artifact cards. The header artifact shelf collects all outputs from the current conversation and can reveal their validated file locations; manual Markdown export remains a separate reply action.
+- The Room header holds the Automatic, `@` Specific Bot, and Everyone default; a structured `@` mention overrides that choice for the current message.
 
 ## Bots and Rooms
 

@@ -5,6 +5,8 @@ import {
   artifactSaveSchema,
   artifactRevealSchema,
   batchIdSchema,
+  briefApprovalReadSchema,
+  briefApprovalCommandSchema,
   botHiddenSchema,
   botIdSchema,
   botPinnedSchema,
@@ -159,6 +161,8 @@ export function registerIpc(dependencies: IpcDependencies): void {
     repository.deleteConversations(conversationBatchDeleteSchema.parse(input)),
   );
   handle(IPC.teamsCreateContentTeam, () => repository.createContentTeamTemplate());
+  handle(IPC.roomsGetBriefApproval, (_event, input: unknown) => roomCoordinator.getBriefApproval(briefApprovalReadSchema.parse(input)));
+  handle(IPC.roomsApproveBrief, (_event, input: unknown) => roomCoordinator.approveBrief(briefApprovalCommandSchema.parse(input)));
   handle(IPC.botsList, () => repository.listBots());
   handle(IPC.botsCreate, () => repository.createBot());
   handle(IPC.botsUpdate, (_event, input: unknown) => {

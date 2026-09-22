@@ -499,7 +499,7 @@ describe("Workspace tool Runtime wiring", () => {
     };
     const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
     const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
-    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "短帖 140–220、展开版 280–420；用 text_measure 后 workspace_write 写审校稿" });
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "workspaceId=e8d67efd-a281-46c4-84f0-9fdf7b18b7df；短帖 140–220、展开版 280–420；用 text_measure 后 workspace_write 写审校稿" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
     expect(calls).toBe(5);
     expect(measurementGuidance).toContain("missingRanges");
@@ -527,6 +527,25 @@ describe("Workspace tool Runtime wiring", () => {
     expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_EVIDENCE_REQUIRED");
     expect(repository.listToolInvocations(created.session.id)).toEqual([]);
     expect(repository.listTranscript(created.session.id).at(-1)).toMatchObject({ status: "failed" });
+  });
+
+  it("fails a completed-looking reply that claims an audit artifact was written without a succeeded tool record", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const created = repository.createBot();
+    const provider: ModelProvider = {
+      async *run() {
+        yield { type: "started", requestId: "false-write-claim" };
+        yield { type: "delta", text: "审校稿已由真实工具写入。" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "写入审校稿文件" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
+    expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_EVIDENCE_REQUIRED");
+    expect(repository.listToolInvocations(created.session.id)).toEqual([]);
   });
 
   it("rejects CSV metrics and length claims without their exact deterministic evidence tools", async () => {

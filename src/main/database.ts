@@ -22,6 +22,7 @@ import type {
   DecisionJournalEntry,
   DecisionProviderKind,
   DecisionState,
+  ExecutionEvidenceReceipt,
   HandoffState,
   HandoffVisibility,
   MemoryItem,
@@ -1601,6 +1602,16 @@ export const MIGRATIONS = [
       CREATE INDEX approval_requests_pending ON approval_requests(state, expires_at, created_at, id);
     `,
   },
+  {
+    version: 24,
+    sql: `
+      ALTER TABLE room_turns ADD COLUMN execution_receipt_json TEXT
+        CHECK (execution_receipt_json IS NULL OR json_valid(execution_receipt_json));
+      ALTER TABLE room_batches ADD COLUMN orchestration_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (orchestration_enabled IN (0, 1));
+      UPDATE room_batches SET orchestration_enabled = 1 WHERE routing_mode = 'automatic';
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -1938,6 +1949,7 @@ type RoomBatchRow = {
   target_digest: string;
   routing_mode: RoomRoutingMode;
   routing_reason: string | null;
+  orchestration_enabled: number;
   state: RoomBatchState;
   membership_version: number;
   max_turns: number;
@@ -1975,6 +1987,7 @@ type RoomTurnRow = {
   created_at: string;
   updated_at: string;
   finished_at: string | null;
+  execution_receipt_json: string | null;
 };
 
 type HandoffRow = {
@@ -2326,6 +2339,7 @@ function toRoomBatch(row: RoomBatchRow): RoomBatch {
     targetDigest: row.target_digest,
     routingMode: row.routing_mode,
     routingReason: row.routing_reason,
+    orchestrationEnabled: row.orchestration_enabled === 1,
     state: row.state,
     membershipVersion: row.membership_version,
     maxTurns: Number(row.max_turns),
@@ -4063,7 +4077,7 @@ export class AppRepository {
         name: "数据复盘师",
         label: "真实数据复盘",
         description: "只基于明确授权且真实读取的数据做复盘。",
-        instructions: "你负责数据复盘。没有真实 CSV 或 Analytics 授权时必须停止。必须先通过 workspace_read 成功读取指定 CSV，再根据返回的真实行和字段计算；禁止虚构 ID、指标或样本。结论必须列出来源路径、字段、样本数和计算口径。若任务要求先生成 CSV，只允许创建该 CSV 与最终报告各一个；成功后不得创建副本、索引或确认文件。",
+        instructions: "你负责数据复盘。没有真实 CSV 或 Analytics 授权时必须停止。必须先通过 workspace_read 成功读取指定 CSV，只能复制 Host 返回的 csvSummary 确定性指标；禁止心算或估算，禁止虚构 ID、指标或样本，也不得追加未经用户要求和确定性工具验证的单位换算、百分比或派生结论。结论必须列出来源路径、字段、样本数和计算口径。若任务要求先生成 CSV，只允许创建该 CSV 与最终报告各一个；成功后不得创建副本、索引或确认文件。",
       },
     ] as const;
     const modelSelection = this.getDefaultModelSelection();
@@ -4483,6 +4497,7 @@ export class AppRepository {
       comparePolicyOnDuplicate: false,
       routingMode: "legacy",
       routingReason: null,
+      orchestrationEnabled: false,
     });
     return {
       disposition: prepared.disposition === "created" ? "prepared" : "duplicate",
@@ -4499,11 +4514,61 @@ export class AppRepository {
     return this.prepareRoomRun({ ...input, windingDown: false, comparePolicyOnDuplicate: true });
   }
 
+  /** Approval, its user entry, initial turn, and evidence are committed together. */
+  createApprovedBriefRun(input: CreateRoomRunInput, approval: {
+    sourceRuntimeRunId: string;
+    briefInvocationId: string;
+    sha256: string;
+    candidate: "A" | "B" | "C";
+  }): ReturnType<AppRepository["createRoomRunWithInitialTurns"]> {
+    if (input.initialTurns.length !== 1 || !["A", "B", "C"].includes(approval.candidate)) {
+      throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    }
+    const source = this.getCompletedWorkspaceArtifact(input.sessionId, approval.briefInvocationId, approval.sourceRuntimeRunId);
+    if (!source || !source.invocation.targetPath.startsWith("02-briefs/") || source.invocation.resultMetadata?.sha256 !== approval.sha256) {
+      throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    }
+    const previous = this.database.prepare(
+      `SELECT room_batches.client_nonce FROM room_turns
+       INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+       WHERE json_extract(room_turns.execution_receipt_json, '$.approvedBrief.briefInvocationId') = ?
+         AND room_turns.parent_turn_id IS NULL LIMIT 1`,
+    ).get(approval.briefInvocationId) as { client_nonce: string } | undefined;
+    if (previous && previous.client_nonce !== input.clientNonce) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const attachReceipt = (prepared: ReturnType<AppRepository["createRoomRunWithInitialTurns"]>): void => {
+      if (prepared.disposition === "created") {
+        const latest = this.findLatestCompletedWorkspaceArtifact(input.sessionId, "02-briefs/");
+        if (latest?.invocation.id !== approval.briefInvocationId) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      }
+      const previousApproval = this.database.prepare(
+        `SELECT batch_id FROM room_turns WHERE parent_turn_id IS NULL
+         AND json_extract(execution_receipt_json, '$.approvedBrief.briefInvocationId') = ? LIMIT 1`,
+      ).get(approval.briefInvocationId) as { batch_id: string } | undefined;
+      if (previousApproval && previousApproval.batch_id !== prepared.run.id) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      this.createExecutionEvidenceReceipt(prepared.turns[0]!.id, approval.sourceRuntimeRunId, {
+        candidate: approval.candidate,
+        approvalEntryId: prepared.run.triggerMessageId,
+        briefInvocationId: approval.briefInvocationId,
+        sha256: approval.sha256,
+      });
+    };
+    // A transport retry repeats the human decision, not the wall-clock deadline calculation.
+    const existingRun = this.getRoomBatchByNonce(input.clientNonce);
+    const prepared = this.prepareRoomRun({
+      ...input,
+      deadlineAt: existingRun?.deadlineAt ?? input.deadlineAt,
+      windingDown: false,
+      comparePolicyOnDuplicate: true,
+    }, attachReceipt);
+    if (prepared.disposition === "duplicate") attachReceipt(prepared);
+    return prepared;
+  }
+
   private prepareRoomRun(input: Omit<CreateRoomRunInput, "membershipVersion"> & {
     membershipVersion?: number;
     windingDown: boolean;
     comparePolicyOnDuplicate: boolean;
-  }): {
+  }, afterCreate?: (prepared: ReturnType<AppRepository["createRoomRunWithInitialTurns"]>) => void): {
     disposition: "created" | "duplicate";
     run: RoomRun;
     turns: AgentTurn[];
@@ -4513,6 +4578,7 @@ export class AppRepository {
     const canonicalTargetIds = input.initialTurns.map((turn) => turn.agentId).toSorted();
     const routingMode = input.routingMode ?? "legacy";
     const routingReason = input.routingReason?.trim() || null;
+    const orchestrationEnabled = input.orchestrationEnabled ?? routingMode !== "legacy";
     const commandTargetIds = routingMode === "automatic" ? [] : canonicalTargetIds;
     if (
       input.initialTurns.length === 0 ||
@@ -4553,6 +4619,7 @@ export class AppRepository {
         existing.targetDigest !== targetDigest ||
         existing.routingMode !== routingMode ||
         existing.routingReason !== routingReason ||
+        existing.orchestrationEnabled !== orchestrationEnabled ||
         existing.maxTurns !== input.maxTurns ||
         existing.maxHops !== input.maxHops ||
         existing.maxTargetsPerTurn !== input.maxTargetsPerTurn ||
@@ -4618,10 +4685,10 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO room_batches(
-             id, room_id, session_id, client_nonce, trigger_message_id, target_digest, routing_mode, routing_reason, state, membership_version,
+             id, room_id, session_id, client_nonce, trigger_message_id, target_digest, routing_mode, routing_reason, orchestration_enabled, state, membership_version,
              max_turns, max_hops, max_targets_per_turn, deadline_at, is_winding_down,
              version, created_at, updated_at, finished_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)`,
         )
         .run(
           runId,
@@ -4632,6 +4699,7 @@ export class AppRepository {
           targetDigest,
           routingMode,
           routingReason,
+          orchestrationEnabled ? 1 : 0,
           input.membershipVersion ?? room.membershipVersion,
           input.maxTurns,
           input.maxHops,
@@ -4665,6 +4733,7 @@ export class AppRepository {
           timestamp,
         );
       }
+      afterCreate?.({ disposition: "created", run: this.getRoomRun(runId), turns: this.listAgentTurns(runId) });
     });
     return { disposition: "created", run: this.getRoomRun(runId), turns: this.listAgentTurns(runId) };
   }
@@ -4862,6 +4931,249 @@ export class AppRepository {
     return toRoomTurn(row);
   }
 
+  findLatestCompletedWorkspaceArtifact(sessionId: string, pathPrefix: string): {
+    invocation: ToolInvocation;
+    run: RuntimeRun;
+    sourceTurnId: string | null;
+  } | null {
+    const session = this.getSession(sessionId);
+    const prefix = pathPrefix.trim();
+    if (!prefix || prefix.length > 1_024) throw new AevorenBotError("INVALID_REQUEST");
+    // A newer incomplete/failed write must not silently resurrect an older Brief.
+    const invocation = (this.database.prepare(
+      `SELECT tool_invocations.* FROM tool_invocations
+       INNER JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id
+       WHERE tool_invocations.session_id = ? AND runtime_runs.input_generation = ?
+         AND tool_invocations.tool_kind = 'workspace-write'
+       ORDER BY tool_invocations.created_at DESC, tool_invocations.rowid DESC`,
+    ).all(sessionId, session.generation) as ToolInvocationRow[])
+      .map(toToolInvocation).find((candidate) => candidate.targetPath.startsWith(prefix));
+    return invocation ? this.getCompletedWorkspaceArtifact(sessionId, invocation.id) : null;
+  }
+
+  getCompletedWorkspaceArtifact(sessionId: string, invocationId: string, runtimeRunId?: string): {
+    invocation: ToolInvocation;
+    run: RuntimeRun;
+    sourceTurnId: string;
+  } | null {
+    const session = this.getSession(sessionId);
+    const invocation = this.getToolInvocation(invocationId);
+    if (
+      invocation.sessionId !== sessionId || (runtimeRunId && invocation.runtimeRunId !== runtimeRunId) ||
+      invocation.toolKind !== "workspace-write" || invocation.state !== "succeeded" ||
+      !invocation.workspaceId || !invocation.resultDigest || !invocation.finishedAt
+    ) return null;
+    try {
+      const { source, sourceTurn } = this.completedReceiptSource(invocation.runtimeRunId, sessionId, session.generation);
+      this.receiptArtifact(invocation);
+      return { invocation, run: source, sourceTurnId: sourceTurn.id };
+    } catch {
+      return null;
+    }
+  }
+
+  private completedReceiptSource(sourceRuntimeRunId: string, sessionId: string, generation: number): {
+    source: RuntimeRun;
+    sourceTurn: RoomTurn;
+    assistant: TranscriptEntry;
+  } {
+    const source = this.getRuntimeRun(sourceRuntimeRunId);
+    const sourceTurnRow = this.database.prepare("SELECT id FROM room_turns WHERE runtime_run_id = ? LIMIT 1")
+      .get(source.id) as { id: string } | undefined;
+    if (
+      source.sessionId !== sessionId || source.inputGeneration !== generation || source.state !== "completed" ||
+      !source.assistantEntryId || !source.finishedAt || !sourceTurnRow
+    ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const sourceTurn = this.getRoomTurn(sourceTurnRow.id);
+    const assistant = this.getTranscriptEntry(source.assistantEntryId);
+    const sourceBatch = this.getRoomRun(sourceTurn.runId);
+    if (
+      sourceTurn.state !== "completed" || sourceTurn.inputGeneration !== generation || sourceTurn.agentId !== source.executorBotId ||
+      sourceBatch.sessionId !== sessionId || assistant.sessionId !== sessionId || assistant.generation !== generation ||
+      assistant.status !== "completed" || assistant.role !== "assistant" || assistant.sourceTurnId !== sourceTurn.id ||
+      assistant.speakerBotId !== source.executorBotId
+    ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    return { source, sourceTurn, assistant };
+  }
+
+  private receiptArtifact(invocation: ToolInvocation): ExecutionEvidenceReceipt["artifacts"][number] {
+    const sha256 = invocation.resultMetadata?.sha256;
+    const bytes = invocation.resultMetadata?.bytes;
+    if (
+      invocation.toolKind !== "workspace-write" || invocation.arguments.kind !== "workspace-write" ||
+      invocation.state !== "succeeded" || !invocation.workspaceId || !invocation.resultDigest || !invocation.finishedAt ||
+      typeof sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(sha256) ||
+      typeof bytes !== "number" || !Number.isSafeInteger(bytes) || bytes < 1 ||
+      bytes !== Buffer.byteLength(invocation.arguments.content, "utf8") ||
+      sha256 !== createHash("sha256").update(invocation.arguments.content, "utf8").digest("hex")
+    ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    this.getWorkspace(invocation.workspaceId);
+    return {
+      invocationId: invocation.id,
+      sourceRuntimeRunId: invocation.runtimeRunId,
+      workspaceId: invocation.workspaceId,
+      path: invocation.targetPath,
+      resultDigest: invocation.resultDigest,
+      sha256,
+      bytes,
+      finishedAt: invocation.finishedAt,
+    };
+  }
+
+  createExecutionEvidenceReceipt(
+    targetTurnId: string,
+    sourceRuntimeRunId: string,
+    approval?: NonNullable<ExecutionEvidenceReceipt["approvedBrief"]>,
+  ): ExecutionEvidenceReceipt {
+    const target = this.getRoomTurn(targetTurnId);
+    const existing = this.getExecutionEvidenceReceipt(targetTurnId);
+    if (existing) {
+      if (
+        existing.sourceRuntimeRunId !== sourceRuntimeRunId ||
+        (approval && (
+          existing.approvedBrief?.candidate !== approval.candidate ||
+          existing.approvedBrief.approvalEntryId !== approval.approvalEntryId ||
+          existing.approvedBrief.briefInvocationId !== approval.briefInvocationId ||
+          existing.approvedBrief.sha256 !== approval.sha256
+        ))
+      ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      return existing;
+    }
+    if (target.state !== "queued") throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: target.state });
+    const evidence = this.collectExecutionEvidence(target, sourceRuntimeRunId, approval, new Set([target.id]));
+    const unsigned = {
+      schemaVersion: 1 as const,
+      id: randomUUID(),
+      targetTurnId: target.id,
+      ...evidence,
+      createdAt: now(),
+    };
+    const receipt: ExecutionEvidenceReceipt = {
+      ...unsigned,
+      digest: createHash("sha256").update(JSON.stringify(unsigned), "utf8").digest("hex"),
+    };
+    const updated = this.database.prepare(
+      `UPDATE room_turns SET execution_receipt_json = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND state = 'queued' AND execution_receipt_json IS NULL`,
+    ).run(JSON.stringify(receipt), now(), target.id);
+    if (Number(updated.changes) !== 1) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    return this.getExecutionEvidenceReceipt(target.id)!;
+  }
+
+  private collectExecutionEvidence(
+    target: RoomTurn,
+    sourceRuntimeRunId: string,
+    approval: ExecutionEvidenceReceipt["approvedBrief"] | undefined,
+    seen: Set<string>,
+  ): Omit<ExecutionEvidenceReceipt, "schemaVersion" | "id" | "targetTurnId" | "createdAt" | "digest"> {
+    const batch = this.getRoomRun(target.runId);
+    const session = this.getSession(batch.sessionId);
+    if (session.roomId !== batch.roomId || target.inputGeneration !== session.generation) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const { source, sourceTurn, assistant } = this.completedReceiptSource(sourceRuntimeRunId, session.id, session.generation);
+    const sourceBatch = this.getRoomRun(sourceTurn.runId);
+    if (sourceBatch.roomId !== batch.roomId || sourceTurn.id === target.id) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const inherited = this.readExecutionEvidenceReceipt(sourceTurn.id, seen);
+    let approvedBrief = inherited?.approvedBrief ?? null;
+    if (target.parentTurnId) {
+      if (target.parentTurnId !== sourceTurn.id || sourceTurn.runId !== target.runId || approval) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      const incoming = this.getIncomingHandoff(target.id);
+      if (!incoming || incoming.fromTurnId !== sourceTurn.id || incoming.toAgentId !== target.agentId) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    } else {
+      if (!approval || !["A", "B", "C"].includes(approval.candidate)) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      const approvalEntry = this.getTranscriptEntry(approval.approvalEntryId);
+      const brief = this.getCompletedWorkspaceArtifact(session.id, approval.briefInvocationId, source.id);
+      if (
+        approvalEntry.id !== batch.triggerMessageId || approvalEntry.clientNonce !== batch.clientNonce ||
+        approvalEntry.sessionId !== session.id || approvalEntry.generation !== session.generation ||
+        approvalEntry.role !== "user" || approvalEntry.status !== "completed" || approvalEntry.seq <= assistant.seq ||
+        !brief || !brief.invocation.targetPath.startsWith("02-briefs/") || brief.invocation.resultMetadata?.sha256 !== approval.sha256
+      ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      approvedBrief = approval;
+    }
+    const succeeded = this.listToolInvocations(batch.sessionId).filter((invocation) => (
+      invocation.runtimeRunId === source.id &&
+      invocation.state === "succeeded" &&
+      invocation.resultDigest !== null &&
+      invocation.finishedAt !== null
+    ));
+    const tools = succeeded.map((invocation) => ({
+      invocationId: invocation.id,
+      sourceRuntimeRunId: invocation.runtimeRunId,
+      kind: invocation.toolKind,
+      workspaceId: invocation.workspaceId,
+      targetPath: invocation.targetPath,
+      resultDigest: invocation.resultDigest!,
+      resultMetadata: invocation.resultMetadata,
+      finishedAt: invocation.finishedAt!,
+    }));
+    const artifacts = succeeded.filter((invocation) => invocation.toolKind === "workspace-write")
+      .map((invocation) => this.receiptArtifact(invocation));
+    const request = this.getTranscriptEntry(sourceBatch.triggerMessageId);
+    if (request.sessionId !== session.id || request.generation !== session.generation || request.role !== "user" || request.status !== "completed") {
+      throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    }
+    return {
+      roomId: batch.roomId,
+      sessionId: batch.sessionId,
+      generation: session.generation,
+      sourceRuntimeRunId: source.id,
+      sourceTurnId: sourceTurn.id,
+      sourceAgentId: source.executorBotId,
+      sourceAssistantEntryId: source.assistantEntryId!,
+      sourceCompletedAt: source.finishedAt!,
+      taskRequirements: inherited?.taskRequirements ?? { sourceEntryId: request.id, text: request.body },
+      approvedBrief,
+      tools: [...new Map([...(inherited?.tools ?? []), ...tools].map((tool) => [tool.invocationId, tool])).values()],
+      artifacts: [...new Map([...(inherited?.artifacts ?? []), ...artifacts].map((artifact) => [artifact.invocationId, artifact])).values()],
+    };
+  }
+
+  getExecutionEvidenceReceipt(turnId: string): ExecutionEvidenceReceipt | null {
+    return this.readExecutionEvidenceReceipt(turnId, new Set());
+  }
+
+  isBriefApproved(sessionId: string, briefInvocationId: string, sha256: string): boolean {
+    this.getSession(sessionId);
+    const rows = this.database.prepare(
+      `SELECT room_turns.id FROM room_turns INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+       WHERE room_batches.session_id = ? AND room_turns.parent_turn_id IS NULL
+         AND json_extract(room_turns.execution_receipt_json, '$.approvedBrief.briefInvocationId') = ?
+         AND json_extract(room_turns.execution_receipt_json, '$.approvedBrief.sha256') = ?`,
+    ).all(sessionId, briefInvocationId, sha256) as Array<{ id: string }>;
+    return rows.some((row) => this.getExecutionEvidenceReceipt(row.id)?.approvedBrief?.briefInvocationId === briefInvocationId);
+  }
+
+  private readExecutionEvidenceReceipt(turnId: string, seen: Set<string>): ExecutionEvidenceReceipt | null {
+    if (seen.has(turnId) || seen.size > 64) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const ancestors = new Set(seen).add(turnId);
+    const turn = this.getRoomTurn(turnId);
+    const row = this.database.prepare(
+      `SELECT id, execution_receipt_json FROM room_turns
+       WHERE batch_id = ? AND logical_turn_id = ? AND execution_receipt_json IS NOT NULL
+       ORDER BY attempt_no ASC LIMIT 1`,
+    ).get(turn.batchId, turn.logicalTurnId) as { id: string; execution_receipt_json: string } | undefined;
+    if (!row) return null;
+    try {
+      const receipt = JSON.parse(row.execution_receipt_json) as ExecutionEvidenceReceipt;
+      const { digest, ...unsigned } = receipt;
+      const actual = createHash("sha256").update(JSON.stringify(unsigned), "utf8").digest("hex");
+      if (
+        receipt.schemaVersion !== 1 ||
+        receipt.targetTurnId !== row.id ||
+        digest !== actual
+      ) throw new Error("invalid receipt");
+      const original = this.getRoomTurn(row.id);
+      if (original.agentId !== turn.agentId || original.inputGeneration !== turn.inputGeneration) throw new Error("invalid retry scope");
+      const evidence = this.collectExecutionEvidence(original, receipt.sourceRuntimeRunId,
+        original.parentTurnId ? undefined : receipt.approvedBrief, ancestors);
+      const expected = { schemaVersion: 1, id: receipt.id, targetTurnId: original.id, ...evidence, createdAt: receipt.createdAt };
+      if (JSON.stringify(unsigned) !== JSON.stringify(expected)) throw new Error("receipt evidence changed");
+      return receipt;
+    } catch {
+      throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    }
+  }
+
   listRoomTurns(batchId: string): RoomTurn[] {
     this.getRoomBatch(batchId);
     return (this.database
@@ -4954,11 +5266,7 @@ export class AppRepository {
   }
 
   isCoordinatedRoomRun(runId: string): boolean {
-    const run = this.getRoomRun(runId);
-    return run.maxTurns !== EXISTING_ROOM_RUN_MAX_TURNS
-      || run.maxHops !== EXISTING_ROOM_RUN_MAX_TURNS
-      || run.maxTargetsPerTurn !== EXISTING_ROOM_RUN_MAX_TURNS
-      || run.deadlineAt !== EXISTING_ROOM_RUN_DEADLINE;
+    return this.getRoomRun(runId).orchestrationEnabled;
   }
 
   cancelOpenHandoffs(runId: string): RoomHandoff[] {

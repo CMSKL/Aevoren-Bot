@@ -74,6 +74,8 @@ const api: AevorenBotApi = {
     resolve: (input) => ipcRenderer.invoke(IPC.approvalsResolve, input),
   },
   rooms: {
+    getBriefApproval: (input) => ipcRenderer.invoke(IPC.roomsGetBriefApproval, input),
+    approveBrief: (input) => ipcRenderer.invoke(IPC.roomsApproveBrief, input),
     list: (input) => ipcRenderer.invoke(IPC.roomsList, input),
     create: (input) => ipcRenderer.invoke(IPC.roomsCreate, input),
     get: (id) => ipcRenderer.invoke(IPC.roomsGet, id),

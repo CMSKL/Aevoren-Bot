@@ -173,10 +173,20 @@ describe("parseOpenAiStream", () => {
     const outside = streamFrom([
       `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "read", type: "function", function: { name: "workspace_read", arguments: JSON.stringify({ workspaceId: outsideWorkspaceId, path: "secret", maxBytes: 10 }) } }] }, finish_reason: "tool_calls" }] })}\n\n`,
     ]);
-    await expect(collect(parseOpenAiStream(
+    expect(await collect(parseOpenAiStream(
       outside, new AbortController().signal, DEFAULT_PROVIDER_TIMEOUTS,
       new Set([target]), new Set([allowedWorkspaceId]),
-    ))).rejects.toMatchObject({ code: "MODEL_WORKSPACE_TOOL_INVALID" });
+    ))).toEqual([
+      {
+        type: "tool-rejection",
+        toolCallId: "read",
+        providerToolName: "workspace_read",
+        arguments: JSON.stringify({ workspaceId: outsideWorkspaceId, path: "secret", maxBytes: 10 }),
+        code: "WORKSPACE_SCOPE_INVALID",
+        safeMessage: "目标工作区不在当前 Runtime 的授权范围内。请从函数定义提供的 workspaceId 中选择后重试。",
+      },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
 
     const mixed = streamFrom([
       `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [
@@ -190,6 +200,34 @@ describe("parseOpenAiStream", () => {
     ))).toEqual([
       { type: "workspace-tool", toolCallId: "read", tool: { kind: "workspace-read", workspaceId: allowedWorkspaceId, path: "safe", maxBytes: 10 }, providerToolName: "workspace_read" },
       { type: "handoff", toolCallId: "handoff", toAgentId: target, task: "review", contextRefs: [], visibility: "room" },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+  });
+
+  it("returns a corrective tool result for malformed workspace arguments without discarding valid calls", async () => {
+    const workspaceId = crypto.randomUUID();
+    const payload = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [
+      { index: 0, id: "fetch", type: "function", function: { name: "web_fetch", arguments: JSON.stringify({ url: "https://example.com", maxCharacters: 1000 }) } },
+      { index: 1, id: "write", type: "function", function: { name: "workspace_write", arguments: JSON.stringify({ workspaceId, path: "result.md" }) } },
+    ] }, finish_reason: "tool_calls" }] })}\n\n`;
+    expect(await collect(parseOpenAiStream(
+      streamFrom([payload]), new AbortController().signal, DEFAULT_PROVIDER_TIMEOUTS,
+      undefined, new Set([workspaceId]), true,
+    ))).toEqual([
+      {
+        type: "network-tool",
+        toolCallId: "fetch",
+        tool: { kind: "web-fetch", url: "https://example.com", maxCharacters: 1000 },
+        providerToolName: "web_fetch",
+      },
+      {
+        type: "tool-rejection",
+        toolCallId: "write",
+        providerToolName: "workspace_write",
+        arguments: JSON.stringify({ workspaceId, path: "result.md" }),
+        code: "WORKSPACE_TOOL_ARGUMENTS_INVALID",
+        safeMessage: "工作区工具参数不符合函数 Schema。请仅使用声明的字段、类型和边界后重试。",
+      },
       { type: "completed", finishReason: "tool_calls" },
     ]);
   });
@@ -560,7 +598,7 @@ describe("parseOpenAiStream", () => {
       .toThrowError(expect.objectContaining({ code: "MODEL_NETWORK_TOOL_INVALID" }));
   });
 
-  it("adds one bounded handoff function schema only for a coordinated Room without leaking agent instructions", async () => {
+  it("keeps Handoff out of Provider tools so only the Host orchestrator can create another turn", async () => {
     const executorBotId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
     const body = streamFrom(['data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n']);
@@ -581,22 +619,11 @@ describe("parseOpenAiStream", () => {
         ],
       },
     ));
-    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
-      tools?: Array<{ function: { description: string; parameters: { properties: { toAgentId: { enum: string[] }; contextRefs: { maxItems: number } }; additionalProperties: boolean } } }>;
-    };
-    expect(request.tools).toHaveLength(1);
-    expect(request.tools?.[0]).toMatchObject({
-      function: {
-        parameters: {
-          additionalProperties: false,
-          properties: { toAgentId: { enum: [targetId] }, contextRefs: { maxItems: 0 } },
-        },
-      },
-    });
-    expect(request.tools?.[0]?.function.description).toContain(targetId);
-    expect(request.tools?.[0]?.function.description).toContain("评审员");
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(request).not.toHaveProperty("tools");
     expect(request).not.toHaveProperty("thinking");
     expect(JSON.stringify(request)).not.toContain("SECRET_AGENT_INSTRUCTIONS");
+    expect(JSON.stringify(request)).not.toContain("handoff_to_agent");
   });
 
   it("disables DeepSeek thinking only for coordinated requests with tools", async () => {
@@ -621,6 +648,7 @@ describe("parseOpenAiStream", () => {
           { id: executorBotId, name: "策划师", label: "策划", description: "负责规划" },
           { id: targetId, name: "评审员", label: "评审", description: "负责复核" },
         ],
+        workspaces: [{ id: crypto.randomUUID(), name: "content", writeEnabled: false, automationEnabled: false }],
       },
     ));
 

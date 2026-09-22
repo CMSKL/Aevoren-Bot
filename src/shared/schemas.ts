@@ -235,6 +235,13 @@ export const messageAttachmentsSchema = z.array(attachmentDraftSchema).max(6).su
 export const roomIdSchema = z.string().uuid();
 export const batchIdSchema = z.string().uuid();
 export const turnIdSchema = z.string().uuid();
+export const briefApprovalReadSchema = z.object({ roomId: roomIdSchema, sourceRuntimeRunId: z.string().uuid() }).strict();
+export const briefApprovalCommandSchema = briefApprovalReadSchema.extend({
+  briefInvocationId: z.string().uuid(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  clientNonce: nonceSchema,
+  candidate: z.enum(["A", "B", "C"]),
+}).strict();
 
 export const sendCommandSchema = z.object({
   sessionId: sessionIdSchema,

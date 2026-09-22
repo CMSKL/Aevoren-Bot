@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Bot, CapabilityPromptSnapshot, MemoryItem, Session, TranscriptEntry } from "@shared/contracts";
+import type { Bot, CapabilityPromptSnapshot, ExecutionEvidenceReceipt, MemoryItem, Session, TranscriptEntry } from "@shared/contracts";
 import { buildPrompt } from "./prompt";
 
 const bot: Bot = {
@@ -211,8 +211,8 @@ describe("buildPrompt", () => {
     const contract = JSON.parse(prompt.messages[1]!.content) as { notice: string; rules: string[] };
     expect(contract.notice).toBe("ROOM_HANDOFF_EXECUTION_CONTRACT");
     expect(contract.rules).toEqual(expect.arrayContaining([
-      expect.stringContaining("Only a successful handoff_to_agent function call"),
-      expect.stringContaining("@Agent, HANDOFF, ASSIGN, or next_owner"),
+      expect.stringContaining("Only Aevoren Host"),
+      expect.stringContaining("@Agent, HANDOFF, ASSIGN, next_owner"),
       expect.stringContaining("wait for user approval or input"),
       expect.stringContaining("CURRENT_TURN_FOCUS"),
     ]));
@@ -259,6 +259,66 @@ describe("buildPrompt", () => {
       scope: `room:${roomSession.roomId}`,
     }));
     expect(JSON.stringify(prompt.manifest)).not.toContain(description);
+  });
+
+  it("injects a Host-signed execution receipt without asking the next Runtime to guess upstream evidence", () => {
+    const roomSession = { ...session, botId: null, roomId: "00000000-0000-4000-8000-000000000077" };
+    const receipt: ExecutionEvidenceReceipt = {
+      schemaVersion: 1,
+      id: "00000000-0000-4000-8000-000000000020",
+      roomId: roomSession.roomId,
+      sessionId: roomSession.id,
+      generation: roomSession.generation,
+      targetTurnId: "00000000-0000-4000-8000-000000000021",
+      sourceRuntimeRunId: "00000000-0000-4000-8000-000000000022",
+      sourceTurnId: "00000000-0000-4000-8000-000000000023",
+      sourceAgentId: bot.id,
+      sourceAssistantEntryId: "00000000-0000-4000-8000-000000000024",
+      sourceCompletedAt: "2026-01-03T00:00:00.000Z",
+      taskRequirements: { sourceEntryId: "00000000-0000-4000-8000-000000000028", text: "研究并完成真实内容" },
+      approvedBrief: {
+        candidate: "B", approvalEntryId: "00000000-0000-4000-8000-000000000025",
+        briefInvocationId: "00000000-0000-4000-8000-000000000026", sha256: "b".repeat(64),
+      },
+      tools: [{
+        invocationId: "00000000-0000-4000-8000-000000000026",
+        sourceRuntimeRunId: "00000000-0000-4000-8000-000000000022",
+        kind: "workspace-write",
+        workspaceId: "00000000-0000-4000-8000-000000000027",
+        targetPath: "02-briefs/options.md",
+        resultDigest: "a".repeat(64),
+        resultMetadata: { sha256: "b".repeat(64), bytes: 321 },
+        finishedAt: "2026-01-03T00:00:00.000Z",
+      }],
+      artifacts: [{
+        invocationId: "00000000-0000-4000-8000-000000000026",
+        sourceRuntimeRunId: "00000000-0000-4000-8000-000000000022",
+        workspaceId: "00000000-0000-4000-8000-000000000027",
+        path: "02-briefs/options.md",
+        resultDigest: "a".repeat(64),
+        sha256: "b".repeat(64),
+        bytes: 321,
+        finishedAt: "2026-01-03T00:00:00.000Z",
+      }],
+      digest: "c".repeat(64),
+      createdAt: "2026-01-03T00:00:01.000Z",
+    };
+    const prompt = buildPrompt(bot, roomSession, [entry(1, "user", "APPROVED：批准候选 B")], 1, {
+      promptCutoffSeq: 1,
+      roomId: roomSession.roomId,
+      roomMembershipVersion: 1,
+      sourceTurnId: receipt.targetTurnId,
+      executionReceipt: receipt,
+    });
+    const message = prompt.messages.find((candidate) => candidate.content.includes("AUTHORITATIVE_EXECUTION_HANDOFF_RECEIPT"));
+    expect(message).toBeDefined();
+    expect(JSON.parse(message!.content)).toMatchObject({ receipt: { approvedBrief: { candidate: "B" }, artifacts: [{ path: "02-briefs/options.md" }] } });
+    expect(prompt.manifest.blocks).toContainEqual(expect.objectContaining({
+      authority: "runtime-state",
+      provenance: `runtime:${receipt.sourceRuntimeRunId}:handoff-receipt:v1`,
+      digest: receipt.digest,
+    }));
+    expect(JSON.stringify(prompt.manifest)).not.toContain("options.md");
   });
 
   it("does not advertise the Handoff execution contract when no other Room peer can be targeted", () => {
