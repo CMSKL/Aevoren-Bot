@@ -338,8 +338,8 @@ textarea:focus-visible {
 }
 
 .bot-row .bot-avatar-icon {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
 }
 
 .bot-avatar-icon {
@@ -347,6 +347,8 @@ textarea:focus-visible {
   flex: 0 0 auto;
   max-width: 100%;
   max-height: 100%;
+  object-fit: cover;
+  object-position: center;
 }
 
 .bot-row span {
@@ -362,6 +364,11 @@ textarea:focus-visible {
   border-radius: 50%;
   color: var(--text-muted);
   background: var(--surface-soft);
+}
+
+.bot-row .bot-avatar-container {
+  border-radius: 8px;
+  background: transparent;
 }
 
 .bot-row strong,
@@ -1519,6 +1526,11 @@ textarea:focus-visible {
   box-shadow: var(--shadow-bubble);
 }
 
+.message-avatar-with-bot {
+  background: transparent;
+  box-shadow: none;
+}
+
 .superseded-attempt-note {
   display: inline-flex;
   align-items: center;
@@ -1553,8 +1565,8 @@ textarea:focus-visible {
 }
 
 .message-avatar .bot-avatar-icon {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
 }
 
 .message-avatar-placeholder {
@@ -3466,8 +3478,8 @@ textarea:focus-visible {
 
 .mention-option-icon {
   display: grid;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   place-items: center;
   border: 1px solid var(--border);
   border-radius: 50%;
@@ -3475,9 +3487,15 @@ textarea:focus-visible {
   background: var(--panel-bg);
 }
 
+.mention-option-icon.bot-avatar-container {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .mention-option-icon svg {
-  width: 13px;
-  height: 13px;
+  width: 24px;
+  height: 24px;
 }
 
 .mention-option-copy {
@@ -3977,8 +3995,13 @@ textarea:focus-visible {
 }
 
 .recipient-option-icon .bot-avatar-icon {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
+}
+
+.recipient-option-icon.bot-avatar-container {
+  border-radius: 8px;
+  background: transparent;
 }
 
 .recipient-option-copy,

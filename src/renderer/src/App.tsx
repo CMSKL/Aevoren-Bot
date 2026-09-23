@@ -476,6 +476,12 @@ export function App(): React.JSX.Element {
   function updateBot(bot: Bot): void {
     setBots((current) => current.map((item) => item.id === bot.id ? bot : item));
     setSelectedBot((current) => current?.id === bot.id ? bot : current);
+    setSelectedRoom((current) => current && current.members.some((member) => member.botId === bot.id)
+      ? {
+          ...current,
+          members: current.members.map((member) => member.botId === bot.id ? { ...member, bot } : member),
+        }
+      : current);
   }
 
   async function setBotPinned(bot: Bot, pinned: boolean): Promise<boolean> {

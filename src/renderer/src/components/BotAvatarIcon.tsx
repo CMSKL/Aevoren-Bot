@@ -52,11 +52,14 @@ export function BotAvatarIcon({
       className={`bot-avatar-icon${className ? ` ${className}` : ""}`}
       width={size}
       height={size}
-      viewBox="0 0 48 48"
+      viewBox="4 4 40 40"
+      preserveAspectRatio="xMidYMid slice"
       role={title ? "img" : undefined}
       aria-label={title ? title : label}
       aria-hidden={title ? undefined : true}
       focusable="false"
+      data-avatar-shape={safeShape}
+      data-avatar-color={safeColor}
     >
       {title ? <title>{title}</title> : null}
       <path d={shellPaths[safeShape]} fill={colorValues[safeColor]} />
