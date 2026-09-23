@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.7] - 2026-09-23
+
+### Added
+
+- A persistent Bot avatar picker with 12 original silhouettes and 8 colorways, shared by Bot lists, Room members, mentions, and speaker messages.
+
+### Changed
+
+- Existing Bots receive a safe default avatar during the database migration, and duplicated Bots retain their selected avatar.
+
 ## [0.3.0-beta.6] - 2026-09-22
 
 ### Added
@@ -90,6 +100,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Background Memory capture considers only the current human message and blocks likely credentials before persistence.
 
 [0.3.0-beta.6]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.5...v0.3.0-beta.6
+[0.3.0-beta.7]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.6...v0.3.0-beta.7
 [0.3.0-beta.5]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.4...v0.3.0-beta.5
 [0.3.0-beta.4]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.2...v0.3.0-beta.3

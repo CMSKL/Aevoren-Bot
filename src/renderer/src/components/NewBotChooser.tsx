@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppError, Bot } from "@shared/contracts";
 import { buildBotIdentityMap } from "../bot-identity";
-import { BotIcon, PlusIcon, RoomIcon } from "./Icons";
+import { BotAvatarIcon } from "./BotAvatarIcon";
+import { PlusIcon, RoomIcon } from "./Icons";
 
 type NewBotChooserProps = {
   bots: Bot[];
@@ -138,7 +139,7 @@ export function NewBotChooser({
                   });
                 }}
               >
-                <span className="recipient-option-icon"><BotIcon /></span>
+                <span className="recipient-option-icon"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={22} /></span>
                 <span className="recipient-option-copy">
                   <strong>{groupMode ? `${selectedIds.has(bot.id) ? "✓ " : ""}${identity.primary}` : identity.primary}</strong>
                   {bot.label || identity.disambiguated ? <small>{identity.secondary}</small> : null}

@@ -1,3 +1,5 @@
+import type { BotAvatarColor, BotAvatarShape } from "./bot-avatar";
+
 export type Bot = {
   id: string;
   name: string;
@@ -5,6 +7,8 @@ export type Bot = {
   description: string;
   instructions: string;
   modelSelection: ModelSelection;
+  avatarShape: BotAvatarShape;
+  avatarColor: BotAvatarColor;
   mcpServerIds?: string[] | null;
   memoryWorkspaceIds?: string[];
   pinnedAt: string | null;
@@ -15,7 +19,7 @@ export type Bot = {
   updatedAt: string;
 };
 
-export type BotPatch = Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection" | "mcpServerIds" | "memoryWorkspaceIds">>;
+export type BotPatch = Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection" | "avatarShape" | "avatarColor" | "mcpServerIds" | "memoryWorkspaceIds">>;
 
 export type BotDeleteResult = {
   id: string;
