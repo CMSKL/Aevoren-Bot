@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.9] - 2026-09-23
+
+### Changed
+
+- Repackaged the current Beta application as `0.3.0-beta.9` to validate automatic updates from the preceding Beta build; no application behavior changes.
+
 ## [0.3.0-beta.8] - 2026-09-23
 
 ### Fixed
@@ -109,6 +115,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 [0.3.0-beta.6]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.5...v0.3.0-beta.6
 [0.3.0-beta.7]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.6...v0.3.0-beta.7
 [0.3.0-beta.8]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.7...v0.3.0-beta.8
+[0.3.0-beta.9]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.8...v0.3.0-beta.9
 [0.3.0-beta.5]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.4...v0.3.0-beta.5
 [0.3.0-beta.4]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.2...v0.3.0-beta.3
