@@ -1,6 +1,7 @@
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { AppError, Bot, RoomDetail, RoomPatch } from "@shared/contracts";
 import { buildBotIdentityMap } from "../bot-identity";
+import { BotAvatarIcon } from "./BotAvatarIcon";
 import { CheckIcon, CloseIcon } from "./Icons";
 
 type Draft = Pick<RoomDetail["room"], "name" | "description">;
@@ -144,7 +145,10 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
         {detail.members.map((member) => {
           const identity = botIdentities.get(member.botId)!;
           return <div className="room-member-row" key={member.botId}>
-            <button className="member-main-link" type="button" title={identity.inline} onClick={() => onOpenBot(member.bot)}>{identity.inline}</button>
+            <button className="member-main-link" type="button" title={identity.inline} onClick={() => onOpenBot(member.bot)}>
+              <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={20} />
+              <span>{identity.inline}</span>
+            </button>
             <button
               className="text-button danger-button"
               type="button"

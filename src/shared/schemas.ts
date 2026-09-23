@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "./bot-avatar";
 
 const nonEmptyText = z.string().trim().min(1).max(20_000);
 const providerInstanceIdSchema = z.string().trim().min(1).max(120).regex(/^[a-z0-9][a-z0-9._-]*$/i);
@@ -18,6 +19,8 @@ export const botUpdateSchema = z.object({
       description: z.string().trim().max(2_000).optional(),
       instructions: z.string().trim().max(20_000).optional(),
       modelSelection: modelSelectionSchema.optional(),
+      avatarShape: z.enum(BOT_AVATAR_SHAPES).optional(),
+      avatarColor: z.enum(BOT_AVATAR_COLORS).optional(),
       mcpServerIds: z.array(z.string().uuid()).max(20).refine((ids) => new Set(ids).size === ids.length, "MCP server ids must be unique").nullable().optional(),
       memoryWorkspaceIds: z.array(workspaceIdSchema).max(20).refine((ids) => new Set(ids).size === ids.length, "Memory workspace ids must be unique").optional(),
     })

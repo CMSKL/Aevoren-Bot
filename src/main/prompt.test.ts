@@ -9,6 +9,8 @@ const bot: Bot = {
   description: "Description",
   instructions: "Profile instructions",
   modelSelection: { providerInstanceId: "openai-compatible.default", modelId: "test-model" },
+  avatarShape: "rounded",
+  avatarColor: "cobalt",
   pinnedAt: null,
   hiddenAt: null,
   hasUnread: false,

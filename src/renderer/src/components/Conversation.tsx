@@ -33,7 +33,8 @@ import {
   type RoomMention,
 } from "../room-mentions";
 import { conversationArtifacts, groupToolActivity } from "../conversation-view-model";
-import { AttachmentIcon, BotIcon, CloseIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
+import { BotAvatarIcon } from "./BotAvatarIcon";
+import { AttachmentIcon, CloseIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
 import { HeaderModelPicker } from "./HeaderModelPicker";
 import { ExpandableTrace, type ExpandableTraceKind, type ExpandableTraceTone } from "./ExpandableTrace";
 import {
@@ -93,6 +94,7 @@ type TranscriptItemProps = {
   groupedWithPrevious: boolean;
   groupedWithNext: boolean;
   isSuperseded: boolean;
+  speakerBot: Bot | null;
   speakerDisplayName: string | null;
   routeDisplayNames: string[];
   routeMode: UserRoomRoutingMode | "legacy" | null;
@@ -315,6 +317,7 @@ const TranscriptItem = memo(function TranscriptItem({
   groupedWithPrevious,
   groupedWithNext,
   isSuperseded,
+  speakerBot,
   speakerDisplayName,
   routeDisplayNames,
   routeMode,
@@ -361,7 +364,7 @@ const TranscriptItem = memo(function TranscriptItem({
             aria-hidden="true"
             style={entry.speakerBotId ? { "--role-hue": [...entry.speakerBotId].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 360 } as CSSProperties : undefined}
           >
-            {groupedWithPrevious ? null : <BotIcon />}
+            {groupedWithPrevious ? null : <BotAvatarIcon shape={speakerBot?.avatarShape} color={speakerBot?.avatarColor} size={22} />}
           </span>
         ) : null}
         <div className="message-stack">
@@ -991,6 +994,11 @@ export function Conversation({
               groupedWithPrevious={entries[index - 1]?.role === entry.role && entries[index - 1]?.speakerBotId === entry.speakerBotId}
               groupedWithNext={entries[index + 1]?.role === entry.role && entries[index + 1]?.speakerBotId === entry.speakerBotId}
               isSuperseded={Boolean(sourceTurn && (retriedTurnIds.has(sourceTurn.id) || roomTurnState.latestByLogicalTurn.get(`${sourceTurn.batchId}:${sourceTurn.logicalTurnId}`)?.id !== sourceTurn.id))}
+              speakerBot={entry.role === "assistant"
+                ? entry.speakerBotId
+                  ? room?.members.find((member) => member.botId === entry.speakerBotId)?.bot ?? (bot?.id === entry.speakerBotId ? bot : null)
+                  : bot
+                : null}
               speakerDisplayName={entry.speakerBotId
                 ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? snapshotIdentities.get(entry.speakerBotId) ?? null
                 : null}
@@ -1097,6 +1105,9 @@ export function Conversation({
                 <div className="mention-empty">未找到与“{mentionQuery.query}”匹配的 Bot <span>按 Esc 关闭</span></div>
               ) : mentionCandidates.map((item, index) => {
                 const selected = effectiveRoomMentions.some((mention) => mention.id === item.id);
+                const mentionBot = item.id === EVERYONE_MENTION_ID
+                  ? null
+                  : room.members.find((member) => member.botId === item.id)?.bot ?? null;
                 return (
                   <button
                     className={`mention-option${index === activeMentionIndex ? " active" : ""}${selected ? " selected" : ""}`}
@@ -1108,7 +1119,7 @@ export function Conversation({
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => selectMention(item.id)}
                   >
-                    <span className="mention-option-icon"><BotIcon /></span>
+                    <span className="mention-option-icon"><BotAvatarIcon shape={mentionBot?.avatarShape} color={mentionBot?.avatarColor} size={21} /></span>
                     <span className="mention-option-copy">
                       <strong>{item.label}</strong>
                       <small>{item.id === EVERYONE_MENTION_ID ? "Bot · 群聊中的全部成员" : "Bot"}</small>

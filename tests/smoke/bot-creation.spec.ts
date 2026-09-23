@@ -28,6 +28,15 @@ function databaseCounts(userDataDir: string): { bots: number; sessions: number; 
   }
 }
 
+function databaseAvatar(userDataDir: string): { shape: string; color: string } {
+  const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
+  try {
+    return database.prepare("SELECT avatar_shape AS shape, avatar_color AS color FROM bots WHERE deleted_at IS NULL ORDER BY created_at ASC LIMIT 1").get() as { shape: string; color: string };
+  } finally {
+    database.close();
+  }
+}
+
 async function openChooser(page: Page): Promise<ReturnType<Page["getByRole"]>> {
   await page.locator(".new-bot-button").click();
   const dialog = page.getByRole("dialog", { name: "新建聊天" });
@@ -104,6 +113,12 @@ test("creates one neutral Bot and one MAIN session under a duplicate trigger, th
     await page.getByLabel("描述").fill("整理材料并给出可核验的研究结论。");
     await page.getByLabel("描述").blur();
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+    await page.getByRole("radio", { name: "造型 crest" }).click();
+    await page.getByRole("radio", { name: "配色 coral" }).click();
+    await expect(page.getByRole("radio", { name: "造型 crest" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("radio", { name: "配色 coral" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+    expect(databaseAvatar(userDataDir)).toEqual({ shape: "crest", color: "coral" });
     await expect(page.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
     await application.close();
     application = undefined;
@@ -115,6 +130,9 @@ test("creates one neutral Bot and one MAIN session under a duplicate trigger, th
     await expect(page.getByLabel("名称")).toHaveValue("研究助手");
     await expect(page.getByLabel("标签（可选）")).toHaveValue("研究");
     await expect(page.getByLabel("描述")).toHaveValue("整理材料并给出可核验的研究结论。");
+    await expect(page.getByRole("radio", { name: "造型 crest" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("radio", { name: "配色 coral" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.locator(".bot-row.selected .bot-avatar-icon")).toHaveCount(1);
     expect(databaseCounts(userDataDir)).toEqual({ bots: 1, sessions: 1, transcript: 0 });
 
     await application.close();

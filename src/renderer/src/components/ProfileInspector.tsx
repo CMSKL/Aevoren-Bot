@@ -1,9 +1,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { AppError, Bot, BotPatch, McpServerInfo, ModelSelection, ProviderInstanceInfo, Workspace } from "@shared/contracts";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES, type BotAvatarColor, type BotAvatarShape } from "@shared/bot-avatar";
 import { CheckIcon, CloseIcon } from "./Icons";
+import { BotAvatarIcon } from "./BotAvatarIcon";
 import { MemoryPanel, type MemoryPanelHandle } from "./MemoryPanel";
 
-type ProfileDraft = Pick<Bot, "name" | "label" | "description" | "instructions">;
+type ProfileDraft = Pick<Bot, "name" | "label" | "description" | "instructions" | "avatarShape" | "avatarColor">;
 export type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
 
 export type ProfileInspectorHandle = {
@@ -25,6 +27,8 @@ function toDraft(bot: Bot): ProfileDraft {
     label: bot.label,
     description: bot.description,
     instructions: bot.instructions,
+    avatarShape: bot.avatarShape,
+    avatarColor: bot.avatarColor,
   };
 }
 
@@ -33,7 +37,9 @@ function sameDraft(left: ProfileDraft, right: ProfileDraft): boolean {
     left.name === right.name &&
     left.label === right.label &&
     left.description === right.description &&
-    left.instructions === right.instructions
+    left.instructions === right.instructions &&
+    left.avatarShape === right.avatarShape &&
+    left.avatarColor === right.avatarColor
   );
 }
 
@@ -172,7 +178,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
     },
   }));
 
-  function update(field: keyof ProfileDraft, value: string): void {
+  function update(field: keyof ProfileDraft, value: ProfileDraft[typeof field]): void {
     if (!draftRef.current) return;
     const next = { ...draftRef.current, [field]: value };
     draftRef.current = next;
@@ -292,6 +298,50 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
           <span>描述</span>
           <textarea value={draft.description} maxLength={2_000} rows={5} placeholder="详细说明用途和工作方式" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
         </label>
+      </section>
+
+      <section className="inspector-group avatar-settings" aria-labelledby="bot-avatar-settings">
+        <div className="avatar-settings-heading">
+          <div>
+            <h3 id="bot-avatar-settings">头像</h3>
+            <p>用统一的造型和配色区分不同 Bot。</p>
+          </div>
+          <BotAvatarIcon shape={draft.avatarShape} color={draft.avatarColor} size={64} title={`${draft.name || "Bot"}头像`} />
+        </div>
+        <div className="avatar-picker-group">
+          <span className="avatar-picker-label">造型</span>
+          <div className="avatar-shape-grid" role="radiogroup" aria-label="Bot 头像造型">
+            {BOT_AVATAR_SHAPES.map((shape) => (
+              <button
+                className={`avatar-shape-option${draft.avatarShape === shape ? " selected" : ""}`}
+                type="button"
+                role="radio"
+                aria-checked={draft.avatarShape === shape}
+                aria-label={`造型 ${shape}`}
+                key={shape}
+                onClick={() => update("avatarShape", shape as BotAvatarShape)}
+              >
+                <BotAvatarIcon shape={shape} color={draft.avatarColor} size={32} />
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="avatar-picker-group">
+          <span className="avatar-picker-label">配色</span>
+          <div className="avatar-color-row" role="radiogroup" aria-label="Bot 头像配色">
+            {BOT_AVATAR_COLORS.map((color) => (
+              <button
+                className={`avatar-color-option avatar-color-${color}${draft.avatarColor === color ? " selected" : ""}`}
+                type="button"
+                role="radio"
+                aria-checked={draft.avatarColor === color}
+                aria-label={`配色 ${color}`}
+                key={color}
+                onClick={() => update("avatarColor", color as BotAvatarColor)}
+              />
+            ))}
+          </div>
+        </div>
       </section>
 
       <section className="inspector-group" aria-labelledby="bot-model-settings">

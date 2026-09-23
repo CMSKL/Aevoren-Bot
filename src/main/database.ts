@@ -74,6 +74,7 @@ import type {
   Workspace,
   WorkspaceRegistrationResult,
 } from "@shared/contracts";
+import { normalizeBotAvatarColor, normalizeBotAvatarShape } from "@shared/bot-avatar";
 import { messageAttachmentsSchema, toolInvocationCommandSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
 import { containsLikelySecret } from "./memory-safety";
@@ -1612,6 +1613,13 @@ export const MIGRATIONS = [
       UPDATE room_batches SET orchestration_enabled = 1 WHERE routing_mode = 'automatic';
     `,
   },
+  {
+    version: 25,
+    sql: `
+      ALTER TABLE bots ADD COLUMN avatar_shape TEXT NOT NULL DEFAULT 'rounded';
+      ALTER TABLE bots ADD COLUMN avatar_color TEXT NOT NULL DEFAULT 'cobalt';
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -1622,6 +1630,8 @@ type BotRow = {
   instructions: string;
   provider_instance_id: string;
   model_id: string;
+  avatar_shape: string;
+  avatar_color: string;
   mcp_server_ids_json: string | null;
   memory_workspace_ids_json: string;
   pinned_at: string | null;
@@ -1929,6 +1939,8 @@ type RoomMemberRow = {
   instructions: string;
   provider_instance_id: string;
   model_id: string;
+  avatar_shape: string;
+  avatar_color: string;
   mcp_server_ids_json: string | null;
   memory_workspace_ids_json: string;
   pinned_at: string | null;
@@ -2040,6 +2052,8 @@ function toBot(row: BotRow): Bot {
       providerInstanceId: row.provider_instance_id,
       modelId: row.model_id,
     },
+    avatarShape: normalizeBotAvatarShape(row.avatar_shape),
+    avatarColor: normalizeBotAvatarColor(row.avatar_color),
     mcpServerIds,
     memoryWorkspaceIds,
     pinnedAt: row.pinned_at,
@@ -2940,10 +2954,12 @@ export class AppRepository {
       label: "label",
       description: "description",
       instructions: "instructions",
+      avatarShape: "avatar_shape",
+      avatarColor: "avatar_color",
     };
     const assignments: string[] = [];
     const values: Array<string | number | null> = [];
-    for (const field of ["name", "label", "description", "instructions"] as const) {
+    for (const field of ["name", "label", "description", "instructions", "avatarShape", "avatarColor"] as const) {
       const value = patch[field];
       if (value === undefined) continue;
       assignments.push(`${columns[field]} = ?`);
@@ -3911,9 +3927,9 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO bots(
-             id, name, label, description, instructions, provider_instance_id, model_id, mcp_server_ids_json, memory_workspace_ids_json,
+             id, name, label, description, instructions, provider_instance_id, model_id, avatar_shape, avatar_color, mcp_server_ids_json, memory_workspace_ids_json,
              version, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .run(
           botId,
@@ -3923,6 +3939,8 @@ export class AppRepository {
           source.instructions,
           source.modelSelection.providerInstanceId,
           source.modelSelection.modelId,
+          source.avatarShape,
+          source.avatarColor,
           source.mcpServerIds == null ? null : JSON.stringify(source.mcpServerIds),
           JSON.stringify(source.memoryWorkspaceIds ?? []),
           timestamp,
