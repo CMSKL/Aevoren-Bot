@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AppError,
   ArtifactSaveResult,
@@ -350,7 +350,9 @@ const TranscriptItem = memo(function TranscriptItem({
   const longAssistant = entry.role === "assistant" && assistantBody.length > 160;
   const collapsibleAssistant = entry.role === "assistant" && entry.status === "completed" && assistantBody.length > 900;
   const hasVisibleBody = entry.role === "user" || assistantBody.trim().length > 0;
-  const speakerName = entry.role === "assistant" ? speakerDisplayName ?? entry.speakerNameSnapshot ?? "Aevoren Bot" : "你";
+  const speakerName = entry.role === "assistant"
+    ? speakerDisplayName ?? speakerBot?.name ?? entry.speakerNameSnapshot ?? "Bot"
+    : "你";
 
   return (
     <article
@@ -360,9 +362,8 @@ const TranscriptItem = memo(function TranscriptItem({
       <div className="message-row">
         {entry.role === "assistant" ? (
           <span
-            className={`message-avatar${groupedWithPrevious ? " message-avatar-placeholder" : ""}`}
+            className={`message-avatar message-avatar-with-bot${groupedWithPrevious ? " message-avatar-placeholder" : ""}`}
             aria-hidden="true"
-            style={entry.speakerBotId ? { "--role-hue": [...entry.speakerBotId].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 360 } as CSSProperties : undefined}
           >
             {groupedWithPrevious ? null : <BotAvatarIcon shape={speakerBot?.avatarShape} color={speakerBot?.avatarColor} size={22} />}
           </span>
@@ -591,7 +592,7 @@ export function Conversation({
   const hasInvalidRoomMentions = invalidRoomMentions.length > 0;
   const targetBotIds = room ? resolveRoomTargetIds(roomMentions, memberBotIds) : [];
   const explicitRoutingBlocked = Boolean(room && routingPreference === "explicit" && targetBotIds.length === 0);
-  const subjectName = bot?.name ?? room?.room.name ?? "Aevoren Bot";
+  const subjectName = bot?.name ?? room?.room.name ?? "选择对话";
   const conversationScopeId = room?.room.id ?? bot?.id ?? null;
   const artifactShelfOpen = conversationScopeId !== null && artifactShelfScopeId === conversationScopeId;
   const artifacts = useMemo(() => conversationArtifacts(toolInvocations), [toolInvocations]);
@@ -1119,7 +1120,7 @@ export function Conversation({
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => selectMention(item.id)}
                   >
-                    <span className="mention-option-icon"><BotAvatarIcon shape={mentionBot?.avatarShape} color={mentionBot?.avatarColor} size={21} /></span>
+                    <span className="mention-option-icon bot-avatar-container"><BotAvatarIcon shape={mentionBot?.avatarShape} color={mentionBot?.avatarColor} size={24} /></span>
                     <span className="mention-option-copy">
                       <strong>{item.label}</strong>
                       <small>{item.id === EVERYONE_MENTION_ID ? "Bot · 群聊中的全部成员" : "Bot"}</small>

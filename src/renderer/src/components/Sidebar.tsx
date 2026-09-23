@@ -552,7 +552,7 @@ export function Sidebar({
     if (renamingId === bot.id) {
       return (
         <div className={`bot-row renaming${bot.id === selectedBotId ? " selected" : ""}`} key={bot.id} role="listitem">
-          <span className="bot-icon"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={22} /></span>
+          <span className="bot-icon bot-avatar-container"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={28} /></span>
           <input
             ref={renameRef}
             className="bot-rename-input"
@@ -606,7 +606,9 @@ export function Sidebar({
         aria-haspopup="menu"
         data-multi-selected={multiSelected ? "true" : undefined}
       >
-        <span className="bot-icon">{multiSelected ? <CheckIcon /> : <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={22} />}</span>
+        <span className={`bot-icon${multiSelected ? "" : " bot-avatar-container"}`}>
+          {multiSelected ? <CheckIcon /> : <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={28} />}
+        </span>
         <span className="bot-copy">
           <strong>{identity.primary}</strong>
           <small>{identity.secondary}</small>

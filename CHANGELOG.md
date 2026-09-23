@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.8] - 2026-09-23
+
+### Fixed
+
+- Direct and Room speaker labels now use the configured Bot name, and an open Room refreshes member identity and avatar data after a Bot profile update.
+- Bot avatar artwork now fills its square display area without the previous inset gutter while preserving its aspect ratio.
+
 ## [0.3.0-beta.7] - 2026-09-23
 
 ### Added
@@ -101,6 +108,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 [0.3.0-beta.6]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.5...v0.3.0-beta.6
 [0.3.0-beta.7]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.6...v0.3.0-beta.7
+[0.3.0-beta.8]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.7...v0.3.0-beta.8
 [0.3.0-beta.5]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.4...v0.3.0-beta.5
 [0.3.0-beta.4]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.2...v0.3.0-beta.3

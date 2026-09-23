@@ -610,3 +610,102 @@ test("preserves Room user-cancel intent through a normal close when the Provider
     removeTestDirectory(userDataDir);
   }
 });
+
+test("keeps a renamed Bot and its full-bleed avatar synchronized across an open Room and existing messages", async () => {
+  test.setTimeout(90_000);
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-avatar-sync-"));
+  let application: ElectronApplication | undefined;
+  try {
+    const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
+    application = launched.application;
+    const page = launched.page;
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+
+    await createNamedBot(page, "调查员");
+    await createNamedBot(page, "审校员");
+    await createRoom(page, ["调查员", "审校员"]);
+
+    const input = page.getByLabel("消息");
+    await input.fill("@调查");
+    await expect(page.getByRole("listbox", { name: "提及 Bot" })).toBeVisible();
+    await page.getByRole("option", { name: /调查员/u }).click();
+    await input.fill("先记录一条协作回复。");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
+    await expect(page.locator(".speaker-link")).toHaveText(["调查员"]);
+
+    await page.locator('.bot-row[aria-label="调查员"]').click({ button: "right" });
+    await page.getByRole("menuitem", { name: "重命名 Bot" }).click();
+    const rename = page.getByLabel("重命名 Bot");
+    await rename.fill("首席研究员");
+    await rename.press("Enter");
+    await expect(page.locator(".room-member-row").filter({ hasText: "首席研究员" })).toBeVisible();
+    await expect(page.locator(".speaker-link")).toHaveText(["首席研究员"]);
+    await expect(page.getByRole("heading", { name: "调查员、审校员" })).toBeVisible();
+
+    await page.locator(".room-member-row").filter({ hasText: "首席研究员" }).getByRole("button", { name: "首席研究员" }).click();
+    await expect(page.getByRole("heading", { name: "首席研究员" })).toBeVisible();
+    await page.getByRole("radio", { name: "造型 peak" }).click();
+    await page.getByRole("radio", { name: "配色 teal" }).click();
+    await expect(page.getByRole("radio", { name: "造型 peak" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("radio", { name: "配色 teal" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+    await expect(page.locator('.bot-row[aria-label="首席研究员"] .bot-avatar-icon'))
+      .toHaveAttribute("data-avatar-shape", "peak");
+    await expect(page.locator('.bot-row[aria-label="首席研究员"] .bot-avatar-icon'))
+      .toHaveAttribute("data-avatar-color", "teal");
+    expect(await page.locator('.bot-row[aria-label="首席研究员"] .bot-avatar-icon').evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { width: bounds.width, height: bounds.height };
+    })).toEqual({ width: 28, height: 28 });
+
+    await input.fill("直接对话中使用当前 Bot 名称和头像。");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
+    await expect(page.locator("article.message-assistant .message-meta")).toContainText("首席研究员");
+    const directAvatar = page.locator("article.message-assistant .message-avatar .bot-avatar-icon");
+    await expect(directAvatar).toHaveAttribute("data-avatar-shape", "peak");
+    await expect(directAvatar).toHaveAttribute("data-avatar-color", "teal");
+    expect(await directAvatar.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { width: bounds.width, height: bounds.height };
+    })).toEqual({ width: 24, height: 24 });
+
+    await page.getByRole("listitem", { name: "调查员、审校员" }).click();
+    await expect(page.getByRole("heading", { name: "调查员、审校员" })).toBeVisible();
+    const memberRow = page.locator(".room-member-row").filter({ hasText: "首席研究员" });
+    await expect(memberRow).toBeVisible();
+    await expect(memberRow.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-shape", "peak");
+    await expect(memberRow.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-color", "teal");
+    await expect(page.locator(".speaker-link")).toHaveText(["首席研究员"]);
+    const historicalAvatar = page.locator("article.message-assistant .message-avatar .bot-avatar-icon");
+    await expect(historicalAvatar).toHaveAttribute("data-avatar-shape", "peak");
+    await expect(historicalAvatar).toHaveAttribute("data-avatar-color", "teal");
+
+    await input.fill("@首席");
+    const mentionOption = page.getByRole("option", { name: /首席研究员/u });
+    await expect(mentionOption).toBeVisible();
+    await expect(mentionOption.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-shape", "peak");
+    await expect(mentionOption.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-color", "teal");
+    expect(await mentionOption.locator(".bot-avatar-icon").evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { width: bounds.width, height: bounds.height };
+    })).toEqual({ width: 24, height: 24 });
+    await mentionOption.click();
+    await input.fill("继续验证群聊发言者显示。");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
+    await expect(page.locator(".speaker-link").last()).toHaveText("首席研究员");
+    await expect(page.locator("article.message-assistant .message-avatar .bot-avatar-icon").last())
+      .toHaveAttribute("data-avatar-shape", "peak");
+    await page.screenshot({ path: "/tmp/aevoren-bot-name-avatar-sync.png", fullPage: false });
+    expect(consoleErrors).toEqual([]);
+  } finally {
+    if (application) await forceKill(application);
+    removeTestDirectory(userDataDir);
+  }
+});
