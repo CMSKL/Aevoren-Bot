@@ -36,11 +36,13 @@ const api: AevorenBotApi = {
     deleteBatch: (input) => ipcRenderer.invoke(IPC.conversationsDeleteBatch, input),
   },
   teams: {
-    createContentTeam: () => ipcRenderer.invoke(IPC.teamsCreateContentTeam),
+    createContentTeam: (input) => input
+      ? ipcRenderer.invoke(IPC.teamsCreateContentTeam, input)
+      : ipcRenderer.invoke(IPC.teamsCreateContentTeam),
   },
   bots: {
     list: () => ipcRenderer.invoke(IPC.botsList),
-    create: () => ipcRenderer.invoke(IPC.botsCreate),
+    create: (input) => input ? ipcRenderer.invoke(IPC.botsCreate, input) : ipcRenderer.invoke(IPC.botsCreate),
     update: (input) => ipcRenderer.invoke(IPC.botsUpdate, input),
     setPinned: (input) => ipcRenderer.invoke(IPC.botsSetPinned, input),
     setUnread: (input) => ipcRenderer.invoke(IPC.botsSetUnread, input),
@@ -65,6 +67,10 @@ const api: AevorenBotApi = {
     updatePermissions: (input) => ipcRenderer.invoke(IPC.workspacesUpdatePermissions, input),
     reveal: (input) => ipcRenderer.invoke(IPC.workspacesReveal, input),
     remove: (input) => ipcRenderer.invoke(IPC.workspacesRemove, input),
+  },
+  projects: {
+    list: () => ipcRenderer.invoke(IPC.projectsList),
+    create: (input) => ipcRenderer.invoke(IPC.projectsCreate, input),
   },
   tools: {
     list: (input) => ipcRenderer.invoke(IPC.toolsList, input),

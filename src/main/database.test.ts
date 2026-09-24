@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "@shared/bot-avatar";
-import type { AttachmentDraft, PromptManifest } from "@shared/contracts";
+import { DEFAULT_PROJECT_ID, type AttachmentDraft, type PromptManifest } from "@shared/contracts";
 import { AppRepository, MIGRATIONS } from "./database";
 import { AevorenBotError } from "./errors";
 
@@ -111,6 +111,55 @@ describe("AppRepository", () => {
     const database = new DatabaseSync(filename, { readOnly: true });
     expect(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: sourceSchemaVersion });
     database.close();
+  });
+
+  it("migrates every existing Bot and Room into the default project without changing their identities", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-project-migration-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    createDatabaseAtVersion(filename, 25);
+    const legacy = new DatabaseSync(filename);
+    legacy.prepare(
+      `INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at)
+       VALUES (?, ?, '', '', '', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run("legacy-bot", "Legacy Bot");
+    legacy.prepare(
+      `INSERT INTO rooms(id, name, description, version, membership_version, archived_at, created_at, updated_at)
+       VALUES (?, ?, ?, 1, 1, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run("legacy-room", "Legacy Room", "Original description");
+    legacy.close();
+
+    const repository = new AppRepository(filename, { backupDirectory: join(directory, "Backups") });
+    repositories.push(repository);
+    const projects = repository.listProjects();
+    expect(projects).toHaveLength(1);
+    expect(projects[0]).toMatchObject({ id: DEFAULT_PROJECT_ID, name: "默认项目", isDefault: true });
+    expect(repository.getBot("legacy-bot")).toMatchObject({ id: "legacy-bot", name: "Legacy Bot", projectId: DEFAULT_PROJECT_ID });
+    expect(repository.getRoom("legacy-room")).toMatchObject({ id: "legacy-room", name: "Legacy Room", description: "Original description", projectId: DEFAULT_PROJECT_ID });
+
+    const newBot = repository.createBot().bot;
+    const secondBot = repository.createBot().bot;
+    const newRoom = repository.createRoom({ memberBotIds: [newBot.id, secondBot.id] }).room;
+    expect(newBot.projectId).toBe(DEFAULT_PROJECT_ID);
+    expect(newRoom.projectId).toBe(DEFAULT_PROJECT_ID);
+    expect(repository.getBot("legacy-bot").name).toBe("Legacy Bot");
+    expect(repository.getRoom("legacy-room").description).toBe("Original description");
+
+    const project = repository.createProject("Content Project");
+    expect(project).toMatchObject({ name: "Content Project", isDefault: false });
+    expect(() => repository.createProject("Content Project")).toThrow(AevorenBotError);
+    expect(() => repository.createProject("content project")).toThrow(AevorenBotError);
+    const projectBot = repository.createBot(project.id).bot;
+    const anotherProjectBot = repository.createBot(project.id).bot;
+    const projectRoom = repository.createRoom({ memberBotIds: [projectBot.id, anotherProjectBot.id] }).room;
+    expect(projectBot.projectId).toBe(project.id);
+    expect(projectRoom.projectId).toBe(project.id);
+    expect(() => repository.createRoom({ memberBotIds: ["legacy-bot", projectBot.id] })).toThrow(AevorenBotError);
+    const projectTeam = repository.createContentTeamTemplate(project.id);
+    expect(projectTeam.room.room.projectId).toBe(project.id);
+    expect(projectTeam.bots.every((bot) => bot.projectId === project.id)).toBe(true);
+    expect(repository.createContentTeamTemplate(project.id).disposition).toBe("existing");
+    expect(repository.duplicateBot(projectBot.id).bot.projectId).toBe(project.id);
   });
 
   it("migrates the legacy global model configuration into one provider instance without decrypting the key", () => {

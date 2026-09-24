@@ -2,6 +2,7 @@ import { createHash, randomInt, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { DEFAULT_PROJECT_ID } from "@shared/contracts";
 import type {
   AgentTurn,
   AgentTurnOutcome,
@@ -37,6 +38,7 @@ import type {
   ModelSelection,
   PromptManifest,
   ProviderDriverKind,
+  Project,
   Room,
   RoomBatch,
   RoomBatchState,
@@ -1621,10 +1623,47 @@ export const MIGRATIONS = [
       ALTER TABLE bots ADD COLUMN avatar_color TEXT NOT NULL DEFAULT 'cobalt';
     `,
   },
+  {
+    version: 26,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 80),
+        is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX projects_single_default
+        ON projects(is_default) WHERE is_default = 1;
+      CREATE UNIQUE INDEX projects_unique_name ON projects(name COLLATE NOCASE);
+
+      INSERT INTO projects(id, name, is_default, version, created_at, updated_at)
+      VALUES (
+        '${DEFAULT_PROJECT_ID}',
+        '默认项目',
+        1,
+        1,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+
+      ALTER TABLE bots ADD COLUMN project_id TEXT NOT NULL DEFAULT '${DEFAULT_PROJECT_ID}'
+        REFERENCES projects(id) ON DELETE RESTRICT;
+      ALTER TABLE rooms ADD COLUMN project_id TEXT NOT NULL DEFAULT '${DEFAULT_PROJECT_ID}'
+        REFERENCES projects(id) ON DELETE RESTRICT;
+
+      CREATE INDEX bots_by_project ON bots(project_id, deleted_at, hidden_at, pinned_at, created_at);
+      CREATE INDEX rooms_by_project ON rooms(project_id, archived_at, hidden_at, pinned_at, created_at);
+    `,
+  },
 ] as const;
 
 type BotRow = {
   id: string;
+  project_id: string;
   name: string;
   label: string;
   description: string;
@@ -1855,6 +1894,15 @@ type WorkspaceRow = {
   updated_at: string;
 };
 
+type ProjectRow = {
+  id: string;
+  name: string;
+  is_default: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
 type McpServerRow = {
   id: string;
   name: string;
@@ -1917,6 +1965,7 @@ export type McpServerConfig = {
 
 type RoomRow = {
   id: string;
+  project_id: string;
   name: string;
   description: string;
   version: number;
@@ -1933,6 +1982,7 @@ type RoomMemberRow = {
   room_id: string;
   bot_id: string;
   position: number;
+  project_id: string;
   id: string;
   name: string;
   label: string;
@@ -2052,6 +2102,7 @@ function toBot(row: BotRow): Bot {
     .filter((value): value is string => typeof value === "string");
   return {
     id: row.id,
+    projectId: row.project_id,
     name: row.name,
     label: row.label,
     description: row.description,
@@ -2283,6 +2334,17 @@ function toWorkspace(row: WorkspaceRow): Workspace {
   };
 }
 
+function toProject(row: ProjectRow): Project {
+  return {
+    id: row.id,
+    name: row.name,
+    isDefault: row.is_default === 1,
+    version: Number(row.version),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function toMcpServerConfig(row: McpServerRow): McpServerConfig {
   return {
     id: row.id,
@@ -2338,6 +2400,7 @@ function toRoutineRun(row: RoutineRunRow): RoutineRun {
 function toRoom(row: RoomRow): Room {
   return {
     id: row.id,
+    projectId: row.project_id,
     name: row.name,
     description: row.description,
     version: row.version,
@@ -2922,7 +2985,8 @@ export class AppRepository {
     return toBot(row);
   }
 
-  createBot(): { bot: Bot; session: Session } {
+  createBot(projectId = DEFAULT_PROJECT_ID): { bot: Bot; session: Session } {
+    this.getProject(projectId);
     const timestamp = now();
     const botId = randomUUID();
     const sessionId = randomUUID();
@@ -2932,12 +2996,13 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO bots(
-             id, name, label, description, instructions, provider_instance_id, model_id,
+             id, project_id, name, label, description, instructions, provider_instance_id, model_id,
              avatar_shape, avatar_color, version, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .run(
           botId,
+          projectId,
           "新建 Bot",
           "",
           "",
@@ -3416,6 +3481,32 @@ export class AppRepository {
         .prepare("SELECT * FROM workspaces WHERE removed_at IS NULL ORDER BY created_at ASC, id ASC")
         .all() as WorkspaceRow[]
     ).map(toWorkspace);
+  }
+
+  listProjects(): Project[] {
+    return (
+      this.database
+        .prepare("SELECT * FROM projects ORDER BY is_default DESC, created_at ASC, id ASC")
+        .all() as ProjectRow[]
+    ).map(toProject);
+  }
+
+  createProject(name: string): Project {
+    const normalizedName = name.trim();
+    const duplicate = this.database.prepare("SELECT id FROM projects WHERE name = ? COLLATE NOCASE").get(normalizedName);
+    if (duplicate) throw new AevorenBotError("PROJECT_NAME_TAKEN");
+    const id = randomUUID();
+    const timestamp = now();
+    this.database.prepare(
+      "INSERT INTO projects(id, name, is_default, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)",
+    ).run(id, normalizedName, timestamp, timestamp);
+    return toProject(this.database.prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow);
+  }
+
+  private getProject(id: string): Project {
+    const row = this.database.prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow | undefined;
+    if (!row) throw new AevorenBotError("PROJECT_NOT_FOUND");
+    return toProject(row);
   }
 
   getWorkspace(id: string, includeRemoved = false): Workspace {
@@ -3939,12 +4030,13 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO bots(
-             id, name, label, description, instructions, provider_instance_id, model_id, avatar_shape, avatar_color, mcp_server_ids_json, memory_workspace_ids_json,
+             id, project_id, name, label, description, instructions, provider_instance_id, model_id, avatar_shape, avatar_color, mcp_server_ids_json, memory_workspace_ids_json,
              version, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .run(
           botId,
+          source.projectId,
           name,
           source.label,
           source.description,
@@ -4067,8 +4159,11 @@ export class AppRepository {
     return rows.map((row) => ({ roomId: row.room_id, botId: row.bot_id, position: row.position, bot: toBot(row) }));
   }
 
-  createContentTeamTemplate(): TeamTemplateCreateResult {
-    const settingKey = "template.content-team.roomId";
+  createContentTeamTemplate(projectId = DEFAULT_PROJECT_ID): TeamTemplateCreateResult {
+    this.getProject(projectId);
+    const settingKey = projectId === DEFAULT_PROJECT_ID
+      ? "template.content-team.roomId"
+      : `template.content-team.roomId.${projectId}`;
     const existingRoomId = this.getSetting(settingKey)?.value;
     if (existingRoomId) {
       try {
@@ -4120,9 +4215,9 @@ export class AppRepository {
     this.transaction(() => {
       const insertBot = this.database.prepare(
         `INSERT INTO bots(
-           id, name, label, description, instructions, provider_instance_id, model_id,
+           id, project_id, name, label, description, instructions, provider_instance_id, model_id,
            avatar_shape, avatar_color, version, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
       );
       const insertSession = this.database.prepare(
         `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
@@ -4132,15 +4227,15 @@ export class AppRepository {
         const botId = botIds[index]!;
         const avatar = avatars[index]!;
         insertBot.run(
-          botId, role.name, role.label, role.description, role.instructions,
+          botId, projectId, role.name, role.label, role.description, role.instructions,
           modelSelection.providerInstanceId, modelSelection.modelId, avatar.shape, avatar.color, timestamp, timestamp,
         );
         insertSession.run(randomUUID(), botId, timestamp, timestamp);
       });
       this.database.prepare(
-        `INSERT INTO rooms(id, name, description, version, membership_version, archived_at, created_at, updated_at)
-         VALUES (?, '自媒体内容团队', ?, 1, 1, NULL, ?, ?)`,
-      ).run(roomId, description, timestamp, timestamp);
+        `INSERT INTO rooms(id, project_id, name, description, version, membership_version, archived_at, created_at, updated_at)
+         VALUES (?, ?, '自媒体内容团队', ?, 1, 1, NULL, ?, ?)`,
+      ).run(roomId, projectId, description, timestamp, timestamp);
       const insertMember = this.database.prepare(
         "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
       );
@@ -4167,13 +4262,15 @@ export class AppRepository {
     const timestamp = now();
     this.transaction(() => {
       const bots = input.memberBotIds.map((id) => this.getBot(id));
+      const projectId = bots[0]!.projectId;
+      if (bots.some((bot) => bot.projectId !== projectId)) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
       const generatedName = bots.map((bot) => bot.name).join("、").replace(/\s+/g, " ").trim().slice(0, 72);
       this.database
         .prepare(
-          `INSERT INTO rooms(id, name, description, version, membership_version, archived_at, created_at, updated_at)
-           VALUES (?, ?, ?, 1, 1, NULL, ?, ?)`,
+          `INSERT INTO rooms(id, project_id, name, description, version, membership_version, archived_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 1, 1, NULL, ?, ?)`,
         )
-        .run(roomId, input.name?.trim() || generatedName || "新群聊", input.description?.trim() ?? "", timestamp, timestamp);
+        .run(roomId, projectId, input.name?.trim() || generatedName || "新群聊", input.description?.trim() ?? "", timestamp, timestamp);
       const insertMember = this.database.prepare(
         "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
       );
@@ -4297,7 +4394,8 @@ export class AppRepository {
       const room = this.getRoom(roomId);
       const sessionId = this.getRoomMainSession(roomId).id;
       if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new AevorenBotError("ROOM_BUSY");
-      this.getBot(botId);
+      const bot = this.getBot(botId);
+      if (bot.projectId !== room.projectId) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
       if (room.membershipVersion !== expectedMembershipVersion) {
         throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
       }

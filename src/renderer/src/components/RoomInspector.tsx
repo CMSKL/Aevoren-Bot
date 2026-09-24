@@ -16,7 +16,6 @@ type Props = {
   active: boolean;
   mobileOpen: boolean;
   onDetailUpdated(detail: RoomDetail): void;
-  onArchived(room: RoomDetail["room"]): void;
   onError(error: AppError | null): void;
   onOpenBot(bot: Bot): void;
   onMobileClose(): void;
@@ -31,20 +30,21 @@ function same(left: Draft, right: Draft): boolean {
 }
 
 export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function RoomInspector(
-  { id, detail, bots, active, mobileOpen, onDetailUpdated, onArchived, onError, onOpenBot, onMobileClose },
+  { id, detail, bots, active, mobileOpen, onDetailUpdated, onError, onOpenBot, onMobileClose },
   ref,
 ) {
   const [draft, setDraft] = useState<Draft | null>(detail ? toDraft(detail) : null);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [selectedBotId, setSelectedBotId] = useState("");
   const [memberPending, setMemberPending] = useState(false);
+  const [membersExpanded, setMembersExpanded] = useState(false);
   const draftRef = useRef(draft);
   const savedRef = useRef<Draft | null>(detail ? toDraft(detail) : null);
   const detailRef = useRef(detail);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
   const availableBots = useMemo(
-    () => bots.filter((bot) => bot.hiddenAt === null && !detail?.members.some((member) => member.botId === bot.id)),
+    () => bots.filter((bot) => bot.projectId === detail?.room.projectId && bot.hiddenAt === null && !detail?.members.some((member) => member.botId === bot.id)),
     [bots, detail],
   );
   const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);
@@ -130,7 +130,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   return (
     <aside id={id} className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="群聊设置">
       <header className="inspector-header">
-        <h2>对话详情</h2>
+        <h2>设置</h2>
         <div className="inspector-header-actions">
           <div className={`save-status status-${status}`} data-testid="room-save-status">
             {status === "saving" ? "保存中…" : null}
@@ -138,57 +138,58 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
             {status === "failed" ? "保存失败" : null}
             {status === "idle" || status === "saved" ? <><CheckIcon />已保存</> : null}
           </div>
-          <button className="drawer-close-button" type="button" aria-label="关闭群聊设置" onClick={onMobileClose}><CloseIcon /></button>
+          <button className="drawer-close-button" type="button" aria-label="关闭设置" onClick={onMobileClose}><CloseIcon /></button>
         </div>
       </header>
-      <section className="room-members" aria-label="群聊成员">
-        <div className="room-section-title"><strong>成员</strong><span>{detail.members.length}/6</span></div>
-        {detail.members.map((member) => {
-          const identity = botIdentities.get(member.botId)!;
-          return <div className="room-member-row" key={member.botId}>
-            <button className="member-main-link" type="button" title={identity.inline} onClick={() => onOpenBot(member.bot)}>
-              <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={20} />
-              <span>{identity.inline}</span>
-            </button>
-            <button
-              className="text-button danger-button"
-              type="button"
-              disabled={active || memberPending || detail.members.length <= 2}
-              onClick={() => void changeMember("remove", member.botId)}
-            >移除</button>
-          </div>;
-        })}
-        {detail.members.length < 6 && availableBots.length > 0 ? (
-          <div className="room-add-member">
-            <select aria-label="选择要添加的 Bot" value={selectedBotId} onChange={(event) => setSelectedBotId(event.target.value)} disabled={active || memberPending}>
-              <option value="">选择 Bot…</option>
-              {availableBots.map((bot) => <option value={bot.id} key={bot.id}>{botIdentities.get(bot.id)!.inline}</option>)}
-            </select>
-            <button className="secondary-button" type="button" disabled={!selectedBotId || active || memberPending} onClick={() => void changeMember("add", selectedBotId)}>添加</button>
-          </div>
-        ) : null}
-        {active ? <p className="room-lock-note">本批回复完成或取消后才能修改成员。</p> : null}
-      </section>
-      <label className="field">
+      <button
+        className="room-avatar-stack"
+        type="button"
+        aria-label={`管理群聊成员 ${detail.members.length}/6`}
+        aria-expanded={membersExpanded}
+        aria-controls={`room-members-${detail.room.id}`}
+        onClick={() => setMembersExpanded((expanded) => !expanded)}
+      >
+        {detail.members.slice(0, 3).map((member) => (
+          <BotAvatarIcon key={member.botId} shape={member.bot.avatarShape} color={member.bot.avatarColor} size={60} title={member.bot.name} />
+        ))}
+        {detail.members.length > 3 ? <span className="room-avatar-count">+{detail.members.length - 3}</span> : null}
+      </button>
+      <label className="field inspector-primary-field">
         <span>名称</span>
         <input value={draft.name} maxLength={72} onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
       </label>
-      <label className="field">
+      <label className="field inspector-primary-field">
         <span>描述</span>
-        <textarea value={draft.description} maxLength={2_000} rows={4} placeholder="说明这个群聊的协作目标" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
+        <textarea value={draft.description} maxLength={2_000} rows={7} placeholder="说明这个群聊的协作目标" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
       </label>
       {status === "failed" ? <button className="secondary-button full-width" type="button" onClick={() => void flush()}>重试保存</button> : null}
-      <button
-        className="secondary-button full-width archive-button"
-        type="button"
-        disabled={active || memberPending}
-        onClick={async () => {
-          if (!(await flush())) return;
-          const result = await window.aevorenBot.rooms.archive({ id: detail.room.id, archived: true });
-          if (!result.ok) onError(result.error);
-          else onArchived(result.data);
-        }}
-      >归档群聊</button>
+      <section className="room-members-manager" id={`room-members-${detail.room.id}`} hidden={!membersExpanded} aria-label="群聊成员">
+            {detail.members.map((member) => {
+              const identity = botIdentities.get(member.botId)!;
+              return <div className="room-member-row" key={member.botId}>
+                <button className="member-main-link" type="button" title={identity.inline} onClick={() => onOpenBot(member.bot)}>
+                  <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={20} />
+                  <span>{identity.inline}</span>
+                </button>
+                <button
+                  className="text-button danger-button"
+                  type="button"
+                  disabled={active || memberPending || detail.members.length <= 2}
+                  onClick={() => void changeMember("remove", member.botId)}
+                >移除</button>
+              </div>;
+            })}
+            {detail.members.length < 6 && availableBots.length > 0 ? (
+              <div className="room-add-member">
+                <select aria-label="选择要添加的 Bot" value={selectedBotId} onChange={(event) => setSelectedBotId(event.target.value)} disabled={active || memberPending}>
+                  <option value="">选择 Bot…</option>
+                  {availableBots.map((bot) => <option value={bot.id} key={bot.id}>{botIdentities.get(bot.id)!.inline}</option>)}
+                </select>
+                <button className="secondary-button" type="button" disabled={!selectedBotId || active || memberPending} onClick={() => void changeMember("add", selectedBotId)}>添加</button>
+              </div>
+            ) : null}
+            {active ? <p className="room-lock-note">本批回复完成或取消后才能修改成员。</p> : null}
+      </section>
     </aside>
   );
 });

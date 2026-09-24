@@ -44,6 +44,8 @@ import {
   runIdSchema,
   sendCommandSchema,
   providerInstanceIdInputSchema,
+  projectContextSchema,
+  projectCreateSchema,
   saveCliProviderSchema,
   saveOpenAiCompatibleProviderSchema,
   sessionIdSchema,
@@ -160,11 +162,15 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.conversationsDeleteBatch, (_event, input: unknown) =>
     repository.deleteConversations(conversationBatchDeleteSchema.parse(input)),
   );
-  handle(IPC.teamsCreateContentTeam, () => repository.createContentTeamTemplate());
+  handle(IPC.teamsCreateContentTeam, (_event, input: unknown) => {
+    const parsed = projectContextSchema.parse(input ?? {});
+    return repository.createContentTeamTemplate(parsed.projectId);
+  });
+  handle(IPC.projectsCreate, (_event, input: unknown) => repository.createProject(projectCreateSchema.parse(input).name));
   handle(IPC.roomsGetBriefApproval, (_event, input: unknown) => roomCoordinator.getBriefApproval(briefApprovalReadSchema.parse(input)));
   handle(IPC.roomsApproveBrief, (_event, input: unknown) => roomCoordinator.approveBrief(briefApprovalCommandSchema.parse(input)));
   handle(IPC.botsList, () => repository.listBots());
-  handle(IPC.botsCreate, () => repository.createBot());
+  handle(IPC.botsCreate, (_event, input: unknown) => repository.createBot(projectContextSchema.parse(input ?? {}).projectId));
   handle(IPC.botsUpdate, (_event, input: unknown) => {
     const parsed = botUpdateSchema.parse(input);
     if (parsed.patch.modelSelection && !providers.isSupported(parsed.patch.modelSelection.providerInstanceId)) {
@@ -252,6 +258,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
     const parsed = workspaceMutationSchema.parse(input);
     return repository.removeWorkspace(parsed.id, parsed.expectedVersion);
   });
+  handle(IPC.projectsList, () => repository.listProjects());
   handle(IPC.toolsList, (_event, input: unknown) => {
     const parsed = toolSessionScopeSchema.parse(input);
     return repository.listToolInvocations(parsed.sessionId);

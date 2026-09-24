@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { DEFAULT_PROJECT_ID } from "@shared/contracts";
 import type {
+  ApiResult,
   AppearanceTheme,
   AppError,
   ApprovalRequest,
@@ -8,6 +10,7 @@ import type {
   BriefApprovalCommand,
   ConversationBatchDeleteInput,
   LoginItemStatus,
+  Project,
   Room,
   RoomBatch,
   RoomDetail,
@@ -34,6 +37,7 @@ import { ProfileInspector, type ProfileInspectorHandle } from "./components/Prof
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
 import { Sidebar } from "./components/Sidebar";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
+import { ProjectDialog } from "./components/ProjectDialog";
 import { UpdateStatusNotice } from "./components/UpdateStatusNotice";
 import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
 import { mergeRoomRuntimeEvents } from "./room-runtime-state";
@@ -64,6 +68,8 @@ function mergeToolEvents(
 export function App(): React.JSX.Element {
   const [bots, setBots] = useState<Bot[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState(DEFAULT_PROJECT_ID);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedBot, setSelectedBot] = useState<Bot | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<RoomDetail | null>(null);
@@ -84,6 +90,7 @@ export function App(): React.JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [workspaceAddPending, setWorkspaceAddPending] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"bots" | "profile" | null>(null);
@@ -377,7 +384,11 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([window.aevorenBot.bots.list(), window.aevorenBot.rooms.list({ includeArchived: true })]).then(async ([botResult, roomResult]) => {
+    void Promise.all([
+      window.aevorenBot.bots.list(),
+      window.aevorenBot.rooms.list({ includeArchived: true }),
+      window.aevorenBot.projects.list(),
+    ]).then(async ([botResult, roomResult, projectResult]) => {
       if (cancelled) return;
       if (!botResult.ok) {
         setError(botResult.error);
@@ -389,8 +400,19 @@ export function App(): React.JSX.Element {
         setLoading(false);
         return;
       }
+      if (!projectResult.ok) {
+        setError(projectResult.error);
+        setLoading(false);
+        return;
+      }
       setBots(botResult.data);
       setRooms(roomResult.data);
+      setProjects(projectResult.data);
+      const rememberedProjectId = sessionStorage.getItem("aevoren-bot:project");
+      const activeProject = projectResult.data.find((project) => project.id === rememberedProjectId)
+        ?? projectResult.data.find((project) => project.id === DEFAULT_PROJECT_ID)
+        ?? projectResult.data[0];
+      if (activeProject) setActiveProjectId((current) => current === DEFAULT_PROJECT_ID ? activeProject.id : current);
       const selected = sessionStorage.getItem("aevoren-bot:selected");
       const selectedRoom = selected?.startsWith("room:")
         ? roomResult.data.find((room) => room.id === selected.slice(5) && room.archivedAt === null)
@@ -445,7 +467,7 @@ export function App(): React.JSX.Element {
     try {
       if (!(await flushActive())) return;
       setCreateError(null);
-      const result = await window.aevorenBot.bots.create();
+      const result = await window.aevorenBot.bots.create({ projectId: activeProjectId });
       if (!result.ok) {
         setCreateError(result.error);
         return;
@@ -485,7 +507,7 @@ export function App(): React.JSX.Element {
     try {
       if (!(await flushActive())) return;
       setCreateError(null);
-      const result = await window.aevorenBot.teams.createContentTeam();
+      const result = await window.aevorenBot.teams.createContentTeam({ projectId: activeProjectId });
       if (!result.ok) {
         setCreateError(result.error);
         return;
@@ -506,6 +528,17 @@ export function App(): React.JSX.Element {
       chooserActionRef.current = null;
       setCreatingBot(false);
     }
+  }
+
+  async function createProject(name: string): Promise<ApiResult<Project>> {
+    const result = await window.aevorenBot.projects.create({ name });
+    if (result.ok) {
+      setProjects((current) => [...current, result.data]);
+      setActiveProjectId(result.data.id);
+      sessionStorage.setItem("aevoren-bot:project", result.data.id);
+      setProjectDialogOpen(false);
+    }
+    return result;
   }
 
   function updateBot(bot: Bot): void {
@@ -876,14 +909,19 @@ export function App(): React.JSX.Element {
       <Sidebar
         bots={bots}
         rooms={rooms}
+        projects={projects}
+        activeProjectId={activeProjectId}
         workspaces={workspaces}
         selectedBotId={selectedBot?.id ?? null}
         selectedRoomId={selectedRoom?.room.id ?? null}
         busy={loading}
-        workspaceAddPending={workspaceAddPending}
         mobileOpen={mobilePanel === "bots"}
         createButtonRef={newBotButtonRef}
-        onAddWorkspace={addWorkspace}
+        onCreateProject={() => setProjectDialogOpen(true)}
+        onSelectProject={(projectId) => {
+          setActiveProjectId(projectId);
+          sessionStorage.setItem("aevoren-bot:project", projectId);
+        }}
         onOpenWorkspaces={() => setWorkspacesOpen(true)}
         onCreate={() => {
           if (chooserActionRef.current) return;
@@ -1048,7 +1086,6 @@ export function App(): React.JSX.Element {
           active={activeRoomBatch}
           mobileOpen={mobilePanel === "profile"}
           onDetailUpdated={updateRoom}
-          onArchived={handleArchived}
           onError={setError}
           onOpenBot={(bot) => void openBot(bot)}
           onMobileClose={() => void closeInspector()}
@@ -1118,10 +1155,22 @@ export function App(): React.JSX.Element {
           });
         }}
       />
-      <WorkspaceDialog open={workspacesOpen} onClose={() => setWorkspacesOpen(false)} />
+      <WorkspaceDialog
+        open={workspacesOpen}
+        adding={workspaceAddPending}
+        onAddWorkspace={addWorkspace}
+        onClose={() => setWorkspacesOpen(false)}
+      />
+      {projectDialogOpen ? (
+        <ProjectDialog
+          open
+          onClose={() => setProjectDialogOpen(false)}
+          onCreate={createProject}
+        />
+      ) : null}
       {newBotOpen ? (
         <NewBotChooser
-          bots={bots}
+          bots={bots.filter((bot) => bot.projectId === activeProjectId)}
           creating={creatingBot}
           error={createError}
           onClose={() => {

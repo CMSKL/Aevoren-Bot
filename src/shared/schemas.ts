@@ -4,6 +4,9 @@ import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "./bot-avatar";
 const nonEmptyText = z.string().trim().min(1).max(20_000);
 const providerInstanceIdSchema = z.string().trim().min(1).max(120).regex(/^[a-z0-9][a-z0-9._-]*$/i);
 export const workspaceIdSchema = z.string().uuid();
+export const projectIdSchema = z.string().uuid();
+export const projectCreateSchema = z.object({ name: z.string().trim().min(1).max(80) }).strict();
+export const projectContextSchema = z.object({ projectId: projectIdSchema.optional() }).strict();
 export const modelSelectionSchema = z.object({
   providerInstanceId: providerInstanceIdSchema,
   modelId: z.string().trim().max(200),

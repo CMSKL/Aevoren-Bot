@@ -1,7 +1,10 @@
 import type { BotAvatarColor, BotAvatarShape } from "./bot-avatar";
 
+export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
+
 export type Bot = {
   id: string;
+  projectId: string;
   name: string;
   label: string;
   description: string;
@@ -93,6 +96,15 @@ export type Workspace = {
   automationEnabled: boolean;
   version: number;
   removedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Project = {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  version: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -661,6 +673,7 @@ export type ToolApprovalResult = {
 
 export type Room = {
   id: string;
+  projectId: string;
   name: string;
   description: string;
   version: number;
@@ -1158,11 +1171,11 @@ export interface AevorenBotApi {
     deleteBatch(input: ConversationBatchDeleteInput): Promise<ApiResult<ConversationBatchDeleteResult>>;
   };
   teams: {
-    createContentTeam(): Promise<ApiResult<TeamTemplateCreateResult>>;
+    createContentTeam(input?: { projectId?: string }): Promise<ApiResult<TeamTemplateCreateResult>>;
   };
   bots: {
     list(): Promise<ApiResult<Bot[]>>;
-    create(): Promise<ApiResult<{ bot: Bot; session: Session }>>;
+    create(input?: { projectId?: string }): Promise<ApiResult<{ bot: Bot; session: Session }>>;
     update(input: { id: string; expectedVersion: number; patch: BotPatch }): Promise<ApiResult<Bot>>;
     setPinned(input: { id: string; pinned: boolean }): Promise<ApiResult<Bot>>;
     setUnread(input: { id: string; unread: boolean }): Promise<ApiResult<Bot>>;
@@ -1187,6 +1200,10 @@ export interface AevorenBotApi {
     updatePermissions(input: { id: string; expectedVersion: number; writeEnabled: boolean; automationEnabled: boolean }): Promise<ApiResult<Workspace>>;
     reveal(input: { workspaceId: string; path: string }): Promise<ApiResult<boolean>>;
     remove(input: { id: string; expectedVersion: number }): Promise<ApiResult<Workspace>>;
+  };
+  projects: {
+    list(): Promise<ApiResult<Project[]>>;
+    create(input: { name: string }): Promise<ApiResult<Project>>;
   };
   tools: {
     list(input: { sessionId: string }): Promise<ApiResult<ToolInvocation[]>>;

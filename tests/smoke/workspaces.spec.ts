@@ -43,18 +43,18 @@ test("shows only public Workspace identity and revokes access without touching d
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "关闭设置" }).click();
     const sidebarWorkspaces = page.locator(".sidebar-added-workspaces");
-    const workspaceRow = page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` });
+    const workspaceRow = page.getByRole("button", { name: `管理文件夹 ${registered.workspace.name}` });
     await expect(workspaceRow).toBeVisible();
     await expect(page.locator(".conversation-header").getByRole("button", { name: "工作区" })).toHaveCount(0);
     await workspaceRow.click();
-    const dialog = page.getByRole("dialog", { name: "工作区" });
+    const dialog = page.getByRole("dialog", { name: "文件工作区" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText(registered.workspace.name, { exact: true })).toBeVisible();
     await expect(dialog).not.toContainText(workspaceRoot);
     await dialog.getByLabel("允许 Bot 新建 Markdown/CSV").check();
-    await dialog.getByLabel("自动批准此工作区的受限工具").check();
+    await dialog.getByLabel("自动批准此文件夹的受限工具").check();
     await expect(dialog.getByLabel("允许 Bot 新建 Markdown/CSV")).toBeChecked();
-    await expect(dialog.getByLabel("自动批准此工作区的受限工具")).toBeChecked();
+    await expect(dialog.getByLabel("自动批准此文件夹的受限工具")).toBeChecked();
 
     const publicResult = await page.evaluate(() => (
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.workspaces.list()
@@ -90,12 +90,15 @@ test("shows only public Workspace identity and revokes access without touching d
 
     await dialog.getByRole("button", { name: "完成" }).click();
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
-    await page.getByRole("button", { name: "添加工作区" }).click();
+    await page.getByRole("button", { name: `管理文件夹 ${registered.workspace.name}` }).click();
+    const addFolderDialog = page.getByRole("dialog", { name: "文件工作区" });
+    await addFolderDialog.getByRole("button", { name: "添加文件夹", exact: true }).click();
     const addedWorkspaceName = workspaceRootToAdd.split(/[\\/]/u).at(-1)!;
-    const addedWorkspaceRow = page.getByRole("button", { name: `管理工作区 ${addedWorkspaceName}` });
+    const addedWorkspaceRow = page.getByRole("button", { name: `管理文件夹 ${addedWorkspaceName}` });
+    await expect(addFolderDialog.getByText(addedWorkspaceName, { exact: true })).toBeVisible();
+    await addFolderDialog.getByRole("button", { name: "完成" }).click();
     await expect(addedWorkspaceRow).toBeVisible();
     await expect(sidebarWorkspaces).not.toContainText(workspaceRootToAdd);
-    await expect(page.locator(".bot-action-notice")).toHaveText(`已添加工作区：${addedWorkspaceName}`);
     await expect(page.locator(".bot-action-notice")).toHaveCount(0);
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-added-sidebar.png" });
 
@@ -106,13 +109,13 @@ test("shows only public Workspace identity and revokes access without touching d
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-added-sidebar-compact.png" });
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
-    await page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` }).click();
-    const reopenedDialog = page.getByRole("dialog", { name: "工作区" });
+    await page.getByRole("button", { name: `管理文件夹 ${registered.workspace.name}` }).click();
+    const reopenedDialog = page.getByRole("dialog", { name: "文件工作区" });
     await reopenedDialog.locator(".workspace-row").filter({ hasText: registered.workspace.name }).getByRole("button", { name: "移除" }).click();
     await expect(reopenedDialog.getByText(registered.workspace.name, { exact: true })).toHaveCount(0);
     await expect(reopenedDialog.getByText(addedWorkspaceName, { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: `管理工作区 ${addedWorkspaceName}` })).toBeVisible();
+    await expect(page.getByRole("button", { name: `管理文件夹 ${registered.workspace.name}` })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: `管理文件夹 ${addedWorkspaceName}` })).toBeVisible();
     await application.close();
     application = undefined;
     expect(consoleErrors).toEqual([]);

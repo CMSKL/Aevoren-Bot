@@ -25,7 +25,12 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await page.getByRole("button", { name: "创建新 Bot" }).click();
   await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
   await expect(page.getByText("产品需求分析助手")).toHaveCount(0);
+  await expect(page.locator(".inspector-header h2")).toHaveText("设置");
+  await expect(page.locator(".inspector-avatar-hero .bot-avatar-icon")).toBeVisible();
+  await expect(page.getByLabel("模型供应商")).toBeHidden();
+  await page.screenshot({ path: "/tmp/aevoren-bot-settings-aligned.png" });
 
+  await page.locator(".inspector-advanced > summary").click();
   await page.getByLabel("模型供应商").selectOption("openai-compatible.default");
   await expect(page.getByLabel("模型供应商")).toHaveValue("openai-compatible.default");
   await page.getByLabel("Bot 模型").fill("smoke-model");
@@ -65,7 +70,7 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
 
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
   await expect(page.getByRole("button", { name: "收起详情面板" })).toBeVisible();
-  await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
+  await page.getByRole("button", { name: "关闭设置" }).click();
   await expect(page.locator(".app-shell")).toHaveClass(/inspector-collapsed/u);
   await expect(page.getByRole("button", { name: "展开详情面板" })).toHaveAttribute("aria-expanded", "false");
   await page.getByRole("button", { name: "展开详情面板" }).click();
@@ -107,6 +112,8 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await expect(page.getByText("做一个帮助团队整理产品需求的桌面应用。")).toBeVisible();
   await expect(page.getByText("待确认事项", { exact: true }).last()).toBeVisible();
   await expect(page.getByLabel("描述")).toHaveValue("关闭应用前未移焦，也必须可靠保存。");
+  await expect(page.getByLabel("模型供应商")).toBeHidden();
+  await page.locator(".inspector-advanced > summary").click();
   await expect(page.getByLabel("模型供应商")).toHaveValue("openai-compatible.default");
   await expect(page.getByLabel("Bot 模型")).toHaveValue("smoke-model");
 
