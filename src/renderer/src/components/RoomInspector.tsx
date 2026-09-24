@@ -10,6 +10,7 @@ type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
 export type RoomInspectorHandle = { flush(): Promise<boolean> };
 
 type Props = {
+  id?: string;
   detail: RoomDetail | null;
   bots: Bot[];
   active: boolean;
@@ -30,7 +31,7 @@ function same(left: Draft, right: Draft): boolean {
 }
 
 export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function RoomInspector(
-  { detail, bots, active, mobileOpen, onDetailUpdated, onArchived, onError, onOpenBot, onMobileClose },
+  { id, detail, bots, active, mobileOpen, onDetailUpdated, onArchived, onError, onOpenBot, onMobileClose },
   ref,
 ) {
   const [draft, setDraft] = useState<Draft | null>(detail ? toDraft(detail) : null);
@@ -124,10 +125,10 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
     onDetailUpdated(result.data);
   }
 
-  if (!detail || !draft) return <aside className="inspector inspector-empty" aria-label="群聊设置" />;
+  if (!detail || !draft) return <aside id={id} className="inspector inspector-empty" aria-label="群聊设置" />;
 
   return (
-    <aside className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="群聊设置">
+    <aside id={id} className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="群聊设置">
       <header className="inspector-header">
         <h2>对话详情</h2>
         <div className="inspector-header-actions">

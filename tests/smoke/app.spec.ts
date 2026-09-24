@@ -61,6 +61,16 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await expect(assistant).not.toContainText("## 背景");
   await expect(page.getByText("待确认事项", { exact: true })).toBeVisible();
   await expect(page.locator("article.message-assistant")).toHaveAttribute("data-status", "completed");
+  await expect(page.getByRole("button", { name: /保存为 Markdown/u })).toHaveCount(0);
+
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+  await expect(page.getByRole("button", { name: "收起详情面板" })).toBeVisible();
+  await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
+  await expect(page.locator(".app-shell")).toHaveClass(/inspector-collapsed/u);
+  await expect(page.getByRole("button", { name: "展开详情面板" })).toHaveAttribute("aria-expanded", "false");
+  await page.getByRole("button", { name: "展开详情面板" }).click();
+  await expect(page.locator(".app-shell")).not.toHaveClass(/inspector-collapsed/u);
+  await expect(page.locator("#conversation-inspector")).toBeVisible();
 
   for (const [index, supplement] of ["补充目标用户和使用场景。", "补充验收标准和风险。"].entries()) {
     await page.getByLabel("消息").fill(supplement);

@@ -1,10 +1,17 @@
-import type { GeneralSettings, LoginItemStatus, SaveGeneralSettings } from "@shared/contracts";
+import { UPDATE_CHECK_INTERVAL_MINUTES, type GeneralSettings, type LoginItemStatus, type SaveGeneralSettings, type UpdateCheckIntervalMinutes } from "@shared/contracts";
 import type { AppRepository } from "./database";
 import { AevorenBotError } from "./errors";
 
 const APPEARANCE_THEME_KEY = "appearance.theme";
 const MEMORY_CAPTURE_ENABLED_KEY = "memory.capture.enabled";
 const AUTO_APPROVE_PUBLIC_READ_TOOLS_KEY = "tools.autoApprovePublicRead";
+const UPDATE_CHECK_INTERVAL_KEY = "updates.checkIntervalMinutes";
+const DEFAULT_UPDATE_CHECK_INTERVAL_MINUTES: UpdateCheckIntervalMinutes = 360;
+
+function readUpdateCheckInterval(value: string | undefined): UpdateCheckIntervalMinutes {
+  const minutes = Number(value);
+  return UPDATE_CHECK_INTERVAL_MINUTES.find((candidate) => candidate === minutes) ?? DEFAULT_UPDATE_CHECK_INTERVAL_MINUTES;
+}
 
 export type LoginItemController = {
   supported: boolean;
@@ -23,8 +30,9 @@ export class GeneralSettingsService {
     const appearance = theme === "light" || theme === "dark" ? theme : "system";
     const memoryCaptureEnabled = this.repository.getSetting(MEMORY_CAPTURE_ENABLED_KEY)?.value !== "false";
     const autoApprovePublicReadTools = this.repository.getSetting(AUTO_APPROVE_PUBLIC_READ_TOOLS_KEY)?.value === "true";
+    const updateCheckIntervalMinutes = readUpdateCheckInterval(this.repository.getSetting(UPDATE_CHECK_INTERVAL_KEY)?.value);
     if (!this.loginItem?.supported) {
-      return { theme: appearance, memoryCaptureEnabled, autoApprovePublicReadTools, launchAtLogin: false, launchAtLoginSupported: false, launchAtLoginStatus: "unsupported" };
+      return { theme: appearance, memoryCaptureEnabled, autoApprovePublicReadTools, updateCheckIntervalMinutes, launchAtLogin: false, launchAtLoginSupported: false, launchAtLoginStatus: "unsupported" };
     }
     try {
       const current = this.loginItem.get();
@@ -35,12 +43,13 @@ export class GeneralSettingsService {
         theme: appearance,
         memoryCaptureEnabled,
         autoApprovePublicReadTools,
+        updateCheckIntervalMinutes,
         launchAtLogin: current.openAtLogin,
         launchAtLoginSupported: true,
         launchAtLoginStatus: status,
       };
     } catch {
-      return { theme: appearance, memoryCaptureEnabled, autoApprovePublicReadTools, launchAtLogin: false, launchAtLoginSupported: true, launchAtLoginStatus: "not-found" };
+      return { theme: appearance, memoryCaptureEnabled, autoApprovePublicReadTools, updateCheckIntervalMinutes, launchAtLogin: false, launchAtLoginSupported: true, launchAtLoginStatus: "not-found" };
     }
   }
 
@@ -51,6 +60,9 @@ export class GeneralSettingsService {
     }
     if (input.autoApprovePublicReadTools !== undefined) {
       this.repository.setSetting(AUTO_APPROVE_PUBLIC_READ_TOOLS_KEY, String(input.autoApprovePublicReadTools), false);
+    }
+    if (input.updateCheckIntervalMinutes !== undefined) {
+      this.repository.setSetting(UPDATE_CHECK_INTERVAL_KEY, String(input.updateCheckIntervalMinutes), false);
     }
     if (input.launchAtLogin !== undefined) {
       if (!this.loginItem?.supported) throw new AevorenBotError("SYSTEM_SETTING_UNAVAILABLE");

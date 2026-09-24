@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
@@ -6,10 +6,8 @@ import { removeTestDirectory } from "./test-cleanup";
 import { AppRepository } from "../../src/main/database";
 import type { AevorenBotApi } from "../../src/shared/contracts";
 
-test("shows Save as Markdown and exports the completed real transcript body", async () => {
+test("keeps the completed transcript available without a per-reply Markdown export action", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-artifact-smoke-data-"));
-  const outputDirectory = mkdtempSync(join(tmpdir(), "aevoren-artifact-smoke-output-"));
-  const outputPath = join(outputDirectory, "answer.md");
   const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
   repository.createBot();
   repository.close();
@@ -21,7 +19,6 @@ test("shows Save as Markdown and exports the completed real transcript body", as
       AEVOREN_BOT_USER_DATA_DIR: userDataDir,
       AEVOREN_BOT_FAKE_PROVIDER: "1",
       AEVOREN_BOT_TEST_HIDDEN: "1",
-      AEVOREN_BOT_ARTIFACT_TEST_PATH: outputPath,
     },
   });
   try {
@@ -40,18 +37,11 @@ test("shows Save as Markdown and exports the completed real transcript body", as
       if (!transcript.ok) throw new Error("missing transcript");
       return transcript.data.filter((entry) => entry.role === "assistant" && entry.status === "completed").at(-1)?.body ?? "";
     });
-    const save = assistant.getByRole("button", { name: "保存为 Markdown", exact: true });
-    await expect(save).toBeVisible();
-    await save.click();
-    await expect(page.getByText("Markdown 已保存。", { exact: true })).toBeVisible();
-    const reveal = assistant.getByRole("button", { name: "打开所在位置", exact: true });
-    await expect(reveal).toBeVisible();
-    await reveal.click();
-    expect(existsSync(outputPath)).toBe(true);
-    expect(readFileSync(outputPath, "utf8").trim()).toBe(body.trim());
+    expect(body).toContain("## 背景");
+    await expect(assistant).toContainText("背景");
+    await expect(assistant.getByRole("button", { name: "保存为 Markdown", exact: true })).toHaveCount(0);
   } finally {
     await application.close();
     removeTestDirectory(userDataDir);
-    removeTestDirectory(outputDirectory);
   }
 });

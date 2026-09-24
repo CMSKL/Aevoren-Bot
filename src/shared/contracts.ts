@@ -901,11 +901,14 @@ export type SessionRuntimeSnapshot = {
 
 export type AppearanceTheme = "system" | "light" | "dark";
 export type LoginItemStatus = "unsupported" | "not-registered" | "enabled" | "requires-approval" | "not-found";
+export const UPDATE_CHECK_INTERVAL_MINUTES = [60, 360, 720, 1_440] as const;
+export type UpdateCheckIntervalMinutes = (typeof UPDATE_CHECK_INTERVAL_MINUTES)[number];
 
 export type GeneralSettings = {
   theme: AppearanceTheme;
   memoryCaptureEnabled: boolean;
   autoApprovePublicReadTools: boolean;
+  updateCheckIntervalMinutes: UpdateCheckIntervalMinutes;
   launchAtLogin: boolean;
   launchAtLoginSupported: boolean;
   launchAtLoginStatus: LoginItemStatus;
@@ -915,6 +918,7 @@ export type SaveGeneralSettings = {
   theme?: AppearanceTheme;
   memoryCaptureEnabled?: boolean;
   autoApprovePublicReadTools?: boolean;
+  updateCheckIntervalMinutes?: UpdateCheckIntervalMinutes;
   launchAtLogin?: boolean;
 };
 

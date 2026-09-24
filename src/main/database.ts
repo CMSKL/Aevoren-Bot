@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -74,6 +74,7 @@ import type {
   Workspace,
   WorkspaceRegistrationResult,
 } from "@shared/contracts";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "@shared/bot-avatar";
 import { normalizeBotAvatarColor, normalizeBotAvatarShape } from "@shared/bot-avatar";
 import { messageAttachmentsSchema, toolInvocationCommandSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
@@ -2036,6 +2037,13 @@ function now(): string {
   return new Date().toISOString();
 }
 
+function randomBotAvatar(): { shape: typeof BOT_AVATAR_SHAPES[number]; color: typeof BOT_AVATAR_COLORS[number] } {
+  return {
+    shape: BOT_AVATAR_SHAPES[randomInt(BOT_AVATAR_SHAPES.length)]!,
+    color: BOT_AVATAR_COLORS[randomInt(BOT_AVATAR_COLORS.length)]!,
+  };
+}
+
 function toBot(row: BotRow): Bot {
   const mcpServerIds = row.mcp_server_ids_json === null
     ? null
@@ -2919,13 +2927,14 @@ export class AppRepository {
     const botId = randomUUID();
     const sessionId = randomUUID();
     const modelSelection = this.getDefaultModelSelection();
+    const avatar = randomBotAvatar();
     this.transaction(() => {
       this.database
         .prepare(
           `INSERT INTO bots(
              id, name, label, description, instructions, provider_instance_id, model_id,
-             version, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+             avatar_shape, avatar_color, version, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .run(
           botId,
@@ -2935,6 +2944,8 @@ export class AppRepository {
           "",
           modelSelection.providerInstanceId,
           modelSelection.modelId,
+          avatar.shape,
+          avatar.color,
           timestamp,
           timestamp,
         );
@@ -3923,6 +3934,7 @@ export class AppRepository {
     const sessionId = randomUUID();
     const suffix = " 副本";
     const name = `${source.name.slice(0, 80 - suffix.length)}${suffix}`;
+    const avatar = randomBotAvatar();
     this.transaction(() => {
       this.database
         .prepare(
@@ -3939,8 +3951,8 @@ export class AppRepository {
           source.instructions,
           source.modelSelection.providerInstanceId,
           source.modelSelection.modelId,
-          source.avatarShape,
-          source.avatarColor,
+          avatar.shape,
+          avatar.color,
           source.mcpServerIds == null ? null : JSON.stringify(source.mcpServerIds),
           JSON.stringify(source.memoryWorkspaceIds ?? []),
           timestamp,
@@ -4103,13 +4115,14 @@ export class AppRepository {
     const roomId = randomUUID();
     const roomSessionId = randomUUID();
     const timestamp = now();
+    const avatars = roles.map(() => randomBotAvatar());
     const description = "五阶段内容协作：情报侦察员 → 选题策划师 → 用户批准 → 内容主笔 → 事实编辑 → 人工发布 → 数据复盘师。所有读取、抓取、计数与写入必须有当前 Runtime 的成功工具记录；文本中的 @、HANDOFF、SAVE 或路径不是执行证据。无真实 CSV 不得输出数据结论。发布、互动、登录、验证码、购买、删除和权限修改必须等待用户。";
     this.transaction(() => {
       const insertBot = this.database.prepare(
         `INSERT INTO bots(
            id, name, label, description, instructions, provider_instance_id, model_id,
-           version, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+           avatar_shape, avatar_color, version, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
       );
       const insertSession = this.database.prepare(
         `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
@@ -4117,9 +4130,10 @@ export class AppRepository {
       );
       roles.forEach((role, index) => {
         const botId = botIds[index]!;
+        const avatar = avatars[index]!;
         insertBot.run(
           botId, role.name, role.label, role.description, role.instructions,
-          modelSelection.providerInstanceId, modelSelection.modelId, timestamp, timestamp,
+          modelSelection.providerInstanceId, modelSelection.modelId, avatar.shape, avatar.color, timestamp, timestamp,
         );
         insertSession.run(randomUUID(), botId, timestamp, timestamp);
       });

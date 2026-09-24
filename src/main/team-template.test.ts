@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "@shared/bot-avatar";
 import { AppRepository } from "./database";
 
 const repositories: AppRepository[] = [];
@@ -24,6 +25,8 @@ describe("content team template", () => {
     expect(created.room.room).toMatchObject({ name: "自媒体内容团队" });
     expect(created.room.room.description).toContain("成功工具记录");
     expect(created.bots.find((bot) => bot.name === "数据复盘师")?.instructions).toContain("禁止虚构");
+    expect(created.bots.every((bot) => BOT_AVATAR_SHAPES.includes(bot.avatarShape))).toBe(true);
+    expect(created.bots.every((bot) => BOT_AVATAR_COLORS.includes(bot.avatarColor))).toBe(true);
     expect(repository.listBots()).toHaveLength(5);
     expect(repository.listRooms()).toHaveLength(1);
 

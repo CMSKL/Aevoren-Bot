@@ -410,5 +410,6 @@ export const generalSettingsSchema = z.object({
   theme: z.enum(["system", "light", "dark"]).optional(),
   memoryCaptureEnabled: z.boolean().optional(),
   autoApprovePublicReadTools: z.boolean().optional(),
+  updateCheckIntervalMinutes: z.union([z.literal(60), z.literal(360), z.literal(720), z.literal(1_440)]).optional(),
   launchAtLogin: z.boolean().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one general setting is required");

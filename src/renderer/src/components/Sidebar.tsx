@@ -4,7 +4,7 @@ import { buildBotIdentityMap } from "../bot-identity";
 import { BatchContextMenu } from "./BatchContextMenu";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { BotContextMenu } from "./BotContextMenu";
-import { CheckIcon, CloseIcon, PinIcon, PlusIcon, RoomIcon, SettingsIcon, TrashIcon } from "./Icons";
+import { CheckIcon, CloseIcon, FolderIcon, PinIcon, PlusIcon, RoomIcon, SettingsIcon, TrashIcon } from "./Icons";
 import { RoomContextMenu } from "./RoomContextMenu";
 
 type SidebarProps = {
@@ -119,6 +119,7 @@ export function Sidebar({
 }: SidebarProps): React.JSX.Element {
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [hiddenOpen, setHiddenOpen] = useState(false);
+  const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [roomContextMenu, setRoomContextMenu] = useState<{ roomId: string; x: number; y: number } | null>(null);
   const [batchContextMenu, setBatchContextMenu] = useState<BatchContextMenuState | null>(null);
@@ -657,21 +658,42 @@ export function Sidebar({
           </>
         )}
       </div>
-      <div className="bot-list" role="list">
-        {bots.length === 0 && activeRooms.length === 0 && hiddenRooms.length === 0 && archivedRooms.length === 0 ? (
-          <div className="bot-list-empty">还没有 Bot。新建一个 Bot 开始工作。</div>
-        ) : (
-          <>
-            {activeRooms.length > 0 ? <div className="sidebar-label">群聊</div> : null}
-            {activeRooms.map(renderRoomRow)}
-            {visibleBots.length > 0 ? <div className="sidebar-label">Bot</div> : null}
-            {visibleBots.map(renderBotRow)}
+      <div className="bot-list">
+        <details
+          className="sidebar-workspace"
+          open={workspaceExpanded}
+          onToggle={(event) => setWorkspaceExpanded(event.currentTarget.open)}
+        >
+          <summary className="sidebar-workspace-summary" aria-controls="sidebar-workspace-content">
+            <span className="sidebar-workspace-title">工作区</span>
+          </summary>
+          <div className="sidebar-workspace-content" id="sidebar-workspace-content">
+            <section className="sidebar-workspace-section" aria-label="群聊">
+              <h3 className="sidebar-workspace-section-heading">
+                <FolderIcon />
+                <span>群聊</span>
+              </h3>
+              <div className="sidebar-workspace-items" id="sidebar-room-items" role="list">
+                {activeRooms.length > 0 ? activeRooms.map(renderRoomRow) : <div className="bot-list-empty">暂无群聊</div>}
+              </div>
+            </section>
+            <section className="sidebar-workspace-section" aria-label="Bot">
+              <h3 className="sidebar-workspace-section-heading">
+                <FolderIcon />
+                <span>Bot</span>
+              </h3>
+              <div className="sidebar-workspace-items" id="sidebar-bot-items" role="list">
+                {visibleBots.length > 0
+                  ? visibleBots.map(renderBotRow)
+                  : <div className="bot-list-empty">还没有 Bot。新建一个 Bot 开始工作。</div>}
+              </div>
+            </section>
             {hiddenBots.length + hiddenRooms.length > 0 ? (
               <>
                 <button className="archived-toggle" type="button" aria-expanded={hiddenOpen} onClick={() => setHiddenOpen((open) => !open)}>
                   已隐藏 ({hiddenBots.length + hiddenRooms.length})
                 </button>
-                {hiddenOpen ? <>{hiddenRooms.map(renderRoomRow)}{hiddenBots.map(renderBotRow)}</> : null}
+                {hiddenOpen ? <div className="sidebar-workspace-items" role="list">{hiddenRooms.map(renderRoomRow)}{hiddenBots.map(renderBotRow)}</div> : null}
               </>
             ) : null}
             {archivedRooms.length > 0 ? (
@@ -679,16 +701,16 @@ export function Sidebar({
                 <button className="archived-toggle" type="button" aria-expanded={archivedOpen} onClick={() => setArchivedOpen((open) => !open)}>
                   已归档 ({archivedRooms.length})
                 </button>
-                {archivedOpen ? archivedRooms.map((room) => (
+                {archivedOpen ? <div className="sidebar-workspace-items">{archivedRooms.map((room) => (
                   <div className="archived-room-row" key={room.id}>
                     <span>{room.name}</span>
                     <button className="text-button" type="button" onClick={() => onRestoreRoom(room)}>恢复</button>
                   </div>
-                )) : null}
+                ))}</div> : null}
               </>
             ) : null}
-          </>
-        )}
+          </div>
+        </details>
       </div>
 
       <div className="sidebar-footer">

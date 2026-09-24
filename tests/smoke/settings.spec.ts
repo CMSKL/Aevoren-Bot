@@ -98,6 +98,9 @@ test("uses one sidebar settings entry and preserves general and model configurat
     await page.getByRole("button", { name: "版本更新", exact: true }).click();
     await page.screenshot({ path: "/tmp/aevoren-settings-update-1182x804.png" });
     await page.locator(".settings-dialog").screenshot({ path: "/tmp/aevoren-settings-update-modal.png" });
+    await expect(page.getByLabel("自动检查更新频率")).toHaveValue("360");
+    await page.getByLabel("自动检查更新频率").selectOption("720");
+    await expect(page.getByLabel("自动检查更新频率")).toHaveValue("720");
     await expect(page.locator('[aria-labelledby="settings-update-title"]').getByText(`v${appVersion}`, { exact: true })).toBeVisible();
     await expect(page.getByText("开发环境未启用", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "检查更新" })).toBeDisabled();
@@ -113,6 +116,7 @@ test("uses one sidebar settings entry and preserves general and model configurat
       value: "true",
       encrypted: 0,
     });
+    expect(database.prepare("SELECT value, encrypted FROM app_settings WHERE key = 'updates.checkIntervalMinutes'").get()).toEqual({ value: "720", encrypted: 0 });
     const storedKey = database.prepare("SELECT value, encrypted FROM app_settings WHERE key = 'provider.openai-compatible.default.apiKey'").get() as { value: string; encrypted: number };
     expect(storedKey.encrypted).toBe(1);
     expect(storedKey.value).not.toContain("settings-smoke-secret");
@@ -135,6 +139,8 @@ test("uses one sidebar settings entry and preserves general and model configurat
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await expect(page.getByLabel("外观主题")).toHaveValue("dark");
     await expect(page.getByLabel("自动批准公开只读工具")).toBeChecked();
+    await page.getByRole("button", { name: "版本更新", exact: true }).click();
+    await expect(page.getByLabel("自动检查更新频率")).toHaveValue("720");
     await page.getByRole("button", { name: "模型与 CLI", exact: true }).click();
     await page.getByLabel("管理 API").click();
     await expect(page.getByLabel("Base URL")).toHaveValue("https://example.com/v1");

@@ -126,6 +126,7 @@ test("shows contextual approval, failure recovery, and artifact evidence without
     await expect(briefMessage.getByRole("region", { name: "交付物状态" })).toContainText("02-briefs/options.md");
     await expect(briefMessage.getByTestId("tool-activity-run")).toContainText("已完成 2 个步骤");
     await expect(briefMessage.getByTestId("workspace-tool-activity")).toHaveCount(2);
+    await expect(page.getByRole("button", { name: /保存为 Markdown/u })).toHaveCount(0);
     await expect(page.locator(".conversation-header").getByTestId("brief-approval-card")).toHaveCount(0);
     await expect(approvalCard.getByRole("radio", { name: /证据链设计/u })).toBeVisible();
     await expect(approvalCard).not.toContainText("这不是文件中的真实候选标题");

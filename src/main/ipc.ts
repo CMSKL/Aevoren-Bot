@@ -320,9 +320,14 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.roomRuntimeContinue, (_event, batchId: unknown) => roomCoordinator.continue(batchIdSchema.parse(batchId)));
   handle(IPC.roomRuntimeRetryTurn, (_event, turnId: unknown) => roomCoordinator.retryTurn(turnIdSchema.parse(turnId)));
   handle(IPC.settingsGetGeneral, () => generalSettings.getConfiguration());
-  handle(IPC.settingsSaveGeneral, (_event, input: unknown) =>
-    generalSettings.saveConfiguration(generalSettingsSchema.parse(input)),
-  );
+  handle(IPC.settingsSaveGeneral, (_event, input: unknown) => {
+    const parsed = generalSettingsSchema.parse(input);
+    const saved = generalSettings.saveConfiguration(parsed);
+    if (parsed.updateCheckIntervalMinutes !== undefined) {
+      dependencies.updateService.setCheckIntervalMinutes(saved.updateCheckIntervalMinutes);
+    }
+    return saved;
+  });
   handle(IPC.providersList, () => providers.list());
   handle(IPC.providersScan, () => providers.scan());
   handle(IPC.providersSaveOpenAiCompatible, async (_event, input: unknown) => {

@@ -1,7 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AppError,
-  ArtifactSaveResult,
   AttachmentDraft,
   ApprovalRequest,
   ApprovalResolution,
@@ -44,7 +43,6 @@ import {
   HandoffEventCard,
   LongMessageView,
   RunFailureCard,
-  type ArtifactSaveState,
   type WorkflowAction,
 } from "./CollaborationFeedback";
 
@@ -104,15 +102,12 @@ type TranscriptItemProps = {
   coordinationErrorCode: string | null;
   toolInvocations: ToolInvocation[];
   approvalsByInvocation: ReadonlyMap<string, ApprovalRequest>;
-  artifactSaveState: ArtifactSaveState;
   briefApproval: { roomId: string; sourceRuntimeRunId: string; briefInvocationId: string } | null;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onRetryRoomTurn(turnId: string): void;
   onOpenSpeaker(botId: string): void;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
-  onSaveArtifact(entry: TranscriptEntry): void;
-  onRevealArtifact(path: string): void;
   onRevealWorkspaceArtifact(workspaceId: string, path: string): void;
   onOpenWorkspaces(): void;
   onWorkflowAction(action: WorkflowAction): Promise<boolean>;
@@ -327,15 +322,12 @@ const TranscriptItem = memo(function TranscriptItem({
   coordinationErrorCode,
   toolInvocations,
   approvalsByInvocation,
-  artifactSaveState,
   briefApproval,
   onRetryMessage,
   onRetryRun,
   onRetryRoomTurn,
   onOpenSpeaker,
   onResolveApproval,
-  onSaveArtifact,
-  onRevealArtifact,
   onRevealWorkspaceArtifact,
   onOpenWorkspaces,
   onWorkflowAction,
@@ -448,9 +440,6 @@ const TranscriptItem = memo(function TranscriptItem({
           {entry.role === "assistant" && entry.status === "completed"
             ? <ArtifactStatusBar
                 writes={toolInvocations}
-                saveState={artifactSaveState}
-                onSave={() => onSaveArtifact(entry)}
-                onReveal={onRevealArtifact}
                 onRevealWorkspace={onRevealWorkspaceArtifact}
                 onOpenWorkspaces={onOpenWorkspaces}
               />
@@ -512,13 +501,13 @@ type ConversationProps = {
   closeNotice: string | null;
   onOpenBots(): void;
   onOpenProfile(): void;
+  inspectorCollapsed: boolean;
+  onToggleInspector(): void;
   onOpenWorkspaces(): void;
   onPickAttachments(): Promise<AttachmentDraft[]>;
   onBotUpdated(bot: Bot): void;
   onError(error: AppError | null): void;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
-  onSaveArtifact(entry: TranscriptEntry): Promise<ArtifactSaveResult | null>;
-  onRevealArtifact(path: string): Promise<boolean>;
   onRevealWorkspaceArtifact(workspaceId: string, path: string): Promise<boolean>;
   onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode, attachments?: AttachmentDraft[]): Promise<boolean>;
   onApproveBrief?(input: { roomId: string; sourceRuntimeRunId: string; briefInvocationId: string; sha256: string; candidate: "A" | "B" | "C"; clientNonce: string }): Promise<boolean>;
@@ -549,13 +538,13 @@ export function Conversation({
   closeNotice,
   onOpenBots,
   onOpenProfile,
+  inspectorCollapsed,
+  onToggleInspector,
   onOpenWorkspaces,
   onPickAttachments,
   onBotUpdated,
   onError,
   onResolveApproval,
-  onSaveArtifact,
-  onRevealArtifact,
   onRevealWorkspaceArtifact,
   onSend,
   onApproveBrief,
@@ -571,7 +560,6 @@ export function Conversation({
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [roomMentions, setRoomMentions] = useState<RoomMention[]>([]);
   const [routingPreference, setRoutingPreference] = useState<UserRoomRoutingMode>("automatic");
-  const [artifactStates, setArtifactStates] = useState<Record<string, ArtifactSaveState>>({});
   const [artifactShelfScopeId, setArtifactShelfScopeId] = useState<string | null>(null);
   const [retriedTurnIds, setRetriedTurnIds] = useState<Set<string>>(() => new Set());
   const [mentionQuery, setMentionQuery] = useState<ActiveMentionQuery | null>(null);
@@ -759,26 +747,6 @@ export function Conversation({
     composerInputRef.current?.setSelectionRange(caret, caret);
   }, [draft, roomMentions]);
 
-  async function saveArtifact(entry: TranscriptEntry): Promise<void> {
-    setArtifactStates((current) => ({ ...current, [entry.id]: { state: "saving" } }));
-    try {
-      const result = await onSaveArtifact(entry);
-      setArtifactStates((current) => ({
-        ...current,
-        [entry.id]: result ? { state: "saved", result } : { state: "unsaved", message: "已取消保存" },
-      }));
-    } catch {
-      setArtifactStates((current) => ({ ...current, [entry.id]: { state: "failed", message: "请重试或更换保存位置" } }));
-    }
-  }
-
-  async function revealArtifact(path: string, entryId: string): Promise<void> {
-    const revealed = await onRevealArtifact(path);
-    if (!revealed) {
-      setArtifactStates((current) => ({ ...current, [entryId]: { ...current[entryId], state: "failed", message: "无法打开该文件位置" } }));
-    }
-  }
-
   async function handleWorkflowAction(action: WorkflowAction): Promise<boolean> {
     if (!room || busy) return false;
     if (action.kind === "approve") {
@@ -917,6 +885,17 @@ export function Conversation({
           <button className="mobile-panel-button" type="button" aria-label="打开 Bot 设置" onClick={onOpenProfile}>
             <PanelIcon />
           </button>
+          <button
+            className="desktop-inspector-toggle"
+            type="button"
+            aria-label={inspectorCollapsed ? "展开详情面板" : "收起详情面板"}
+            aria-expanded={!inspectorCollapsed}
+            aria-controls="conversation-inspector"
+            title={inspectorCollapsed ? "展开详情面板" : "收起详情面板"}
+            onClick={onToggleInspector}
+          >
+            <PanelIcon />
+          </button>
         </div>
       </header>
 
@@ -1019,15 +998,12 @@ export function Conversation({
                 : null}
               toolInvocations={toolsByAssistant.get(entry.id) ?? []}
               approvalsByInvocation={approvalsByInvocation}
-              artifactSaveState={artifactStates[entry.id] ?? { state: "unsaved" }}
               briefApproval={entry.id === briefApproval?.entryId ? briefApproval : null}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
               onRetryRoomTurn={(turnId) => void retryRoomTurn(turnId)}
               onOpenSpeaker={onOpenSpeaker}
               onResolveApproval={onResolveApproval}
-              onSaveArtifact={(targetEntry) => void saveArtifact(targetEntry)}
-              onRevealArtifact={(path) => void revealArtifact(path, entry.id)}
               onRevealWorkspaceArtifact={(workspaceId, path) => void onRevealWorkspaceArtifact(workspaceId, path)}
               onOpenWorkspaces={onOpenWorkspaces}
               onWorkflowAction={handleWorkflowAction}

@@ -328,6 +328,7 @@ app.whenReady().then(async () => {
   updateService = new UpdateService(new ElectronUpdateAdapter(), {
     currentVersion: app.getVersion(),
     channel: updateChannel,
+    intervalMs: generalSettings.getConfiguration().updateCheckIntervalMinutes * 60 * 1_000,
     receiptStore: {
       getPendingReceipt: () => {
         const receipt = parsePendingUpdateReceipt(repository?.getSetting("update.pendingReceipt")?.value);
