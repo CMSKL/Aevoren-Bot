@@ -138,7 +138,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
             {status === "failed" ? "保存失败" : null}
             {status === "idle" || status === "saved" ? <><CheckIcon />已保存</> : null}
           </div>
-          <button className="drawer-close-button" type="button" aria-label="关闭设置" onClick={onMobileClose}><CloseIcon /></button>
+          <button className="drawer-close-button" type="button" aria-label="关闭群聊设置" onClick={onMobileClose}><CloseIcon /></button>
         </div>
       </header>
       <button

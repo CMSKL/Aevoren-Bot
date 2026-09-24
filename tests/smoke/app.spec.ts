@@ -70,7 +70,7 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
 
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
   await expect(page.getByRole("button", { name: "收起详情面板" })).toBeVisible();
-  await page.getByRole("button", { name: "关闭设置" }).click();
+  await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
   await expect(page.locator(".app-shell")).toHaveClass(/inspector-collapsed/u);
   await expect(page.getByRole("button", { name: "展开详情面板" })).toHaveAttribute("aria-expanded", "false");
   await page.getByRole("button", { name: "展开详情面板" }).click();
