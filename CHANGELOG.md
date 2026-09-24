@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.10] - 2026-09-24
+
+### Added
+
+- Group chats and Bots are organized under a collapsible Workspace section in the sidebar.
+
+### Changed
+
+- Bot avatars are assigned automatically when Bots are created, duplicated, or added from a team template; profile details no longer require users to choose an avatar.
+- The conversation details panel can be collapsed on desktop, and the per-reply Markdown export action has been removed.
+- Automatic update checks now use a configurable interval, while update downloads remain unobtrusive during active work.
+
 ## [0.3.0-beta.9] - 2026-09-23
 
 ### Changed
@@ -116,6 +128,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 [0.3.0-beta.7]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.6...v0.3.0-beta.7
 [0.3.0-beta.8]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.7...v0.3.0-beta.8
 [0.3.0-beta.9]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.8...v0.3.0-beta.9
+[0.3.0-beta.10]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.9...v0.3.0-beta.10
 [0.3.0-beta.5]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.4...v0.3.0-beta.5
 [0.3.0-beta.4]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.2...v0.3.0-beta.3

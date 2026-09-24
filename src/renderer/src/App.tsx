@@ -23,6 +23,7 @@ import type {
   ToolInvocation,
   TranscriptEntry,
   TranscriptEvent,
+  UpdateCheckIntervalMinutes,
   UpdateState,
 } from "@shared/contracts";
 import { Conversation } from "./components/Conversation";
@@ -79,6 +80,7 @@ export function App(): React.JSX.Element {
   const [error, setError] = useState<AppError | null>(null);
   const [closeNotice, setCloseNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"bots" | "profile" | null>(null);
@@ -90,6 +92,7 @@ export function App(): React.JSX.Element {
   const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
   const [launchAtLoginStatus, setLaunchAtLoginStatus] = useState<LoginItemStatus>("unsupported");
   const [autoApprovePublicReadTools, setAutoApprovePublicReadTools] = useState(false);
+  const [updateCheckIntervalMinutes, setUpdateCheckIntervalMinutes] = useState<UpdateCheckIntervalMinutes>(360);
   const newBotButtonRef = useRef<HTMLButtonElement>(null);
   const profileRef = useRef<ProfileInspectorHandle>(null);
   const roomRef = useRef<RoomInspectorHandle>(null);
@@ -173,6 +176,7 @@ export function App(): React.JSX.Element {
         setLaunchAtLoginSupported(result.data.launchAtLoginSupported);
         setLaunchAtLoginStatus(result.data.launchAtLoginStatus);
         setAutoApprovePublicReadTools(result.data.autoApprovePublicReadTools);
+        setUpdateCheckIntervalMinutes(result.data.updateCheckIntervalMinutes);
       }
     });
     return () => {
@@ -393,6 +397,19 @@ export function App(): React.JSX.Element {
     if (mobilePanel === "profile" && !(await flushActive())) return;
     setMobilePanel(null);
   }, [flushActive, mobilePanel]);
+
+  const closeInspector = useCallback(async (): Promise<void> => {
+    if (window.matchMedia("(max-width: 1180px)").matches) {
+      await closeMobilePanel();
+      return;
+    }
+    if (await flushActive()) setInspectorCollapsed(true);
+  }, [closeMobilePanel, flushActive]);
+
+  const toggleInspector = useCallback(async (): Promise<void> => {
+    if (!(await flushActive())) return;
+    setInspectorCollapsed((current) => !current);
+  }, [flushActive]);
 
   useEffect(() => {
     if (!mobilePanel) return;
@@ -817,7 +834,7 @@ export function App(): React.JSX.Element {
   const updateRestartBlocked = submitting || activeRoomBatch || activeDirectRun;
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
       <Sidebar
         bots={bots}
         rooms={rooms}
@@ -887,34 +904,14 @@ export function App(): React.JSX.Element {
         closeNotice={closeNotice}
         onOpenBots={() => setMobilePanel("bots")}
         onOpenProfile={() => setMobilePanel("profile")}
+        inspectorCollapsed={inspectorCollapsed}
+        onToggleInspector={() => void toggleInspector()}
         onOpenWorkspaces={() => setWorkspacesOpen(true)}
         onPickAttachments={async () => {
           const result = await window.aevorenBot.attachments.pick();
           if (!result.ok) {
             setError(result.error);
             return [];
-          }
-          return result.data;
-        }}
-        onSaveArtifact={async (entry) => {
-          const title = selectedBot?.name ?? selectedRoom?.room.name ?? "aevoren-result";
-          const stamp = new Date(entry.createdAt).toISOString().replace(/[:.]/gu, "-");
-          const result = await window.aevorenBot.artifacts.save({
-            name: `${title}-${stamp}.md`,
-            content: entry.body,
-          });
-          if (!result.ok) {
-            setError(result.error);
-            throw new Error(result.error.code);
-          }
-          if (result.data) setCloseNotice("Markdown 已保存。");
-          return result.data;
-        }}
-        onRevealArtifact={async (path) => {
-          const result = await window.aevorenBot.artifacts.reveal(path);
-          if (!result.ok) {
-            setError(result.error);
-            return false;
           }
           return result.data;
         }}
@@ -1003,6 +1000,7 @@ export function App(): React.JSX.Element {
         <RoomInspector
           key={`room-inspector:${selectedRoom.room.id}`}
           ref={roomRef}
+          id="conversation-inspector"
           detail={selectedRoom}
           bots={bots}
           active={activeRoomBatch}
@@ -1011,16 +1009,17 @@ export function App(): React.JSX.Element {
           onArchived={handleArchived}
           onError={setError}
           onOpenBot={(bot) => void openBot(bot)}
-          onMobileClose={() => void closeMobilePanel()}
+          onMobileClose={() => void closeInspector()}
         />
       ) : (
         <ProfileInspector
           ref={profileRef}
+          id="conversation-inspector"
           bot={selectedBot}
           mobileOpen={mobilePanel === "profile"}
           onBotUpdated={updateBot}
           onError={setError}
-          onMobileClose={() => void closeMobilePanel()}
+          onMobileClose={() => void closeInspector()}
         />
       )}
       {mobilePanel ? <button className="drawer-backdrop" type="button" aria-label="关闭侧边面板" onClick={() => void closeMobilePanel()} /> : null}
@@ -1031,6 +1030,7 @@ export function App(): React.JSX.Element {
         launchAtLoginSupported={launchAtLoginSupported}
         launchAtLoginStatus={launchAtLoginStatus}
         autoApprovePublicReadTools={autoApprovePublicReadTools}
+        updateCheckIntervalMinutes={updateCheckIntervalMinutes}
         updateState={updateState}
         restartBlocked={updateRestartBlocked}
         activeBotId={selectedBot?.id ?? null}
@@ -1053,6 +1053,12 @@ export function App(): React.JSX.Element {
           const result = await window.aevorenBot.settings.saveGeneral({ autoApprovePublicReadTools: enabled });
           if (!result.ok) return result.error;
           setAutoApprovePublicReadTools(result.data.autoApprovePublicReadTools);
+          return null;
+        }}
+        onUpdateCheckIntervalChange={async (minutes) => {
+          const result = await window.aevorenBot.settings.saveGeneral({ updateCheckIntervalMinutes: minutes });
+          if (!result.ok) return result.error;
+          setUpdateCheckIntervalMinutes(result.data.updateCheckIntervalMinutes);
           return null;
         }}
         onCheckUpdate={() => void window.aevorenBot.updates.check().then((result) => {

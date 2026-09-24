@@ -1,5 +1,5 @@
 import { memo, useEffect, useId, useMemo, useState } from "react";
-import type { ArtifactSaveResult, BriefApprovalView, ToolInvocation } from "@shared/contracts";
+import type { BriefApprovalView, ToolInvocation } from "@shared/contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { briefCandidateOptions, type BriefCandidate } from "../brief-approval-state";
 import { conversationArtifacts, type ConversationArtifact } from "../conversation-view-model";
@@ -8,12 +8,6 @@ export type WorkflowAction =
   | { kind: "approve"; candidate: "A" | "B" | "C"; sourceRuntimeRunId: string; briefInvocationId: string; sha256: string }
   | { kind: "return" }
   | { kind: "abandon" };
-
-export type ArtifactSaveState = {
-  state: "unsaved" | "saving" | "saved" | "failed";
-  result?: ArtifactSaveResult;
-  message?: string;
-};
 
 export const BriefApprovalCard = memo(function BriefApprovalCard({
   roomId,
@@ -230,36 +224,15 @@ export const RunFailureCard = memo(function RunFailureCard({
 
 export const ArtifactStatusBar = memo(function ArtifactStatusBar({
   writes,
-  saveState,
-  onSave,
-  onReveal,
   onRevealWorkspace,
   onOpenWorkspaces,
 }: {
   writes: ToolInvocation[];
-  saveState: ArtifactSaveState;
-  onSave(): void;
-  onReveal(path: string): void;
   onRevealWorkspace(workspaceId: string, path: string): void;
   onOpenWorkspaces(): void;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const artifacts = conversationArtifacts(writes);
-  if (artifacts.length === 0) {
-    return (
-      <div className={`reply-export-action state-${saveState.state}`}>
-        {saveState.state === "saved" && saveState.result ? (
-          <>
-            <span>回复已导出</span>
-            <button type="button" className="text-button" onClick={() => onReveal(saveState.result!.path)}>打开所在位置</button>
-          </>
-        ) : (
-          <button type="button" className="text-button" disabled={saveState.state === "saving"} onClick={onSave}>
-            {saveState.state === "saving" ? "保存中…" : saveState.state === "failed" ? "重试保存为 Markdown" : "保存为 Markdown"}
-          </button>
-        )}
-      </div>
-    );
-  }
+  if (artifacts.length === 0) return null;
   return (
     <section className="artifact-status-bar" aria-label="交付物状态">
       <header><span aria-hidden="true">▣</span><strong>{artifacts.length} 个成果</strong><small>已由工具真实保存</small></header>
@@ -274,17 +247,6 @@ export const ArtifactStatusBar = memo(function ArtifactStatusBar({
           />
         ))}
       </div>
-      {saveState.state === "saved" && saveState.result ? (
-        <div className="reply-export-action state-saved">
-          <span>回复已导出</span>
-          <button type="button" className="text-button" onClick={() => onReveal(saveState.result!.path)}>打开所在位置</button>
-        </div>
-      ) : (
-        <div className={`reply-export-action state-${saveState.state}`}>
-          {saveState.message ? <span>{saveState.message}</span> : <span>需要时可单独导出这条回复</span>}
-          <button type="button" className="text-button" disabled={saveState.state === "saving"} onClick={onSave}>{saveState.state === "failed" ? "重试保存" : "保存为 Markdown"}</button>
-        </div>
-      )}
     </section>
   );
 });

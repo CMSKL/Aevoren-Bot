@@ -15,6 +15,7 @@ describe("GeneralSettingsService", () => {
     const service = new GeneralSettingsService(repository);
     expect(service.getConfiguration()).toEqual({
       theme: "system", memoryCaptureEnabled: true, autoApprovePublicReadTools: false,
+      updateCheckIntervalMinutes: 360,
       launchAtLogin: false, launchAtLoginSupported: false, launchAtLoginStatus: "unsupported",
     });
     expect(service.saveConfiguration({ theme: "dark" })).toMatchObject({ theme: "dark" });
@@ -24,6 +25,9 @@ describe("GeneralSettingsService", () => {
     expect(repository.getSetting("memory.capture.enabled")).toMatchObject({ value: "false", encrypted: false });
     expect(service.saveConfiguration({ autoApprovePublicReadTools: true })).toMatchObject({ autoApprovePublicReadTools: true });
     expect(repository.getSetting("tools.autoApprovePublicRead")).toMatchObject({ value: "true", encrypted: false });
+    expect(service.saveConfiguration({ updateCheckIntervalMinutes: 720 })).toMatchObject({ updateCheckIntervalMinutes: 720 });
+    expect(new GeneralSettingsService(repository).getConfiguration()).toMatchObject({ updateCheckIntervalMinutes: 720 });
+    expect(repository.getSetting("updates.checkIntervalMinutes")).toMatchObject({ value: "720", encrypted: false });
   });
 
   it("falls back safely when a stored theme is unknown", () => {
@@ -31,6 +35,13 @@ describe("GeneralSettingsService", () => {
     repositories.push(repository);
     repository.setSetting("appearance.theme", "future-theme", false);
     expect(new GeneralSettingsService(repository).getConfiguration()).toMatchObject({ theme: "system" });
+  });
+
+  it("falls back to a safe update interval when the stored value is unsupported", () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    repository.setSetting("updates.checkIntervalMinutes", "5", false);
+    expect(new GeneralSettingsService(repository).getConfiguration()).toMatchObject({ updateCheckIntervalMinutes: 360 });
   });
 
   it("uses the operating system as the authority for launch-at-login and never writes it to SQLite", () => {

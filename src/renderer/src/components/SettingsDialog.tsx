@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppearanceTheme, AppError, LoginItemStatus, UpdateState } from "@shared/contracts";
+import { UPDATE_CHECK_INTERVAL_MINUTES, type AppearanceTheme, type AppError, type LoginItemStatus, type UpdateCheckIntervalMinutes, type UpdateState } from "@shared/contracts";
 import { BellIcon, BotIcon, CloseIcon, EyeIcon, PanelIcon, RefreshIcon, SettingsIcon } from "./Icons";
 import { ModelSettingsPanel } from "./ModelSettingsDialog";
 import { CapabilitiesSettingsPanel } from "./CapabilitiesSettingsPanel";
@@ -16,6 +16,7 @@ type SettingsDialogProps = {
   launchAtLoginSupported: boolean;
   launchAtLoginStatus: LoginItemStatus;
   autoApprovePublicReadTools: boolean;
+  updateCheckIntervalMinutes: UpdateCheckIntervalMinutes;
   updateState: UpdateState | null;
   restartBlocked: boolean;
   activeBotId: string | null;
@@ -23,6 +24,7 @@ type SettingsDialogProps = {
   onThemeChange(theme: AppearanceTheme): Promise<AppError | null>;
   onLaunchAtLoginChange(enabled: boolean): Promise<AppError | null>;
   onAutoApprovePublicReadToolsChange(enabled: boolean): Promise<AppError | null>;
+  onUpdateCheckIntervalChange(minutes: UpdateCheckIntervalMinutes): Promise<AppError | null>;
   onCheckUpdate(): void;
   onRetryUpdate(): void;
   onInstallUpdate(): void;
@@ -63,6 +65,7 @@ export function SettingsDialog({
   launchAtLoginSupported,
   launchAtLoginStatus,
   autoApprovePublicReadTools,
+  updateCheckIntervalMinutes,
   updateState,
   restartBlocked,
   activeBotId,
@@ -70,6 +73,7 @@ export function SettingsDialog({
   onThemeChange,
   onLaunchAtLoginChange,
   onAutoApprovePublicReadToolsChange,
+  onUpdateCheckIntervalChange,
   onCheckUpdate,
   onRetryUpdate,
   onInstallUpdate,
@@ -81,6 +85,8 @@ export function SettingsDialog({
   const [launchError, setLaunchError] = useState<AppError | null>(null);
   const [toolApprovalPending, setToolApprovalPending] = useState(false);
   const [toolApprovalError, setToolApprovalError] = useState<AppError | null>(null);
+  const [updateIntervalPending, setUpdateIntervalPending] = useState(false);
+  const [updateIntervalError, setUpdateIntervalError] = useState<AppError | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const close = useCallback((): void => {
@@ -130,6 +136,15 @@ export function SettingsDialog({
     const error = await onAutoApprovePublicReadToolsChange(enabled);
     setToolApprovalError(error);
     setToolApprovalPending(false);
+  }
+
+  async function changeUpdateCheckInterval(minutes: UpdateCheckIntervalMinutes): Promise<void> {
+    if (updateIntervalPending || minutes === updateCheckIntervalMinutes) return;
+    setUpdateIntervalPending(true);
+    setUpdateIntervalError(null);
+    const error = await onUpdateCheckIntervalChange(minutes);
+    setUpdateIntervalError(error);
+    setUpdateIntervalPending(false);
   }
 
   const progress = Math.round(updateState?.progress?.percent ?? 0);
@@ -228,8 +243,27 @@ export function SettingsDialog({
           {section === "updates" ? <section className="settings-panel" aria-labelledby="settings-update-title">
             <div className="settings-section-heading">
               <h2 id="settings-update-title">版本更新</h2>
-              <p>检查并安装可信来源发布的 Aevoren Bot 新版本。</p>
+              <p>从可信发布源检查并下载 Aevoren Bot 新版本。</p>
             </div>
+            <div className="settings-card">
+              <label className="settings-row">
+                <span>
+                  <strong>自动检查并下载</strong>
+                  <small>应用启动后约 15 秒检查并按所选间隔复查；发现新版本自动下载，不会打断当前工作，可立即重启更新或在下次退出时应用。</small>
+                </span>
+                <select
+                  aria-label="自动检查更新频率"
+                  value={updateCheckIntervalMinutes}
+                  disabled={updateIntervalPending}
+                  onChange={(event) => void changeUpdateCheckInterval(Number(event.target.value) as UpdateCheckIntervalMinutes)}
+                >
+                  {UPDATE_CHECK_INTERVAL_MINUTES.map((minutes) => (
+                    <option value={minutes} key={minutes}>{minutes === 60 ? "每小时" : minutes === 360 ? "每 6 小时" : minutes === 720 ? "每 12 小时" : "每天"}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {updateIntervalError ? <div className="dialog-error" role="alert">{updateIntervalError.safeMessage}</div> : null}
             <div className="settings-card">
               <div className="settings-row">
                 <span><strong>当前版本</strong><small>{updateState?.channel === "development" ? "开发环境" : updateState?.channel === "beta" ? "Beta 渠道" : "Stable 渠道"}</small></span>

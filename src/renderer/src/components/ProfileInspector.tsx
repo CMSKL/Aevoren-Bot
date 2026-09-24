@@ -1,11 +1,10 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { AppError, Bot, BotPatch, McpServerInfo, ModelSelection, ProviderInstanceInfo, Workspace } from "@shared/contracts";
-import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES, type BotAvatarColor, type BotAvatarShape } from "@shared/bot-avatar";
 import { CheckIcon, CloseIcon } from "./Icons";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { MemoryPanel, type MemoryPanelHandle } from "./MemoryPanel";
 
-type ProfileDraft = Pick<Bot, "name" | "label" | "description" | "instructions" | "avatarShape" | "avatarColor">;
+type ProfileDraft = Pick<Bot, "name" | "label" | "description" | "instructions">;
 export type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
 
 export type ProfileInspectorHandle = {
@@ -14,6 +13,7 @@ export type ProfileInspectorHandle = {
 };
 
 type ProfileInspectorProps = {
+  id?: string;
   bot: Bot | null;
   mobileOpen: boolean;
   onBotUpdated(bot: Bot): void;
@@ -27,8 +27,6 @@ function toDraft(bot: Bot): ProfileDraft {
     label: bot.label,
     description: bot.description,
     instructions: bot.instructions,
-    avatarShape: bot.avatarShape,
-    avatarColor: bot.avatarColor,
   };
 }
 
@@ -37,14 +35,12 @@ function sameDraft(left: ProfileDraft, right: ProfileDraft): boolean {
     left.name === right.name &&
     left.label === right.label &&
     left.description === right.description &&
-    left.instructions === right.instructions &&
-    left.avatarShape === right.avatarShape &&
-    left.avatarColor === right.avatarColor
+    left.instructions === right.instructions
   );
 }
 
 export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspectorProps>(function ProfileInspector(
-  { bot, mobileOpen, onBotUpdated, onError, onMobileClose },
+  { id, bot, mobileOpen, onBotUpdated, onError, onMobileClose },
   ref,
 ) {
   const [draft, setDraft] = useState<ProfileDraft | null>(bot ? toDraft(bot) : null);
@@ -256,7 +252,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
 
   if (!bot || !draft) {
     return (
-      <aside className={`inspector inspector-empty${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
+      <aside id={id} className={`inspector inspector-empty${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
         <button className="drawer-close-button" type="button" aria-label="关闭 Bot 设置" onClick={onMobileClose}>
           <CloseIcon />
         </button>
@@ -268,7 +264,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   const selectedProvider = providers.find((provider) => provider.id === bot.modelSelection.providerInstanceId) ?? null;
 
   return (
-    <aside className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
+    <aside id={id} className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
       <header className="inspector-header">
         <h2>Bot 详情</h2>
         <div className="inspector-header-actions">
@@ -304,43 +300,9 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
         <div className="avatar-settings-heading">
           <div>
             <h3 id="bot-avatar-settings">头像</h3>
-            <p>用统一的造型和配色区分不同 Bot。</p>
+            <p>由系统随机分配，无需设置。</p>
           </div>
-          <BotAvatarIcon shape={draft.avatarShape} color={draft.avatarColor} size={64} title={`${draft.name || "Bot"}头像`} />
-        </div>
-        <div className="avatar-picker-group">
-          <span className="avatar-picker-label">造型</span>
-          <div className="avatar-shape-grid" role="radiogroup" aria-label="Bot 头像造型">
-            {BOT_AVATAR_SHAPES.map((shape) => (
-              <button
-                className={`avatar-shape-option${draft.avatarShape === shape ? " selected" : ""}`}
-                type="button"
-                role="radio"
-                aria-checked={draft.avatarShape === shape}
-                aria-label={`造型 ${shape}`}
-                key={shape}
-                onClick={() => update("avatarShape", shape as BotAvatarShape)}
-              >
-                <BotAvatarIcon shape={shape} color={draft.avatarColor} size={32} />
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="avatar-picker-group">
-          <span className="avatar-picker-label">配色</span>
-          <div className="avatar-color-row" role="radiogroup" aria-label="Bot 头像配色">
-            {BOT_AVATAR_COLORS.map((color) => (
-              <button
-                className={`avatar-color-option avatar-color-${color}${draft.avatarColor === color ? " selected" : ""}`}
-                type="button"
-                role="radio"
-                aria-checked={draft.avatarColor === color}
-                aria-label={`配色 ${color}`}
-                key={color}
-                onClick={() => update("avatarColor", color as BotAvatarColor)}
-              />
-            ))}
-          </div>
+          <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={64} title={`${bot.name || "Bot"}头像`} />
         </div>
       </section>
 

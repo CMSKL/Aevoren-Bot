@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "@shared/bot-avatar";
 import type { AevorenBotApi, PromptManifest } from "@shared/contracts";
 import { AppRepository } from "../../src/main/database";
 
@@ -627,6 +628,11 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
 
     await createNamedBot(page, "调查员");
     await createNamedBot(page, "审校员");
+    const assignedAvatar = page.locator('.bot-row[aria-label="调查员"] .bot-avatar-icon');
+    const avatarShape = await assignedAvatar.getAttribute("data-avatar-shape");
+    const avatarColor = await assignedAvatar.getAttribute("data-avatar-color");
+    expect(BOT_AVATAR_SHAPES).toContain(avatarShape);
+    expect(BOT_AVATAR_COLORS).toContain(avatarColor);
     await createRoom(page, ["调查员", "审校员"]);
 
     const input = page.getByLabel("消息");
@@ -649,15 +655,14 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
 
     await page.locator(".room-member-row").filter({ hasText: "首席研究员" }).getByRole("button", { name: "首席研究员" }).click();
     await expect(page.getByRole("heading", { name: "首席研究员" })).toBeVisible();
-    await page.getByRole("radio", { name: "造型 peak" }).click();
-    await page.getByRole("radio", { name: "配色 teal" }).click();
-    await expect(page.getByRole("radio", { name: "造型 peak" })).toHaveAttribute("aria-checked", "true");
-    await expect(page.getByRole("radio", { name: "配色 teal" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("radiogroup", { name: "Bot 头像造型" })).toHaveCount(0);
+    await expect(page.getByRole("radiogroup", { name: "Bot 头像配色" })).toHaveCount(0);
+    await expect(page.getByText("由系统随机分配，无需设置。")).toBeVisible();
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
     await expect(page.locator('.bot-row[aria-label="首席研究员"] .bot-avatar-icon'))
-      .toHaveAttribute("data-avatar-shape", "peak");
+      .toHaveAttribute("data-avatar-shape", avatarShape!);
     await expect(page.locator('.bot-row[aria-label="首席研究员"] .bot-avatar-icon'))
-      .toHaveAttribute("data-avatar-color", "teal");
+      .toHaveAttribute("data-avatar-color", avatarColor!);
     expect(await page.locator('.bot-row[aria-label="首席研究员"] .bot-avatar-icon').evaluate((element) => {
       const bounds = element.getBoundingClientRect();
       return { width: bounds.width, height: bounds.height };
@@ -668,8 +673,8 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
     await expect(page.locator("article.message-assistant .message-meta")).toContainText("首席研究员");
     const directAvatar = page.locator("article.message-assistant .message-avatar .bot-avatar-icon");
-    await expect(directAvatar).toHaveAttribute("data-avatar-shape", "peak");
-    await expect(directAvatar).toHaveAttribute("data-avatar-color", "teal");
+    await expect(directAvatar).toHaveAttribute("data-avatar-shape", avatarShape!);
+    await expect(directAvatar).toHaveAttribute("data-avatar-color", avatarColor!);
     expect(await directAvatar.evaluate((element) => {
       const bounds = element.getBoundingClientRect();
       return { width: bounds.width, height: bounds.height };
@@ -679,18 +684,18 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
     await expect(page.getByRole("heading", { name: "调查员、审校员" })).toBeVisible();
     const memberRow = page.locator(".room-member-row").filter({ hasText: "首席研究员" });
     await expect(memberRow).toBeVisible();
-    await expect(memberRow.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-shape", "peak");
-    await expect(memberRow.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-color", "teal");
+    await expect(memberRow.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-shape", avatarShape!);
+    await expect(memberRow.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-color", avatarColor!);
     await expect(page.locator(".speaker-link")).toHaveText(["首席研究员"]);
     const historicalAvatar = page.locator("article.message-assistant .message-avatar .bot-avatar-icon");
-    await expect(historicalAvatar).toHaveAttribute("data-avatar-shape", "peak");
-    await expect(historicalAvatar).toHaveAttribute("data-avatar-color", "teal");
+    await expect(historicalAvatar).toHaveAttribute("data-avatar-shape", avatarShape!);
+    await expect(historicalAvatar).toHaveAttribute("data-avatar-color", avatarColor!);
 
     await input.fill("@首席");
     const mentionOption = page.getByRole("option", { name: /首席研究员/u });
     await expect(mentionOption).toBeVisible();
-    await expect(mentionOption.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-shape", "peak");
-    await expect(mentionOption.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-color", "teal");
+    await expect(mentionOption.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-shape", avatarShape!);
+    await expect(mentionOption.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-color", avatarColor!);
     expect(await mentionOption.locator(".bot-avatar-icon").evaluate((element) => {
       const bounds = element.getBoundingClientRect();
       return { width: bounds.width, height: bounds.height };
@@ -701,7 +706,7 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
     await expect(page.locator(".speaker-link").last()).toHaveText("首席研究员");
     await expect(page.locator("article.message-assistant .message-avatar .bot-avatar-icon").last())
-      .toHaveAttribute("data-avatar-shape", "peak");
+      .toHaveAttribute("data-avatar-shape", avatarShape!);
     await page.screenshot({ path: "/tmp/aevoren-bot-name-avatar-sync.png", fullPage: false });
     expect(consoleErrors).toEqual([]);
   } finally {

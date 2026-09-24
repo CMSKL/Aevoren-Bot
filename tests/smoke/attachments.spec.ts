@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -8,7 +8,6 @@ import { removeTestDirectory } from "./test-cleanup";
 test("attaches a bounded text file to a direct message and restores its metadata", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-attachments-"));
   const sourcePath = join(userDataDir, "requirements.md");
-  const artifactPath = join(userDataDir, "saved-result.md");
   writeFileSync(sourcePath, "# Requirements\n\nKeep this source.", "utf8");
   const environment = {
     ...process.env,
@@ -16,7 +15,6 @@ test("attaches a bounded text file to a direct message and restores its metadata
     AEVOREN_BOT_FAKE_PROVIDER: "1",
     AEVOREN_BOT_TEST_HIDDEN: "1",
     AEVOREN_BOT_ATTACHMENT_TEST_PATHS: sourcePath,
-    AEVOREN_BOT_ARTIFACT_TEST_PATH: artifactPath,
   };
 
   const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
@@ -33,8 +31,7 @@ test("attaches a bounded text file to a direct message and restores its metadata
     await expect(page.locator("article.message-user")).toContainText("requirements.md");
     await expect(page.locator("article.message-user .message-attachment")).toContainText("1 KB");
     await expect(page.locator("article.message-assistant")).toHaveAttribute("data-status", "completed");
-    await page.getByRole("button", { name: "保存为 Markdown", exact: true }).click();
-    expect(readFileSync(artifactPath, "utf8")).toContain("## 背景");
+    await expect(page.getByRole("button", { name: "保存为 Markdown", exact: true })).toHaveCount(0);
 
     const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
     expect(database.prepare("SELECT COUNT(*) AS count FROM message_attachments").get()).toEqual({ count: 1 });

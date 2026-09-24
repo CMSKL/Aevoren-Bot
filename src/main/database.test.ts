@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "@shared/bot-avatar";
 import type { AttachmentDraft, PromptManifest } from "@shared/contracts";
 import { AppRepository, MIGRATIONS } from "./database";
 import { AevorenBotError } from "./errors";
@@ -227,6 +228,8 @@ describe("AppRepository", () => {
       hasUnread: false,
       version: 1,
     });
+    expect(BOT_AVATAR_SHAPES).toContain(created.bot.avatarShape);
+    expect(BOT_AVATAR_COLORS).toContain(created.bot.avatarColor);
     expect(created.session.kind).toBe("MAIN");
     expect(repository.listBots()).toHaveLength(1);
     expect(repository.getMainSession(created.bot.id).id).toBe(created.session.id);
@@ -353,6 +356,8 @@ describe("AppRepository", () => {
       version: 1,
     });
     expect(duplicate.bot.id).not.toBe(source.id);
+    expect(BOT_AVATAR_SHAPES).toContain(duplicate.bot.avatarShape);
+    expect(BOT_AVATAR_COLORS).toContain(duplicate.bot.avatarColor);
     expect(duplicate.session.id).not.toBe(created.session.id);
     expect(repository.listTranscript(duplicate.session.id)).toHaveLength(0);
     expect(repository.listTranscript(created.session.id)).toHaveLength(1);

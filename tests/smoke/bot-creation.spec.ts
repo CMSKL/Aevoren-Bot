@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "@shared/bot-avatar";
 
 function environment(userDataDir: string): Record<string, string> {
   const inherited = Object.fromEntries(
@@ -106,6 +107,17 @@ test("creates one neutral Bot and one MAIN session under a duplicate trigger, th
     await expect(page.getByLabel("描述")).toHaveValue("");
     await expect(page.getByLabel("描述")).toHaveAttribute("placeholder", "详细说明用途和工作方式");
     await expect(page.getByLabel("Instructions")).toHaveCount(0);
+    const avatar = page.locator(".bot-row.selected .bot-avatar-icon");
+    const avatarShape = await avatar.getAttribute("data-avatar-shape");
+    const avatarColor = await avatar.getAttribute("data-avatar-color");
+    expect(BOT_AVATAR_SHAPES).toContain(avatarShape);
+    expect(BOT_AVATAR_COLORS).toContain(avatarColor);
+    await expect(page.locator(".avatar-settings .bot-avatar-icon")).toHaveAttribute("data-avatar-shape", avatarShape!);
+    await expect(page.locator(".avatar-settings .bot-avatar-icon")).toHaveAttribute("data-avatar-color", avatarColor!);
+    await expect(page.getByRole("radiogroup", { name: "Bot 头像造型" })).toHaveCount(0);
+    await expect(page.getByRole("radiogroup", { name: "Bot 头像配色" })).toHaveCount(0);
+    await page.screenshot({ path: "/tmp/aevoren-avatar-random-profile.png" });
+    expect(databaseAvatar(userDataDir)).toEqual({ shape: avatarShape, color: avatarColor });
     expect(databaseCounts(userDataDir)).toEqual({ bots: 1, sessions: 1, transcript: 0 });
 
     await page.getByLabel("名称").fill("研究助手");
@@ -113,12 +125,7 @@ test("creates one neutral Bot and one MAIN session under a duplicate trigger, th
     await page.getByLabel("描述").fill("整理材料并给出可核验的研究结论。");
     await page.getByLabel("描述").blur();
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
-    await page.getByRole("radio", { name: "造型 crest" }).click();
-    await page.getByRole("radio", { name: "配色 coral" }).click();
-    await expect(page.getByRole("radio", { name: "造型 crest" })).toHaveAttribute("aria-checked", "true");
-    await expect(page.getByRole("radio", { name: "配色 coral" })).toHaveAttribute("aria-checked", "true");
-    await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
-    expect(databaseAvatar(userDataDir)).toEqual({ shape: "crest", color: "coral" });
+    expect(databaseAvatar(userDataDir)).toEqual({ shape: avatarShape, color: avatarColor });
     await expect(page.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
     await application.close();
     application = undefined;
@@ -130,8 +137,9 @@ test("creates one neutral Bot and one MAIN session under a duplicate trigger, th
     await expect(page.getByLabel("名称")).toHaveValue("研究助手");
     await expect(page.getByLabel("标签（可选）")).toHaveValue("研究");
     await expect(page.getByLabel("描述")).toHaveValue("整理材料并给出可核验的研究结论。");
-    await expect(page.getByRole("radio", { name: "造型 crest" })).toHaveAttribute("aria-checked", "true");
-    await expect(page.getByRole("radio", { name: "配色 coral" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("radiogroup", { name: "Bot 头像造型" })).toHaveCount(0);
+    await expect(page.getByRole("radiogroup", { name: "Bot 头像配色" })).toHaveCount(0);
+    expect(databaseAvatar(userDataDir)).toEqual({ shape: avatarShape, color: avatarColor });
     await expect(page.locator(".bot-row.selected .bot-avatar-icon")).toHaveCount(1);
     expect(databaseCounts(userDataDir)).toEqual({ bots: 1, sessions: 1, transcript: 0 });
 

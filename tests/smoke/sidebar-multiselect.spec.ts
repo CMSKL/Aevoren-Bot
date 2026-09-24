@@ -163,6 +163,70 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
   }
 });
 
+test("groups chat and Bot navigation under an independently collapsible Workspace", async () => {
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-sidebar-workspace-nav-"));
+  let application: ElectronApplication | undefined;
+  try {
+    const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
+    const first = repository.createBot();
+    repository.updateBot(first.bot.id, first.bot.version, { name: "工作区研究员" });
+    const second = repository.createBot();
+    repository.updateBot(second.bot.id, second.bot.version, { name: "工作区审校员" });
+    repository.createRoom({ name: "工作区群聊", memberBotIds: [first.bot.id, second.bot.id] });
+    repository.setSetting("appearance.theme", "dark", false);
+    repository.close();
+
+    const launched = await launch(userDataDir);
+    application = launched.application;
+    const page = launched.page;
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+
+    const workspace = page.locator(".sidebar-workspace");
+    const workspaceSummary = workspace.locator(":scope > summary");
+    const roomGroup = page.locator(".sidebar-workspace-section").nth(0);
+    const botGroup = page.locator(".sidebar-workspace-section").nth(1);
+    await expect(workspaceSummary).toContainText("工作区");
+    await expect(roomGroup.getByRole("heading", { name: "群聊" })).toBeVisible();
+    await expect(botGroup.getByRole("heading", { name: "Bot" })).toBeVisible();
+    expect(await workspace.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(true);
+    await expect(page.locator("#sidebar-room-items .bot-row")).toHaveCount(1);
+    await expect(page.locator("#sidebar-bot-items .bot-row")).toHaveCount(2);
+
+    await page.locator('.bot-row[aria-label="工作区群聊"]').click();
+    await expect(page.locator('.bot-row[aria-label="工作区群聊"]')).toHaveClass(/selected/u);
+    await expect(roomGroup.getByRole("heading", { name: "群聊" })).toBeVisible();
+    await page.screenshot({ path: "/tmp/aevoren-workspace-navigation-expanded.png" });
+    await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-sidebar-expanded.png" });
+
+    await expect(roomGroup.locator("summary")).toHaveCount(0);
+    await expect(botGroup.locator("summary")).toHaveCount(0);
+    await page.locator(".sidebar-workspace").screenshot({ path: "/tmp/aevoren-workspace-navigation-folders.png" });
+
+    await workspaceSummary.click();
+    await expect(page.locator("#sidebar-workspace-content")).toBeHidden();
+    await expect(page.getByRole("button", { name: "设置", exact: true })).toBeVisible();
+    await page.screenshot({ path: "/tmp/aevoren-workspace-navigation-collapsed.png" });
+    await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-sidebar-collapsed.png" });
+    await workspaceSummary.click();
+    await expect(page.locator("#sidebar-workspace-content")).toBeVisible();
+    await expect(page.locator("#sidebar-room-items .bot-row")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
+    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await expect(page.locator(".sidebar")).toBeVisible();
+    await expect(page.locator(".sidebar-workspace-summary")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(consoleErrors).toEqual([]);
+    await page.screenshot({ path: "/tmp/aevoren-workspace-navigation-compact.png" });
+  } finally {
+    if (application) await application.close();
+    removeTestDirectory(userDataDir);
+  }
+});
+
 test("keeps the entire batch and selection when one selected Bot is running", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-sidebar-multiselect-busy-"));
   let application: ElectronApplication | undefined;
