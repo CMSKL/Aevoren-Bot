@@ -83,7 +83,7 @@ test("routes one approved Room workspace read through the configured real Provid
     const assistant = page.locator('article.message-assistant[data-status="completed"]').last();
     await expect(assistant).toContainText(token, { timeout: 90_000 });
     await expect(assistant.locator(".speaker-link")).toHaveText(targetBotName);
-    await expect(page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
   } finally {
     await application.close();
     removeTestDirectory(root);

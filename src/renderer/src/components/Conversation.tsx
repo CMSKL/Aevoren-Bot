@@ -869,19 +869,19 @@ export function Conversation({
             </label>
           ) : null}
           {bot ? <HeaderModelPicker bot={bot} busy={busy} onBotUpdated={onBotUpdated} onError={onError} /> : null}
-          <button
-            className={`secondary-button model-settings-button${artifacts.length > 0 ? " has-artifacts" : ""}`}
-            type="button"
-            aria-label={artifacts.length > 0 ? `打开会话成果，共 ${artifacts.length} 个` : "工作区"}
-            aria-expanded={artifacts.length > 0 ? artifactShelfOpen : undefined}
-            title={artifacts.length > 0 ? `会话成果 · ${artifacts.length}` : "工作区"}
-            onClick={() => artifacts.length > 0 && conversationScopeId
-              ? setArtifactShelfScopeId((current) => current === conversationScopeId ? null : conversationScopeId)
-              : onOpenWorkspaces()}
-          >
-            <FolderIcon />
-            <span>{artifacts.length > 0 ? `成果 ${artifacts.length}` : "工作区"}</span>
-          </button>
+          {artifacts.length > 0 ? (
+            <button
+              className="secondary-button model-settings-button has-artifacts"
+              type="button"
+              aria-label={`打开会话成果，共 ${artifacts.length} 个`}
+              aria-expanded={artifactShelfOpen}
+              title={`会话成果 · ${artifacts.length}`}
+              onClick={() => conversationScopeId && setArtifactShelfScopeId((current) => current === conversationScopeId ? null : conversationScopeId)}
+            >
+              <FolderIcon />
+              <span>成果 {artifacts.length}</span>
+            </button>
+          ) : null}
           <button className="mobile-panel-button" type="button" aria-label="打开 Bot 设置" onClick={onOpenProfile}>
             <PanelIcon />
           </button>
@@ -1016,15 +1016,11 @@ export function Conversation({
         {closeNotice ? <div className="composer-notice" role="alert">{closeNotice}</div> : null}
         {error ? <div className="composer-error" role="alert">{error.safeMessage}</div> : null}
         {submitting ? <div className="send-state">正在准备</div> : null}
-        {!submitting && liveState && liveState.state !== "idle"
+        {!room && !submitting && liveState && liveState.state !== "idle"
           ? <div className={"send-state runtime-" + liveState.state}>{liveLabels[liveState.state]}</div>
           : null}
         {room && latestBatch && latestFailedTurn ? (
           <div className="composer-run-status" data-testid="room-batch-state">
-            <div className="room-batch-context">
-              <strong>本批状态：{latestBatch.state}</strong>
-              <div>{latestTurns.map((turn) => <span className={`room-turn-state turn-${turn.state}`} key={turn.id}>{roomMemberIdentities.get(turn.memberBotId)?.inline ?? turn.memberNameSnapshot}：{turn.state}</span>)}</div>
-            </div>
             <RunFailureCard
               step={roomMemberIdentities.get(latestFailedTurn.memberBotId)?.inline ?? latestFailedTurn.memberNameSnapshot}
               errorCode={latestFailedTurn.lastErrorCode ?? latestFailedRun?.lastErrorCode}
@@ -1036,15 +1032,18 @@ export function Conversation({
               <button className="secondary-button continue-room-button" type="button" disabled={busy} onClick={() => onContinueRoomBatch(latestBatch.id)}>继续未开始成员</button>
             ) : null}
           </div>
-        ) : room && latestBatch ? (
+        ) : room && latestBatch && latestBatch.state === "running" ? (
+          <div className="room-run-indicator" data-testid="room-batch-state" role="status" aria-live="polite">
+            <span className="room-presence-dot" aria-hidden="true" />
+            <span>{activeRoomTurn
+              ? `${roomMemberIdentities.get(activeRoomTurn.memberBotId)?.inline ?? snapshotIdentities.get(activeRoomTurn.memberBotId) ?? activeRoomTurn.memberNameSnapshot} 正在执行`
+              : "协作团队正在执行"}</span>
+          </div>
+        ) : room && latestBatch && latestBatch.state !== "completed" ? (
           <details className={`room-batch-state batch-${latestBatch.state}`} data-testid="room-batch-state" open={latestBatch.state === "running"}>
             <summary>
               <span className="room-presence-dot" aria-hidden="true" />
-              <strong>{latestBatch.state === "running"
-                ? `${activeRoomTurn ? roomMemberIdentities.get(activeRoomTurn.memberBotId)?.inline ?? snapshotIdentities.get(activeRoomTurn.memberBotId) ?? activeRoomTurn.memberNameSnapshot : "协作团队"}正在执行`
-                : latestBatch.state === "completed"
-                  ? "本轮协作已完成"
-                  : `本轮状态：${latestBatch.state}`}</strong>
+              <strong>本轮状态：{latestBatch.state}</strong>
               <small>{latestBatch.state}</small>
               <span className="room-batch-chevron" aria-hidden="true">›</span>
             </summary>
@@ -1063,17 +1062,13 @@ export function Conversation({
             ) : null}
           </details>
         ) : null}
-        {room ? <div className={`room-routing-hint${hasInvalidRoomMentions || explicitRoutingBlocked ? " invalid" : ""}`} role={hasInvalidRoomMentions || explicitRoutingBlocked ? "alert" : undefined}>
-          {hasInvalidRoomMentions
-            ? `${invalidRoomMentions.map((mention) => mention.kind === "bot" ? `@${mention.label}` : "").join("、")} 已不在群聊，请移除后重新选择`
-            : routingPreference === "automatic"
-              ? "Host 自动选择首位 Bot，并仅在真实工件完成后接力"
-              : routingPreference === "everyone"
-                ? `将按成员顺序调用全部 ${room.members.length} 个 Bot`
-                : targetBotIds.length === 0
-                  ? "请输入 @ 并选择要响应的 Bot"
-                  : `将只调用 ${targetBotIds.length} 个指定 Bot`}
-        </div> : null}
+        {room && (hasInvalidRoomMentions || explicitRoutingBlocked) ? (
+          <div className="room-routing-hint invalid" role="alert">
+            {hasInvalidRoomMentions
+              ? `${invalidRoomMentions.map((mention) => mention.kind === "bot" ? `@${mention.label}` : "").join("、")} 已不在群聊，请移除后重新选择`
+              : "请先输入 @ 并选择要响应的 Bot"}
+          </div>
+        ) : null}
         <div className="composer">
           {room && mentionQuery ? (
             <div className="mention-menu" role="listbox" aria-label="提及 Bot" id="room-mention-menu">

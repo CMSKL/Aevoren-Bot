@@ -48,7 +48,7 @@ test("routes one no-mention request through the real selector with at most two P
     const page = await application.firstWindow();
     await page.locator(".bot-row").filter({ hasText: roomName }).click();
     await expect(page.getByRole("heading", { name: roomName })).toBeVisible();
-    await expect(page.getByText("Host 自动选择首位 Bot，并仅在真实工件完成后接力", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
 
     await page.getByLabel("消息").fill("请分析本季度财务预算、成本结构和费用控制重点，并用一句话回答。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -57,7 +57,7 @@ test("routes one no-mention request through the real selector with at most two P
     const userMessage = page.locator("article.message-user").last();
     await expect(userMessage).toContainText("自动选择");
     await expect(userMessage.locator(".message-route-chip")).toHaveText([`@${financeName}`]);
-    await expect(page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
   } finally {
     await application.close();
   }

@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import type { Bot, ConversationBatchDeleteInput, Room } from "@shared/contracts";
+import type { AppError, Bot, ConversationBatchDeleteInput, Room, Workspace } from "@shared/contracts";
 import { buildBotIdentityMap } from "../bot-identity";
 import { BatchContextMenu } from "./BatchContextMenu";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { BotContextMenu } from "./BotContextMenu";
-import { CheckIcon, CloseIcon, FolderIcon, PinIcon, PlusIcon, RoomIcon, SettingsIcon, TrashIcon } from "./Icons";
+import { CheckIcon, CloseIcon, FolderIcon, PinIcon, PlusIcon, RoomIcon, SettingsIcon, TrashIcon, ChevronDownIcon } from "./Icons";
 import { RoomContextMenu } from "./RoomContextMenu";
 
 type SidebarProps = {
   bots: Bot[];
   rooms: Room[];
+  workspaces: Workspace[];
   selectedBotId: string | null;
   selectedRoomId: string | null;
   busy: boolean;
+  workspaceAddPending: boolean;
   mobileOpen: boolean;
   createButtonRef: RefObject<HTMLButtonElement | null>;
+  onAddWorkspace(): Promise<{ workspace: Workspace } | { error: AppError } | null>;
+  onOpenWorkspaces(): void;
   onCreate(): void;
   onOpenSettings(): void;
   onMobileClose(): void;
@@ -89,11 +93,15 @@ function orderVisibleRooms(rooms: Room[]): Room[] {
 export function Sidebar({
   bots,
   rooms,
+  workspaces,
   selectedBotId,
   selectedRoomId,
   busy,
+  workspaceAddPending,
   mobileOpen,
   createButtonRef,
+  onAddWorkspace,
+  onOpenWorkspaces,
   onCreate,
   onOpenSettings,
   onMobileClose,
@@ -193,6 +201,17 @@ export function Sidebar({
     setSelectedKeys(EMPTY_SELECTION);
     setBatchContextMenu(null);
   }, []);
+
+  async function addWorkspace(): Promise<void> {
+    if (workspaceAddPending) return;
+    try {
+      const result = await onAddWorkspace();
+      if (result && "error" in result) setNotice(result.error.safeMessage);
+      else if (result && "workspace" in result) setNotice(`已添加工作区：${result.workspace.name}`);
+    } catch {
+      setNotice("添加工作区失败，请稍后重试。");
+    }
+  }
 
   useEffect(() => {
     if (!notice) return;
@@ -659,15 +678,47 @@ export function Sidebar({
         )}
       </div>
       <div className="bot-list">
-        <details
-          className="sidebar-workspace"
-          open={workspaceExpanded}
-          onToggle={(event) => setWorkspaceExpanded(event.currentTarget.open)}
-        >
-          <summary className="sidebar-workspace-summary" aria-controls="sidebar-workspace-content">
-            <span className="sidebar-workspace-title">工作区</span>
-          </summary>
-          <div className="sidebar-workspace-content" id="sidebar-workspace-content">
+        <section className="sidebar-workspace" aria-label="工作区">
+          <div className="sidebar-workspace-heading">
+            <button
+              className="sidebar-workspace-toggle"
+              type="button"
+              aria-expanded={workspaceExpanded}
+              aria-controls="sidebar-workspace-content"
+              onClick={() => setWorkspaceExpanded((expanded) => !expanded)}
+            >
+              <span>工作区</span>
+              <ChevronDownIcon className={workspaceExpanded ? "" : "collapsed"} />
+            </button>
+            <button
+              className="sidebar-workspace-add"
+              type="button"
+              aria-label="添加工作区"
+              title="添加工作区"
+              disabled={workspaceAddPending}
+              onClick={() => void addWorkspace()}
+            >
+              <PlusIcon />
+            </button>
+          </div>
+          <div className="sidebar-workspace-content" id="sidebar-workspace-content" hidden={!workspaceExpanded}>
+            {workspaces.length > 0 ? (
+              <div className="sidebar-added-workspaces" aria-label="已添加工作区">
+                {workspaces.map((workspace) => (
+                  <button
+                    className="sidebar-workspace-item"
+                    type="button"
+                    key={workspace.id}
+                    aria-label={`管理工作区 ${workspace.name}`}
+                    title={workspace.name}
+                    onClick={onOpenWorkspaces}
+                  >
+                    <FolderIcon />
+                    <span>{workspace.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <section className="sidebar-workspace-section" aria-label="群聊">
               <h3 className="sidebar-workspace-section-heading">
                 <FolderIcon />
@@ -710,7 +761,7 @@ export function Sidebar({
               </>
             ) : null}
           </div>
-        </details>
+        </section>
       </div>
 
       <div className="sidebar-footer">

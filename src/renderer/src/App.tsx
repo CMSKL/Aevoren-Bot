@@ -25,6 +25,7 @@ import type {
   TranscriptEvent,
   UpdateCheckIntervalMinutes,
   UpdateState,
+  Workspace,
 } from "@shared/contracts";
 import { Conversation } from "./components/Conversation";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -63,6 +64,7 @@ function mergeToolEvents(
 export function App(): React.JSX.Element {
   const [bots, setBots] = useState<Bot[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedBot, setSelectedBot] = useState<Bot | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<RoomDetail | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -82,6 +84,7 @@ export function App(): React.JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
+  const [workspaceAddPending, setWorkspaceAddPending] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"bots" | "profile" | null>(null);
   const [creatingBot, setCreatingBot] = useState(false);
@@ -190,6 +193,21 @@ export function App(): React.JSX.Element {
       unsubscribeCloseBlocked();
     };
   }, [flushActive]);
+
+  useEffect(() => {
+    let active = true;
+    const refreshWorkspaces = (): void => {
+      void window.aevorenBot.workspaces.list().then((result) => {
+        if (active && result.ok) setWorkspaces(result.data);
+      });
+    };
+    refreshWorkspaces();
+    window.addEventListener("aevoren:workspaces-changed", refreshWorkspaces);
+    return () => {
+      active = false;
+      window.removeEventListener("aevoren:workspaces-changed", refreshWorkspaces);
+    };
+  }, []);
 
   useEffect(() => {
     const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
@@ -821,6 +839,26 @@ export function App(): React.JSX.Element {
     }
   }
 
+  async function addWorkspace(): Promise<{ workspace: Workspace } | { error: AppError } | null> {
+    setWorkspaceAddPending(true);
+    try {
+      const result = await window.aevorenBot.workspaces.add();
+      if (!result.ok) return { error: result.error };
+      if (!result.data) return null;
+      const workspace = result.data.workspace;
+      setWorkspaces((current) => {
+        const withoutCurrent = current.filter((item) => item.id !== workspace.id);
+        return [...withoutCurrent, workspace].toSorted((left, right) => (
+          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
+        ));
+      });
+      window.dispatchEvent(new Event("aevoren:workspaces-changed"));
+      return { workspace };
+    } finally {
+      setWorkspaceAddPending(false);
+    }
+  }
+
   function handleArchived(room: Room): void {
     setRooms((current) => current.map((item) => item.id === room.id ? room : item));
     selectedRoomIdRef.current = null;
@@ -838,11 +876,15 @@ export function App(): React.JSX.Element {
       <Sidebar
         bots={bots}
         rooms={rooms}
+        workspaces={workspaces}
         selectedBotId={selectedBot?.id ?? null}
         selectedRoomId={selectedRoom?.room.id ?? null}
         busy={loading}
+        workspaceAddPending={workspaceAddPending}
         mobileOpen={mobilePanel === "bots"}
         createButtonRef={newBotButtonRef}
+        onAddWorkspace={addWorkspace}
+        onOpenWorkspaces={() => setWorkspacesOpen(true)}
         onCreate={() => {
           if (chooserActionRef.current) return;
           setCreateError(null);

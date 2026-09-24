@@ -81,6 +81,14 @@ export function PlusIcon(props: IconProps): React.JSX.Element {
   );
 }
 
+export function ChevronDownIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="m6 9 6 6 6-6" />
+    </IconBase>
+  );
+}
+
 export function CheckIcon(props: IconProps): React.JSX.Element {
   return (
     <IconBase {...props}>

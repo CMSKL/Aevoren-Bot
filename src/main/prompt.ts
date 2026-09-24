@@ -297,10 +297,10 @@ export function buildPrompt(
     ...rosterBlocks,
     ...(context?.orchestrationEnabled === false ? [{
       authority: "runtime-state" as const,
-      provenance: "app:fixed-room-routing:v1",
+      provenance: "app:fixed-room-routing:v2",
       scope: `room:${context.roomId}:turn:${context.sourceTurnId}`,
-      content: "当前为用户指定/全员响应模式。本回合仅由既定成员各执行一次。只处理当前用户请求，不展开角色规则中的后续业务阶段，不要求或声称其他成员已启动。内部接力关闭；若需要自动协作，请说明用户可以选择自动编排。",
-      digest: digest("fixed-room-routing:v1"), createdAt: session.createdAt, sourceEntryId: null,
+      content: "当前为用户指定/全员固定响应模式。本批每个指定 Bot 都独立回应同一条原始用户请求；不得把本批其他 Bot 的回复当成当前执行证据。只处理当前用户请求，不展开角色规则中的后续业务阶段，不要求或声称其他成员已启动。内部接力关闭，不要发起或声称任务转交。读取、抓取、核验、计数和写入等声明必须有当前 Runtime 的成功工具记录；若资源未提供、无权限或工具不可用，请明确说明尚未完成及需要的资料。",
+      digest: digest("fixed-room-routing:v2"), createdAt: session.createdAt, sourceEntryId: null,
     }] : []),
     ...entries
       .filter(

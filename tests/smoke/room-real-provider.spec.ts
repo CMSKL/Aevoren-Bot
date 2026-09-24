@@ -87,7 +87,7 @@ test("routes explicit, multiple, and automatic Room targets through the configur
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1, { timeout: 90_000 });
     await expect(page.locator(".speaker-link").last()).toHaveText(first);
     await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveText([`@${first}`]);
-    await expect(page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
 
     await selectMention(page, second);
     await selectMention(page, first);
@@ -96,14 +96,14 @@ test("routes explicit, multiple, and automatic Room targets through the configur
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(3, { timeout: 90_000 });
     expect(await page.locator(".speaker-link").allTextContents()).toEqual([first, first, second]);
     await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveText([`@${first}`, `@${second}`]);
-    await expect(page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
 
     await page.getByLabel("消息").fill("真实模型自动选择验收。请由最合适的一位用一句话确认收到。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(4, { timeout: 90_000 });
     await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveCount(1);
     await expect(page.locator("article.message-user").last()).toContainText("自动选择");
-    await expect(page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
   } finally {
     await application.close();
   }

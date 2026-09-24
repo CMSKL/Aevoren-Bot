@@ -61,7 +61,7 @@ test("routes approved workspace tools through one Room speaker and recovers a pe
     await expect(allowedTool).toContainText("执行完成");
     await expect(page.getByText(new RegExp(marker)).last()).toBeVisible();
     await expect(page.locator(".speaker-link")).toHaveText([analyst.name]);
-    await expect(page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
 
     await input.fill("@群聊评审员");
     await expect(page.getByRole("listbox", { name: "提及 Bot" })).toBeVisible();

@@ -318,8 +318,14 @@ export class RoomCoordinator {
           break;
         }
       }
-      const promptCutoffSeq = pending.promptCutoffSeq
-        ?? (pending.origin === "handoff" ? pending.inputSeq : this.repository.getTranscriptHighWater(batch.sessionId));
+      const fixedFanout = !coordinated &&
+        (batch.routingMode === "explicit" || batch.routingMode === "everyone") &&
+        pending.origin !== "handoff";
+      const promptCutoffSeq = pending.promptCutoffSeq ?? (
+        pending.origin === "handoff" || fixedFanout
+          ? pending.inputSeq
+          : this.repository.getTranscriptHighWater(batch.sessionId)
+      );
       const incomingBeforeDispatch = this.repository.getIncomingHandoff(pending.id);
       const sourceBeforeDispatch = incomingBeforeDispatch ? this.repository.getRoomTurn(incomingBeforeDispatch.fromTurnId) : null;
       let executionReceipt: ReturnType<AppRepository["getExecutionEvidenceReceipt"]>;

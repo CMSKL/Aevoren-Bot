@@ -86,6 +86,8 @@ type ActiveRun = {
   messages: ChatMessage[];
   modelSelection: ModelSelection;
   attribution?: RuntimeExecutionInput["attribution"];
+  fixedRoomRouting: boolean;
+  evidenceCorrectionAttempts: number;
   providerContext: ModelRunContext;
   executorBotName: string;
   onDispatchStart?: RuntimeExecutionInput["onDispatchStart"];
@@ -301,6 +303,8 @@ export class RuntimeExecutor {
       messages: prompt.messages,
       modelSelection,
       attribution: input.attribution,
+      fixedRoomRouting: input.room?.orchestrationEnabled === false,
+      evidenceCorrectionAttempts: 0,
       providerContext: {
         executorBotId: bot.id,
         executionKey: input.executionKey,
@@ -472,6 +476,8 @@ export class RuntimeExecutor {
         let roundToolCount = 0;
         let roundCompleted = false;
         let roundProviderStarted = false;
+        let rejectedFixedHandoff = false;
+        let retryAfterEvidenceRepair = false;
         const roundBodyStart = active.providerBody.length;
         iterator = provider.run(active.messages, active.controller.signal, active.providerContext)[Symbol.asyncIterator]();
         while (true) {
@@ -529,7 +535,45 @@ export class RuntimeExecutor {
           continue;
         }
         if (event.type === "handoff") {
-          if (!active.providerStarted || !active.onHandoff) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          if (!active.providerStarted) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          if (!active.onHandoff) {
+            if (!active.fixedRoomRouting) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+            if (roundToolCount === 0) {
+              if (toolRounds >= active.maxToolRounds) throw new AevorenBotError("TOOL_ROUND_LIMIT_EXCEEDED");
+              toolRounds += 1;
+            }
+            roundToolCount += 1;
+            rejectedFixedHandoff = true;
+            roundActions.push({
+              kind: "tool",
+              call: {
+                id: event.toolCallId,
+                type: "function",
+                function: {
+                  name: "handoff_to_agent",
+                  arguments: JSON.stringify({
+                    toAgentId: event.toAgentId,
+                    task: event.task,
+                    contextRefs: event.contextRefs,
+                    visibility: event.visibility,
+                  }),
+                },
+              },
+              result: {
+                role: "tool",
+                tool_call_id: event.toolCallId,
+                content: JSON.stringify({
+                  ok: false,
+                  code: "ROOM_HANDOFF_DISABLED",
+                  safeMessage: "当前是固定响应模式，本回合不能转交其他 Bot。请完成自己的回复，不要声称其他 Bot 已接力。",
+                }),
+              },
+            });
+            run = this.repository.touchRuntimeRun(runId);
+            this.emitRuntime(run);
+            this.armStaleTimer(active);
+            continue;
+          }
           const roster = active.providerContext.roomRoster;
           if (roster && event.visibility === "room") {
             void this.recordHandoffShadow(active, {
@@ -900,9 +944,44 @@ export class RuntimeExecutor {
               tool_calls: protocolActions.map((action) => action.call),
             });
             active.messages.push(...protocolActions.map((action) => action.result));
+            if (rejectedFixedHandoff) {
+              active.providerBody = active.providerBody.slice(0, roundBodyStart);
+              active.body = active.attribution
+                ? sanitizeRoomSpeakerOutput(active.providerBody, true)
+                : active.providerBody;
+              this.flush(active, "streaming");
+            }
             break;
           }
-          this.assertToolEvidence(active);
+          try {
+            this.assertToolEvidence(active);
+          } catch (error) {
+            const appError = asAppError(error);
+            if (!active.fixedRoomRouting || appError.code !== "TOOL_EVIDENCE_REQUIRED" || active.evidenceCorrectionAttempts >= 1) {
+              throw error;
+            }
+            active.evidenceCorrectionAttempts += 1;
+            active.messages.push({ role: "assistant", content: active.providerBody.slice(roundBodyStart) });
+            active.messages.push({
+              role: "system",
+              content: JSON.stringify({
+                notice: "FIXED_ROOM_EVIDENCE_REPAIR",
+                reason: "The preceding draft claimed a tool action without a matching successful Tool Journal record in this Runtime.",
+                rules: [
+                  "Do not repeat or imply that unverified action succeeded.",
+                  "If the current request needs a file, network, or other tool result and the tool is available, perform that action now and rely only on its successful result.",
+                  "If the source, permission, or tool is unavailable, explicitly state that the action was not completed and identify the missing input or authorization.",
+                ],
+              }),
+            });
+            active.providerBody = active.providerBody.slice(0, roundBodyStart);
+            active.body = active.attribution
+              ? sanitizeRoomSpeakerOutput(active.providerBody, true)
+              : active.providerBody;
+            this.flush(active, "streaming");
+            retryAfterEvidenceRepair = true;
+            break;
+          }
           // A provider can still fail after announcing a handoff. Only commit its
           // successor after the complete source result and tool evidence passed.
           for (const handoff of pendingHandoffs.values()) {
@@ -937,6 +1016,7 @@ export class RuntimeExecutor {
       }
         closeIterator(iterator);
         iterator = null;
+        if (retryAfterEvidenceRepair) continue;
         if (!roundCompleted) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
       }
       const current = this.repository.getRuntimeRun(runId);

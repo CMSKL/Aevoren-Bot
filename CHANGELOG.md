@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.11] - 2026-09-24
+
+### Added
+
+- A compact Room execution indicator shows only the currently running Bot; completed batches no longer leave a persistent process panel in the conversation.
+- The Workspace heading provides the single add-workspace entry point in the sidebar.
+
+### Fixed
+
+- Fixed-route Room Bots now receive the original user request without treating earlier peer replies as tool evidence, and unexpected Handoff requests cannot start duplicate role dispatches.
+- Unsupported tool-completion claims get one bounded correction attempt and still fail closed if the current Runtime has no successful tool evidence.
+
 ## [0.3.0-beta.10] - 2026-09-24
 
 ### Added
@@ -129,6 +141,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 [0.3.0-beta.8]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.7...v0.3.0-beta.8
 [0.3.0-beta.9]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.8...v0.3.0-beta.9
 [0.3.0-beta.10]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.9...v0.3.0-beta.10
+[0.3.0-beta.11]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.10...v0.3.0-beta.11
 [0.3.0-beta.5]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.4...v0.3.0-beta.5
 [0.3.0-beta.4]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/CMSKL/Aevoren-Bot/compare/v0.3.0-beta.2...v0.3.0-beta.3
