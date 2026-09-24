@@ -153,6 +153,13 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await createRoom(page, ["研究员", "评审员", "执行员"]);
 
     await expect(page.getByRole("heading", { name: "研究员、评审员、执行员" })).toBeVisible();
+    await expect(page.locator(".inspector-header h2")).toHaveText("设置");
+    await expect(page.locator(".room-avatar-stack .bot-avatar-icon")).toHaveCount(3);
+    await expect(page.getByLabel("名称")).toHaveValue("研究员、评审员、执行员");
+    const membersToggle = page.getByRole("button", { name: "管理群聊成员 3/6" });
+    await expect(membersToggle).toBeVisible();
+    await expect(page.locator(".room-members-manager")).toBeHidden();
+    await page.screenshot({ path: "/tmp/aevoren-room-settings-aligned.png" });
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
     await page.getByLabel("消息").fill("请依次给出分析。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -166,6 +173,7 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
     await page.locator(".composer-wrap").screenshot({ path: "/tmp/aevoren-room-composer-completed.png" });
 
+    await membersToggle.click();
     const secondSpeaker = page.getByRole("button", { name: "评审员", exact: true }).last();
     await secondSpeaker.click();
     await expect(page.getByRole("heading", { name: "评审员" })).toBeVisible();
@@ -175,6 +183,7 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await page.getByLabel("名称").fill("产品协作室");
     await page.getByLabel("名称").blur();
     await expect(page.getByTestId("room-save-status")).toContainText("已保存");
+    await page.getByRole("button", { name: "管理群聊成员 3/6" }).click();
     const evaluatorRow = page.locator(".room-member-row").filter({ hasText: "评审员" });
     await evaluatorRow.getByRole("button", { name: "移除" }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(2);
@@ -257,8 +266,10 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
         && getComputedStyle(element).overflowWrap === "anywhere";
     })).toBe(true);
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1280, 800));
+    await restarted.page.getByRole("button", { name: "管理群聊成员 3/6" }).click();
     await expect(restarted.page.locator(".room-member-row")).toHaveCount(3);
-    await restarted.page.getByRole("button", { name: "归档群聊" }).click();
+    await restarted.page.locator(".bot-list .bot-row").filter({ hasText: "产品协作室" }).click({ button: "right" });
+    await restarted.page.getByRole("menu", { name: "群聊操作" }).getByRole("menuitem", { name: "归档群聊" }).click();
     await expect(restarted.page.getByRole("button", { name: "产品协作室" })).toHaveCount(0);
     await restarted.page.locator(".bot-row").filter({ hasText: "研究员" }).click();
     await restarted.page.getByLabel("描述").fill("恢复归档 Room 前必须先保存的 Bot 描述");
@@ -694,6 +705,7 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
     const rename = page.getByLabel("重命名 Bot");
     await rename.fill("首席研究员");
     await rename.press("Enter");
+    await page.getByRole("button", { name: /管理群聊成员/ }).click();
     await expect(page.locator(".room-member-row").filter({ hasText: "首席研究员" })).toBeVisible();
     await expect(page.locator(".speaker-link")).toHaveText(["首席研究员"]);
     await expect(page.getByRole("heading", { name: "调查员、审校员" })).toBeVisible();
@@ -702,7 +714,8 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
     await expect(page.getByRole("heading", { name: "首席研究员" })).toBeVisible();
     await expect(page.getByRole("radiogroup", { name: "Bot 头像造型" })).toHaveCount(0);
     await expect(page.getByRole("radiogroup", { name: "Bot 头像配色" })).toHaveCount(0);
-    await expect(page.getByText("由系统随机分配，无需设置。")).toBeVisible();
+    await expect(page.locator(".inspector-header h2")).toHaveText("设置");
+    await expect(page.locator(".inspector-avatar-hero .bot-avatar-icon")).toBeVisible();
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
     await expect(page.locator('.bot-row[aria-label="首席研究员"] .bot-avatar-icon'))
       .toHaveAttribute("data-avatar-shape", avatarShape!);
@@ -727,6 +740,7 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
 
     await page.getByRole("listitem", { name: "调查员、审校员" }).click();
     await expect(page.getByRole("heading", { name: "调查员、审校员" })).toBeVisible();
+    await page.getByRole("button", { name: /管理群聊成员/ }).click();
     const memberRow = page.locator(".room-member-row").filter({ hasText: "首席研究员" });
     await expect(memberRow).toBeVisible();
     await expect(memberRow.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-shape", avatarShape!);

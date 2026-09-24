@@ -253,7 +253,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   if (!bot || !draft) {
     return (
       <aside id={id} className={`inspector inspector-empty${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
-        <button className="drawer-close-button" type="button" aria-label="关闭 Bot 设置" onClick={onMobileClose}>
+        <button className="drawer-close-button" type="button" aria-label="关闭设置" onClick={onMobileClose}>
           <CloseIcon />
         </button>
         <span>创建 Bot 后，可在这里定义它的职责。</span>
@@ -266,7 +266,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   return (
     <aside id={id} className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
       <header className="inspector-header">
-        <h2>Bot 详情</h2>
+        <h2>设置</h2>
         <div className="inspector-header-actions">
           <div className={`save-status status-${status}`} data-testid="profile-save-status">
             {status === "saving" ? "保存中…" : null}
@@ -274,40 +274,33 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
             {status === "failed" ? "保存失败" : null}
             {status === "idle" || status === "saved" ? <><CheckIcon />已保存</> : null}
           </div>
-          <button className="drawer-close-button" type="button" aria-label="关闭 Bot 设置" onClick={onMobileClose}>
+          <button className="drawer-close-button" type="button" aria-label="关闭设置" onClick={onMobileClose}>
             <CloseIcon />
           </button>
         </div>
       </header>
 
-      <section className="inspector-group" aria-labelledby="bot-basic-settings">
-        <h3 id="bot-basic-settings">基础信息</h3>
-        <label className="field">
+      <div className="inspector-avatar-hero avatar-settings">
+        <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={92} title={`${bot.name || "Bot"}头像`} />
+      </div>
+      <label className="field inspector-primary-field">
           <span>名称</span>
           <input ref={nameInputRef} value={draft.name} maxLength={80} placeholder="Bob" onChange={(event) => update("name", event.target.value)} onBlur={() => void flush()} />
-        </label>
-        <label className="field">
+      </label>
+      <label className="field inspector-primary-field">
           <span>标签（可选）</span>
           <input value={draft.label} maxLength={120} placeholder="研究、市场、行政" onChange={(event) => update("label", event.target.value)} onBlur={() => void flush()} />
-        </label>
-        <label className="field">
+      </label>
+      <label className="field inspector-primary-field">
           <span>描述</span>
-          <textarea value={draft.description} maxLength={2_000} rows={5} placeholder="详细说明用途和工作方式" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
-        </label>
-      </section>
+          <textarea value={draft.description} maxLength={2_000} rows={6} placeholder="详细说明用途和工作方式" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
+      </label>
 
-      <section className="inspector-group avatar-settings" aria-labelledby="bot-avatar-settings">
-        <div className="avatar-settings-heading">
-          <div>
-            <h3 id="bot-avatar-settings">头像</h3>
-            <p>由系统随机分配，无需设置。</p>
-          </div>
-          <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={64} title={`${bot.name || "Bot"}头像`} />
-        </div>
-      </section>
-
-      <section className="inspector-group" aria-labelledby="bot-model-settings">
-        <h3 id="bot-model-settings">模型</h3>
+      <details className="inspector-advanced" key={bot.id}>
+        <summary>高级设置</summary>
+        <div className="inspector-advanced-content">
+        <section className="inspector-group" aria-labelledby="bot-model-settings">
+          <h3 id="bot-model-settings">模型</h3>
         <div className="field provider-selection-field">
           <span>模型供应商</span>
           <select aria-label="模型供应商" value={bot.modelSelection.providerInstanceId} disabled={modelSaving || providers.length === 0} onChange={(event) => {
@@ -329,15 +322,11 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
           }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
           <datalist id={`provider-models-${bot.id}`}>{selectedProvider?.models.options.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist>
         </label>
-      </section>
-
-      <details className="inspector-advanced">
-        <summary>高级设置</summary>
-        <div className="inspector-advanced-content">
+        </section>
           <section className="permission-explainer">
             <strong>文件访问</strong>
-            <p>由“工作区”授权决定 Bot 可以读取或新建哪些文件；它不会自动把内容注入长期记忆。</p>
-            <span>{workspaces.length > 0 ? `已授权 ${workspaces.length} 个工作区` : "尚未授权工作区"}</span>
+            <p>由“文件工作区”授权决定 Bot 可以读取或新建哪些文件；它不会自动把内容注入长期记忆。</p>
+            <span>{workspaces.length > 0 ? `已授权 ${workspaces.length} 个文件夹` : "尚未授权文件夹"}</span>
           </section>
           <div className="field mcp-access-field">
             <span>外部工具（MCP）</span>
@@ -352,9 +341,9 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
             })}</div> : null}
           </div>
           <div className="field mcp-access-field">
-            <span>工作区记忆注入</span>
-            <small>只把明确绑定的工作区长期状态加入模型上下文；不等同于文件访问授权。</small>
-            <div className="mcp-access-list">{workspaces.length === 0 ? <small>尚未授权工作区</small> : workspaces.map((workspace) => {
+            <span>文件工作区记忆注入</span>
+            <small>只把明确绑定的文件工作区长期状态加入模型上下文；不等同于文件访问授权。</small>
+            <div className="mcp-access-list">{workspaces.length === 0 ? <small>尚未绑定文件夹记忆</small> : workspaces.map((workspace) => {
               const selected = (bot.memoryWorkspaceIds ?? []).includes(workspace.id);
               return <label key={workspace.id}><input type="checkbox" checked={selected} disabled={memoryScopeSaving} onChange={() => void updateMemoryWorkspaceSelection(selected ? (bot.memoryWorkspaceIds ?? []).filter((id) => id !== workspace.id) : [...(bot.memoryWorkspaceIds ?? []), workspace.id])} /><span>{workspace.name}</span><small>{selected ? "已注入" : "未注入"}</small></label>;
             })}</div>

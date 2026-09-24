@@ -185,15 +185,63 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
 
     const workspace = page.locator(".sidebar-workspace");
     const workspaceToggle = workspace.getByRole("button", { name: "工作区", exact: true });
+    const projectToggle = page.getByRole("button", { name: "默认项目", exact: true });
     const roomGroup = page.locator(".sidebar-workspace-section").nth(0);
     const botGroup = page.locator(".sidebar-workspace-section").nth(1);
     await expect(workspaceToggle).toBeVisible();
-    await expect(workspace.getByRole("button", { name: "添加工作区" })).toBeVisible();
+    await expect(projectToggle).toBeVisible();
+    await expect(page.locator(".sidebar-file-workspaces").getByRole("button", { name: "添加本地文件夹" })).toBeVisible();
+    await expect(page.locator(".sidebar-file-workspaces").getByRole("button", { name: "添加文件夹" })).toHaveCount(0);
+    await page.locator(".sidebar-file-workspaces").getByRole("button", { name: "添加本地文件夹" }).click();
+    const emptyFileWorkspaceDialog = page.getByRole("dialog", { name: "文件工作区" });
+    await expect(emptyFileWorkspaceDialog.getByRole("button", { name: "添加文件夹", exact: true })).toBeVisible();
+    await emptyFileWorkspaceDialog.getByRole("button", { name: "完成" }).click();
     await expect(roomGroup.getByRole("heading", { name: "群聊" })).toBeVisible();
     await expect(botGroup.getByRole("heading", { name: "Bot" })).toBeVisible();
     await expect(workspaceToggle).toHaveAttribute("aria-expanded", "true");
     await expect(page.locator("#sidebar-room-items .bot-row")).toHaveCount(1);
     await expect(page.locator("#sidebar-bot-items .bot-row")).toHaveCount(2);
+
+    await page.getByRole("button", { name: "新建工作区", exact: true }).click();
+    const projectDialog = page.getByRole("dialog", { name: "新建工作区" });
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
+    expect(await projectDialog.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.right <= window.innerWidth && bounds.top >= 0 && bounds.bottom <= window.innerHeight
+        && element.scrollWidth <= element.clientWidth;
+    })).toBe(true);
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440);
+    await projectDialog.getByLabel("工作区名称").fill("产品规划");
+    await projectDialog.getByRole("button", { name: "创建工作区", exact: true }).click();
+    const createdProject = page.getByRole("button", { name: "产品规划", exact: true });
+    await expect(createdProject).toBeVisible();
+    await expect(createdProject).toHaveClass(/active/u);
+    await page.getByRole("button", { name: "新建聊天", exact: true }).click();
+    await page.getByRole("button", { name: "创建新 Bot", exact: true }).click();
+    const createdBotRow = page.locator('section[aria-label="项目 产品规划"] .bot-row').filter({ hasText: "新建 Bot" });
+    await expect(createdBotRow).toBeVisible();
+    const scopedBots = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.bots.list());
+    const listedProjects = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.projects.list());
+    expect(scopedBots.ok).toBe(true);
+    expect(listedProjects.ok).toBe(true);
+    if (scopedBots.ok && listedProjects.ok) {
+      const projectId = listedProjects.data.find((project) => project.name === "产品规划")?.id;
+      expect(projectId).toBeTruthy();
+      expect(scopedBots.data.find((bot) => bot.name === "新建 Bot")?.projectId).toBe(projectId);
+    }
+
+    await roomGroup.getByRole("button", { name: "群聊", exact: true }).click();
+    await expect(roomGroup.getByRole("button", { name: "群聊", exact: true })).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator("#sidebar-room-items")).toBeHidden();
+    await roomGroup.getByRole("button", { name: "群聊", exact: true }).click();
+    await expect(page.locator("#sidebar-room-items .bot-row")).toHaveCount(1);
+
+    await projectToggle.click();
+    await expect(page.locator("#sidebar-project-content-10000000-0000-4000-8000-000000000001")).toBeHidden();
+    await projectToggle.click();
+    await expect(page.locator("#sidebar-project-content-10000000-0000-4000-8000-000000000001")).toBeVisible();
 
     await page.locator('.bot-row[aria-label="工作区群聊"]').click();
     await expect(page.locator('.bot-row[aria-label="工作区群聊"]')).toHaveClass(/selected/u);
@@ -201,7 +249,7 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     await page.screenshot({ path: "/tmp/aevoren-workspace-navigation-expanded.png" });
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-sidebar-expanded.png" });
 
-    await page.locator(".sidebar-workspace").screenshot({ path: "/tmp/aevoren-workspace-navigation-folders.png" });
+    await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-project-sidebar-expanded.png" });
 
     await workspaceToggle.click();
     await expect(page.locator("#sidebar-workspace-content")).toBeHidden();
@@ -217,7 +265,7 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
     await page.getByRole("button", { name: "打开 Bot 列表" }).click();
     await expect(page.locator(".sidebar")).toBeVisible();
-    await expect(page.locator(".sidebar-workspace-toggle")).toBeVisible();
+    await expect(page.locator(".sidebar-workspace-toggle").first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(consoleErrors).toEqual([]);
     await page.screenshot({ path: "/tmp/aevoren-workspace-navigation-compact.png" });

@@ -26,10 +26,10 @@ const availabilityLabels: Record<CapabilityAvailability, string> = {
 };
 
 const toolLabels: Record<string, string> = {
-  workspace_list: "查看工作区目录",
-  workspace_read: "读取工作区文件",
-  workspace_search: "搜索工作区文件",
-  workspace_write: "新建工作区文件",
+  workspace_list: "查看已授权文件夹",
+  workspace_read: "读取已授权文件夹文件",
+  workspace_search: "搜索已授权文件夹文件",
+  workspace_write: "在授权文件夹中新建文件",
   web_search: "联网搜索",
   web_fetch: "读取公开网页",
   weather_current: "查询天气",
@@ -100,7 +100,7 @@ export function CapabilitiesSettingsPanel({ active, botId }: CapabilitiesSetting
             <span className="settings-value">{new Date(snapshot.generatedAt).toLocaleString("zh-CN")}</span>
           </div>
           <div className="settings-row">
-            <span><strong>当前可调用工具</strong><small>{snapshot.workspaceCount} 个工作区 · {snapshot.connections.filter((item) => item.status === "available").length}/{snapshot.connections.length} 个模型来源可用</small></span>
+            <span><strong>当前可调用工具</strong><small>{snapshot.workspaceCount} 个文件夹 · {snapshot.connections.filter((item) => item.status === "available").length}/{snapshot.connections.length} 个模型来源可用</small></span>
             <span className="settings-value">{snapshot.availableTools.length > 0 ? snapshot.availableTools.map((tool) => toolLabels[tool] ?? "外部工具").join("、") : "无"}</span>
           </div>
         </div>

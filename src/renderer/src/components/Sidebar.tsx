@@ -1,23 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import type { AppError, Bot, ConversationBatchDeleteInput, Room, Workspace } from "@shared/contracts";
+import type { Bot, ConversationBatchDeleteInput, Project, Room, Workspace } from "@shared/contracts";
 import { buildBotIdentityMap } from "../bot-identity";
 import { BatchContextMenu } from "./BatchContextMenu";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { BotContextMenu } from "./BotContextMenu";
-import { CheckIcon, CloseIcon, FolderIcon, PinIcon, PlusIcon, RoomIcon, SettingsIcon, TrashIcon, ChevronDownIcon } from "./Icons";
+import { BotIcon, CheckIcon, CloseIcon, FolderIcon, PinIcon, PlusIcon, RoomIcon, SettingsIcon, TrashIcon, ChevronDownIcon } from "./Icons";
 import { RoomContextMenu } from "./RoomContextMenu";
 
 type SidebarProps = {
   bots: Bot[];
   rooms: Room[];
+  projects: Project[];
+  activeProjectId: string;
   workspaces: Workspace[];
   selectedBotId: string | null;
   selectedRoomId: string | null;
   busy: boolean;
-  workspaceAddPending: boolean;
   mobileOpen: boolean;
   createButtonRef: RefObject<HTMLButtonElement | null>;
-  onAddWorkspace(): Promise<{ workspace: Workspace } | { error: AppError } | null>;
+  onCreateProject(): void;
+  onSelectProject(projectId: string): void;
   onOpenWorkspaces(): void;
   onCreate(): void;
   onOpenSettings(): void;
@@ -93,14 +95,16 @@ function orderVisibleRooms(rooms: Room[]): Room[] {
 export function Sidebar({
   bots,
   rooms,
+  projects,
+  activeProjectId,
   workspaces,
   selectedBotId,
   selectedRoomId,
   busy,
-  workspaceAddPending,
   mobileOpen,
   createButtonRef,
-  onAddWorkspace,
+  onCreateProject,
+  onSelectProject,
   onOpenWorkspaces,
   onCreate,
   onOpenSettings,
@@ -128,6 +132,10 @@ export function Sidebar({
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [hiddenOpen, setHiddenOpen] = useState(false);
   const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
+  const [fileWorkspacesExpanded, setFileWorkspacesExpanded] = useState(true);
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set());
+  const [collapsedRoomGroupIds, setCollapsedRoomGroupIds] = useState<Set<string>>(() => new Set());
+  const [collapsedBotGroupIds, setCollapsedBotGroupIds] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [roomContextMenu, setRoomContextMenu] = useState<{ roomId: string; x: number; y: number } | null>(null);
   const [batchContextMenu, setBatchContextMenu] = useState<BatchContextMenuState | null>(null);
@@ -165,15 +173,25 @@ export function Sidebar({
     () => rooms.filter((room) => room.archivedAt === null && room.hiddenAt !== null),
     [rooms],
   );
-  const archivedRooms = rooms.filter((room) => room.archivedAt !== null);
+  const archivedRooms = useMemo(() => rooms.filter((room) => room.archivedAt !== null), [rooms]);
   const visibleBots = useMemo(() => orderVisibleBots(bots.filter((bot) => bot.hiddenAt === null)), [bots]);
   const hiddenBots = useMemo(() => bots.filter((bot) => bot.hiddenAt !== null), [bots]);
+  const projectGroups = useMemo(() => projects.map((project) => ({
+    project,
+    activeRooms: activeRooms.filter((room) => room.projectId === project.id),
+    hiddenRooms: hiddenRooms.filter((room) => room.projectId === project.id),
+    archivedRooms: archivedRooms.filter((room) => room.projectId === project.id),
+    visibleBots: visibleBots.filter((bot) => bot.projectId === project.id),
+    hiddenBots: hiddenBots.filter((bot) => bot.projectId === project.id),
+  })), [activeRooms, archivedRooms, hiddenBots, hiddenRooms, projects, visibleBots]);
   const contextBot = contextMenu ? bots.find((bot) => bot.id === contextMenu.botId) ?? null : null;
   const contextRoom = roomContextMenu ? rooms.find((room) => room.id === roomContextMenu.roomId) ?? null : null;
-  const conversationOrder = useMemo<ConversationKey[]>(() => [
-    ...activeRooms.map((room) => roomKey(room.id)),
-    ...visibleBots.map((bot) => botKey(bot.id)),
-  ], [activeRooms, visibleBots]);
+  const conversationOrder = useMemo<ConversationKey[]>(() => projectGroups.flatMap(({ project, activeRooms: projectRooms, visibleBots: projectBots }) => (
+    collapsedProjectIds.has(project.id) ? [] : [
+      ...(collapsedRoomGroupIds.has(project.id) ? [] : projectRooms).map((room) => roomKey(room.id)),
+      ...(collapsedBotGroupIds.has(project.id) ? [] : projectBots).map((bot) => botKey(bot.id)),
+    ]
+  )), [collapsedBotGroupIds, collapsedProjectIds, collapsedRoomGroupIds, projectGroups]);
   const visibleSelectedKeys = useMemo(() => {
     const available = new Set(conversationOrder);
     return new Set([...selectedKeys].filter((key) => available.has(key)));
@@ -201,17 +219,6 @@ export function Sidebar({
     setSelectedKeys(EMPTY_SELECTION);
     setBatchContextMenu(null);
   }, []);
-
-  async function addWorkspace(): Promise<void> {
-    if (workspaceAddPending) return;
-    try {
-      const result = await onAddWorkspace();
-      if (result && "error" in result) setNotice(result.error.safeMessage);
-      else if (result && "workspace" in result) setNotice(`已添加工作区：${result.workspace.name}`);
-    } catch {
-      setNotice("添加工作区失败，请稍后重试。");
-    }
-  }
 
   useEffect(() => {
     if (!notice) return;
@@ -693,24 +700,142 @@ export function Sidebar({
             <button
               className="sidebar-workspace-add"
               type="button"
-              aria-label="添加工作区"
-              title="添加工作区"
-              disabled={workspaceAddPending}
-              onClick={() => void addWorkspace()}
+              aria-label="新建工作区"
+              title="新建工作区"
+              onClick={onCreateProject}
             >
               <PlusIcon />
             </button>
           </div>
           <div className="sidebar-workspace-content" id="sidebar-workspace-content" hidden={!workspaceExpanded}>
+            {projectGroups.map(({ project, activeRooms: projectRooms, hiddenRooms: projectHiddenRooms, archivedRooms: projectArchivedRooms, visibleBots: projectBots, hiddenBots: projectHiddenBots }) => {
+              const projectCollapsed = collapsedProjectIds.has(project.id);
+              const roomsCollapsed = collapsedRoomGroupIds.has(project.id);
+              const botsCollapsed = collapsedBotGroupIds.has(project.id);
+              const projectContentId = `sidebar-project-content-${project.id}`;
+              const roomItemsId = project.isDefault ? "sidebar-room-items" : `sidebar-room-items-${project.id}`;
+              const botItemsId = project.isDefault ? "sidebar-bot-items" : `sidebar-bot-items-${project.id}`;
+              return (
+                <section className="sidebar-project" key={project.id} aria-label={`项目 ${project.name}`}>
+                  <button
+                    className={`sidebar-project-toggle${activeProjectId === project.id ? " active" : ""}`}
+                    type="button"
+                    aria-expanded={!projectCollapsed}
+                    aria-controls={projectContentId}
+                    onClick={() => {
+                      onSelectProject(project.id);
+                      setCollapsedProjectIds((current) => {
+                        const next = new Set(current);
+                        if (next.has(project.id)) next.delete(project.id);
+                        else next.add(project.id);
+                        return next;
+                      });
+                    }}
+                  >
+                    <ChevronDownIcon className={projectCollapsed ? "collapsed" : ""} />
+                    <FolderIcon />
+                    <span>{project.name}</span>
+                  </button>
+                  <div className="sidebar-project-content" id={projectContentId} hidden={projectCollapsed}>
+                    <section className="sidebar-workspace-section" aria-label="群聊">
+                      <h3 className="sidebar-workspace-section-title">
+                        <button
+                          className="sidebar-workspace-section-heading"
+                          type="button"
+                          aria-expanded={!roomsCollapsed}
+                          aria-controls={roomItemsId}
+                          onClick={() => setCollapsedRoomGroupIds((current) => {
+                            const next = new Set(current);
+                            if (next.has(project.id)) next.delete(project.id);
+                            else next.add(project.id);
+                            return next;
+                          })}
+                        >
+                          <ChevronDownIcon className={roomsCollapsed ? "collapsed" : ""} />
+                          <RoomIcon />
+                          <span>群聊</span>
+                        </button>
+                      </h3>
+                      <div className="sidebar-workspace-items" id={roomItemsId} role="list" hidden={roomsCollapsed}>
+                        {projectRooms.length > 0 ? projectRooms.map(renderRoomRow) : <div className="bot-list-empty">暂无群聊</div>}
+                      </div>
+                    </section>
+                    <section className="sidebar-workspace-section" aria-label="Bot">
+                      <h3 className="sidebar-workspace-section-title">
+                        <button
+                          className="sidebar-workspace-section-heading"
+                          type="button"
+                          aria-expanded={!botsCollapsed}
+                          aria-controls={botItemsId}
+                          onClick={() => setCollapsedBotGroupIds((current) => {
+                            const next = new Set(current);
+                            if (next.has(project.id)) next.delete(project.id);
+                            else next.add(project.id);
+                            return next;
+                          })}
+                        >
+                          <ChevronDownIcon className={botsCollapsed ? "collapsed" : ""} />
+                          <BotIcon />
+                          <span>Bot</span>
+                        </button>
+                      </h3>
+                      <div className="sidebar-workspace-items" id={botItemsId} role="list" hidden={botsCollapsed}>
+                        {projectBots.length > 0
+                          ? projectBots.map(renderBotRow)
+                          : <div className="bot-list-empty">还没有 Bot。新建一个 Bot 开始工作。</div>}
+                      </div>
+                    </section>
+                    {projectHiddenBots.length + projectHiddenRooms.length > 0 ? (
+                      <>
+                        <button className="archived-toggle" type="button" aria-expanded={hiddenOpen} onClick={() => setHiddenOpen((open) => !open)}>
+                          已隐藏 ({projectHiddenBots.length + projectHiddenRooms.length})
+                        </button>
+                        {hiddenOpen ? <div className="sidebar-workspace-items" role="list">{projectHiddenRooms.map(renderRoomRow)}{projectHiddenBots.map(renderBotRow)}</div> : null}
+                      </>
+                    ) : null}
+                    {projectArchivedRooms.length > 0 ? (
+                      <>
+                        <button className="archived-toggle" type="button" aria-expanded={archivedOpen} onClick={() => setArchivedOpen((open) => !open)}>
+                          已归档 ({projectArchivedRooms.length})
+                        </button>
+                        {archivedOpen ? <div className="sidebar-workspace-items">{projectArchivedRooms.map((room) => (
+                          <div className="archived-room-row" key={room.id}>
+                            <span>{room.name}</span>
+                            <button className="text-button" type="button" onClick={() => onRestoreRoom(room)}>恢复</button>
+                          </div>
+                        ))}</div> : null}
+                      </>
+                    ) : null}
+                  </div>
+                </section>
+              );
+            })}
+            {projects.length === 0 ? <div className="bot-list-empty">正在加载项目…</div> : null}
+          </div>
+        </section>
+        <section className="sidebar-file-workspaces" aria-label="文件工作区">
+          <div className="sidebar-file-workspaces-heading">
+            <button
+              className="sidebar-workspace-toggle"
+              type="button"
+              aria-expanded={fileWorkspacesExpanded}
+              aria-controls="sidebar-file-workspaces-content"
+              onClick={() => setFileWorkspacesExpanded((expanded) => !expanded)}
+            >
+              <span>文件工作区</span>
+              <ChevronDownIcon className={fileWorkspacesExpanded ? "" : "collapsed"} />
+            </button>
+          </div>
+          <div className="sidebar-file-workspaces-content" id="sidebar-file-workspaces-content" hidden={!fileWorkspacesExpanded}>
             {workspaces.length > 0 ? (
-              <div className="sidebar-added-workspaces" aria-label="已添加工作区">
+              <div className="sidebar-added-workspaces" aria-label="已授权文件夹">
                 {workspaces.map((workspace) => (
                   <button
                     className="sidebar-workspace-item"
                     type="button"
                     key={workspace.id}
-                    aria-label={`管理工作区 ${workspace.name}`}
-                    title={workspace.name}
+                    aria-label={`管理文件夹 ${workspace.name}`}
+                    title={`管理文件夹 ${workspace.name}`}
                     onClick={onOpenWorkspaces}
                   >
                     <FolderIcon />
@@ -718,48 +843,12 @@ export function Sidebar({
                   </button>
                 ))}
               </div>
-            ) : null}
-            <section className="sidebar-workspace-section" aria-label="群聊">
-              <h3 className="sidebar-workspace-section-heading">
-                <FolderIcon />
-                <span>群聊</span>
-              </h3>
-              <div className="sidebar-workspace-items" id="sidebar-room-items" role="list">
-                {activeRooms.length > 0 ? activeRooms.map(renderRoomRow) : <div className="bot-list-empty">暂无群聊</div>}
+            ) : (
+              <div className="sidebar-file-empty-add">
+                <span>尚未添加本地文件夹</span>
+                <button type="button" className="text-button" aria-label="添加本地文件夹" onClick={onOpenWorkspaces}>添加本地文件夹</button>
               </div>
-            </section>
-            <section className="sidebar-workspace-section" aria-label="Bot">
-              <h3 className="sidebar-workspace-section-heading">
-                <FolderIcon />
-                <span>Bot</span>
-              </h3>
-              <div className="sidebar-workspace-items" id="sidebar-bot-items" role="list">
-                {visibleBots.length > 0
-                  ? visibleBots.map(renderBotRow)
-                  : <div className="bot-list-empty">还没有 Bot。新建一个 Bot 开始工作。</div>}
-              </div>
-            </section>
-            {hiddenBots.length + hiddenRooms.length > 0 ? (
-              <>
-                <button className="archived-toggle" type="button" aria-expanded={hiddenOpen} onClick={() => setHiddenOpen((open) => !open)}>
-                  已隐藏 ({hiddenBots.length + hiddenRooms.length})
-                </button>
-                {hiddenOpen ? <div className="sidebar-workspace-items" role="list">{hiddenRooms.map(renderRoomRow)}{hiddenBots.map(renderBotRow)}</div> : null}
-              </>
-            ) : null}
-            {archivedRooms.length > 0 ? (
-              <>
-                <button className="archived-toggle" type="button" aria-expanded={archivedOpen} onClick={() => setArchivedOpen((open) => !open)}>
-                  已归档 ({archivedRooms.length})
-                </button>
-                {archivedOpen ? <div className="sidebar-workspace-items">{archivedRooms.map((room) => (
-                  <div className="archived-room-row" key={room.id}>
-                    <span>{room.name}</span>
-                    <button className="text-button" type="button" onClick={() => onRestoreRoom(room)}>恢复</button>
-                  </div>
-                ))}</div> : null}
-              </>
-            ) : null}
+            )}
           </div>
         </section>
       </div>

@@ -190,7 +190,7 @@ const ToolActivity = memo(function ToolActivity({
   const clipboardRead = invocation.toolKind === "clipboard-read";
   const targetLabel = invocation.arguments.kind === "mcp-call"
     ? `Server ${invocation.arguments.serverId.slice(0, 8)}…`
-    : invocation.targetPath || "工作区根目录";
+    : invocation.targetPath || "文件夹根目录";
   const resultProvider = typeof invocation.resultMetadata?.provider === "string"
     ? invocation.resultMetadata.provider
     : typeof invocation.resultMetadata?.server === "string"
@@ -249,7 +249,7 @@ const ToolActivity = memo(function ToolActivity({
               ? "仅本次允许 Aevoren Bot 读取本机系统时间；不会访问外部网络。"
               : clipboardRead
                 ? "仅本次允许 Aevoren Bot 读取当前纯文本剪贴板内容；结果不会写入 Memory。"
-                : "仅本次允许 Aevoren Bot 访问这个已登记工作区目标。"}</p>
+                : "仅本次允许 Aevoren Bot 访问这个已登记文件夹目标。"}</p>
           <div>
             <button type="button" className="secondary-button" disabled={resolving !== null} onClick={() => void resolve("deny")}>{resolving === "deny" ? "正在拒绝…" : "拒绝"}</button>
             <button type="button" className="primary-button" disabled={resolving !== null} onClick={() => void resolve("allow-once")}>{resolving === "allow-once" ? "正在执行…" : "仅允许一次"}</button>
@@ -271,7 +271,7 @@ const ToolActivityList = memo(function ToolActivityList({
 }): React.JSX.Element {
   const items = useMemo(() => groupToolActivity(invocations), [invocations]);
   return (
-    <div className="message-tools" aria-label="工作区工具活动">
+    <div className="message-tools" aria-label="本地文件工具活动">
       {items.map((item) => item.kind === "run" ? (
         <details className="tool-activity-run" key={item.id} data-testid="tool-activity-run">
           <summary>
@@ -459,7 +459,17 @@ const TranscriptItem = memo(function TranscriptItem({
             </div>
           ) : null}
           {failed && entry.role === "assistant" ? (
-            canRetryRoomTurn ? null : isSuperseded ? (
+            canRetryRoomTurn && entry.sourceTurnId ? (
+              <div className="room-inline-failure" data-testid="room-batch-state">
+                <RunFailureCard
+                  step={speakerName}
+                  errorCode={run?.lastErrorCode}
+                  invocations={toolInvocations}
+                  canRetry={canRetryRoomTurn}
+                  onRetry={() => onRetryRoomTurn(entry.sourceTurnId!)}
+                />
+              </div>
+            ) : isSuperseded ? (
               <details className="superseded-attempt-details">
                 <summary>查看较早失败详情</summary>
                 <RunFailureCard step={speakerName} errorCode={run?.lastErrorCode} invocations={toolInvocations} canRetry={false} onRetry={() => undefined} />
@@ -640,6 +650,13 @@ export function Conversation({
     ?? latestTurns.find((turn) => turn.state === "queued")
     ?? null;
   const latestFailedTurn = latestTurns.toReversed().find((turn) => ["failed", "cancelled", "interrupted"].includes(turn.state)) ?? null;
+  const latestFailedTurnHasMessage = latestFailedTurn
+    ? entries.some((entry) => entry.role === "assistant" && entry.sourceTurnId === latestFailedTurn.id)
+    : false;
+  const canContinueRoomBatch = Boolean(
+    latestBatch && ["interrupted", "partial"].includes(latestBatch.state) &&
+    latestTurns.some((turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null),
+  );
   const latestFailedRun = latestFailedTurn?.runtimeRunId ? runsById.get(latestFailedTurn.runtimeRunId) ?? null : null;
   const latestFailedTools = latestFailedRun ? toolInvocations.filter((invocation) => invocation.runtimeRunId === latestFailedRun.id) : [];
   const roomTurnState = useMemo(() => {
@@ -919,7 +936,7 @@ export function Conversation({
                 />
               ))}
             </div>
-            <footer><button type="button" className="secondary-button" onClick={onOpenWorkspaces}>管理工作区</button></footer>
+            <footer><button type="button" className="secondary-button" onClick={onOpenWorkspaces}>管理文件夹</button></footer>
           </aside>
         </>
       ) : null}
@@ -1019,16 +1036,16 @@ export function Conversation({
         {!room && !submitting && liveState && liveState.state !== "idle"
           ? <div className={"send-state runtime-" + liveState.state}>{liveLabels[liveState.state]}</div>
           : null}
-        {room && latestBatch && latestFailedTurn ? (
+        {room && latestBatch && latestFailedTurn && (!latestFailedTurnHasMessage || canContinueRoomBatch) ? (
           <div className="composer-run-status" data-testid="room-batch-state">
-            <RunFailureCard
+            {!latestFailedTurnHasMessage ? <RunFailureCard
               step={roomMemberIdentities.get(latestFailedTurn.memberBotId)?.inline ?? latestFailedTurn.memberNameSnapshot}
               errorCode={latestFailedTurn.lastErrorCode ?? latestFailedRun?.lastErrorCode}
               invocations={latestFailedTools}
               canRetry={!busy}
               onRetry={() => void retryRoomTurn(latestFailedTurn.id)}
-            />
-            {["interrupted", "partial"].includes(latestBatch.state) && latestTurns.some((turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null) ? (
+            /> : null}
+            {canContinueRoomBatch ? (
               <button className="secondary-button continue-room-button" type="button" disabled={busy} onClick={() => onContinueRoomBatch(latestBatch.id)}>继续未开始成员</button>
             ) : null}
           </div>
@@ -1057,7 +1074,7 @@ export function Conversation({
                 </span>
               ))}
             </div>
-            {["interrupted", "partial"].includes(latestBatch.state) && latestTurns.some((turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null) ? (
+            {canContinueRoomBatch ? (
               <button className="text-button" type="button" onClick={() => onContinueRoomBatch(latestBatch.id)}>继续未开始成员</button>
             ) : null}
           </details>
