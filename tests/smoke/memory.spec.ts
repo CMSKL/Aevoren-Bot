@@ -168,6 +168,7 @@ test("blocks Bot switching on a stale Memory version and preserves the draft", a
     });
     expect(externalUpdate).toMatchObject({ ok: true, data: { content: "外部更新事实", version: 2 } });
 
+    await openAdvancedSettings(page);
     await page.getByLabel("Memory 1").fill("本地未保存草稿");
     await selectBot(page, "Memory Bot B").click();
     await expect(page.locator(".bot-row.selected")).toContainText("Memory Bot A");

@@ -218,6 +218,7 @@ test("keeps Room member actions on one line beside a long Bot name", async () =>
     await page.locator(".bot-row").filter({ hasText: roomName }).click();
     await page.getByRole("button", { name: "打开 Bot 设置" }).click();
     await expect(page.locator(".inspector")).toBeVisible();
+    await page.getByRole("button", { name: /管理群聊成员/u }).click();
     const memberRow = page.locator(".room-member-row").filter({ hasText: longName });
     const removeButton = memberRow.getByRole("button", { name: "移除" });
     const layout = await memberRow.evaluate((row) => {

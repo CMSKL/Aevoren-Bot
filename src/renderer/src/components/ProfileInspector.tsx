@@ -253,7 +253,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   if (!bot || !draft) {
     return (
       <aside id={id} className={`inspector inspector-empty${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
-        <button className="drawer-close-button" type="button" aria-label="关闭设置" onClick={onMobileClose}>
+        <button className="drawer-close-button" type="button" aria-label="关闭 Bot 设置" onClick={onMobileClose}>
           <CloseIcon />
         </button>
         <span>创建 Bot 后，可在这里定义它的职责。</span>
@@ -274,7 +274,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
             {status === "failed" ? "保存失败" : null}
             {status === "idle" || status === "saved" ? <><CheckIcon />已保存</> : null}
           </div>
-          <button className="drawer-close-button" type="button" aria-label="关闭设置" onClick={onMobileClose}>
+          <button className="drawer-close-button" type="button" aria-label="关闭 Bot 设置" onClick={onMobileClose}>
             <CloseIcon />
           </button>
         </div>
