@@ -1,6 +1,6 @@
 import { removeTestDirectory } from "./test-cleanup";
 import { expect, test, _electron as electron, type ElectronApplication } from "@playwright/test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,7 +10,11 @@ import { WorkspaceService } from "../../src/main/workspace-service";
 
 test("shows only public Workspace identity and revokes access without touching daily data", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-workspace-smoke-data-"));
-  const workspaceRoot = mkdtempSync(join(tmpdir(), "aevoren-workspace-smoke-root-"));
+  const workspaceParent = mkdtempSync(join(tmpdir(), "aevoren-workspace-smoke-folders-"));
+  const workspaceRoot = join(workspaceParent, "现有资料");
+  const workspaceRootToAdd = join(workspaceParent, "团队资料");
+  mkdirSync(workspaceRoot);
+  mkdirSync(workspaceRootToAdd);
   const databasePath = join(userDataDir, "aevoren-bot.sqlite");
   const repository = new AppRepository(databasePath);
   const registered = await new WorkspaceService(repository).registerRoot(workspaceRoot);
@@ -26,6 +30,7 @@ test("shows only public Workspace identity and revokes access without touching d
         AEVOREN_BOT_USER_DATA_DIR: userDataDir,
         AEVOREN_BOT_FAKE_PROVIDER: "1",
         AEVOREN_BOT_TEST_HIDDEN: "1",
+        AEVOREN_BOT_WORKSPACE_TEST_PATH: workspaceRootToAdd,
       },
     });
     const page = await application.firstWindow();
@@ -33,7 +38,15 @@ test("shows only public Workspace identity and revokes access without touching d
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
-    await page.getByRole("button", { name: "工作区" }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.getByLabel("外观主题").selectOption("dark");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await page.getByRole("button", { name: "关闭设置" }).click();
+    const sidebarWorkspaces = page.locator(".sidebar-added-workspaces");
+    const workspaceRow = page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` });
+    await expect(workspaceRow).toBeVisible();
+    await expect(page.locator(".conversation-header").getByRole("button", { name: "工作区" })).toHaveCount(0);
+    await workspaceRow.click();
     const dialog = page.getByRole("dialog", { name: "工作区" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText(registered.workspace.name, { exact: true })).toBeVisible();
@@ -48,7 +61,12 @@ test("shows only public Workspace identity and revokes access without touching d
     ));
     expect(publicResult).toMatchObject({
       ok: true,
-      data: [{ id: registered.workspace.id, name: registered.workspace.name, writeEnabled: true, automationEnabled: true }],
+      data: expect.arrayContaining([expect.objectContaining({
+        id: registered.workspace.id,
+        name: registered.workspace.name,
+        writeEnabled: true,
+        automationEnabled: true,
+      })]),
     });
     expect(JSON.stringify(publicResult)).not.toContain(workspaceRoot);
     const revealResult = await page.evaluate(({ workspaceId }) => (
@@ -70,8 +88,31 @@ test("shows only public Workspace identity and revokes access without touching d
     });
     expect(compactLayout).toEqual({ withinViewport: true, contentContained: true });
 
-    await dialog.getByRole("button", { name: "移除" }).click();
-    await expect(dialog.getByText("尚未授权工作区。")).toBeVisible();
+    await dialog.getByRole("button", { name: "完成" }).click();
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    await page.getByRole("button", { name: "添加工作区" }).click();
+    const addedWorkspaceName = workspaceRootToAdd.split(/[\\/]/u).at(-1)!;
+    const addedWorkspaceRow = page.getByRole("button", { name: `管理工作区 ${addedWorkspaceName}` });
+    await expect(addedWorkspaceRow).toBeVisible();
+    await expect(sidebarWorkspaces).not.toContainText(workspaceRootToAdd);
+    await expect(page.locator(".bot-action-notice")).toHaveText(`已添加工作区：${addedWorkspaceName}`);
+    await expect(page.locator(".bot-action-notice")).toHaveCount(0);
+    await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-added-sidebar.png" });
+
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
+    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await expect(addedWorkspaceRow).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-added-sidebar-compact.png" });
+
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    await page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` }).click();
+    const reopenedDialog = page.getByRole("dialog", { name: "工作区" });
+    await reopenedDialog.locator(".workspace-row").filter({ hasText: registered.workspace.name }).getByRole("button", { name: "移除" }).click();
+    await expect(reopenedDialog.getByText(registered.workspace.name, { exact: true })).toHaveCount(0);
+    await expect(reopenedDialog.getByText(addedWorkspaceName, { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: `管理工作区 ${addedWorkspaceName}` })).toBeVisible();
     await application.close();
     application = undefined;
     expect(consoleErrors).toEqual([]);
@@ -84,6 +125,6 @@ test("shows only public Workspace identity and revokes access without touching d
   } finally {
     if (application) application.process().kill("SIGKILL");
     removeTestDirectory(userDataDir);
-    removeTestDirectory(workspaceRoot);
+    removeTestDirectory(workspaceParent);
   }
 });

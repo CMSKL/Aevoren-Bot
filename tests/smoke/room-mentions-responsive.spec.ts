@@ -60,7 +60,8 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     });
     await page.locator(".bot-row").filter({ hasText: seeded.roomName }).click();
     await expect(page.getByRole("heading", { name: seeded.roomName })).toBeVisible();
-    await expect(page.getByText("Host 自动选择首位 Bot，并仅在真实工件完成后接力", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
+    await expect(page.locator(".room-routing-hint")).toHaveCount(0);
 
     const input = page.getByLabel("消息");
     await input.fill("@");
@@ -121,7 +122,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await mention(page, "执");
     await mention(page, "评");
     await expect(page.locator(".mention-chip")).toHaveCount(2);
-    await expect(page.getByText("将只调用 2 个指定 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("explicit");
     await input.fill("两位一起复核。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(3);
@@ -151,10 +152,11 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
 
     await mention(page, "all");
     await expect(page.getByRole("button", { name: "移除 @所有人" })).toBeVisible();
-    await expect(page.getByText("将按成员顺序调用全部 3 个 Bot", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("everyone");
     await input.fill("显式通知所有人。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(7);
+    await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
 
     await mention(page, "研");
     await input.fill("成员变化后不能静默改发给全部成员。");
@@ -163,11 +165,12 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await expect(page.getByRole("alert")).toContainText(`@${seeded.botNames[0]} 已不在群聊，请移除后重新选择`);
     const invalidMention = page.getByRole("button", { name: `移除 @${seeded.botNames[0]}` });
     await expect(invalidMention).toHaveAttribute("aria-invalid", "true");
+    await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("explicit");
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
     await expect(page.locator("article.message-user")).toHaveCount(4);
     await page.screenshot({ path: "/tmp/aevoren-bot-room-mention-invalid.png", fullPage: true });
     await invalidMention.click();
-    await expect(page.getByText("Host 自动选择首位 Bot，并仅在真实工件完成后接力", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
     await input.fill("");
     await page.getByLabel("选择要添加的 Bot").selectOption({ label: seeded.botNames[0] });

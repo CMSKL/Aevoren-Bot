@@ -184,13 +184,14 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
 
     const workspace = page.locator(".sidebar-workspace");
-    const workspaceSummary = workspace.locator(":scope > summary");
+    const workspaceToggle = workspace.getByRole("button", { name: "工作区", exact: true });
     const roomGroup = page.locator(".sidebar-workspace-section").nth(0);
     const botGroup = page.locator(".sidebar-workspace-section").nth(1);
-    await expect(workspaceSummary).toContainText("工作区");
+    await expect(workspaceToggle).toBeVisible();
+    await expect(workspace.getByRole("button", { name: "添加工作区" })).toBeVisible();
     await expect(roomGroup.getByRole("heading", { name: "群聊" })).toBeVisible();
     await expect(botGroup.getByRole("heading", { name: "Bot" })).toBeVisible();
-    expect(await workspace.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(true);
+    await expect(workspaceToggle).toHaveAttribute("aria-expanded", "true");
     await expect(page.locator("#sidebar-room-items .bot-row")).toHaveCount(1);
     await expect(page.locator("#sidebar-bot-items .bot-row")).toHaveCount(2);
 
@@ -200,16 +201,15 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     await page.screenshot({ path: "/tmp/aevoren-workspace-navigation-expanded.png" });
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-sidebar-expanded.png" });
 
-    await expect(roomGroup.locator("summary")).toHaveCount(0);
-    await expect(botGroup.locator("summary")).toHaveCount(0);
     await page.locator(".sidebar-workspace").screenshot({ path: "/tmp/aevoren-workspace-navigation-folders.png" });
 
-    await workspaceSummary.click();
+    await workspaceToggle.click();
     await expect(page.locator("#sidebar-workspace-content")).toBeHidden();
     await expect(page.getByRole("button", { name: "设置", exact: true })).toBeVisible();
+    await expect(workspaceToggle).toHaveAttribute("aria-expanded", "false");
     await page.screenshot({ path: "/tmp/aevoren-workspace-navigation-collapsed.png" });
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-sidebar-collapsed.png" });
-    await workspaceSummary.click();
+    await workspaceToggle.click();
     await expect(page.locator("#sidebar-workspace-content")).toBeVisible();
     await expect(page.locator("#sidebar-room-items .bot-row")).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -217,7 +217,7 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
     await page.getByRole("button", { name: "打开 Bot 列表" }).click();
     await expect(page.locator(".sidebar")).toBeVisible();
-    await expect(page.locator(".sidebar-workspace-summary")).toBeVisible();
+    await expect(page.locator(".sidebar-workspace-toggle")).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(consoleErrors).toEqual([]);
     await page.screenshot({ path: "/tmp/aevoren-workspace-navigation-compact.png" });

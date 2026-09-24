@@ -10,7 +10,7 @@ type WorkspaceDialogProps = {
 export function WorkspaceDialog({ open, onClose }: WorkspaceDialogProps): React.JSX.Element | null {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [error, setError] = useState<AppError | null>(null);
-  const [busy, setBusy] = useState<"add" | string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -24,26 +24,6 @@ export function WorkspaceDialog({ open, onClose }: WorkspaceDialogProps): React.
   }, [open]);
 
   if (!open) return null;
-
-  async function addWorkspace(): Promise<void> {
-    setBusy("add");
-    setError(null);
-    const result = await window.aevorenBot.workspaces.add();
-    setBusy(null);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    if (!result.data) return;
-    const registered = result.data;
-    setWorkspaces((current) => {
-      const withoutCurrent = current.filter((workspace) => workspace.id !== registered.workspace.id);
-      return [...withoutCurrent, registered.workspace].toSorted((left, right) => (
-        left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
-      ));
-    });
-    window.dispatchEvent(new Event("aevoren:workspaces-changed"));
-  }
 
   async function removeWorkspace(workspace: Workspace): Promise<void> {
     setBusy(workspace.id);
@@ -134,9 +114,6 @@ export function WorkspaceDialog({ open, onClose }: WorkspaceDialogProps): React.
         {error ? <div className="dialog-error" role="alert">{error.safeMessage}</div> : null}
         <footer>
           <button className="secondary-button" type="button" onClick={onClose}>完成</button>
-          <button className="primary-button" type="button" onClick={() => void addWorkspace()} disabled={busy !== null}>
-            {busy === "add" ? "选择中…" : "添加文件夹"}
-          </button>
         </footer>
       </section>
     </div>

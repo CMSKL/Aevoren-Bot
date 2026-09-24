@@ -180,7 +180,7 @@ test("shows contextual approval, failure recovery, and artifact evidence without
     await expect(failure).toContainText("下一步");
     await failure.getByRole("button", { name: "重试此步骤" }).click();
     await expect(page.locator('article.message-assistant[data-status="completed"]').last()).toBeAttached();
-    await expect(page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
     await expect(page.getByTestId("brief-approval-card")).toHaveCount(0);
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1180, 900));
     await page.reload();

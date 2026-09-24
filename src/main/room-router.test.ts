@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Bot, RoomDetail, RoomSendCommand } from "@shared/contracts";
 import { AppRepository } from "./database";
-import { OpenAiCompatibleProvider, type ModelEvent, type ModelProvider, type RoomOwnerSelection } from "./model";
+import { OpenAiCompatibleProvider, type ChatMessage, type ModelEvent, type ModelProvider, type RoomOwnerSelection } from "./model";
 import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
 const repositories: AppRepository[] = [];
@@ -163,6 +163,133 @@ describe("M4 no-mention central router", () => {
     await expect(value.coordinator.routeAndSend(explicitCommand)).resolves.toMatchObject({ disposition: "duplicate" });
     await expect(value.coordinator.routeAndSend(everyoneCommand)).resolves.toMatchObject({ disposition: "duplicate" });
     expect(ownerSelector).not.toHaveBeenCalled();
+  });
+
+  it("keeps everyone fan-out prompts on the original batch cutoff instead of exposing peer replies", async () => {
+    const botIds: string[] = [];
+    const captured = new Map<string, ChatMessage[]>();
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        const executorBotId = context!.executorBotId;
+        captured.set(executorBotId, messages);
+        yield { type: "started", requestId: `everyone-${executorBotId}` };
+        const seesEarlierReply = messages.some((message) => (
+          typeof message.content === "string" && message.content.includes("FIRST_PEER_RESPONSE_MARKER")
+        ));
+        yield {
+          type: "delta",
+          text: executorBotId === botIds[0]
+            ? "FIRST_PEER_RESPONSE_MARKER"
+            : seesEarlierReply ? "文件已读取并完成分析。" : "尚未读取文件，无法核验。",
+        };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const value = setup(provider, 2);
+    botIds.push(...value.bots.map((bot) => bot.id));
+    const input = command(
+      value.detail,
+      "everyone",
+      value.bots.map((bot) => bot.id),
+      "请每个 Bot 独立给出一句简短观点，不要转交其他 Bot",
+    );
+    const sent = await value.coordinator.routeAndSend(input);
+    await waitForTerminal(value.repository, sent.batchId);
+
+    const user = value.repository.getUserMessage(input.clientNonce);
+    const turns = value.repository.listAgentTurns(sent.batchId);
+    expect(value.repository.getRoomRun(sent.batchId).state).toBe("completed");
+    expect(turns.map((turn) => turn.promptCutoffSeq)).toEqual([user.seq, user.seq]);
+    expect(captured.get(value.bots[1]!.id)?.some((message) => (
+      typeof message.content === "string" && message.content.includes("FIRST_PEER_RESPONSE_MARKER")
+    ))).toBe(false);
+    expect(value.repository.listHandoffs(sent.batchId)).toEqual([]);
+  });
+
+  it("repairs one unverified tool claim in fixed routing without marking the original claim successful", async () => {
+    const calls = new Map<string, number>();
+    const botIds: string[] = [];
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        const executorBotId = context!.executorBotId;
+        const attempt = (calls.get(executorBotId) ?? 0) + 1;
+        calls.set(executorBotId, attempt);
+        yield { type: "started", requestId: `evidence-repair-${executorBotId}-${attempt}` };
+        if (executorBotId === botIds[0] && attempt === 1) {
+          yield { type: "delta", text: "我已经读取文件并完成分析。" };
+        } else {
+          if (executorBotId === botIds[0]) {
+            expect(messages.some((message) => message.role === "system" && message.content.includes("FIXED_ROOM_EVIDENCE_REPAIR"))).toBe(true);
+          }
+          yield { type: "delta", text: "尚未读取文件，无法核验。请提供文件路径。" };
+        }
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const value = setup(provider, 2);
+    botIds.push(...value.bots.map((bot) => bot.id));
+    const input = command(value.detail, "everyone", value.bots.map((bot) => bot.id), "说明现有资料的情况");
+    const sent = await value.coordinator.routeAndSend(input);
+    await waitForTerminal(value.repository, sent.batchId);
+
+    const responses = value.repository.listTranscript(value.detail.session.id).filter((entry) => entry.role === "assistant");
+    expect([...calls.values()].reduce((total, count) => total + count, 0)).toBe(3);
+    expect(calls.get(value.bots[0]!.id)).toBe(2);
+    expect(value.repository.getRoomRun(sent.batchId).state).toBe("completed");
+    expect(responses.map((response) => response.body)).toEqual([
+      "尚未读取文件，无法核验。请提供文件路径。",
+      "尚未读取文件，无法核验。请提供文件路径。",
+    ]);
+    expect(JSON.stringify(responses)).not.toContain("已读取文件");
+    expect(value.repository.listToolInvocations(value.detail.session.id)).toHaveLength(0);
+  });
+
+  it("rejects an internal Handoff in fixed routing and lets the current Agent finish without a second Bot dispatch", async () => {
+    const botIds: string[] = [];
+    const calls: string[] = [];
+    let fixedHandoffRejected = false;
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        const executorBotId = context!.executorBotId;
+        calls.push(executorBotId);
+        yield { type: "started", requestId: `fixed-handoff-${calls.length}` };
+        if (executorBotId === botIds[0] && calls.filter((id) => id === executorBotId).length === 1) {
+          yield { type: "delta", text: "我准备把任务交给 Agent B。" };
+          yield {
+            type: "handoff",
+            toolCallId: "unexpected-fixed-handoff",
+            toAgentId: botIds[1]!,
+            task: "继续处理",
+            contextRefs: [],
+            visibility: "room",
+          };
+        } else if (executorBotId === botIds[0]) {
+          fixedHandoffRejected = messages.some((message) => message.role === "tool" && message.content.includes("ROOM_HANDOFF_DISABLED"));
+          yield { type: "delta", text: "当前是固定响应模式，我会独立完成本回合。" };
+        } else {
+          yield { type: "delta", text: "Agent B 已独立完成回复。" };
+        }
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const value = setup(provider, 2);
+    botIds.push(...value.bots.map((bot) => bot.id));
+    const input = command(value.detail, "everyone", value.bots.map((bot) => bot.id), "请所有 Bot 各自简短回应");
+    const sent = await value.coordinator.routeAndSend(input);
+    await waitForTerminal(value.repository, sent.batchId);
+
+    const replies = value.repository.listTranscript(value.detail.session.id).filter((entry) => entry.role === "assistant");
+    expect(calls).toEqual([value.bots[0]!.id, value.bots[0]!.id, value.bots[1]!.id]);
+    expect(fixedHandoffRejected).toBe(true);
+    expect(value.repository.getRoomRun(sent.batchId).state).toBe("completed");
+    expect(value.repository.listHandoffs(sent.batchId)).toEqual([]);
+    expect(replies.map((entry) => entry.body)).toEqual([
+      "当前是固定响应模式，我会独立完成本回合。",
+      "Agent B 已独立完成回复。",
+    ]);
   });
 
   it("fails closed before persistence when the adapter cannot select or returns invalid data", async () => {

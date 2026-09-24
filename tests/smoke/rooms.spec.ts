@@ -49,6 +49,17 @@ async function mentionEveryone(page: Page): Promise<void> {
   await input.press("Enter");
 }
 
+async function getRoomRuntimeSnapshot(page: Page, roomName: string) {
+  return page.evaluate(async (name) => {
+    const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+    const rooms = await api.rooms.list({ includeArchived: true });
+    if (!rooms.ok) throw new Error("Room list unavailable");
+    const room = rooms.data.find((candidate) => candidate.name === name);
+    if (!room) throw new Error(`Room not found: ${name}`);
+    return api.roomRuntime.getSnapshot(room.id);
+  }, roomName);
+}
+
 async function forceKill(application: ElectronApplication): Promise<void> {
   const process = application.process();
   if (process.exitCode !== null) return;
@@ -129,27 +140,31 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-room-smoke-"));
   let application: ElectronApplication | undefined;
   try {
-    const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
+    const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "80" });
     application = launched.application;
     const page = launched.page;
     const consoleErrors: string[] = [];
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
+    await page.emulateMedia({ colorScheme: "dark" });
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1280, 800));
     for (const name of ["研究员", "评审员", "执行员", "观察员"]) await createNamedBot(page, name);
     await createRoom(page, ["研究员", "评审员", "执行员"]);
 
     await expect(page.getByRole("heading", { name: "研究员、评审员、执行员" })).toBeVisible();
-    await expect(page.getByText("Host 自动选择首位 Bot，并仅在真实工件完成后接力", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
     await page.getByLabel("消息").fill("请依次给出分析。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.locator(".room-run-indicator")).toBeVisible();
+    await expect(page.locator(".room-run-indicator")).toContainText("正在执行");
+    await page.locator(".composer-wrap").screenshot({ path: "/tmp/aevoren-room-composer-running.png" });
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
     await expect(page.locator(".speaker-link")).toHaveText(["研究员"]);
     await expect(page.locator("article.message-assistant.message-group-continuation")).toHaveCount(0);
     await expect(page.locator("article.message-assistant .message-avatar:not(.message-avatar-placeholder)")).toHaveCount(1);
-    await expect(page.locator(".room-turn-state")).toHaveCount(1);
-    await expect(page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
+    await page.locator(".composer-wrap").screenshot({ path: "/tmp/aevoren-room-composer-completed.png" });
 
     const secondSpeaker = page.getByRole("button", { name: "评审员", exact: true }).last();
     await secondSpeaker.click();
@@ -166,12 +181,12 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await page.getByLabel("选择要添加的 Bot").selectOption({ label: "观察员" });
     await page.getByRole("button", { name: "添加", exact: true }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(3);
-    await expect(page.getByText("Host 自动选择首位 Bot，并仅在真实工件完成后接力", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
     await page.locator(".bot-row").filter({ hasText: "观察员" }).click();
     await expect(page.getByRole("heading", { name: "观察员" })).toBeVisible();
     await page.locator(".bot-row").filter({ hasText: "产品协作室" }).click();
     await expect(page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
-    await expect(page.getByText("Host 自动选择首位 Bot，并仅在真实工件完成后接力", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
     await page.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
 
     await page.screenshot({ path: "/tmp/aevoren-bot-room-desktop-light.png", fullPage: true });
@@ -376,10 +391,16 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
     const speakerLabels = await launched.page.locator(".speaker-link").allTextContents();
     expect(speakerLabels).toEqual(memberLabels);
-    const turnLabels = await launched.page.locator(".room-turn-state").allTextContents();
-    expect(turnLabels).toHaveLength(2);
-    expect(turnLabels[0]).toContain(memberLabels[0]);
-    expect(turnLabels[1]).toContain(memberLabels[1]);
+    await expect(launched.page.getByTestId("room-batch-state")).toHaveCount(0);
+    const snapshot = await launched.page.evaluate(async (roomId) => (
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.getSnapshot(roomId)
+    ), room.room.id);
+    expect(snapshot.ok).toBe(true);
+    if (snapshot.ok) {
+      const turns = snapshot.data.turns.filter((turn) => turn.origin === "initial").toSorted((left, right) => left.position - right.position);
+      expect(turns.map((turn) => turn.memberBotId)).toEqual([first.id, second.id]);
+      expect(turns.map((turn) => turn.state)).toEqual(["completed", "completed"]);
+    }
 
     await launched.page.locator(".speaker-link").nth(0).click();
     await expect(launched.page.getByLabel("描述")).toHaveValue("第一位重复身份 Bot");
@@ -412,7 +433,7 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     await mentionEveryone(launched.page);
     await launched.page.getByLabel("消息").fill("重载测试");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(launched.page.getByText("正在连接模型", { exact: true })).toBeVisible();
+    await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
     const scopeErrors = await launched.page.evaluate(async () => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       const rooms = await api.rooms.list();
@@ -428,12 +449,12 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
       { ok: false, error: { code: "RUNTIME_CONTROL_SCOPE_INVALID", domain: "runtime", retryable: false, safeMessage: "群聊运行必须使用群聊控制。" } },
     ]);
     for (let reload = 0; reload < 5; reload += 1) {
-      await expect(launched.page.getByText("正在连接模型", { exact: true })).toBeVisible();
+      await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
       await launched.page.reload();
       await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible({ timeout: 2_000 });
     }
     for (let reload = 0; reload < 5; reload += 1) {
-      await expect(launched.page.getByText("正在生成回复", { exact: true })).toBeVisible();
+      await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
       await launched.page.reload();
       await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible({ timeout: 2_000 });
     }
@@ -442,7 +463,7 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     await mentionEveryone(launched.page);
     await launched.page.getByLabel("消息").fill("崩溃恢复测试");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(launched.page.getByText("正在生成回复", { exact: true })).toBeVisible();
+    await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
     const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     await forceKill(application);
     application = undefined;
@@ -460,7 +481,13 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     database.close();
     await launched.page.locator(".bot-list .bot-row").first().click();
     await expect(launched.page.getByRole("heading", { name: "甲、乙、丙" })).toBeVisible();
-    await expect(launched.page.getByTestId("room-batch-state")).toContainText("interrupted");
+    const recovered = await getRoomRuntimeSnapshot(launched.page, "甲、乙、丙");
+    expect(recovered.ok).toBe(true);
+    if (recovered.ok) {
+      const interruptedBatch = recovered.data.batches.at(-1);
+      expect(interruptedBatch?.state).toBe("interrupted");
+      expect(recovered.data.turns.filter((turn) => turn.batchId === interruptedBatch?.id).map((turn) => turn.state)).toEqual(["interrupted", "interrupted", "interrupted"]);
+    }
     await expect(launched.page.getByRole("button", { name: "继续未开始成员" })).toBeVisible();
   } finally {
     if (application) await forceKill(application);
@@ -477,12 +504,18 @@ test("reconciles a completed Room Runtime and exposes Continue for only the unst
     const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = launched.application;
     await launched.page.locator(".bot-row").filter({ hasText: "恢复边界群聊" }).click();
-    await expect(launched.page.getByTestId("room-batch-state")).toContainText("partial");
-    await expect(launched.page.locator(".room-turn-state.turn-completed")).toContainText("先行者：completed");
-    await expect(launched.page.locator(".room-turn-state.turn-interrupted")).toContainText("收尾者：interrupted");
+    const recovered = await getRoomRuntimeSnapshot(launched.page, "恢复边界群聊");
+    expect(recovered.ok).toBe(true);
+    if (recovered.ok) {
+      expect(recovered.data.batches.find((batch) => batch.id === fixture.batchId)?.state).toBe("partial");
+      expect(recovered.data.turns.filter((turn) => turn.batchId === fixture.batchId).toSorted((left, right) => left.position - right.position).map((turn) => [turn.memberNameSnapshot, turn.state])).toEqual([
+        ["先行者", "completed"],
+        ["收尾者", "interrupted"],
+      ]);
+    }
     await expect(launched.page.getByRole("button", { name: "重试", exact: true })).toHaveCount(0);
     await launched.page.getByRole("button", { name: "继续未开始成员" }).click();
-    await expect(launched.page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(launched.page.getByTestId("room-batch-state")).toHaveCount(0);
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
     await application.close();
     application = undefined;
@@ -517,11 +550,23 @@ test("offers a Turn retry when a Room member fails before Provider acceptance", 
     await mentionEveryone(launched.page);
     await launched.page.getByLabel("消息").fill("失败后重试");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(launched.page.getByTestId("room-batch-state")).toContainText("partial");
-    const failedTurn = launched.page.locator(".room-turn-state.turn-failed");
-    await expect(failedTurn).toContainText("前置失败成员");
+    await expect(launched.page.getByTestId("room-batch-state")).toContainText("前置失败成员");
+    await expect.poll(async () => {
+      const snapshot = await getRoomRuntimeSnapshot(launched.page, "前置失败成员、正常成员");
+      return snapshot.ok ? snapshot.data.batches.at(-1)?.state : undefined;
+    }).toBe("partial");
+    const failed = await getRoomRuntimeSnapshot(launched.page, "前置失败成员、正常成员");
+    expect(failed.ok).toBe(true);
+    if (failed.ok) {
+      const partialBatch = failed.data.batches.at(-1);
+      expect(partialBatch?.state).toBe("partial");
+      expect(failed.data.turns.filter((turn) => turn.batchId === partialBatch?.id).toSorted((left, right) => left.position - right.position).map((turn) => [turn.memberNameSnapshot, turn.state])).toEqual([
+        ["前置失败成员", "failed"],
+        ["正常成员", "completed"],
+      ]);
+    }
     await launched.page.locator(".composer-run-status").getByRole("button", { name: "重试此步骤", exact: true }).click();
-    await expect(launched.page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(launched.page.getByTestId("room-batch-state")).toHaveCount(0);
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
     await application.close();
     application = undefined;
@@ -548,7 +593,7 @@ test("settles Cancel then SIGKILL without leaving a running Turn or auto-resumin
     await createRoom(launched.page, ["取消甲", "取消乙"]);
     await launched.page.getByLabel("消息").fill("取消后立即崩溃");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(launched.page.getByText("正在生成回复", { exact: true })).toBeVisible();
+    await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
     await launched.page.getByRole("button", { name: "停止群聊回复" }).click();
     await forceKill(application);
     application = undefined;
@@ -585,7 +630,7 @@ test("preserves Room user-cancel intent through a normal close when the Provider
     await createRoom(launched.page, ["关闭取消甲", "关闭取消乙"]);
     await launched.page.getByLabel("消息").fill("取消后正常关闭");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(launched.page.getByText("正在生成回复", { exact: true })).toBeVisible();
+    await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
     await launched.page.getByRole("button", { name: "停止群聊回复" }).click();
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
