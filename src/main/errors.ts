@@ -31,6 +31,7 @@ export const ERROR_REGISTRY = {
   WORKSPACE_TARGET_CHANGED: { domain: "workspace", retryable: true, safeMessage: "目标在读取期间发生变化，结果已丢弃。", allowedDetailKeys: [] },
   PROJECT_NOT_FOUND: { domain: "workspace", retryable: false, safeMessage: "没有找到这个项目。", allowedDetailKeys: [] },
   PROJECT_NAME_TAKEN: { domain: "workspace", retryable: false, safeMessage: "已有同名项目，请换一个名称。", allowedDetailKeys: [] },
+  WORKSPACE_PROJECT_CONFLICT: { domain: "workspace", retryable: false, safeMessage: "这个文件夹已关联其他工作区，或当前工作区已关联其他文件夹。请选择对应的文件夹。", allowedDetailKeys: [] },
   WORKSPACE_BINARY_UNSUPPORTED: { domain: "workspace", retryable: false, safeMessage: "当前只读工具不支持二进制文件。", allowedDetailKeys: [] },
   WORKSPACE_WRITE_NOT_ENABLED: { domain: "workspace", retryable: false, safeMessage: "该工作区尚未启用 Markdown/CSV 写入。", allowedDetailKeys: [] },
   WORKSPACE_WRITE_CONFLICT: { domain: "workspace", retryable: false, safeMessage: "目标文件已存在；Bot 不会覆盖现有文件。", allowedDetailKeys: [] },

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { DEFAULT_PROJECT_ID } from "@shared/contracts";
 import { AppRepository, MIGRATIONS } from "./database";
 import { WorkspaceService } from "./workspace-service";
 
@@ -126,6 +127,80 @@ afterEach(() => {
 });
 
 describe("Workspace Registry", () => {
+  it("creates one folder-backed project per canonical directory, including folders with the same name", async () => {
+    const value = repository();
+    const service = new WorkspaceService(value);
+    const parent = temporaryDirectory("aevoren-folder-project-");
+    const firstRoot = join(parent, "a", "团队资料");
+    const secondRoot = join(parent, "b", "团队资料");
+    mkdirSync(firstRoot, { recursive: true });
+    mkdirSync(secondRoot, { recursive: true });
+    const first = await service.registerRoot(firstRoot);
+    const repeated = await service.registerRoot(firstRoot);
+    const second = await service.registerRoot(secondRoot);
+    expect(first.project).toMatchObject({ name: "团队资料", workspaceId: first.workspace.id });
+    expect(repeated).toEqual({ ...first, disposition: "duplicate" });
+    expect(second.project.name).toBe(first.project.name);
+    expect(second.project.id).not.toBe(first.project.id);
+    expect(value.listWorkspaces()).toHaveLength(2);
+    expect(value.listProjects().filter((project) => project.workspaceId)).toHaveLength(2);
+  });
+
+  it("links an existing project without changing its conversations and confines its Bots to that folder", async () => {
+    const value = repository();
+    const service = new WorkspaceService(value);
+    const parent = temporaryDirectory("aevoren-bind-project-");
+    const firstRoot = join(parent, "现有团队");
+    const otherRoot = join(parent, "其他团队");
+    mkdirSync(firstRoot);
+    mkdirSync(otherRoot);
+    const first = value.createBot();
+    const second = value.createBot();
+    const room = value.createRoom({ memberBotIds: [first.bot.id, second.bot.id] });
+    const registered = await service.registerRoot(firstRoot, DEFAULT_PROJECT_ID);
+    const other = await service.registerRoot(otherRoot);
+    expect(registered.project).toMatchObject({ id: DEFAULT_PROJECT_ID, name: "现有团队", workspaceId: registered.workspace.id });
+    expect(value.getBot(first.bot.id)).toEqual(first.bot);
+    expect(value.getSession(first.session.id)).toEqual(first.session);
+    expect(value.getRoom(room.room.id)).toEqual(room.room);
+    expect(value.listBotWorkspaces(first.bot.id).map((workspace) => workspace.id)).toEqual([registered.workspace.id]);
+    expect(() => value.assertBotWorkspaceAccess(first.bot.id, other.workspace.id)).toThrow();
+    const removed = value.removeWorkspace(registered.workspace.id, registered.workspace.version);
+    expect(value.listBotWorkspaces(first.bot.id)).toEqual([]);
+    expect(value.listProjects().find((project) => project.id === DEFAULT_PROJECT_ID)?.workspaceId).toBe(removed.id);
+    const restored = await service.registerRoot(firstRoot);
+    expect(restored).toMatchObject({ disposition: "restored", project: { id: DEFAULT_PROJECT_ID } });
+    expect(value.listBotWorkspaces(first.bot.id)).toHaveLength(1);
+  });
+
+  it("rolls back conflicting folder associations and leaves the original grants untouched", async () => {
+    const value = repository();
+    const service = new WorkspaceService(value);
+    const parent = temporaryDirectory("aevoren-bind-conflict-");
+    const root = join(parent, "已关联");
+    const wrongRoot = join(parent, "错误选择");
+    mkdirSync(root);
+    mkdirSync(wrongRoot);
+    const first = await service.registerRoot(root);
+    value.createBot(first.project.id);
+    await expect(service.registerRoot(root, DEFAULT_PROJECT_ID)).rejects.toMatchObject({ code: "WORKSPACE_PROJECT_CONFLICT" });
+    await expect(service.registerRoot(wrongRoot, first.project.id)).rejects.toMatchObject({ code: "WORKSPACE_PROJECT_CONFLICT" });
+    await expect(service.registerRoot(join(parent, "不存在"))).rejects.toMatchObject({ code: "WORKSPACE_INVALID_ROOT" });
+    expect(value.listWorkspaces()).toEqual([first.workspace]);
+    expect(value.listProjects().find((project) => project.id === DEFAULT_PROJECT_ID)?.workspaceId).toBeNull();
+  });
+
+  it("reuses an existing empty folder node when explicitly linking legacy conversations", async () => {
+    const value = repository();
+    const root = temporaryDirectory("aevoren-link-existing-folder-");
+    const service = new WorkspaceService(value);
+    const bot = value.createBot().bot;
+    const folder = await service.registerRoot(root);
+    const linked = await service.registerRoot(root, DEFAULT_PROJECT_ID);
+    expect(linked).toMatchObject({ disposition: "duplicate", workspace: { id: folder.workspace.id }, project: { id: DEFAULT_PROJECT_ID } });
+    expect(value.getBot(bot.id)).toEqual(bot);
+    expect(value.listProjects()).toHaveLength(1);
+  });
   it("migrates v9 through the latest schema atomically without changing existing logical data", () => {
     const directory = temporaryDirectory("aevoren-workspace-v10-");
     const filename = join(directory, "app.sqlite");

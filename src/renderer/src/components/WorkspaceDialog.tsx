@@ -4,28 +4,31 @@ import { FolderIcon } from "./Icons";
 
 type WorkspaceDialogProps = {
   open: boolean;
-  adding: boolean;
-  onAddWorkspace(): Promise<{ workspace: Workspace } | { error: AppError } | null>;
+  workspaceId: string | null;
   onClose(): void;
 };
 
-export function WorkspaceDialog({ open, adding, onAddWorkspace, onClose }: WorkspaceDialogProps): React.JSX.Element | null {
+export function WorkspaceDialog({ open, workspaceId, onClose }: WorkspaceDialogProps): React.JSX.Element | null {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [error, setError] = useState<AppError | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    let active = true;
     void window.aevorenBot.workspaces.list().then((result) => {
+      if (!active) return;
       if (result.ok) {
-        setWorkspaces(result.data);
+        setWorkspaces(result.data.filter((workspace) => workspace.id === workspaceId));
         setError(null);
       }
       else setError(result.error);
     });
-  }, [open]);
+    return () => { active = false; };
+  }, [open, workspaceId]);
 
   if (!open) return null;
+  const visibleWorkspaces = workspaces.filter((workspace) => workspace.id === workspaceId);
 
   async function removeWorkspace(workspace: Workspace): Promise<void> {
     setBusy(workspace.id);
@@ -38,23 +41,6 @@ export function WorkspaceDialog({ open, adding, onAddWorkspace, onClose }: Works
     }
     setWorkspaces((current) => current.filter((item) => item.id !== workspace.id));
     window.dispatchEvent(new Event("aevoren:workspaces-changed"));
-  }
-
-  async function addWorkspace(): Promise<void> {
-    if (busy !== null || adding) return;
-    setError(null);
-    try {
-      const result = await onAddWorkspace();
-      if (!result) return;
-      if ("error" in result) {
-        setError(result.error);
-        return;
-      }
-      setWorkspaces((current) => [...current.filter((item) => item.id !== result.workspace.id), result.workspace]
-        .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)));
-    } catch {
-      setError({ domain: "workspace", code: "WORKSPACE_INVALID_ROOT", retryable: true, safeMessage: "添加文件夹失败，请稍后重试。" });
-    }
   }
 
   async function updatePermissions(
@@ -82,18 +68,18 @@ export function WorkspaceDialog({ open, adding, onAddWorkspace, onClose }: Works
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !adding && busy === null) onClose(); }}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && busy === null) onClose(); }}>
       <section className="settings-dialog workspace-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-dialog-title">
         <header>
           <div>
-            <h2 id="workspace-dialog-title">文件工作区</h2>
-            <p>授权 Bot 使用的一层本地文件夹；路径只在 Main 进程内处理，不会暴露给页面。</p>
+            <h2 id="workspace-dialog-title">工作区权限</h2>
+            <p>管理此工作区的文件访问；取消授权不会删除文件、群聊或 Bot。</p>
           </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭" disabled={adding || busy !== null}>×</button>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭工作区权限" disabled={busy !== null}>×</button>
         </header>
         <div className="workspace-list" aria-label="已授权文件夹">
-          {workspaces.length === 0 ? <div className="workspace-empty">尚未添加本地文件夹。</div> : null}
-          {workspaces.map((workspace) => (
+          {visibleWorkspaces.length === 0 ? <div className="workspace-empty">此工作区尚未授权文件夹，可在左侧重新授权。</div> : null}
+          {visibleWorkspaces.map((workspace) => (
             <div className="workspace-row" key={workspace.id}>
               <span className="workspace-icon" aria-hidden="true"><FolderIcon /></span>
               <div className="workspace-copy">
@@ -103,7 +89,7 @@ export function WorkspaceDialog({ open, adding, onAddWorkspace, onClose }: Works
                   <input
                     type="checkbox"
                     checked={workspace.writeEnabled}
-                    disabled={busy !== null || adding}
+                    disabled={busy !== null}
                     onChange={(event) => void updatePermissions(workspace, { writeEnabled: event.target.checked })}
                   />
                   允许 Bot 新建 Markdown/CSV
@@ -112,7 +98,7 @@ export function WorkspaceDialog({ open, adding, onAddWorkspace, onClose }: Works
                   <input
                     type="checkbox"
                     checked={workspace.automationEnabled}
-                    disabled={busy !== null || adding}
+                    disabled={busy !== null}
                     onChange={(event) => void updatePermissions(workspace, { automationEnabled: event.target.checked })}
                   />
                   自动批准此文件夹的受限工具
@@ -121,10 +107,10 @@ export function WorkspaceDialog({ open, adding, onAddWorkspace, onClose }: Works
               <button
                 className="text-button danger-text-button"
                 type="button"
-                disabled={busy !== null || adding}
+                disabled={busy !== null}
                 onClick={() => void removeWorkspace(workspace)}
               >
-                {busy === workspace.id ? "移除中…" : "移除"}
+                {busy === workspace.id ? "取消中…" : "取消授权"}
               </button>
             </div>
           ))}
@@ -132,10 +118,7 @@ export function WorkspaceDialog({ open, adding, onAddWorkspace, onClose }: Works
         <div className="security-note">自动批准仅适用于该文件夹内经过日志记录的列出、读取、搜索和创建 Markdown/CSV；删除、覆盖、命令执行、浏览器与网络权限不在授权范围内。</div>
         {error ? <div className="dialog-error" role="alert">{error.safeMessage}</div> : null}
         <footer className="workspace-dialog-footer">
-          <button className="secondary-button" type="button" onClick={() => void addWorkspace()} disabled={busy !== null || adding}>
-            {adding ? "正在选择…" : "添加文件夹"}
-          </button>
-          <button className="secondary-button" type="button" onClick={onClose} disabled={busy !== null || adding}>完成</button>
+          <button className="secondary-button" type="button" onClick={onClose} disabled={busy !== null}>完成</button>
         </footer>
       </section>
     </div>

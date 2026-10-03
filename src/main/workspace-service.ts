@@ -27,7 +27,7 @@ function invalidRoot(): never {
 export class WorkspaceService {
   constructor(private readonly repository: AppRepository) {}
 
-  async registerRoot(rootPath: string): Promise<WorkspaceRegistrationResult> {
+  async registerRoot(rootPath: string, projectId?: string): Promise<WorkspaceRegistrationResult> {
     let canonicalRoot: string;
     try {
       canonicalRoot = await realpath(rootPath);
@@ -39,7 +39,7 @@ export class WorkspaceService {
     if (parse(canonicalRoot).root === canonicalRoot) {
       throw new AevorenBotError("WORKSPACE_SCOPE_TOO_BROAD");
     }
-    return this.repository.registerWorkspaceRoot(canonicalRoot, basename(canonicalRoot));
+    return this.repository.registerWorkspaceRoot(canonicalRoot, basename(canonicalRoot), projectId);
   }
 
   async resolveExistingTarget(

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DEFAULT_PROJECT_ID } from "@shared/contracts";
 import type {
-  ApiResult,
   AppearanceTheme,
   AppError,
   ApprovalRequest,
@@ -37,7 +36,6 @@ import { ProfileInspector, type ProfileInspectorHandle } from "./components/Prof
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
 import { Sidebar } from "./components/Sidebar";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
-import { ProjectDialog } from "./components/ProjectDialog";
 import { UpdateStatusNotice } from "./components/UpdateStatusNotice";
 import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
 import { mergeRoomRuntimeEvents } from "./room-runtime-state";
@@ -90,8 +88,10 @@ export function App(): React.JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
-  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [managedWorkspaceId, setManagedWorkspaceId] = useState<string | null>(null);
   const [workspaceAddPending, setWorkspaceAddPending] = useState(false);
+  const [workspaceAddError, setWorkspaceAddError] = useState<string | null>(null);
+  const workspaceAddInFlightRef = useRef(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"bots" | "profile" | null>(null);
   const [creatingBot, setCreatingBot] = useState(false);
@@ -204,8 +204,10 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     let active = true;
     const refreshWorkspaces = (): void => {
-      void window.aevorenBot.workspaces.list().then((result) => {
-        if (active && result.ok) setWorkspaces(result.data);
+      void Promise.all([window.aevorenBot.workspaces.list(), window.aevorenBot.projects.list()]).then(([result, projectResult]) => {
+        if (!active) return;
+        if (result.ok) setWorkspaces(result.data);
+        if (projectResult.ok) setProjects(projectResult.data);
       });
     };
     refreshWorkspaces();
@@ -528,17 +530,6 @@ export function App(): React.JSX.Element {
       chooserActionRef.current = null;
       setCreatingBot(false);
     }
-  }
-
-  async function createProject(name: string): Promise<ApiResult<Project>> {
-    const result = await window.aevorenBot.projects.create({ name });
-    if (result.ok) {
-      setProjects((current) => [...current, result.data]);
-      setActiveProjectId(result.data.id);
-      sessionStorage.setItem("aevoren-bot:project", result.data.id);
-      setProjectDialogOpen(false);
-    }
-    return result;
   }
 
   function updateBot(bot: Bot): void {
@@ -872,22 +863,31 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function addWorkspace(): Promise<{ workspace: Workspace } | { error: AppError } | null> {
+  async function addWorkspace(projectId?: string): Promise<void> {
+    if (workspaceAddInFlightRef.current) return;
+    workspaceAddInFlightRef.current = true;
     setWorkspaceAddPending(true);
+    setWorkspaceAddError(null);
     try {
-      const result = await window.aevorenBot.workspaces.add();
-      if (!result.ok) return { error: result.error };
-      if (!result.data) return null;
+      const result = await window.aevorenBot.workspaces.add(projectId ? { projectId } : undefined);
+      if (!result.ok) { setWorkspaceAddError(result.error.safeMessage); return; }
+      if (!result.data) return;
       const workspace = result.data.workspace;
+      const project = result.data.project;
       setWorkspaces((current) => {
         const withoutCurrent = current.filter((item) => item.id !== workspace.id);
         return [...withoutCurrent, workspace].toSorted((left, right) => (
           left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
         ));
       });
+      setProjects((current) => [...current.filter((item) => item.id !== project.id), project]);
+      setActiveProjectId(project.id);
+      sessionStorage.setItem("aevoren-bot:project", project.id);
       window.dispatchEvent(new Event("aevoren:workspaces-changed"));
-      return { workspace };
+    } catch {
+      setWorkspaceAddError("添加文件夹失败，请稍后重试。");
     } finally {
+      workspaceAddInFlightRef.current = false;
       setWorkspaceAddPending(false);
     }
   }
@@ -915,14 +915,20 @@ export function App(): React.JSX.Element {
         selectedBotId={selectedBot?.id ?? null}
         selectedRoomId={selectedRoom?.room.id ?? null}
         busy={loading}
+        addingWorkspace={workspaceAddPending}
+        workspaceError={workspaceAddError}
         mobileOpen={mobilePanel === "bots"}
         createButtonRef={newBotButtonRef}
-        onCreateProject={() => setProjectDialogOpen(true)}
+        onCreateProject={() => void addWorkspace()}
+        onBindProject={(projectId) => void addWorkspace(projectId)}
         onSelectProject={(projectId) => {
           setActiveProjectId(projectId);
           sessionStorage.setItem("aevoren-bot:project", projectId);
         }}
-        onOpenWorkspaces={() => setWorkspacesOpen(true)}
+        onOpenWorkspaces={(workspaceId) => {
+          setManagedWorkspaceId(workspaceId);
+          setWorkspacesOpen(true);
+        }}
         onCreate={() => {
           if (chooserActionRef.current) return;
           setCreateError(null);
@@ -1095,6 +1101,7 @@ export function App(): React.JSX.Element {
           ref={profileRef}
           id="conversation-inspector"
           bot={selectedBot}
+          workspaceId={projects.find((project) => project.id === selectedBot?.projectId)?.workspaceId ?? null}
           mobileOpen={mobilePanel === "profile"}
           onBotUpdated={updateBot}
           onError={setError}
@@ -1157,17 +1164,9 @@ export function App(): React.JSX.Element {
       />
       <WorkspaceDialog
         open={workspacesOpen}
-        adding={workspaceAddPending}
-        onAddWorkspace={addWorkspace}
+        workspaceId={managedWorkspaceId}
         onClose={() => setWorkspacesOpen(false)}
       />
-      {projectDialogOpen ? (
-        <ProjectDialog
-          open
-          onClose={() => setProjectDialogOpen(false)}
-          onCreate={createProject}
-        />
-      ) : null}
       {newBotOpen ? (
         <NewBotChooser
           bots={bots.filter((bot) => bot.projectId === activeProjectId)}

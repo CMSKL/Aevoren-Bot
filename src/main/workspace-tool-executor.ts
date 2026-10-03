@@ -146,6 +146,7 @@ export class WorkspaceToolExecutor {
 
     this.repository.transitionToolInvocation(id, "dispatching");
     try {
+      if (initial.workspaceId) this.repository.assertBotWorkspaceAccess(initial.executorBotId, initial.workspaceId);
       if (initial.workspaceId && initial.toolKind !== "workspace-write") {
         const targetType = initial.toolKind === "workspace-read" ? "file" : "directory";
         await this.workspaceService.resolveExistingTarget(initial.workspaceId, initial.targetPath, targetType);

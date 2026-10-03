@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PromptManifest, WorkspaceToolRequest } from "@shared/contracts";
+import { DEFAULT_PROJECT_ID, type PromptManifest, type WorkspaceToolRequest } from "@shared/contracts";
 import { AppRepository } from "./database";
 import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolExecutor } from "./workspace-tool-executor";
@@ -78,6 +78,29 @@ afterEach(() => {
 });
 
 describe("WorkspaceToolExecutor", () => {
+  it("reads real files in the linked folder and rejects a stale approval targeting a different project", async () => {
+    const root = temporaryDirectory("aevoren-scoped-read-");
+    const otherRoot = temporaryDirectory("aevoren-other-scoped-read-");
+    writeFileSync(join(root, "notes.md"), "# 实际文件内容\n", "utf8");
+    const value = repository();
+    const fixture = await approvedInvocation(value, root, { kind: "workspace-read", path: "notes.md", maxBytes: 1024 });
+    await fixture.service.registerRoot(root, DEFAULT_PROJECT_ID);
+    const executor = new WorkspaceToolExecutor(value, fixture.service);
+    const read = await executor.execute(fixture.invocation.id);
+    expect(JSON.parse(read.content)).toMatchObject({ text: "# 实际文件内容\n" });
+    expect(read.invocation).toMatchObject({ state: "succeeded", workspaceId: fixture.workspace.id, resultDigest: expect.any(String) });
+    const other = await fixture.service.registerRoot(otherRoot);
+    const blocked = value.prepareToolInvocation({
+      runtimeRunId: fixture.runtime.id,
+      toolCallId: crypto.randomUUID(),
+      idempotencyKey: crypto.randomUUID(),
+      tool: { kind: "workspace-write", workspaceId: other.workspace.id, path: "blocked.md", content: "不可写入" },
+    });
+    value.resolveToolApproval(blocked.approval.id, blocked.approval.version, "allow-once");
+    await expect(executor.execute(blocked.invocation.id)).rejects.toMatchObject({ code: "WORKSPACE_PATH_OUTSIDE_ROOT" });
+    expect(value.getToolInvocation(blocked.invocation.id).state).toBe("failed-before-execution");
+    expect(existsSync(join(otherRoot, "blocked.md"))).toBe(false);
+  });
   it("never resolves a filesystem target before a one-time approval is active", async () => {
     const root = temporaryDirectory("aevoren-tool-approval-guard-");
     writeFileSync(join(root, "safe.txt"), "safe");

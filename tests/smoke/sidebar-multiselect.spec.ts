@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -165,6 +165,8 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
 
 test("groups chat and Bot navigation under an independently collapsible Workspace", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-sidebar-workspace-nav-"));
+  const folder = join(userDataDir, "产品规划");
+  mkdirSync(folder);
   let application: ElectronApplication | undefined;
   try {
     const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
@@ -176,7 +178,7 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     repository.setSetting("appearance.theme", "dark", false);
     repository.close();
 
-    const launched = await launch(userDataDir);
+    const launched = await launch(userDataDir, { AEVOREN_BOT_WORKSPACE_TEST_PATH: folder });
     application = launched.application;
     const page = launched.page;
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
@@ -190,12 +192,8 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     const botGroup = page.locator(".sidebar-workspace-section").nth(1);
     await expect(workspaceToggle).toBeVisible();
     await expect(projectToggle).toBeVisible();
-    await expect(page.locator(".sidebar-file-workspaces").getByRole("button", { name: "添加本地文件夹" })).toBeVisible();
-    await expect(page.locator(".sidebar-file-workspaces").getByRole("button", { name: "添加文件夹" })).toHaveCount(0);
-    await page.locator(".sidebar-file-workspaces").getByRole("button", { name: "添加本地文件夹" }).click();
-    const emptyFileWorkspaceDialog = page.getByRole("dialog", { name: "文件工作区" });
-    await expect(emptyFileWorkspaceDialog.getByRole("button", { name: "添加文件夹", exact: true })).toBeVisible();
-    await emptyFileWorkspaceDialog.getByRole("button", { name: "完成" }).click();
+    await expect(page.locator(".sidebar-file-workspaces")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "关联文件夹", exact: true })).toBeVisible();
     await expect(roomGroup.getByRole("heading", { name: "群聊" })).toBeVisible();
     await expect(botGroup.getByRole("heading", { name: "Bot" })).toBeVisible();
     await expect(workspaceToggle).toHaveAttribute("aria-expanded", "true");
@@ -203,18 +201,6 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     await expect(page.locator("#sidebar-bot-items .bot-row")).toHaveCount(2);
 
     await page.getByRole("button", { name: "新建工作区", exact: true }).click();
-    const projectDialog = page.getByRole("dialog", { name: "新建工作区" });
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
-    expect(await projectDialog.evaluate((element) => {
-      const bounds = element.getBoundingClientRect();
-      return bounds.left >= 0 && bounds.right <= window.innerWidth && bounds.top >= 0 && bounds.bottom <= window.innerHeight
-        && element.scrollWidth <= element.clientWidth;
-    })).toBe(true);
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
-    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440);
-    await projectDialog.getByLabel("工作区名称").fill("产品规划");
-    await projectDialog.getByRole("button", { name: "创建工作区", exact: true }).click();
     const createdProject = page.getByRole("button", { name: "产品规划", exact: true });
     await expect(createdProject).toBeVisible();
     await expect(createdProject).toHaveClass(/active/u);

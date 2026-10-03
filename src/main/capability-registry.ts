@@ -279,7 +279,7 @@ export class CapabilityRegistry {
     room: boolean,
     botId?: string,
   ): CapabilitySnapshot {
-    const workspaces = this.repository.listWorkspaces();
+    const workspaces = botId ? this.repository.listBotWorkspaces(botId) : this.repository.listWorkspaces();
     const providerCapabilities: ProviderCapabilities | null = (() => {
       try {
         return this.providers.getCapabilities(selection);
