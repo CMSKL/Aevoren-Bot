@@ -1659,6 +1659,18 @@ export const MIGRATIONS = [
       CREATE INDEX rooms_by_project ON rooms(project_id, archived_at, hidden_at, pinned_at, created_at);
     `,
   },
+  {
+    version: 27,
+    sql: `
+      ALTER TABLE projects ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE RESTRICT;
+      DROP INDEX projects_unique_name;
+      CREATE UNIQUE INDEX projects_unique_unbound_name ON projects(name COLLATE NOCASE) WHERE workspace_id IS NULL;
+      CREATE UNIQUE INDEX projects_unique_workspace ON projects(workspace_id) WHERE workspace_id IS NOT NULL;
+      INSERT INTO projects(id, name, is_default, workspace_id, version, created_at, updated_at)
+      SELECT id, substr(name, 1, 80), 0, id, 1, created_at, updated_at
+      FROM workspaces WHERE removed_at IS NULL;
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -1897,6 +1909,7 @@ type WorkspaceRow = {
 type ProjectRow = {
   id: string;
   name: string;
+  workspace_id: string | null;
   is_default: number;
   version: number;
   created_at: string;
@@ -2338,6 +2351,7 @@ function toProject(row: ProjectRow): Project {
   return {
     id: row.id,
     name: row.name,
+    workspaceId: row.workspace_id,
     isDefault: row.is_default === 1,
     version: Number(row.version),
     createdAt: row.created_at,
@@ -3442,7 +3456,40 @@ export class AppRepository {
     throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
   }
 
-  registerWorkspaceRoot(canonicalRoot: string, name: string): WorkspaceRegistrationResult {
+  registerWorkspaceRoot(canonicalRoot: string, name: string, projectId?: string): WorkspaceRegistrationResult {
+    return this.transaction(() => {
+      const project = projectId ? this.getProject(projectId) : null;
+      const result = this.registerWorkspaceFolder(canonicalRoot, name);
+      let linkedRow = this.database.prepare("SELECT * FROM projects WHERE workspace_id = ?")
+        .get(result.workspace.id) as ProjectRow | undefined;
+      if (project?.workspaceId && project.workspaceId !== result.workspace.id) {
+        throw new AevorenBotError("WORKSPACE_PROJECT_CONFLICT");
+      }
+      if (project && linkedRow && linkedRow.id !== project.id) {
+        const hasConversations = this.database.prepare(
+          "SELECT 1 FROM bots WHERE project_id = ? UNION ALL SELECT 1 FROM rooms WHERE project_id = ? LIMIT 1",
+        ).get(linkedRow.id, linkedRow.id);
+        if (linkedRow.is_default || hasConversations) throw new AevorenBotError("WORKSPACE_PROJECT_CONFLICT");
+        // Merge an empty folder node when the user explicitly links their existing conversations.
+        this.database.prepare("DELETE FROM projects WHERE id = ?").run(linkedRow.id);
+        linkedRow = undefined;
+      }
+      if (project && !project.workspaceId) {
+        this.database.prepare(
+          "UPDATE projects SET workspace_id = ?, name = ?, version = version + 1, updated_at = ? WHERE id = ?",
+        ).run(result.workspace.id, result.workspace.name.slice(0, 80), now(), project.id);
+      } else if (!linkedRow) {
+        const timestamp = now();
+        this.database.prepare(
+          "INSERT INTO projects(id, name, workspace_id, is_default, version, created_at, updated_at) VALUES (?, ?, ?, 0, 1, ?, ?)",
+        ).run(randomUUID(), result.workspace.name.slice(0, 80), result.workspace.id, timestamp, timestamp);
+      }
+      const linked = this.database.prepare("SELECT * FROM projects WHERE workspace_id = ?").get(result.workspace.id) as ProjectRow;
+      return { ...result, project: toProject(linked) };
+    });
+  }
+
+  private registerWorkspaceFolder(canonicalRoot: string, name: string): Omit<WorkspaceRegistrationResult, "project"> {
     const normalizedName = name.trim().slice(0, 120);
     if (!canonicalRoot || !normalizedName) throw new AevorenBotError("WORKSPACE_INVALID_ROOT");
     const existing = this.database
@@ -3489,6 +3536,20 @@ export class AppRepository {
         .prepare("SELECT * FROM projects ORDER BY is_default DESC, created_at ASC, id ASC")
         .all() as ProjectRow[]
     ).map(toProject);
+  }
+
+  listBotWorkspaces(botId: string): Workspace[] {
+    const project = this.getProject(this.getBot(botId).projectId);
+    // Unbound legacy conversations retain their existing folder grants until the user links a folder.
+    return this.listWorkspaces().filter((workspace) => !project.workspaceId || workspace.id === project.workspaceId);
+  }
+
+  assertBotWorkspaceAccess(botId: string, workspaceId: string): void {
+    this.getWorkspace(workspaceId);
+    const project = this.getProject(this.getBot(botId).projectId);
+    if (project.workspaceId && project.workspaceId !== workspaceId) {
+      throw new AevorenBotError("WORKSPACE_PATH_OUTSIDE_ROOT");
+    }
   }
 
   createProject(name: string): Project {

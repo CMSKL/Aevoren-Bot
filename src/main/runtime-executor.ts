@@ -313,7 +313,7 @@ export class RuntimeExecutor {
         ...(input.incomingHandoff ? { incomingHandoff: input.incomingHandoff } : {}),
         ...(input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
         workspaces: providerCapabilities?.workspaceTools === true
-          ? this.repository.listWorkspaces().map(({ id, name, writeEnabled, automationEnabled }) => ({ id, name, writeEnabled, automationEnabled }))
+          ? this.repository.listBotWorkspaces(bot.id).map(({ id, name, writeEnabled, automationEnabled }) => ({ id, name, writeEnabled, automationEnabled }))
           : [],
         networkTools: allowNetworkTools,
         mcpTools: allowMcpTools ? this.mcpTools?.availableTools(bot.id) ?? [] : [],

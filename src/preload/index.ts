@@ -63,7 +63,7 @@ const api: AevorenBotApi = {
   },
   workspaces: {
     list: () => ipcRenderer.invoke(IPC.workspacesList),
-    add: () => ipcRenderer.invoke(IPC.workspacesAdd),
+    add: (input) => ipcRenderer.invoke(IPC.workspacesAdd, input),
     updatePermissions: (input) => ipcRenderer.invoke(IPC.workspacesUpdatePermissions, input),
     reveal: (input) => ipcRenderer.invoke(IPC.workspacesReveal, input),
     remove: (input) => ipcRenderer.invoke(IPC.workspacesRemove, input),

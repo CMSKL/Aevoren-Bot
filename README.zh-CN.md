@@ -67,6 +67,8 @@ Fake Provider 是确定性的，不需要账号或 API Key。源码构建、数�
 
 保存的 API Key 和 OAuth 凭据由 Electron `safeStorage` 加密，之后不会返回给 Renderer。MCP、Workspace、Routine 和环境变量说明见[配置指南](docs/CONFIGURATION.md)，经用户审核的 Memory 捕获及作用域规则见 [Memory 架构](docs/MEMORY.md)。
 
+左侧“工作区”标题右侧的 **+** 用于选择本地文件夹，选中的文件夹直接成为群聊和 Bot 的上层工作区。重复选择不会重复创建；工作区名称旁的设置按钮管理该文件夹的访问权限。旧项目可通过“关联文件夹”保留原有会话与配置；取消授权不会删除本地文件或会话。
+
 ## 安全模型
 
 - Renderer 使用 Context Isolation、Sandbox、无 Node Integration 和无 WebView。

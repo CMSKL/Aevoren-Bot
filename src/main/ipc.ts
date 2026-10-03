@@ -245,9 +245,10 @@ export function registerIpc(dependencies: IpcDependencies): void {
     return repository.rejectMemoryProposal(parsed.id, parsed.expectedVersion);
   });
   handle(IPC.workspacesList, () => repository.listWorkspaces());
-  handle(IPC.workspacesAdd, async () => {
+  handle(IPC.workspacesAdd, async (_event, input: unknown) => {
+    const parsed = projectContextSchema.parse(input ?? {});
     const rootPath = await dependencies.pickWorkspaceRoot();
-    return rootPath ? workspaceService.registerRoot(rootPath) : null;
+    return rootPath ? workspaceService.registerRoot(rootPath, parsed.projectId) : null;
   });
   handle(IPC.workspacesUpdatePermissions, (_event, input: unknown) => {
     const parsed = workspacePermissionsSchema.parse(input);

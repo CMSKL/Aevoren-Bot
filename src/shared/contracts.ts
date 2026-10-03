@@ -103,6 +103,7 @@ export type Workspace = {
 export type Project = {
   id: string;
   name: string;
+  workspaceId: string | null;
   isDefault: boolean;
   version: number;
   createdAt: string;
@@ -112,6 +113,7 @@ export type Project = {
 export type WorkspaceRegistrationResult = {
   disposition: "registered" | "duplicate" | "restored";
   workspace: Workspace;
+  project: Project;
 };
 
 export type TeamTemplateCreateResult = {
@@ -1196,7 +1198,7 @@ export interface AevorenBotApi {
   };
   workspaces: {
     list(): Promise<ApiResult<Workspace[]>>;
-    add(): Promise<ApiResult<WorkspaceRegistrationResult | null>>;
+    add(input?: { projectId?: string }): Promise<ApiResult<WorkspaceRegistrationResult | null>>;
     updatePermissions(input: { id: string; expectedVersion: number; writeEnabled: boolean; automationEnabled: boolean }): Promise<ApiResult<Workspace>>;
     reveal(input: { workspaceId: string; path: string }): Promise<ApiResult<boolean>>;
     remove(input: { id: string; expectedVersion: number }): Promise<ApiResult<Workspace>>;

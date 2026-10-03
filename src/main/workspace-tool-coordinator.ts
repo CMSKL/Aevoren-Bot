@@ -43,6 +43,9 @@ export class WorkspaceToolCoordinator {
     tool: ToolRequest,
     signal: AbortSignal,
   ): Promise<WorkspaceToolOutcome> {
+    if ("workspaceId" in tool) {
+      this.repository.assertBotWorkspaceAccess(this.repository.getRuntimeRun(runtimeRunId).executorBotId, tool.workspaceId);
+    }
     const prepared = this.repository.prepareToolInvocation({
       runtimeRunId,
       toolCallId,

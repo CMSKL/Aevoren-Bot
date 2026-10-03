@@ -230,9 +230,9 @@ jobs:
           RELEASE_TYPE: ${{ steps.release.outputs.release_type }}
         run: |
           if [[ "$RELEASE_TYPE" == "prerelease" ]]; then
-            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease --latest=false
+            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --draft=false --prerelease --latest=false
           else
-            gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --draft=false --latest
           fi
           release_json="$(gh release view "$GITHUB_REF_NAME" --json isDraft,isPrerelease,assets)"
           RELEASE_JSON="$release_json" node --input-type=module -e '

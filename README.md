@@ -69,6 +69,8 @@ Other Provider and CLI adapters are outside the first-phase product scope and ar
 
 Saved API keys and OAuth credentials are encrypted by Electron `safeStorage` and are not returned to the Renderer. See [Configuration](docs/CONFIGURATION.md) for MCP, Workspace, Routine, and environment-variable details, and [Memory architecture](docs/MEMORY.md) for reviewed capture and scope rules.
 
+Click **+** beside **Workspace** in the sidebar to select a local folder, which becomes the parent of its Rooms and Bots. Selecting the same folder reuses the workspace; the settings icon beside its name manages that folder's access. Legacy projects can use **Link folder** while preserving their conversations and configuration. Revoking access does not delete local files or conversations.
+
 ## Security model
 
 - Renderer processes use context isolation, sandboxing, no Node integration, and no WebView.

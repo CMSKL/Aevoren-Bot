@@ -15,6 +15,7 @@ export type ProfileInspectorHandle = {
 type ProfileInspectorProps = {
   id?: string;
   bot: Bot | null;
+  workspaceId: string | null;
   mobileOpen: boolean;
   onBotUpdated(bot: Bot): void;
   onError(error: AppError | null): void;
@@ -40,7 +41,7 @@ function sameDraft(left: ProfileDraft, right: ProfileDraft): boolean {
 }
 
 export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspectorProps>(function ProfileInspector(
-  { id, bot, mobileOpen, onBotUpdated, onError, onMobileClose },
+  { id, bot, workspaceId, mobileOpen, onBotUpdated, onError, onMobileClose },
   ref,
 ) {
   const [draft, setDraft] = useState<ProfileDraft | null>(bot ? toDraft(bot) : null);
@@ -48,6 +49,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   const [providers, setProviders] = useState<ProviderInstanceInfo[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const fileWorkspaces = workspaceId ? workspaces.filter((workspace) => workspace.id === workspaceId) : workspaces;
   const [modelSaving, setModelSaving] = useState(false);
   const [mcpSaving, setMcpSaving] = useState(false);
   const [memoryScopeSaving, setMemoryScopeSaving] = useState(false);
@@ -325,8 +327,8 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
         </section>
           <section className="permission-explainer">
             <strong>文件访问</strong>
-            <p>由“文件工作区”授权决定 Bot 可以读取或新建哪些文件；它不会自动把内容注入长期记忆。</p>
-            <span>{workspaces.length > 0 ? `已授权 ${workspaces.length} 个文件夹` : "尚未授权文件夹"}</span>
+            <p>由左侧所属工作区的文件夹授权决定 Bot 可以读取或新建哪些文件；它不会自动把内容注入长期记忆。</p>
+            <span>{fileWorkspaces.length > 0 ? `已授权 ${fileWorkspaces.length} 个文件夹` : "尚未授权文件夹"}</span>
           </section>
           <div className="field mcp-access-field">
             <span>外部工具（MCP）</span>
@@ -341,8 +343,8 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
             })}</div> : null}
           </div>
           <div className="field mcp-access-field">
-            <span>文件工作区记忆注入</span>
-            <small>只把明确绑定的文件工作区长期状态加入模型上下文；不等同于文件访问授权。</small>
+            <span>工作区记忆注入</span>
+            <small>只把明确绑定的工作区长期状态加入模型上下文；不等同于文件访问授权。</small>
             <div className="mcp-access-list">{workspaces.length === 0 ? <small>尚未绑定文件夹记忆</small> : workspaces.map((workspace) => {
               const selected = (bot.memoryWorkspaceIds ?? []).includes(workspace.id);
               return <label key={workspace.id}><input type="checkbox" checked={selected} disabled={memoryScopeSaving} onChange={() => void updateMemoryWorkspaceSelection(selected ? (bot.memoryWorkspaceIds ?? []).filter((id) => id !== workspace.id) : [...(bot.memoryWorkspaceIds ?? []), workspace.id])} /><span>{workspace.name}</span><small>{selected ? "已注入" : "未注入"}</small></label>;

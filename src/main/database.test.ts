@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -54,6 +54,39 @@ afterEach(() => {
 });
 
 describe("AppRepository", () => {
+  it("migrates v26 folder grants into project nodes without inferring or moving legacy conversations", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-folder-binding-migration-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    createDatabaseAtVersion(filename, 26);
+    const legacy = new DatabaseSync(filename);
+    const folderIds = [crypto.randomUUID(), crypto.randomUUID()];
+    folderIds.forEach((id, index) => {
+      const root = join(directory, String(index), "资料");
+      mkdirSync(root, { recursive: true });
+      legacy.prepare(
+        `INSERT INTO workspaces(id, name, canonical_root, canonical_root_digest, version, write_enabled, automation_enabled, created_at, updated_at)
+         VALUES (?, '资料', ?, ?, 3, 1, 1, '2026-01-01', '2026-01-01')`,
+      ).run(id, realpathSync(root), "0".repeat(64));
+    });
+    legacy.prepare(
+      `INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at)
+       VALUES ('legacy-bot', '原有 Bot', '', '原有配置', '', 1, '2026-01-01', '2026-01-01')`,
+    ).run();
+    const grantsBefore = legacy.prepare("SELECT * FROM workspaces ORDER BY id").all();
+    legacy.close();
+    const repository = new AppRepository(filename);
+    repositories.push(repository);
+    expect(repository.listProjects().filter((project) => project.workspaceId).map((project) => project.workspaceId).toSorted())
+      .toEqual(folderIds.toSorted());
+    expect(repository.listProjects().filter((project) => project.workspaceId).every((project) => project.name === "资料")).toBe(true);
+    expect(repository.getBot("legacy-bot")).toMatchObject({ name: "原有 Bot", description: "原有配置", projectId: DEFAULT_PROJECT_ID });
+    expect(repository.listProjects().find((project) => project.id === DEFAULT_PROJECT_ID)?.workspaceId).toBeNull();
+    const inspected = new DatabaseSync(filename, { readOnly: true });
+    expect(inspected.prepare("SELECT * FROM workspaces ORDER BY id").all()).toEqual(grantsBefore);
+    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    inspected.close();
+  });
   it("does not create a migration backup for a new database", () => {
     const directory = mkdtempSync(join(tmpdir(), "aevoren-new-database-backup-"));
     temporaryDirectories.push(directory);

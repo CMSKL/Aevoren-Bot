@@ -16,11 +16,14 @@ type SidebarProps = {
   selectedBotId: string | null;
   selectedRoomId: string | null;
   busy: boolean;
+  addingWorkspace: boolean;
+  workspaceError: string | null;
   mobileOpen: boolean;
   createButtonRef: RefObject<HTMLButtonElement | null>;
   onCreateProject(): void;
+  onBindProject(projectId: string): void;
   onSelectProject(projectId: string): void;
-  onOpenWorkspaces(): void;
+  onOpenWorkspaces(workspaceId: string): void;
   onCreate(): void;
   onOpenSettings(): void;
   onMobileClose(): void;
@@ -101,9 +104,12 @@ export function Sidebar({
   selectedBotId,
   selectedRoomId,
   busy,
+  addingWorkspace,
+  workspaceError,
   mobileOpen,
   createButtonRef,
   onCreateProject,
+  onBindProject,
   onSelectProject,
   onOpenWorkspaces,
   onCreate,
@@ -132,7 +138,6 @@ export function Sidebar({
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [hiddenOpen, setHiddenOpen] = useState(false);
   const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
-  const [fileWorkspacesExpanded, setFileWorkspacesExpanded] = useState(true);
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set());
   const [collapsedRoomGroupIds, setCollapsedRoomGroupIds] = useState<Set<string>>(() => new Set());
   const [collapsedBotGroupIds, setCollapsedBotGroupIds] = useState<Set<string>>(() => new Set());
@@ -703,40 +708,62 @@ export function Sidebar({
               aria-label="新建工作区"
               title="新建工作区"
               onClick={onCreateProject}
+              disabled={busy || addingWorkspace}
             >
               <PlusIcon />
             </button>
           </div>
+          {workspaceError ? <div className="dialog-error" role="alert">{workspaceError}</div> : null}
           <div className="sidebar-workspace-content" id="sidebar-workspace-content" hidden={!workspaceExpanded}>
             {projectGroups.map(({ project, activeRooms: projectRooms, hiddenRooms: projectHiddenRooms, archivedRooms: projectArchivedRooms, visibleBots: projectBots, hiddenBots: projectHiddenBots }) => {
               const projectCollapsed = collapsedProjectIds.has(project.id);
               const roomsCollapsed = collapsedRoomGroupIds.has(project.id);
               const botsCollapsed = collapsedBotGroupIds.has(project.id);
               const projectContentId = `sidebar-project-content-${project.id}`;
+              const workspace = workspaces.find((item) => item.id === project.workspaceId);
               const roomItemsId = project.isDefault ? "sidebar-room-items" : `sidebar-room-items-${project.id}`;
               const botItemsId = project.isDefault ? "sidebar-bot-items" : `sidebar-bot-items-${project.id}`;
               return (
                 <section className="sidebar-project" key={project.id} aria-label={`项目 ${project.name}`}>
-                  <button
-                    className={`sidebar-project-toggle${activeProjectId === project.id ? " active" : ""}`}
-                    type="button"
-                    aria-expanded={!projectCollapsed}
-                    aria-controls={projectContentId}
-                    onClick={() => {
-                      onSelectProject(project.id);
-                      setCollapsedProjectIds((current) => {
-                        const next = new Set(current);
-                        if (next.has(project.id)) next.delete(project.id);
-                        else next.add(project.id);
-                        return next;
-                      });
-                    }}
-                  >
-                    <ChevronDownIcon className={projectCollapsed ? "collapsed" : ""} />
-                    <FolderIcon />
-                    <span>{project.name}</span>
-                  </button>
+                  <div className="sidebar-project-heading">
+                    <button
+                      className={`sidebar-project-toggle${activeProjectId === project.id ? " active" : ""}`}
+                      type="button"
+                      aria-expanded={!projectCollapsed}
+                      aria-controls={projectContentId}
+                      onClick={() => {
+                        onSelectProject(project.id);
+                        setCollapsedProjectIds((current) => {
+                          const next = new Set(current);
+                          if (next.has(project.id)) next.delete(project.id);
+                          else next.add(project.id);
+                          return next;
+                        });
+                      }}
+                    >
+                      <ChevronDownIcon className={projectCollapsed ? "collapsed" : ""} />
+                      <FolderIcon />
+                      <span>{project.name}</span>
+                    </button>
+                    {workspace ? (
+                      <button
+                        className="sidebar-workspace-add"
+                        type="button"
+                        aria-label={`管理工作区 ${project.name}`}
+                        title="工作区权限"
+                        onClick={() => onOpenWorkspaces(workspace.id)}
+                      ><SettingsIcon /></button>
+                    ) : null}
+                  </div>
                   <div className="sidebar-project-content" id={projectContentId} hidden={projectCollapsed}>
+                    {!workspace ? (
+                      <button
+                        className="text-button sidebar-project-bind"
+                        type="button"
+                        onClick={() => onBindProject(project.id)}
+                        disabled={addingWorkspace}
+                      >{project.workspaceId ? "重新授权文件夹" : "关联文件夹"}</button>
+                    ) : null}
                     <section className="sidebar-workspace-section" aria-label="群聊">
                       <h3 className="sidebar-workspace-section-title">
                         <button
@@ -811,44 +838,6 @@ export function Sidebar({
               );
             })}
             {projects.length === 0 ? <div className="bot-list-empty">正在加载项目…</div> : null}
-          </div>
-        </section>
-        <section className="sidebar-file-workspaces" aria-label="文件工作区">
-          <div className="sidebar-file-workspaces-heading">
-            <button
-              className="sidebar-workspace-toggle"
-              type="button"
-              aria-expanded={fileWorkspacesExpanded}
-              aria-controls="sidebar-file-workspaces-content"
-              onClick={() => setFileWorkspacesExpanded((expanded) => !expanded)}
-            >
-              <span>文件工作区</span>
-              <ChevronDownIcon className={fileWorkspacesExpanded ? "" : "collapsed"} />
-            </button>
-          </div>
-          <div className="sidebar-file-workspaces-content" id="sidebar-file-workspaces-content" hidden={!fileWorkspacesExpanded}>
-            {workspaces.length > 0 ? (
-              <div className="sidebar-added-workspaces" aria-label="已授权文件夹">
-                {workspaces.map((workspace) => (
-                  <button
-                    className="sidebar-workspace-item"
-                    type="button"
-                    key={workspace.id}
-                    aria-label={`管理文件夹 ${workspace.name}`}
-                    title={`管理文件夹 ${workspace.name}`}
-                    onClick={onOpenWorkspaces}
-                  >
-                    <FolderIcon />
-                    <span>{workspace.name}</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="sidebar-file-empty-add">
-                <span>尚未添加本地文件夹</span>
-                <button type="button" className="text-button" aria-label="添加本地文件夹" onClick={onOpenWorkspaces}>添加本地文件夹</button>
-              </div>
-            )}
           </div>
         </section>
       </div>
