@@ -6,6 +6,7 @@ import { PlusIcon, RoomIcon } from "./Icons";
 
 type NewBotChooserProps = {
   bots: Bot[];
+  initialGroupMode?: boolean;
   creating: boolean;
   error: AppError | null;
   onClose(): void;
@@ -17,6 +18,7 @@ type NewBotChooserProps = {
 
 export function NewBotChooser({
   bots,
+  initialGroupMode = false,
   creating,
   error,
   onClose,
@@ -26,7 +28,7 @@ export function NewBotChooser({
   onSelect,
 }: NewBotChooserProps): React.JSX.Element {
   const [query, setQuery] = useState("");
-  const [groupMode, setGroupMode] = useState(false);
+  const [groupMode, setGroupMode] = useState(initialGroupMode);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const createRef = useRef<HTMLButtonElement>(null);
   const visibleBots = useMemo(() => bots.filter((bot) => bot.hiddenAt === null), [bots]);
@@ -55,7 +57,7 @@ export function NewBotChooser({
         if (event.target === event.currentTarget && !creating) onClose();
       }}
     >
-      <section className="new-bot-chooser" role="dialog" aria-modal="true" aria-label="新建聊天">
+      <section className="new-bot-chooser" role="dialog" aria-modal="true" aria-label={initialGroupMode ? "新建群聊" : "新建聊天"}>
         <header className="recipient-header">
           <span>收件人：</span>
           <input
@@ -86,7 +88,7 @@ export function NewBotChooser({
           </button>
         </header>
         <div className="recipient-options">
-          <button
+          {!initialGroupMode ? <button
             ref={createRef}
             className="recipient-option create-option"
             type="button"
@@ -95,8 +97,8 @@ export function NewBotChooser({
           >
             <span className="recipient-option-icon"><PlusIcon /></span>
             <span>{creating ? "创建中…" : "创建新 Bot"}</span>
-          </button>
-          <button
+          </button> : null}
+          {!initialGroupMode ? <button
             className={`recipient-option${groupMode ? " selected" : ""}`}
             type="button"
             disabled={creating || visibleBots.length < 2}
@@ -107,8 +109,8 @@ export function NewBotChooser({
           >
             <span className="recipient-option-icon"><RoomIcon /></span>
             <span className="recipient-option-copy"><strong>创建群聊</strong><small>选择 2～6 个现有 Bot</small></span>
-          </button>
-          <button
+          </button> : null}
+          {!initialGroupMode ? <button
             className="recipient-option"
             type="button"
             disabled={creating}
@@ -116,7 +118,8 @@ export function NewBotChooser({
           >
             <span className="recipient-option-icon"><RoomIcon /></span>
             <span className="recipient-option-copy"><strong>一键创建内容团队</strong><small>创建研究、策划、写作、审校、复盘 5 个 Bot 与群聊</small></span>
-          </button>
+          </button> : null}
+          {initialGroupMode && visibleBots.length < 2 ? <div className="recipient-empty">此项目至少需要 2 个 Bot。请先使用 Bot 标题右侧的 + 创建成员。</div> : null}
           {filteredBots.map((bot) => {
             const identity = botIdentities.get(bot.id)!;
             return (

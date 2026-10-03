@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PromptMessage } from "./prompt";
-import type { ComputationToolRequest, DeviceToolRequest, ExecutionEvidenceReceipt, McpToolInfo, McpToolRequest, NetworkToolRequest, WorkspaceToolRequest } from "@shared/contracts";
-import { computationToolRequestSchema, deviceToolRequestSchema, mcpToolRequestSchema, networkToolRequestSchema, workspaceToolRequestSchema } from "@shared/schemas";
+import type { ComputationToolRequest, DeviceToolRequest, ExecutionEvidenceReceipt, McpToolInfo, McpToolRequest, NetworkToolRequest, ProjectToolRequest, WorkspaceToolRequest } from "@shared/contracts";
+import { computationToolRequestSchema, deviceToolRequestSchema, mcpToolRequestSchema, networkToolRequestSchema, projectToolRequestSchema, workspaceToolRequestSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
 
 export type ChatMessage = PromptMessage | {
@@ -63,6 +63,7 @@ export type ModelEvent =
   | ({ type: "mcp-tool"; toolCallId: string; tool: McpToolRequest } & ModelToolResponder)
   | ({ type: "device-tool"; toolCallId: string; tool: DeviceToolRequest } & ModelToolResponder)
   | ({ type: "computation-tool"; toolCallId: string; tool: ComputationToolRequest } & ModelToolResponder)
+  | ({ type: "project-tool"; toolCallId: string; tool: ProjectToolRequest } & ModelToolResponder)
   | { type: "tool-rejection"; toolCallId: string; providerToolName: string; arguments: string; code: string; safeMessage: string }
   | { type: "completed"; finishReason: string };
 
@@ -87,6 +88,7 @@ export type ModelRunContext = {
   deviceTools?: boolean;
   requireToolCall?: boolean;
   textMeasureTools?: boolean;
+  projectTools?: boolean;
   requiredToolNames?: string[];
 };
 
@@ -372,6 +374,7 @@ const NETWORK_TOOL_NAMES = {
 } as const;
 const DEVICE_TOOL_NAMES = { "clipboard-read": "clipboard_read" } as const;
 const COMPUTATION_TOOL_NAMES = { "text-measure": "text_measure" } as const;
+const PROJECT_TOOL_NAMES = { "project-bots": "project_list_bots", "bot-create": "bot_create", "room-create": "room_create" } as const;
 const MAX_ROUTER_RESPONSE_LENGTH = 100_000;
 const MAX_ROUTING_REASON_LENGTH = 240;
 const MAX_TOOL_ARGUMENTS_LENGTH = 300_000;
@@ -424,12 +427,23 @@ function finalizeToolCalls(
   allowedMcpTools?: ReadonlyMap<string, McpToolInfo>,
   allowDeviceTools = false,
   handoffTargetAliases?: ReadonlyMap<string, string>,
+  allowProjectTools = false,
 ): ModelEvent[] {
   if (pending.size === 0) return [];
   const calls = [...pending.values()].toSorted((left, right) => left.index - right.index);
   const workspaceNames = new Set(Object.values(WORKSPACE_TOOL_NAMES));
   const networkNames = new Set(Object.values(NETWORK_TOOL_NAMES));
   return calls.map((call) => {
+    const projectKind = Object.entries(PROJECT_TOOL_NAMES).find(([, name]) => name === call.name)?.[0];
+    if (projectKind) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(call.arguments); } catch { parsed = null; }
+      const tool = projectToolRequestSchema.safeParse(parsed && typeof parsed === "object" && !Array.isArray(parsed) ? { ...parsed, kind: projectKind } : null);
+      if (!allowProjectTools || !validToolCallId(call.id) || !tool.success) {
+        return { type: "tool-rejection", toolCallId: call.id, providerToolName: call.name, arguments: call.arguments, code: "PROJECT_TOOL_INVALID", safeMessage: "项目工具不可用或参数不正确。仅允许在当前项目创建 Bot 和群聊，请按函数定义补齐参数，不要传入项目或模型凭据。" };
+      }
+      return { type: "project-tool", toolCallId: call.id, tool: tool.data, providerToolName: call.name };
+    }
     if (workspaceNames.has(call.name as (typeof WORKSPACE_TOOL_NAMES)[keyof typeof WORKSPACE_TOOL_NAMES])) {
       if (!validToolCallId(call.id)) throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
       const rejectWorkspace = (code: string, safeMessage: string): ModelEvent => ({
@@ -692,9 +706,32 @@ export type StructuredModelToolDefinition = {
   inputSchema: Record<string, unknown>;
 };
 
+function projectToolDefinitions(context?: ModelRunContext): StructuredModelToolDefinition[] {
+  if (!context?.projectTools) return [];
+  return [{
+    name: "project_list_bots",
+    description: "List actual Bot IDs, names and roles in the current Bot's project only. Use these IDs to select Room members; never guess IDs.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+  }, {
+    name: "bot_create",
+    description: "Create a configured Bot in the current project after one-time user approval. New Bots inherit the creator's model and MCP restrictions, not its secrets or conversation history, and do not start tasks. Identical arguments in the same user request reuse the existing Bot. Create only when the user requests it; at most 8 new resources per request.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {
+      name: { type: "string", minLength: 1, maxLength: 80 }, label: { type: "string", maxLength: 80 },
+      description: { type: "string", maxLength: 2_000 }, instructions: { type: "string", maxLength: 20_000 },
+    }, required: ["name"] },
+  }, {
+    name: "room_create",
+    description: "Create a Room in the current project after one-time user approval with 2–6 distinct actual Bot IDs. Obtain IDs from project_list_bots or successful bot_create results. A Room starts no tasks and changes no existing membership. Identical arguments in the same user request reuse the existing Room.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {
+      name: { type: "string", minLength: 1, maxLength: 72 }, description: { type: "string", maxLength: 2_000 },
+      memberBotIds: { type: "array", minItems: 2, maxItems: 6, uniqueItems: true, items: { type: "string", format: "uuid" } },
+    }, required: ["name", "memberBotIds"] },
+  }];
+}
+
 export function structuredModelToolDefinitions(context?: ModelRunContext): StructuredModelToolDefinition[] {
   const workspaces = context?.workspaces?.length ? context.workspaces : [];
-  const definitions: StructuredModelToolDefinition[] = [];
+  const definitions: StructuredModelToolDefinition[] = projectToolDefinitions(context);
   if (context?.textMeasureTools) {
     definitions.push({
       name: COMPUTATION_TOOL_NAMES["text-measure"],
@@ -809,7 +846,7 @@ export function parseStructuredModelToolCall(
   name: string,
   argumentsValue: unknown,
   context?: ModelRunContext,
-): Extract<ModelEvent, { type: "workspace-tool" | "network-tool" | "mcp-tool" | "device-tool" | "computation-tool" }> {
+): Extract<ModelEvent, { type: "workspace-tool" | "network-tool" | "mcp-tool" | "device-tool" | "computation-tool" | "project-tool" }> {
   const definitions = new Set(structuredModelToolDefinitions(context).map((definition) => definition.name));
   const serializedArguments = JSON.stringify(argumentsValue) ?? "";
   if (
@@ -835,11 +872,13 @@ export function parseStructuredModelToolCall(
     context?.networkTools === true,
     context?.mcpTools?.length ? new Map(context.mcpTools.filter((tool) => tool.readOnly).map((tool) => [tool.namespacedName, tool])) : undefined,
     context?.deviceTools === true,
+    undefined,
+    context?.projectTools === true,
   )[0];
-  if (!event || !["workspace-tool", "network-tool", "mcp-tool", "device-tool", "computation-tool"].includes(event.type)) {
+  if (!event || !["workspace-tool", "network-tool", "mcp-tool", "device-tool", "computation-tool", "project-tool"].includes(event.type)) {
     throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
   }
-  return event as Extract<ModelEvent, { type: "workspace-tool" | "network-tool" | "mcp-tool" | "device-tool" | "computation-tool" }>;
+  return event as Extract<ModelEvent, { type: "workspace-tool" | "network-tool" | "mcp-tool" | "device-tool" | "computation-tool" | "project-tool" }>;
 }
 
 function decodeSseEvent(
@@ -851,6 +890,7 @@ function decodeSseEvent(
   allowedMcpTools?: ReadonlyMap<string, McpToolInfo>,
   allowDeviceTools = false,
   handoffTargetAliases?: ReadonlyMap<string, string>,
+  allowProjectTools = false,
 ): DecodedSse {
   const data = event
     .split(/\r?\n/)
@@ -860,7 +900,7 @@ function decodeSseEvent(
   if (!data) return { events: [{ type: "activity" }], terminal: false };
   if (data === "[DONE]") {
     return {
-      events: [...finalizeToolCalls(pendingToolCalls, allowedTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases), { type: "completed", finishReason: "done" }],
+      events: [...finalizeToolCalls(pendingToolCalls, allowedTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases, allowProjectTools), { type: "completed", finishReason: "done" }],
       terminal: true,
     };
   }
@@ -889,7 +929,7 @@ function decodeSseEvent(
     appendToolCallDelta(choice.delta.tool_calls, pendingToolCalls);
   }
   if (typeof choice?.finish_reason === "string" && choice.finish_reason.length > 0) {
-    events.push(...finalizeToolCalls(pendingToolCalls, allowedTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases));
+    events.push(...finalizeToolCalls(pendingToolCalls, allowedTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases, allowProjectTools));
     events.push({ type: "completed", finishReason: choice.finish_reason });
     return { events, terminal: true };
   }
@@ -936,6 +976,7 @@ export async function* parseOpenAiStream(
   allowedMcpTools?: ReadonlyMap<string, McpToolInfo>,
   allowDeviceTools = false,
   handoffTargetAliases?: ReadonlyMap<string, string>,
+  allowProjectTools = false,
 ): AsyncIterable<ModelEvent> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -960,7 +1001,7 @@ export async function* parseOpenAiStream(
       buffer = events.pop() ?? "";
       for (const rawEvent of events) {
         sawEvent = true;
-        const decoded = decodeSseEvent(rawEvent, pendingToolCalls, allowedHandoffTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases);
+        const decoded = decodeSseEvent(rawEvent, pendingToolCalls, allowedHandoffTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases, allowProjectTools);
         for (const modelEvent of decoded.events) yield modelEvent;
         if (decoded.terminal) {
           terminal = true;
@@ -971,7 +1012,7 @@ export async function* parseOpenAiStream(
     }
     if (!terminal && buffer.trim()) {
       sawEvent = true;
-      const decoded = decodeSseEvent(buffer, pendingToolCalls, allowedHandoffTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases);
+      const decoded = decodeSseEvent(buffer, pendingToolCalls, allowedHandoffTargetIds, allowedWorkspaceIds, allowNetworkTools, allowedMcpTools, allowDeviceTools, handoffTargetAliases, allowProjectTools);
       for (const modelEvent of decoded.events) yield modelEvent;
       terminal = decoded.terminal;
     }
@@ -1170,7 +1211,8 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       },
       ...messages,
     ] : messages;
-    const tools = [...workspaceTools, ...networkTools, ...mcpTools, ...deviceTools, ...computationTools];
+    const projectTools = projectToolDefinitions(context).map(({ name, description, inputSchema }) => ({ type: "function", function: { name, description, parameters: inputSchema } }));
+    const tools = [...workspaceTools, ...networkTools, ...mcpTools, ...deviceTools, ...computationTools, ...projectTools];
     const availableToolNames = new Set(tools.map((tool) => tool.function.name));
     const rejectedToolCallIds = new Set(messages.flatMap((message) => {
       if (message.role !== "tool") return [];
@@ -1230,6 +1272,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       context?.mcpTools ? new Map(context.mcpTools.filter((tool) => tool.readOnly).map((tool) => [tool.namespacedName, tool])) : undefined,
       deviceTools.length > 0,
       undefined,
+      projectTools.length > 0,
     );
   }
 

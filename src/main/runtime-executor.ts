@@ -151,6 +151,11 @@ function requiresToolCall(value: string): boolean {
   return /(?:请|需要|必须|先|重新|实际|真实).{0,24}(?:读取|打开|解析|列出|搜索|抓取|访问|核验|写入|保存|计算|统计)|\b(?:read|fetch|search|verify|write|save|calculate|measure)\b|https?:\/\/|\.csv\b/iu.test(value);
 }
 
+function requestsProjectManagement(value: string): boolean {
+  if (/(?:不要|禁止|不允许|不得).{0,12}(?:创建|新建|组建|添加).{0,24}(?:Bot|机器人|智能体|群聊)/iu.test(value)) return false;
+  return /(?:创建|新建|组建|添加|建立).{0,60}(?:Bot|机器人|智能体|群聊|团队)|(?:查看|列出|查询).{0,24}(?:项目成员|Bot)|project_list_bots|bot_create|room_create|\b(?:create|add|list)\b.{0,40}\b(?:bot|agent|room|group|team)\b/iu.test(value);
+}
+
 function requiredToolNames(value: string): string[] {
   const names = new Set<string>();
   if (/https?:\/\/|抓取|访问网页|web_fetch/iu.test(value)) names.add("web_fetch");
@@ -320,6 +325,7 @@ export class RuntimeExecutor {
         deviceTools: allowDeviceTools,
         requireToolCall: requiresToolCall(evidenceRequestText) || Boolean(input.executionReceipt?.artifacts.length),
         textMeasureTools: evidenceToolNames.has("text_measure"),
+        projectTools: (providerCapabilities?.workspaceTools === true || providerCapabilities?.networkTools === true) && requestsProjectManagement(rootRequirements),
         requiredToolNames: [...evidenceToolNames],
       },
       executorBotName: bot.name,
@@ -619,8 +625,9 @@ export class RuntimeExecutor {
           this.armStaleTimer(active);
           continue;
         }
-        if (event.type === "workspace-tool" || event.type === "network-tool" || event.type === "mcp-tool" || event.type === "device-tool" || event.type === "computation-tool") {
+        if (event.type === "workspace-tool" || event.type === "network-tool" || event.type === "mcp-tool" || event.type === "device-tool" || event.type === "computation-tool" || event.type === "project-tool") {
           if (!active.providerStarted || !this.workspaceTools) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          if (event.type === "project-tool" && !active.providerContext.projectTools) throw new AevorenBotError("PROJECT_TOOL_NOT_REQUESTED");
           if (active.forceCompleteAfterToolRound) {
             roundToolCount += 1;
             const functionName = event.providerToolName ?? event.tool.kind.replaceAll("-", "_");
@@ -1077,6 +1084,13 @@ export class RuntimeExecutor {
     const hasKind = (...kinds: Array<(typeof succeeded)[number]["toolKind"]>): boolean =>
       succeeded.some((invocation) => kinds.includes(invocation.toolKind));
     const explicitlyUnable = /无法|未能|没有权限|尚未读取|尚未抓取|尚未写入|不能确认|unable|could not|no access|not read|not fetched|not written/iu.test(active.body);
+    const creationClaims = active.body.split(/[。！？\n]/u).filter((sentence) => !/尚未|未创建|未能创建|无法创建|创建失败|not created|failed to create|unable to create/iu.test(sentence)).join("\n");
+    if (/(?:已|已经|成功).{0,12}(?:创建|新建).{0,24}(?:Bot|机器人|智能体)|(?:Bot|机器人|智能体).{0,12}(?:已创建|创建成功)|\bcreated\s+(?:an?\s+)?(?:bot|agent)\b/iu.test(creationClaims) && !hasKind("bot-create")) {
+      throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "bot-create" });
+    }
+    if (/(?:已|已经|成功).{0,12}(?:创建|新建|组建).{0,24}群聊|群聊.{0,12}(?:已创建|创建成功)|\bcreated\s+(?:an?\s+)?(?:room|group)\b/iu.test(creationClaims) && !hasKind("room-create")) {
+      throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "room-create" });
+    }
     if (claimsWorkspaceRead(active.body) && !hasKind("workspace-read") && !explicitlyUnable) {
       throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "workspace-read" });
     }

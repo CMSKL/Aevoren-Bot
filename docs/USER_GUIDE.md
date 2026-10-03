@@ -25,6 +25,8 @@ This guide describes the supported pre-release workflow. It applies to macOS 13 
 - A Room contains 2–6 Bots. Select explicit `@Bot` targets or use the automatic owner route.
 - A Room preserves speaker identity, source turns, bounded handoffs, cancellation, and recovery in one transcript. A Bot's ordinary text such as `@OtherBot` is descriptive only; the next Bot starts only after a validated structured Handoff event, which prevents accidental calls and loops.
 - Use the sidebar context menu for pin, hide, rename, archive, and deletion actions. Destructive actions require confirmation.
+- Each project's **Bot +** creates a Bot in that project; **Room +** opens member selection scoped to that project. Existing conversation search remains available from **New chat**.
+- Ask an API or Codex CLI Bot to create roles or a Room. It uses `project_list_bots`, `bot_create`, and `room_create`; approve each creation once. New roles inherit the creator's model/MCP restrictions, have no copied history or Bot Memory, and start no tasks. Identical commands in one request reuse the existing resource; each creator can create at most eight new resources per request. Cross-project Room members and secret-bearing profiles are rejected. Claude Code currently has no Aevoren host-tool protocol for these operations; use the sidebar or switch to a supported model source.
 
 ## Memory and tools
 

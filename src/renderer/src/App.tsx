@@ -93,6 +93,8 @@ export function App(): React.JSX.Element {
   const [workspaceAddError, setWorkspaceAddError] = useState<string | null>(null);
   const workspaceAddInFlightRef = useRef(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
+  const [creationProjectId, setCreationProjectId] = useState(DEFAULT_PROJECT_ID);
+  const [creationMode, setCreationMode] = useState<"chat" | "room">("chat");
   const [mobilePanel, setMobilePanel] = useState<"bots" | "profile" | null>(null);
   const [creatingBot, setCreatingBot] = useState(false);
   const [createError, setCreateError] = useState<AppError | null>(null);
@@ -160,6 +162,23 @@ export function App(): React.JSX.Element {
       if (event.error) setError(event.error);
     });
     const unsubscribeTool = window.aevorenBot.events.subscribeTool((event) => {
+      if (event.invocation.state === "succeeded" && ["bot-create", "room-create"].includes(event.invocation.toolKind)) {
+        void Promise.all([window.aevorenBot.bots.list(), window.aevorenBot.rooms.list({ includeArchived: true })]).then(([botResult, roomResult]) => {
+          const resourceId = event.invocation.resultMetadata?.resourceId;
+          const bot = botResult.ok ? botResult.data.find((item) => item.id === resourceId) : undefined;
+          const room = roomResult.ok ? roomResult.data.find((item) => item.id === resourceId) : undefined;
+          if (bot) setBots((current) => {
+            const existing = current.find((item) => item.id === bot.id);
+            if (existing && existing.version > bot.version) return current;
+            return [...current.filter((item) => item.id !== bot.id), bot];
+          });
+          if (room) setRooms((current) => {
+            const existing = current.find((item) => item.id === room.id);
+            if (existing && existing.version > room.version) return current;
+            return [...current.filter((item) => item.id !== room.id), room];
+          });
+        });
+      }
       if (event.sessionId === loadingSessionIdRef.current) {
         bufferedToolRef.current.push(event);
         return;
@@ -234,6 +253,8 @@ export function App(): React.JSX.Element {
   const openBot = useCallback(async (bot: Bot, flushCurrent = true): Promise<void> => {
     const requestId = ++openRequestRef.current;
     if (flushCurrent && !(await flushActive())) return;
+    setActiveProjectId(bot.projectId);
+    sessionStorage.setItem("aevoren-bot:project", bot.projectId);
     setLoading(true);
     setError(null);
     setCloseNotice(null);
@@ -307,6 +328,8 @@ export function App(): React.JSX.Element {
   const openRoom = useCallback(async (room: Room, flushCurrent = true): Promise<void> => {
     const requestId = ++openRequestRef.current;
     if (flushCurrent && !(await flushActive())) return;
+    setActiveProjectId(room.projectId);
+    sessionStorage.setItem("aevoren-bot:project", room.projectId);
     setLoading(true);
     setError(null);
     setCloseNotice(null);
@@ -462,39 +485,45 @@ export function App(): React.JSX.Element {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [closeMobilePanel, mobilePanel]);
 
-  async function createBot(): Promise<void> {
+  async function createBot(projectId = activeProjectId): Promise<void> {
     if (chooserActionRef.current) return;
     chooserActionRef.current = "create";
     setCreatingBot(true);
     try {
       if (!(await flushActive())) return;
       setCreateError(null);
-      const result = await window.aevorenBot.bots.create({ projectId: activeProjectId });
+      const result = await window.aevorenBot.bots.create({ projectId });
       if (!result.ok) {
         setCreateError(result.error);
         return;
       }
+      setActiveProjectId(projectId);
+      sessionStorage.setItem("aevoren-bot:project", projectId);
       setBots((current) => [...current, result.data.bot]);
       await openBot(result.data.bot, false);
+    } catch {
+      setCreateError({ code: "INTERNAL_ERROR", domain: "internal", retryable: true, safeMessage: "Bot 创建未完成，请稍后重试。" });
     } finally {
       chooserActionRef.current = null;
       setCreatingBot(false);
     }
   }
 
-  async function createRoom(memberBotIds: string[]): Promise<void> {
+  async function createRoom(memberBotIds: string[], projectId = creationProjectId): Promise<void> {
     if (chooserActionRef.current) return;
     chooserActionRef.current = "create";
     setCreatingBot(true);
     try {
       if (!(await flushActive())) return;
       setCreateError(null);
-      const result = await window.aevorenBot.rooms.create({ memberBotIds });
+      const result = await window.aevorenBot.rooms.create({ memberBotIds, projectId });
       if (!result.ok) {
         setCreateError(result.error);
         return;
       }
       setRooms((current) => [...current, result.data.room]);
+      setActiveProjectId(projectId);
+      sessionStorage.setItem("aevoren-bot:project", projectId);
       await openRoom(result.data.room, false);
     } finally {
       chooserActionRef.current = null;
@@ -502,14 +531,14 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function createContentTeam(): Promise<void> {
+  async function createContentTeam(projectId = creationProjectId): Promise<void> {
     if (chooserActionRef.current) return;
     chooserActionRef.current = "create";
     setCreatingBot(true);
     try {
       if (!(await flushActive())) return;
       setCreateError(null);
-      const result = await window.aevorenBot.teams.createContentTeam({ projectId: activeProjectId });
+      const result = await window.aevorenBot.teams.createContentTeam({ projectId });
       if (!result.ok) {
         setCreateError(result.error);
         return;
@@ -914,9 +943,10 @@ export function App(): React.JSX.Element {
         workspaces={workspaces}
         selectedBotId={selectedBot?.id ?? null}
         selectedRoomId={selectedRoom?.room.id ?? null}
-        busy={loading}
+        busy={loading || creatingBot}
         addingWorkspace={workspaceAddPending}
         workspaceError={workspaceAddError}
+        creationError={newBotOpen ? null : createError?.safeMessage ?? null}
         mobileOpen={mobilePanel === "bots"}
         createButtonRef={newBotButtonRef}
         onCreateProject={() => void addWorkspace()}
@@ -933,6 +963,17 @@ export function App(): React.JSX.Element {
           if (chooserActionRef.current) return;
           setCreateError(null);
           setMobilePanel(null);
+          setCreationProjectId(activeProjectId);
+          setCreationMode("chat");
+          setNewBotOpen(true);
+        }}
+        onCreateBot={(projectId) => void createBot(projectId)}
+        onCreateRoom={(projectId) => {
+          if (chooserActionRef.current) return;
+          setCreateError(null);
+          setMobilePanel(null);
+          setCreationProjectId(projectId);
+          setCreationMode("room");
           setNewBotOpen(true);
         }}
         onOpenSettings={() => {
@@ -1169,7 +1210,8 @@ export function App(): React.JSX.Element {
       />
       {newBotOpen ? (
         <NewBotChooser
-          bots={bots.filter((bot) => bot.projectId === activeProjectId)}
+          bots={bots.filter((bot) => bot.projectId === creationProjectId)}
+          initialGroupMode={creationMode === "room"}
           creating={creatingBot}
           error={createError}
           onClose={() => {
@@ -1179,7 +1221,7 @@ export function App(): React.JSX.Element {
               if (document.activeElement === document.body) newBotButtonRef.current?.focus();
             });
           }}
-          onCreate={() => void createBot()}
+          onCreate={() => void createBot(creationProjectId)}
           onCreateRoom={(botIds) => void createRoom(botIds)}
           onCreateContentTeam={() => void createContentTeam()}
           onSelect={(bot) => {

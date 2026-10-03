@@ -28,6 +28,16 @@ async function collect(stream: AsyncIterable<ModelEvent>): Promise<ModelEvent[]>
 }
 
 describe("parseOpenAiStream", () => {
+  it("exposes project creation to supported contexts and rejects forged project or credential fields", async () => {
+    const context = { executorBotId: crypto.randomUUID(), executionKey: "project", projectTools: true };
+    expect(structuredModelToolDefinitions(context).map((tool) => tool.name)).toEqual(["project_list_bots", "bot_create", "room_create"]);
+    expect(parseStructuredModelToolCall("create", "bot_create", { name: "审阅助手" }, context)).toMatchObject({ type: "project-tool", tool: { kind: "bot-create", name: "审阅助手" } });
+    expect(() => parseStructuredModelToolCall("create", "bot_create", { name: "审阅助手" }, { ...context, projectTools: false })).toThrow();
+    expect(() => parseStructuredModelToolCall("create", "bot_create", { name: "审阅助手", projectId: crypto.randomUUID() }, context)).toThrow();
+    expect(() => parseStructuredModelToolCall("create", "bot_create", { name: "审阅助手", apiKey: "not-permitted" }, context)).toThrow();
+    const calls = streamFrom([`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "create", type: "function", function: { name: "bot_create", arguments: JSON.stringify({ name: "审阅助手" }) } }] }, finish_reason: "tool_calls" }] })}\n\n`]);
+    expect(await collect(parseOpenAiStream(calls, undefined, undefined, undefined, undefined, false, undefined, false, undefined, true))).toContainEqual(expect.objectContaining({ type: "project-tool", tool: expect.objectContaining({ kind: "bot-create" }) }));
+  });
   it("parses SSE deltas split across transport chunks and an explicit done", async () => {
     const stream = streamFrom([
       'data: {"choices":[{"delta":{"content":"第一"}}]}\n',

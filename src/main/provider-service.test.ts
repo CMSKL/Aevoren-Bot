@@ -348,6 +348,18 @@ describe("Codex CLI Provider", () => {
     expect(sanitized).not.toContain("must-not-copy");
   });
 
+  it("retains OpenAI-authenticated provider definitions with the default endpoint", () => {
+    const sourceHome = providerWorkspace();
+    const runtimeHome = providerWorkspace();
+    writeFileSync(join(sourceHome, "config.toml"), 'model = "gpt-6.1-sol"\nmodel_provider = "custom"\n[model_providers.custom]\nname = "Custom"\nrequires_openai_auth = true\nwire_api = "responses"\n', "utf8");
+    vi.stubEnv("CODEX_HOME", sourceHome);
+    isolatedCodexEnvironment(runtimeHome);
+    const sanitized = readFileSync(join(runtimeHome, "config.toml"), "utf8");
+    expect(sanitized).toContain("[model_providers.custom]");
+    expect(sanitized).toContain("requires_openai_auth = true");
+    expect(sanitized).not.toContain("base_url");
+  });
+
   it("discovers the signed-in account and model catalog from app-server", async () => {
     vi.stubEnv("CODEX_HOME", providerWorkspace());
     await expect(inspectCodexCli(fixtureCli, providerWorkspace())).resolves.toMatchObject({

@@ -192,7 +192,7 @@ function readCodexConfiguration(sourceHome: string): CodexConfiguration {
   if (model) output.push(`model = ${tomlText(model)}`);
   if (provider) output.push(`model_provider = ${tomlText(provider)}`);
   for (const [id, values] of providers) {
-    if (!values.base_url) continue;
+    if (!values.base_url && values.requires_openai_auth !== "true") continue;
     if (values.env_key) environmentKeys.add(values.env_key);
     output.push("", `[model_providers.${id}]`);
     for (const key of ["name", "base_url", "env_key", "wire_api"] as const) {

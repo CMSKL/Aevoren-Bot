@@ -6,6 +6,7 @@ import type {
   ToolEvent,
 } from "@shared/contracts";
 import { asAppError, AevorenBotError } from "./errors";
+import { containsLikelySecret } from "./memory-safety";
 import type { AppRepository } from "./database";
 import { choiceQuestion, type DecisionService } from "./decision-service";
 
@@ -43,6 +44,7 @@ export class WorkspaceToolCoordinator {
     tool: ToolRequest,
     signal: AbortSignal,
   ): Promise<WorkspaceToolOutcome> {
+    if (tool.kind === "bot-create" && containsLikelySecret(JSON.stringify(tool))) throw new AevorenBotError("PROJECT_PROFILE_SENSITIVE");
     if ("workspaceId" in tool) {
       this.repository.assertBotWorkspaceAccess(this.repository.getRuntimeRun(runtimeRunId).executorBotId, tool.workspaceId);
     }
@@ -52,6 +54,9 @@ export class WorkspaceToolCoordinator {
       idempotencyKey: randomUUID(),
       tool,
     });
+    if (["bot-create", "room-create"].includes(prepared.invocation.toolKind) && prepared.invocation.state === "succeeded") {
+      return Promise.resolve({ toolCallId, tool, content: this.repository.projectCreationResult(prepared.invocation.id).content });
+    }
     if (prepared.approval.state !== "pending" || prepared.invocation.state !== "awaiting-approval") {
       throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: prepared.invocation.state });
     }
@@ -60,7 +65,7 @@ export class WorkspaceToolCoordinator {
     const autoApprovePublicRead = this.repository.getSetting("tools.autoApprovePublicRead")?.value === "true" &&
       ["web-search", "web-fetch", "weather-current", "time-now"].includes(prepared.invocation.toolKind);
     if (
-      prepared.invocation.toolKind === "text-measure" ||
+      prepared.invocation.toolKind === "text-measure" || prepared.invocation.toolKind === "project-bots" ||
       autoApprovePublicRead ||
       prepared.invocation.workspaceId && this.repository.getWorkspace(prepared.invocation.workspaceId).automationEnabled
     ) {

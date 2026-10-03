@@ -1671,6 +1671,85 @@ export const MIGRATIONS = [
       FROM workspaces WHERE removed_at IS NULL;
     `,
   },
+  {
+    version: 28,
+    foreignKeysOff: true,
+    sql: `
+
+      CREATE TABLE approval_requests_v28 (
+        id TEXT PRIMARY KEY,
+        tool_invocation_id TEXT NOT NULL UNIQUE
+          REFERENCES tool_invocations_v28(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        action_kind TEXT NOT NULL CHECK (action_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure', 'project-bots', 'bot-create', 'room-create'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        target_digest TEXT NOT NULL CHECK (length(target_digest) = 64),
+        arguments_digest TEXT NOT NULL CHECK (length(arguments_digest) = 64),
+        requested_scope TEXT NOT NULL CHECK (requested_scope = 'once'),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'allowed', 'denied', 'expired', 'cancelled')),
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('allow-once', 'deny')),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE tool_invocations_v28 (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure', 'project-bots', 'bot-create', 'room-create'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 600000),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded', 'failed',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests_v28(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      INSERT INTO approval_requests_v28 SELECT * FROM approval_requests;
+      INSERT INTO tool_invocations_v28 SELECT * FROM tool_invocations;
+      DROP TABLE tool_invocations;
+      DROP TABLE approval_requests;
+      ALTER TABLE approval_requests_v28 RENAME TO approval_requests;
+      ALTER TABLE tool_invocations_v28 RENAME TO tool_invocations;
+      CREATE INDEX tool_invocations_by_session ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime ON tool_invocations(runtime_run_id, created_at, id);
+      CREATE INDEX approval_requests_pending ON approval_requests(state, expires_at, created_at, id);
+    `,
+  },
 ] as const;
 
 type BotRow = {
@@ -2642,7 +2721,7 @@ function canonicalToolCommand(input: ToolInvocationCommand): string {
 
 function toolEffectClass(tool: ToolRequest): CapabilityEffectClass {
   if (tool.kind === "time-now" || tool.kind === "text-measure") return "pure";
-  if (tool.kind === "workspace-write") return "write-reversible";
+  if (tool.kind === "workspace-write" || tool.kind === "bot-create" || tool.kind === "room-create") return "write-reversible";
   if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "mcp-call") return "read-remote";
   return "read-local";
 }
@@ -2680,6 +2759,11 @@ function toolTargetPath(tool: ToolRequest): string {
       return "clipboard";
     case "text-measure":
       return "text";
+    case "project-bots":
+      return "当前项目成员";
+    case "bot-create":
+    case "room-create":
+      return tool.name;
   }
 }
 
@@ -3000,41 +3084,44 @@ export class AppRepository {
   }
 
   createBot(projectId = DEFAULT_PROJECT_ID): { bot: Bot; session: Session } {
+    return this.transaction(() => this.insertBot(projectId));
+  }
+
+  private insertBot(projectId: string, profile: Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection" | "mcpServerIds">> = {}): { bot: Bot; session: Session } {
     this.getProject(projectId);
     const timestamp = now();
     const botId = randomUUID();
     const sessionId = randomUUID();
-    const modelSelection = this.getDefaultModelSelection();
+    const modelSelection = profile.modelSelection ?? this.getDefaultModelSelection();
     const avatar = randomBotAvatar();
-    this.transaction(() => {
-      this.database
-        .prepare(
-          `INSERT INTO bots(
-             id, project_id, name, label, description, instructions, provider_instance_id, model_id,
-             avatar_shape, avatar_color, version, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-        )
-        .run(
-          botId,
-          projectId,
-          "新建 Bot",
-          "",
-          "",
-          "",
-          modelSelection.providerInstanceId,
-          modelSelection.modelId,
-          avatar.shape,
-          avatar.color,
-          timestamp,
-          timestamp,
-        );
-      this.database
-        .prepare(
-          `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
-           VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
-        )
-        .run(sessionId, botId, timestamp, timestamp);
-    });
+    this.database
+      .prepare(
+        `INSERT INTO bots(
+           id, project_id, name, label, description, instructions, provider_instance_id, model_id,
+           avatar_shape, avatar_color, mcp_server_ids_json, version, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      )
+      .run(
+        botId,
+        projectId,
+        profile.name ?? "新建 Bot",
+        profile.label ?? "",
+        profile.description ?? "",
+        profile.instructions ?? "",
+        modelSelection.providerInstanceId,
+        modelSelection.modelId,
+        avatar.shape,
+        avatar.color,
+        profile.mcpServerIds == null ? null : JSON.stringify(profile.mcpServerIds),
+        timestamp,
+        timestamp,
+      );
+    this.database
+      .prepare(
+        `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+         VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
+      )
+      .run(sessionId, botId, timestamp, timestamp);
     return { bot: this.getBot(botId), session: this.getMainSession(botId) };
   }
 
@@ -3914,6 +4001,70 @@ export class AppRepository {
     return this.getToolInvocation(id);
   }
 
+  projectBotCatalog(executorBotId: string): { projectId: string; bots: Array<Pick<Bot, "id" | "name" | "label" | "description">> } {
+    const projectId = this.getBot(executorBotId).projectId;
+    return {
+      projectId,
+      bots: this.listBots().filter((bot) => bot.projectId === projectId && bot.hiddenAt === null)
+        .map(({ id, name, label, description }) => ({ id, name, label, description })),
+    };
+  }
+
+  projectCreationResult(id: string): { content: string; metadata: Record<string, string | number | boolean | null> } {
+    const invocation = this.getToolInvocation(id);
+    const resourceId = invocation.resultMetadata?.resourceId;
+    if (invocation.state !== "succeeded" || typeof resourceId !== "string") throw new AevorenBotError("TOOL_STATE_INVALID");
+    const owner = this.getBot(invocation.executorBotId);
+    const resource = invocation.toolKind === "bot-create" ? this.getBot(resourceId) : this.getRoom(resourceId);
+    if (resource.projectId !== owner.projectId) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
+    const metadata = { kind: invocation.toolKind, resourceId, projectId: resource.projectId, name: resource.name, reused: true };
+    const content = JSON.stringify({ ok: true, disposition: "existing", kind: invocation.toolKind, resource: { id: resource.id, name: resource.name, projectId: resource.projectId } });
+    return { content, metadata };
+  }
+
+  executeProjectCreation(id: string): { invocation: ToolInvocation; content: string } {
+    return this.transaction(() => {
+      const invocation = this.getToolInvocation(id);
+      if (invocation.state !== "running" || !["bot-create", "room-create"].includes(invocation.toolKind)) throw new AevorenBotError("TOOL_STATE_INVALID");
+      const approval = this.getApprovalRequest(invocation.approvalRequestId);
+      if (approval.state !== "allowed" || approval.argumentsDigest !== invocation.commandDigest) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      const owner = this.getBot(invocation.executorBotId);
+      const runtime = this.getRuntimeRun(invocation.runtimeRunId);
+      if (!["running", "streaming"].includes(runtime.state)) throw new AevorenBotError("TOOL_STATE_INVALID");
+      const previous = this.database.prepare(
+        `SELECT invocation.id FROM tool_invocations AS invocation
+         JOIN runtime_runs AS runtime ON runtime.id = invocation.runtime_run_id
+         WHERE runtime.client_nonce = ? AND invocation.executor_bot_id = ? AND invocation.arguments_json = ?
+           AND invocation.state = 'succeeded' AND invocation.tool_kind = ? LIMIT 1`,
+      ).get(runtime.clientNonce, owner.id, JSON.stringify(invocation.arguments), invocation.toolKind) as { id: string } | undefined;
+      if (previous) {
+        const result = this.projectCreationResult(previous.id);
+        return { invocation: this.completeToolInvocation(id, digestMessage(result.content), result.metadata), content: result.content };
+      }
+      const count = this.database.prepare(
+        `SELECT COUNT(DISTINCT json_extract(invocation.result_metadata_json, '$.resourceId')) AS count
+         FROM tool_invocations AS invocation JOIN runtime_runs AS runtime ON runtime.id = invocation.runtime_run_id
+         WHERE runtime.client_nonce = ? AND invocation.executor_bot_id = ? AND invocation.state = 'succeeded'
+           AND invocation.tool_kind IN ('bot-create', 'room-create')`,
+      ).get(runtime.clientNonce, owner.id) as { count: number };
+      if (count.count >= 8) throw new AevorenBotError("PROJECT_CREATION_LIMIT");
+      const tool = invocation.arguments;
+      let resource: Bot | Room;
+      if (tool.kind === "bot-create") {
+        if (containsLikelySecret(JSON.stringify(tool))) throw new AevorenBotError("PROJECT_PROFILE_SENSITIVE");
+        resource = this.insertBot(owner.projectId, { ...tool, modelSelection: owner.modelSelection, mcpServerIds: owner.mcpServerIds }).bot;
+      } else if (tool.kind === "room-create") {
+        if (tool.memberBotIds.some((botId) => this.getBot(botId).projectId !== owner.projectId)) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
+        resource = this.insertRoom({ ...tool, projectId: owner.projectId }).room;
+      } else {
+        throw new AevorenBotError("INVALID_REQUEST");
+      }
+      const metadata = { kind: tool.kind, resourceId: resource.id, projectId: resource.projectId, name: resource.name, reused: false };
+      const content = JSON.stringify({ ok: true, disposition: "created", kind: tool.kind, resource: { id: resource.id, name: resource.name, projectId: resource.projectId } });
+      return { invocation: this.completeToolInvocation(id, digestMessage(content), metadata), content };
+    });
+  }
+
   failToolInvocation(id: string, errorCode: string): ToolInvocation {
     const current = this.getToolInvocation(id);
     const state: ToolInvocationState = current.state === "dispatching"
@@ -4314,35 +4465,38 @@ export class AppRepository {
     return { disposition: "created", bots: room.members.map((member) => member.bot), room };
   }
 
-  createRoom(input: { memberBotIds: string[]; name?: string; description?: string }): RoomDetail {
+  createRoom(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string }): RoomDetail {
+    return this.transaction(() => this.insertRoom(input));
+  }
+
+  private insertRoom(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string }): RoomDetail {
     if (input.memberBotIds.length < 2 || input.memberBotIds.length > 6 || new Set(input.memberBotIds).size !== input.memberBotIds.length) {
       throw new AevorenBotError("ROOM_MEMBER_INVALID");
     }
     const roomId = randomUUID();
     const sessionId = randomUUID();
     const timestamp = now();
-    this.transaction(() => {
-      const bots = input.memberBotIds.map((id) => this.getBot(id));
-      const projectId = bots[0]!.projectId;
-      if (bots.some((bot) => bot.projectId !== projectId)) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
-      const generatedName = bots.map((bot) => bot.name).join("、").replace(/\s+/g, " ").trim().slice(0, 72);
-      this.database
-        .prepare(
-          `INSERT INTO rooms(id, project_id, name, description, version, membership_version, archived_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 1, 1, NULL, ?, ?)`,
-        )
-        .run(roomId, projectId, input.name?.trim() || generatedName || "新群聊", input.description?.trim() ?? "", timestamp, timestamp);
-      const insertMember = this.database.prepare(
-        "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
-      );
-      input.memberBotIds.forEach((botId, position) => insertMember.run(roomId, botId, position, timestamp));
-      this.database
-        .prepare(
-          `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
-           VALUES (?, NULL, ?, 'MAIN', 1, 0, ?, ?)`,
-        )
-        .run(sessionId, roomId, timestamp, timestamp);
-    });
+    const bots = input.memberBotIds.map((id) => this.getBot(id));
+    const projectId = bots[0]!.projectId;
+    if (input.projectId && input.projectId !== projectId) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
+    if (bots.some((bot) => bot.projectId !== projectId)) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
+    const generatedName = bots.map((bot) => bot.name).join("、").replace(/\s+/g, " ").trim().slice(0, 72);
+    this.database
+      .prepare(
+        `INSERT INTO rooms(id, project_id, name, description, version, membership_version, archived_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, 1, NULL, ?, ?)`,
+      )
+      .run(roomId, projectId, input.name?.trim() || generatedName || "新群聊", input.description?.trim() ?? "", timestamp, timestamp);
+    const insertMember = this.database.prepare(
+      "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
+    );
+    input.memberBotIds.forEach((botId, position) => insertMember.run(roomId, botId, position, timestamp));
+    this.database
+      .prepare(
+        `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+         VALUES (?, NULL, ?, 'MAIN', 1, 0, ?, ?)`,
+      )
+      .run(sessionId, roomId, timestamp, timestamp);
     return this.getRoomDetail(roomId);
   }
 

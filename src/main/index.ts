@@ -91,6 +91,7 @@ function emitTool(event: ToolEvent): void {
 }
 
 function showNotification(title: string, body: string): void {
+  if (hideTestWindow) return;
   if (!Notification.isSupported()) return;
   const notification = new Notification({ title, body, silent: false });
   notification.on("click", () => {
