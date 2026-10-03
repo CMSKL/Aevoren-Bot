@@ -204,7 +204,23 @@ export const computationToolRequestSchema = z.object({
   kind: z.literal("text-measure"),
   text: z.string().max(100_000),
 }).strict();
-export const toolRequestSchema = z.union([workspaceToolRequestSchema, networkToolRequestSchema, mcpToolRequestSchema, deviceToolRequestSchema, computationToolRequestSchema]);
+export const projectToolRequestSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("project-bots") }).strict(),
+  z.object({
+    kind: z.literal("bot-create"),
+    name: z.string().trim().min(1).max(80),
+    label: z.string().trim().max(80).default(""),
+    description: z.string().trim().max(2_000).default(""),
+    instructions: z.string().trim().max(20_000).default(""),
+  }).strict(),
+  z.object({
+    kind: z.literal("room-create"),
+    name: z.string().trim().min(1).max(72),
+    description: z.string().trim().max(2_000).default(""),
+    memberBotIds: z.array(z.string().uuid()).min(2).max(6).refine((ids) => new Set(ids).size === ids.length),
+  }).strict(),
+]);
+export const toolRequestSchema = z.union([workspaceToolRequestSchema, networkToolRequestSchema, mcpToolRequestSchema, deviceToolRequestSchema, computationToolRequestSchema, projectToolRequestSchema]);
 export const toolInvocationCommandSchema = z.object({
   runtimeRunId: runIdSchema,
   toolCallId: z.string().trim().min(1).max(200),
@@ -262,6 +278,7 @@ const roomMemberIdsSchema = z.array(botIdSchema).min(2).max(6).refine(
 );
 
 export const roomCreateSchema = z.object({
+  projectId: projectIdSchema.optional(),
   memberBotIds: roomMemberIdsSchema,
   name: z.string().trim().min(1).max(72).optional(),
   description: z.string().trim().max(2_000).optional(),

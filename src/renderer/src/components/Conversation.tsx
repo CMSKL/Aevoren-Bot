@@ -139,6 +139,9 @@ function toolActionLabel(invocation: ToolInvocation): string {
   if (invocation.toolKind === "mcp-call") return `外部工具 · ${invocation.arguments.kind === "mcp-call" ? invocation.arguments.toolName : "工具"}`;
   if (invocation.toolKind === "clipboard-read") return "读取剪贴板";
   if (invocation.toolKind === "text-measure") return "精确计算文本长度";
+  if (invocation.toolKind === "project-bots") return "查看项目 Bot";
+  if (invocation.toolKind === "bot-create") return "创建 Bot";
+  if (invocation.toolKind === "room-create") return "创建群聊";
   return "查询当前时间";
 }
 
@@ -188,6 +191,7 @@ const ToolActivity = memo(function ToolActivity({
   const remote = invocation.effectClass === "read-remote";
   const pure = invocation.effectClass === "pure";
   const clipboardRead = invocation.toolKind === "clipboard-read";
+  const projectCreate = invocation.toolKind === "bot-create" || invocation.toolKind === "room-create";
   const targetLabel = invocation.arguments.kind === "mcp-call"
     ? `Server ${invocation.arguments.serverId.slice(0, 8)}…`
     : invocation.targetPath || "文件夹根目录";
@@ -249,7 +253,9 @@ const ToolActivity = memo(function ToolActivity({
               ? "仅本次允许 Aevoren Bot 读取本机系统时间；不会访问外部网络。"
               : clipboardRead
                 ? "仅本次允许 Aevoren Bot 读取当前纯文本剪贴板内容；结果不会写入 Memory。"
-                : "仅本次允许 Aevoren Bot 访问这个已登记文件夹目标。"}</p>
+                : projectCreate
+                  ? "仅本次允许在此 Bot 所属项目创建这个 Bot 或群聊；不会启动新任务、修改已有成员或扩大权限。"
+                  : "仅本次允许 Aevoren Bot 访问这个已登记文件夹目标。"}</p>
           <div>
             <button type="button" className="secondary-button" disabled={resolving !== null} onClick={() => void resolve("deny")}>{resolving === "deny" ? "正在拒绝…" : "拒绝"}</button>
             <button type="button" className="primary-button" disabled={resolving !== null} onClick={() => void resolve("allow-once")}>{resolving === "allow-once" ? "正在执行…" : "仅允许一次"}</button>
@@ -271,7 +277,7 @@ const ToolActivityList = memo(function ToolActivityList({
 }): React.JSX.Element {
   const items = useMemo(() => groupToolActivity(invocations), [invocations]);
   return (
-    <div className="message-tools" aria-label="本地文件工具活动">
+    <div className="message-tools" aria-label="工具活动">
       {items.map((item) => item.kind === "run" ? (
         <details className="tool-activity-run" key={item.id} data-testid="tool-activity-run">
           <summary>

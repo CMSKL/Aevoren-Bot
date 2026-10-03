@@ -76,12 +76,14 @@ describe("CapabilityRegistry", () => {
     repository.registerWorkspaceRoot("/private/tmp/capability-secret-root", "Fixture Workspace");
     const afterGrant = await registry.getSnapshot({ botId: bot.id });
     expect(afterGrant.availableTools).toEqual([
+      "project_list_bots", "bot_create", "room_create",
       "text_measure", "workspace_list", "workspace_read", "workspace_search", "web_search", "web_fetch", "time_now", "weather_current", "clipboard_read",
     ]);
     expect(afterGrant.permissions[0]).toMatchObject({ state: "granted", scopeSummary: "1 个已授权文件夹" });
 
     const prompt = registry.forPrompt(bot.id, bot.modelSelection, true);
     expect(prompt.availableTools).toEqual([
+      "project_list_bots", "bot_create", "room_create",
       "handoff_to_agent", "text_measure", "workspace_list", "workspace_read", "workspace_search", "web_search", "web_fetch", "time_now", "weather_current", "clipboard_read",
     ]);
     const serialized = JSON.stringify(prompt);

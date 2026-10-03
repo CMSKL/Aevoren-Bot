@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { parseStructuredModelToolCall, structuredModelToolDefinitions, type ChatMessage, type ModelEvent, type ModelProvider, type ModelRunContext } from "../model";
 import { AevorenBotError } from "../errors";
+import { containsLikelySecret } from "../memory-safety";
 import { cliEnvironment, cliShellOptions, isolatedCodexEnvironment, probeCliVersion, readCodexConfiguredSelection, resolveCliPath } from "./cli-utils";
 
 const DISABLED_CODEX_FEATURES = [
@@ -52,6 +53,7 @@ const FALLBACK_CODEX_MODELS: CodexModelCatalog = {
 };
 
 type PendingRequest = {
+  method: string;
   resolve(value: unknown): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
@@ -116,7 +118,7 @@ class CodexRpcClient {
         reject(new AevorenBotError("MODEL_CONNECTION_TIMEOUT"));
       }, timeoutMs);
       timer.unref?.();
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { method, resolve, reject, timer });
       try {
         child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
       } catch {
@@ -174,6 +176,9 @@ class CodexRpcClient {
       this.pending.delete(id);
       clearTimeout(pending.timer);
       if (message.error) {
+        const detail = object(message.error);
+        const diagnostic = typeof detail?.message === "string" ? detail.message : "No provider diagnostic";
+        console.warn("[codex-runtime] request failed", { method: pending.method, code: detail?.code, message: containsLikelySecret(diagnostic) ? "Sensitive diagnostic redacted" : diagnostic.slice(0, 1_000) });
         pending.reject(new AevorenBotError("MODEL_REQUEST_REFUSED"));
       } else {
         pending.resolve(message.result);
@@ -532,6 +537,9 @@ export class CodexCliProvider implements ModelProvider {
           queue.push({ type: "completed", finishReason: "stop" });
           queue.end();
         } else {
+          const detail = object(turn?.error);
+          const message = typeof detail?.message === "string" ? detail.message : "No provider diagnostic";
+          console.warn("[codex-runtime] turn failed", { status: turn?.status, message: containsLikelySecret(message) ? "Sensitive diagnostic redacted" : message.slice(0, 1_000) });
           queue.fail(new AevorenBotError("MODEL_REQUEST_REFUSED"));
         }
         settleCompletion?.();

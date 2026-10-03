@@ -18,6 +18,7 @@ type SidebarProps = {
   busy: boolean;
   addingWorkspace: boolean;
   workspaceError: string | null;
+  creationError: string | null;
   mobileOpen: boolean;
   createButtonRef: RefObject<HTMLButtonElement | null>;
   onCreateProject(): void;
@@ -25,6 +26,8 @@ type SidebarProps = {
   onSelectProject(projectId: string): void;
   onOpenWorkspaces(workspaceId: string): void;
   onCreate(): void;
+  onCreateBot(projectId: string): void;
+  onCreateRoom(projectId: string): void;
   onOpenSettings(): void;
   onMobileClose(): void;
   onSelectBot(bot: Bot): void;
@@ -106,6 +109,7 @@ export function Sidebar({
   busy,
   addingWorkspace,
   workspaceError,
+  creationError,
   mobileOpen,
   createButtonRef,
   onCreateProject,
@@ -113,6 +117,8 @@ export function Sidebar({
   onSelectProject,
   onOpenWorkspaces,
   onCreate,
+  onCreateBot,
+  onCreateRoom,
   onOpenSettings,
   onMobileClose,
   onSelectBot,
@@ -714,6 +720,7 @@ export function Sidebar({
             </button>
           </div>
           {workspaceError ? <div className="dialog-error" role="alert">{workspaceError}</div> : null}
+          {creationError ? <div className="dialog-error" role="alert">{creationError}</div> : null}
           <div className="sidebar-workspace-content" id="sidebar-workspace-content" hidden={!workspaceExpanded}>
             {projectGroups.map(({ project, activeRooms: projectRooms, hiddenRooms: projectHiddenRooms, archivedRooms: projectArchivedRooms, visibleBots: projectBots, hiddenBots: projectHiddenBots }) => {
               const projectCollapsed = collapsedProjectIds.has(project.id);
@@ -765,7 +772,7 @@ export function Sidebar({
                       >{project.workspaceId ? "重新授权文件夹" : "关联文件夹"}</button>
                     ) : null}
                     <section className="sidebar-workspace-section" aria-label="群聊">
-                      <h3 className="sidebar-workspace-section-title">
+                      <h3 className="sidebar-workspace-section-title" aria-label="群聊">
                         <button
                           className="sidebar-workspace-section-heading"
                           type="button"
@@ -782,13 +789,14 @@ export function Sidebar({
                           <RoomIcon />
                           <span>群聊</span>
                         </button>
+                        <button className="sidebar-workspace-add" type="button" aria-label={`在 ${project.name} 新建群聊`} title="新建群聊" disabled={busy} onClick={() => onCreateRoom(project.id)}><PlusIcon /></button>
                       </h3>
                       <div className="sidebar-workspace-items" id={roomItemsId} role="list" hidden={roomsCollapsed}>
                         {projectRooms.length > 0 ? projectRooms.map(renderRoomRow) : <div className="bot-list-empty">暂无群聊</div>}
                       </div>
                     </section>
                     <section className="sidebar-workspace-section" aria-label="Bot">
-                      <h3 className="sidebar-workspace-section-title">
+                      <h3 className="sidebar-workspace-section-title" aria-label="Bot">
                         <button
                           className="sidebar-workspace-section-heading"
                           type="button"
@@ -805,6 +813,7 @@ export function Sidebar({
                           <BotIcon />
                           <span>Bot</span>
                         </button>
+                        <button className="sidebar-workspace-add" type="button" aria-label={`在 ${project.name} 新建 Bot`} title="新建 Bot" disabled={busy} onClick={() => onCreateBot(project.id)}><PlusIcon /></button>
                       </h3>
                       <div className="sidebar-workspace-items" id={botItemsId} role="list" hidden={botsCollapsed}>
                         {projectBots.length > 0

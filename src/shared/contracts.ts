@@ -473,7 +473,12 @@ export type ComputationToolRequest = {
   text: string;
 };
 
-export type ToolRequest = WorkspaceToolRequest | NetworkToolRequest | McpToolRequest | DeviceToolRequest | ComputationToolRequest;
+export type ProjectToolRequest =
+  | { kind: "project-bots" }
+  | { kind: "bot-create"; name: string; label: string; description: string; instructions: string }
+  | { kind: "room-create"; name: string; description: string; memberBotIds: string[] };
+
+export type ToolRequest = WorkspaceToolRequest | NetworkToolRequest | McpToolRequest | DeviceToolRequest | ComputationToolRequest | ProjectToolRequest;
 
 export type McpTransportKind = "stdio" | "streamable-http";
 export type McpServerStatus = "disabled" | "connecting" | "available" | "unavailable" | "needs-auth";
@@ -1226,7 +1231,7 @@ export interface AevorenBotApi {
     getBriefApproval(input: { roomId: string; sourceRuntimeRunId: string }): Promise<ApiResult<BriefApprovalView>>;
     approveBrief(input: BriefApprovalCommand): Promise<ApiResult<RoomSendResult>>;
     list(input?: { includeArchived?: boolean }): Promise<ApiResult<Room[]>>;
-    create(input: { memberBotIds: string[]; name?: string; description?: string }): Promise<ApiResult<RoomDetail>>;
+    create(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string }): Promise<ApiResult<RoomDetail>>;
     get(id: string): Promise<ApiResult<RoomDetail>>;
     update(input: { id: string; expectedVersion: number; patch: RoomPatch }): Promise<ApiResult<Room>>;
     archive(input: { id: string; archived: boolean }): Promise<ApiResult<Room>>;

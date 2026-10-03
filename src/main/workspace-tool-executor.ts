@@ -154,7 +154,11 @@ export class WorkspaceToolExecutor {
       checkCancellation(signal);
       this.repository.transitionToolInvocation(id, "running");
 
-      const result = await this.run(initial.arguments, signal);
+      if (initial.arguments.kind === "bot-create" || initial.arguments.kind === "room-create") {
+        return this.repository.executeProjectCreation(id);
+      }
+
+      const result = await this.run(initial.arguments, signal, initial.executorBotId);
       checkCancellation(signal);
       const invocation = this.repository.completeToolInvocation(id, digestResult(result.content), result.metadata);
       return { invocation, content: result.content };
@@ -175,6 +179,7 @@ export class WorkspaceToolExecutor {
   private async run(
     tool: ToolRequest,
     signal: AbortSignal,
+    executorBotId: string,
   ): Promise<{ content: string; metadata: ResultMetadata }> {
     if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "time-now") {
       if (!this.networkTools) throw new AevorenBotError("NETWORK_TOOL_UNAVAILABLE");
@@ -189,6 +194,11 @@ export class WorkspaceToolExecutor {
       return this.deviceTools.run(tool as DeviceToolRequest, signal);
     }
     if (tool.kind === "text-measure") return this.measureText(tool as ComputationToolRequest);
+    if (tool.kind === "project-bots") {
+      const result = this.repository.projectBotCatalog(executorBotId);
+      return { content: JSON.stringify({ ok: true, ...result }), metadata: { projectId: result.projectId, count: result.bots.length } };
+    }
+    if (tool.kind === "bot-create" || tool.kind === "room-create") throw new AevorenBotError("TOOL_STATE_INVALID");
     switch (tool.kind) {
       case "workspace-list":
         return this.list(tool, signal);

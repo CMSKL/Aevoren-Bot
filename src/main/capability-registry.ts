@@ -68,6 +68,18 @@ function capabilityDescriptors(
   const mcpAvailable = networkAvailable && context.mcpTools.length > 0;
   return [
     {
+      id: "project.provisioning",
+      name: "项目内 Bot 与群聊创建",
+      category: "conversation",
+      description: "查看当前项目真实成员，在用户审批后创建 Bot 和群聊；新资源不会自动执行任务，也不能跨项目创建。",
+      effectClass: "write-reversible",
+      adapterKind: "core",
+      availability: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? "available" : "unavailable",
+      reason: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? null : "当前模型来源不支持宿主结构化工具。",
+      permissionState: "not-required",
+      toolNames: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? ["project_list_bots", "bot_create", "room_create"] : [],
+    },
+    {
       id: "conversation.text",
       name: "文本对话",
       category: "conversation",

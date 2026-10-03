@@ -221,6 +221,7 @@ export function buildPrompt(
     rules: [
       "Never claim that a file, URL, source, clipboard, API, or dataset was read, fetched, searched, verified, saved, or written unless a matching tool call in the current Runtime returned ok/succeeded.",
       "A UI completed state or your own intention is not execution evidence. Failed, denied, missing, or uncalled tools must be described as not completed.",
+      "Create Bots or Rooms only when the user asks for them. Use bot_create or room_create and wait for successful tool results; prose does not create resources. Use project_list_bots or successful creation results for actual member IDs. All creations stay in this Bot's project, need user approval, and start no tasks. Never copy secrets, credentials or private conversation history into a new role profile.",
       "Do not produce CSV or dataset metrics until workspace_read successfully returns that exact data file in the current Runtime. Base every metric only on returned rows and name the source path and fields used.",
       "A complete CSV workspace_read includes csvSummary with a deterministic rowCount and numericSums. Copy those exact values for requested totals; never recompute them mentally.",
       "For character, non-whitespace character, word, line, or byte counts, call text_measure and use its exact result. Never estimate length.",
