@@ -34,6 +34,20 @@ function provider(): ProviderInstanceInfo {
 }
 
 describe("CapabilityRegistry", () => {
+  it("advertises only the limited adapter's actual host tools, not unrelated capabilities", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const bot = repository.createBot().bot;
+    const current = provider();
+    current.capabilities = { roomOwnerSelection: false, handoff: false, workspaceTools: true, networkTools: true, supportedToolNames: ["workspace_list", "workspace_read", "workspace_search", "workspace_write", "web_search", "web_fetch"] };
+    const workspace = repository.registerWorkspaceRoot("/private/tmp/limited-tool-scope", "限定工作区").workspace;
+    repository.updateWorkspacePermissions(workspace.id, workspace.version, { writeEnabled: true, automationEnabled: false });
+    const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities }, { name: "Aevoren Bot", version: "1", platform: "darwin", architecture: "arm64", packaged: false });
+    const snapshot = await registry.getSnapshot({ botId: bot.id });
+    expect(snapshot.availableTools).toEqual(["workspace_list", "workspace_read", "workspace_search", "workspace_write", "web_search", "web_fetch"]);
+    for (const id of ["project.provisioning", "computation.text-measure", "network.realtime-data", "device.clipboard"]) expect(snapshot.capabilities.find(capability => capability.id === id)?.availability).toBe("unavailable");
+  });
+
   it("reports authoritative model, permission and unsupported capability state without exposing paths or secrets", async () => {
     const repository = new AppRepository(":memory:");
     repositories.push(repository);

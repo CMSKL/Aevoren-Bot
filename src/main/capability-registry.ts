@@ -301,7 +301,16 @@ export class CapabilityRegistry {
     })();
     const mcpTools = this.mcp?.availableTools(botId) ?? [];
     const routines = this.routineList();
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines });
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines }).map((capability) => {
+      if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
+      const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));
+      return toolNames.length > 0 ? { ...capability, toolNames } : {
+        ...capability,
+        toolNames,
+        availability: "unavailable" as const,
+        reason: "当前模型来源尚未接入此工具。",
+      };
+    });
     const permissions: CapabilityPermission[] = [{
       id: "workspace.read",
       name: "Workspace 只读访问",

@@ -442,6 +442,14 @@ describe("Codex CLI Provider", () => {
 });
 
 describe("Claude CLI Provider", () => {
+  it("reuses only declared Claude authentication from the environment when no settings file exists", async () => {
+    vi.stubEnv("CLAUDE_CONFIG_DIR", providerWorkspace());
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "fixture-auth-token");
+    vi.stubEnv("UNRELATED_SECRET", "must-not-copy");
+    vi.stubEnv("FAKE_CLAUDE_EXPECT_SETTING", "1");
+    const provider = new ClaudeCliProvider(fixtureClaudeCli, "sonnet", providerWorkspace());
+    await expect(provider.testConnection(new AbortController().signal)).resolves.toBeUndefined();
+  });
   it("discovers login status and configured model aliases", async () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", providerWorkspace());
     await expect(inspectClaudeCli(fixtureClaudeCli)).resolves.toMatchObject({

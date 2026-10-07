@@ -10,6 +10,7 @@ import { RuntimeExecutor } from "./runtime-executor";
 import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { WorkspaceToolExecutor } from "./workspace-tool-executor";
+import { NetworkToolExecutor } from "./network-tool-executor";
 
 const repositories: AppRepository[] = [];
 const directories: string[] = [];
@@ -107,6 +108,12 @@ function eventsFor(
       tool: { kind: "text-measure", text: "这是完成事实核验后的正式审校稿。" },
     }, completed];
     if (count === 2) return [started, {
+      type: "network-tool",
+      toolCallId: "review-fetch-source",
+      providerToolName: "web_fetch",
+      tool: { kind: "web-fetch", url: "https://example.com/source", maxCharacters: 4096 },
+    }, completed];
+    if (count === 3) return [started, {
       type: "workspace-tool",
       toolCallId: "review-write",
       providerToolName: "workspace_write",
@@ -176,12 +183,20 @@ describe("content-team Host orchestration", () => {
         return { ownerAgentId: investigator.id, reason: "从研究阶段开始。" };
       },
     };
+    // This is a scripted orchestration unit test, not real-model acceptance.
+    // Exercise the required fetch instead of treating a textual claim as proof.
+    repository.setSetting("tools.autoApprovePublicRead", "true", false);
+    const network = new NetworkToolExecutor(
+      () => new Date(),
+      async (value) => ({ url: new URL(value), addresses: [{ address: "93.184.216.34", family: 4 }] }),
+      async () => ({ status: 200, headers: { "content-type": "text/plain" }, body: new Response("Unit-test source for orchestration").body! }),
+    );
     const toolCoordinator = new WorkspaceToolCoordinator(
       repository,
-      new WorkspaceToolExecutor(repository, workspaceService),
+      new WorkspaceToolExecutor(repository, workspaceService, network),
       () => undefined,
     );
-    const executor = new RuntimeExecutor(repository, null, { transcript: vi.fn(), runtime: vi.fn() }, false, provider, toolCoordinator);
+    const executor = new RuntimeExecutor(repository, null, { transcript: vi.fn(), runtime: vi.fn() }, true, provider, toolCoordinator);
     const coordinator = new RoomCoordinator(repository, executor, { roomRuntime: vi.fn(), transcript: vi.fn() });
 
     const research = await coordinator.routeAndSend({
@@ -212,8 +227,10 @@ describe("content-team Host orchestration", () => {
       sha256,
       candidate: "A",
     });
-    await vi.waitFor(() => expect(repository.getRoomRun(approval.batchId).state).toBe("completed"), { timeout: 10_000 });
-    await vi.waitFor(() => expect(repository.listAgentTurns(approval.batchId)).toHaveLength(3), { timeout: 10_000 }).catch((cause: unknown) => {
+    await vi.waitFor(() => {
+      expect(repository.getRoomRun(approval.batchId).state).toBe("completed");
+      expect(repository.listAgentTurns(approval.batchId)).toHaveLength(3);
+    }, { timeout: 10_000 }).catch((cause: unknown) => {
       const turns = repository.listAgentTurns(approval.batchId);
       throw new Error(JSON.stringify({
         batch: repository.getRoomRun(approval.batchId),

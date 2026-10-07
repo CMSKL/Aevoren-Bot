@@ -145,9 +145,20 @@ function requestsExactMeasurement(value: string): boolean {
   return /字符数|字数|非空白字符|长度|word count|character count/iu.test(value);
 }
 
+function requestsLiveResearch(value: string): boolean {
+  if (/(?:不要|不得|禁止|无需|不需要|不允许).{0,12}(?:联网|外网|搜索|调用工具)|不联网|(?:只|仅).{0,8}(?:群内|本地|已提供)/iu.test(value)) return false;
+  return /(?:去|联网|真实|实际)调研|调研一下|(?:请|帮我|帮我们)(?:你|先)?调研|research the (?:web|latest|current)/iu.test(value);
+}
+
+function requestedWritePaths(value: string): string[] {
+  const paths = [...value.matchAll(/(?:保存(?:为|到|至)?|写入|新建|创建)[^。\n；;]{0,80}?((?:[\p{L}\p{N}_.-]+\/)+[\p{L}\p{N}_.-]+\.(?:md|csv))/giu)].map(match => match[1]!.normalize("NFC"));
+  return [...new Set(paths)];
+}
+
 function requiresToolCall(value: string): boolean {
   const explicitlyNoTools = /(?:不要|不得|禁止|无需|不需要|不允许).{0,20}(?:调用工具|读取|抓取|搜索|写入)|(?:do not|don't|must not).{0,20}(?:use tools?|read|fetch|search|write)/iu.test(value);
   if (explicitlyNoTools) return false;
+  if (requestsLiveResearch(value)) return true;
   return /(?:请|需要|必须|先|重新|实际|真实).{0,24}(?:读取|打开|解析|列出|搜索|抓取|访问|核验|写入|保存|计算|统计)|\b(?:read|fetch|search|verify|write|save|calculate|measure)\b|https?:\/\/|\.csv\b/iu.test(value);
 }
 
@@ -158,6 +169,7 @@ function requestsProjectManagement(value: string): boolean {
 
 function requiredToolNames(value: string): string[] {
   const names = new Set<string>();
+  if (requestsLiveResearch(value)) { names.add("web_search"); names.add("web_fetch"); }
   if (/https?:\/\/|抓取|访问网页|web_fetch/iu.test(value)) names.add("web_fetch");
   if (/workspace_read|读取.{0,24}(?:文件|CSV|Brief|草稿|voice)|read.{0,24}(?:file|csv|brief|draft)/iu.test(value)) names.add("workspace_read");
   if (/workspace_write|写入|落盘|(?:保存|创建|新建).{0,24}(?:文件|Markdown|CSV|[^\s，。；]+\.(?:md|csv))|write.{0,24}(?:file|markdown|csv)/iu.test(value)) names.add("workspace_write");
@@ -311,6 +323,8 @@ export class RuntimeExecutor {
       fixedRoomRouting: input.room?.orchestrationEnabled === false,
       evidenceCorrectionAttempts: 0,
       providerContext: {
+        supportedToolNames: providerCapabilities?.supportedToolNames,
+        requestedWritePaths: requestedWritePaths(evidenceRequestText),
         executorBotId: bot.id,
         executionKey: input.executionKey,
         ...(input.room ? { roomId: input.room.id, sourceTurnId: input.room.sourceTurnId } : {}),
@@ -628,11 +642,15 @@ export class RuntimeExecutor {
         if (event.type === "workspace-tool" || event.type === "network-tool" || event.type === "mcp-tool" || event.type === "device-tool" || event.type === "computation-tool" || event.type === "project-tool") {
           if (!active.providerStarted || !this.workspaceTools) throw new AevorenBotError("RUNTIME_STATE_INVALID");
           if (event.type === "project-tool" && !active.providerContext.projectTools) throw new AevorenBotError("PROJECT_TOOL_NOT_REQUESTED");
+          const recordOrRespond = async (action: Extract<(typeof roundActions)[number], { kind: "tool" }>): Promise<void> => {
+            if (event.respond) await event.respond(action.result.content);
+            else roundActions.push(action);
+          };
           if (active.forceCompleteAfterToolRound) {
             roundToolCount += 1;
             const functionName = event.providerToolName ?? event.tool.kind.replaceAll("-", "_");
             const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
-            roundActions.push({
+            await recordOrRespond({
               kind: "tool",
               call: {
                 id: event.toolCallId,
@@ -659,7 +677,7 @@ export class RuntimeExecutor {
                 toolRounds += 1;
               }
               roundToolCount += 1;
-              roundActions.push({
+              await recordOrRespond({
                 kind: "tool",
                 call: {
                   id: event.toolCallId,
@@ -693,7 +711,7 @@ export class RuntimeExecutor {
               }
               roundToolCount += 1;
               const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
-              roundActions.push({
+              await recordOrRespond({
                 kind: "tool",
                 call: {
                   id: event.toolCallId,
@@ -719,6 +737,7 @@ export class RuntimeExecutor {
             }
           }
           if (event.type === "workspace-tool" && event.tool.kind === "workspace-write") {
+            if (active.providerContext.requestedWritePaths?.length && !active.providerContext.requestedWritePaths.includes(event.tool.path)) throw new AevorenBotError("TASK_REQUIREMENTS_UNMET", undefined, true, { requirement: "requested-artifact-path" });
             this.assertReceiptReads(active);
             if (active.executorBotName === "数据复盘师") {
               const hasCsv = this.repository.listToolInvocations(active.sessionId).some((tool) =>
@@ -740,7 +759,7 @@ export class RuntimeExecutor {
               }
               roundToolCount += 1;
               const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
-              roundActions.push({
+              await recordOrRespond({
                 kind: "tool",
                 call: {
                   id: event.toolCallId,
@@ -775,7 +794,7 @@ export class RuntimeExecutor {
                 toolRounds += 1;
               }
               roundToolCount += 1;
-              roundActions.push({
+              await recordOrRespond({
                 kind: "tool",
                 call: {
                   id: event.toolCallId,
@@ -811,7 +830,7 @@ export class RuntimeExecutor {
               }
               roundToolCount += 1;
               const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
-              roundActions.push({
+              await recordOrRespond({
                 kind: "tool",
                 call: {
                   id: event.toolCallId,
@@ -839,12 +858,20 @@ export class RuntimeExecutor {
             toolRounds += 1;
           }
           roundToolCount += 1;
-          const outcome = await this.workspaceTools.requestAndWait(
-            runId,
-            event.toolCallId,
-            event.tool,
-            active.controller.signal,
-          );
+          let outcome;
+          try {
+            outcome = await this.workspaceTools.requestAndWait(
+              runId,
+              event.toolCallId,
+              event.tool,
+              event.toolSignal ? AbortSignal.any([active.controller.signal, event.toolSignal]) : active.controller.signal,
+            );
+          } catch (error) {
+            if (!event.toolSignal || !event.respond || active.controller.signal.aborted) throw error;
+            const failed = asAppError(error);
+            await event.respond(JSON.stringify({ ok: false, code: failed.code, safeMessage: failed.safeMessage }));
+            continue;
+          }
           let providerOutcomeContent = outcome.content;
           if (event.type === "computation-tool" && event.tool.kind === "text-measure" && active.requiredMeasurementRanges.length > 0) {
             const measuredValues = this.repository.listToolInvocations(active.sessionId)
@@ -880,6 +907,10 @@ export class RuntimeExecutor {
           }
           if (event.respond) {
             await event.respond(providerOutcomeContent);
+            if (event.toolSignal) {
+              const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
+              active.messages.push({ role: "assistant", content: "", tool_calls: [{ id: event.toolCallId, type: "function", function: { name: event.providerToolName ?? event.tool.kind.replaceAll("-", "_"), arguments: JSON.stringify(argumentsValue) } }] }, { role: "tool", tool_call_id: outcome.toolCallId, content: providerOutcomeContent });
+            }
             run = this.repository.touchRuntimeRun(runId);
             this.emitRuntime(run);
             this.armStaleTimer(active);
@@ -1083,6 +1114,19 @@ export class RuntimeExecutor {
       .filter((invocation) => invocation.runtimeRunId === active.runId && invocation.state === "succeeded");
     const hasKind = (...kinds: Array<(typeof succeeded)[number]["toolKind"]>): boolean =>
       succeeded.some((invocation) => kinds.includes(invocation.toolKind));
+    const explicitRequirements = requiresToolCall(active.evidenceRequestText) ? requiredToolNames(active.evidenceRequestText) : [];
+    const requiredKinds: Record<string, (typeof succeeded)[number]["toolKind"]> = { web_search: "web-search", web_fetch: "web-fetch", workspace_read: "workspace-read", workspace_write: "workspace-write", text_measure: "text-measure" };
+    for (const name of explicitRequirements) {
+      const kind = requiredKinds[name];
+      if (kind && !hasKind(kind)) throw new AevorenBotError("TASK_REQUIREMENTS_UNMET", undefined, true, { requirement: name });
+    }
+    for (const path of active.providerContext.requestedWritePaths ?? []) {
+      const written = succeeded.find(tool => tool.toolKind === "workspace-write" && tool.targetPath === path);
+      if (!written) throw new AevorenBotError("TASK_REQUIREMENTS_UNMET", undefined, true, { requirement: "requested-artifact-path" });
+      if (/保存后.{0,16}读取|回读|read.{0,12}back/iu.test(active.evidenceRequestText) && !succeeded.some(tool => tool.toolKind === "workspace-read" && tool.targetPath === path && tool.workspaceId === written.workspaceId && tool.resultMetadata?.sha256 === written.resultMetadata?.sha256 && tool.resultMetadata?.truncated === false)) {
+        throw new AevorenBotError("TASK_REQUIREMENTS_UNMET", undefined, true, { requirement: "artifact-readback" });
+      }
+    }
     const explicitlyUnable = /无法|未能|没有权限|尚未读取|尚未抓取|尚未写入|不能确认|unable|could not|no access|not read|not fetched|not written/iu.test(active.body);
     const creationClaims = active.body.split(/[。！？\n]/u).filter((sentence) => !/尚未|未创建|未能创建|无法创建|创建失败|not created|failed to create|unable to create/iu.test(sentence)).join("\n");
     if (/(?:已|已经|成功).{0,12}(?:创建|新建).{0,24}(?:Bot|机器人|智能体)|(?:Bot|机器人|智能体).{0,12}(?:已创建|创建成功)|\bcreated\s+(?:an?\s+)?(?:bot|agent)\b/iu.test(creationClaims) && !hasKind("bot-create")) {

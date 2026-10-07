@@ -28,6 +28,23 @@ async function collect(stream: AsyncIterable<ModelEvent>): Promise<ModelEvent[]>
 }
 
 describe("parseOpenAiStream", () => {
+  it("limits definitions and rejects tools outside an explicit host allowlist", () => {
+    const context = { executorBotId: crypto.randomUUID(), executionKey: "limited", networkTools: true, deviceTools: true, projectTools: true, textMeasureTools: true, supportedToolNames: ["web_search", "web_fetch"] };
+    expect(structuredModelToolDefinitions(context).map(tool => tool.name)).toEqual(["web_search", "web_fetch"]);
+    expect(() => parseStructuredModelToolCall("forged-time", "time_now", {}, context)).toThrow();
+    expect(() => parseStructuredModelToolCall("forged-clipboard", "clipboard_read", { maxCharacters: 10 }, context)).toThrow();
+    expect(parseStructuredModelToolCall("allowed-search", "web_search", { query: "public docs" }, context)).toMatchObject({ type: "network-tool", tool: { kind: "web-search", query: "public docs" } });
+  });
+
+  it("preserves an explicit Unicode output path and rejects a different filename", () => {
+    const workspaceId = crypto.randomUUID();
+    const context = { executorBotId: crypto.randomUUID(), executionKey: "unicode-path", workspaces: [{ id: workspaceId, name: "公开资料", writeEnabled: true, automationEnabled: false }], requestedWritePaths: ["01-inbox/个人网站调研.md"] };
+    const definition = structuredModelToolDefinitions(context).find(tool => tool.name === "workspace_write")!;
+    expect(JSON.stringify(definition.inputSchema)).toContain("01-inbox/个人网站调研.md");
+    expect(parseStructuredModelToolCall("unicode-write", "workspace_write", { workspaceId, path: "01-inbox/个人网站调研.md", content: "公开调研结果" }, context)).toMatchObject({ type: "workspace-tool", tool: { path: "01-inbox/个人网站调研.md" } });
+    expect(() => parseStructuredModelToolCall("wrong-write", "workspace_write", { workspaceId, path: "  .md", content: "公开结果" }, context)).toThrow();
+  });
+
   it("exposes project creation to supported contexts and rejects forged project or credential fields", async () => {
     const context = { executorBotId: crypto.randomUUID(), executionKey: "project", projectTools: true };
     expect(structuredModelToolDefinitions(context).map((tool) => tool.name)).toEqual(["project_list_bots", "bot_create", "room_create"]);

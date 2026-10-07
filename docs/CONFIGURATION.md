@@ -14,6 +14,18 @@ API keys entered in the application are encrypted by Electron `safeStorage`. Sav
 
 Other Provider or CLI adapters are intentionally not exposed in this release line. They can enter a later phase only after discovery, authentication, model selection, real invocation, and error handling have independent acceptance coverage.
 
+### Claude Code host tools
+
+Compatible Claude Code CLIs can use these six Aevoren tools: `workspace_list`, `workspace_read`, `workspace_search`, `workspace_write`, `web_search`, and `web_fetch`. Rescan the CLI after upgrading it. This integration reuses the existing CLI API authentication configuration; it does not require entering the same key in Aevoren.
+
+Each Runtime starts its own authenticated localhost MCP endpoint. Claude runs with `--bare`, `--restricted`, no built-in tools, and only that explicit MCP configuration. User/global MCP servers, shell, native file tools, browser control, project creation, Handoff and additional tools are not exposed by this bridge. Existing API and Codex CLI integrations are unchanged.
+
+Only CLIs advertising the required isolation flags **and** having reusable `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` configuration advertise host-tool capability. Subscription-only OAuth/keychain authentication remains on the existing text path: `--bare` does not read it, and a separate isolated OAuth tool mode has not been verified. This is not reported as successful tool support.
+
+Select a folder Workspace and enable create-only writes if the task should save a report. Tool calls go through the same approval, permissions and Tool Journal as API/Codex calls. Approving a local read permits its contents to enter model context and, for a cloud model, leave the computer. Do not approve private credentials. Denial, cancellation and network errors are returned to the model without bypassing approvals.
+
+An explicit live-research request needs successful search and page-fetch records to complete. A requested output path constrains the write; requested readback must match the saved file's SHA-256 and be untruncated. Existing files are never overwritten. Failed or unverified outputs remain distinguishable from successful execution.
+
 ## Jev Shadow Mode
 
 Jev is an optional Main-process decision layer. It is currently limited to Shadow Mode for Room routing, tool risk, Handoff, and result-quality observations; it does not replace the chat Provider, execute tools, or change the final route.
@@ -35,6 +47,7 @@ Open **Settings → MCP** to add a local stdio or remote Streamable HTTP Server.
 - New Servers are disabled by default.
 - On Windows, keep MCP stdio commands as a real executable (for example `node.exe`) or explicitly configure `cmd.exe` with its arguments; MCP commands are intentionally launched without an implicit shell.
 - Remote Servers may use OAuth 2.1/PKCE or write-only Header configuration.
+- OAuth credentials are bound to their authorization server. On upgrade, older credentials without that binding remain encrypted but require explicit reauthorization; they are never guessed from new server metadata or sent to another issuer.
 - A Server's `readOnlyHint` is treated only as a claim.
 - You must review and trust exact read-only tool names before they become available.
 - Every actual tool call still requires one-time approval.

@@ -177,6 +177,7 @@ describe("NetworkToolExecutor", () => {
     expect(result.metadata).toEqual({
       kind: "web-fetch",
       provider: "example.com",
+      url: "https://example.com/article",
       retrievedAt: "2026-09-17T08:00:00.000Z",
       title: "A & B",
       publishedAt: "2026-09-16T12:00:00Z",

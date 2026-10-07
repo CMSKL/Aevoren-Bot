@@ -12,7 +12,6 @@ import type {
   RoomTurn,
   RuntimeRun,
   SessionLiveState,
-  SessionLiveStateName,
   ToolInvocation,
   TranscriptEntry,
   UserRoomRoutingMode,
@@ -33,6 +32,7 @@ import {
 } from "../room-mentions";
 import { conversationArtifacts, groupToolActivity } from "../conversation-view-model";
 import { BotAvatarIcon } from "./BotAvatarIcon";
+import { AssistantMarkdown } from "./AssistantMarkdown";
 import { AttachmentIcon, CloseIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
 import { HeaderModelPicker } from "./HeaderModelPicker";
 import { ExpandableTrace, type ExpandableTraceKind, type ExpandableTraceTone } from "./ExpandableTrace";
@@ -41,21 +41,11 @@ import {
   ArtifactCard,
   BriefApprovalCard,
   HandoffEventCard,
-  LongMessageView,
   RunFailureCard,
   type WorkflowAction,
 } from "./CollaborationFeedback";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
-
-const liveLabels: Record<Exclude<SessionLiveStateName, "idle">, string> = {
-  starting: "正在连接模型",
-  running: "模型已接受，正在运行",
-  composing: "正在生成回复",
-  retrying: "正在重新生成",
-  cancelling: "正在取消",
-  stale: "连接可能已停滞，仍可停止本次运行",
-};
 
 const handoffRejectionMessages: Record<string, string> = {
   INVALID_REQUEST: "任务转交格式不受支持，未执行。",
@@ -256,6 +246,7 @@ const ToolActivity = memo(function ToolActivity({
                 : projectCreate
                   ? "仅本次允许在此 Bot 所属项目创建这个 Bot 或群聊；不会启动新任务、修改已有成员或扩大权限。"
                   : "仅本次允许 Aevoren Bot 访问这个已登记文件夹目标。"}</p>
+          {invocation.toolKind === "workspace-read" || clipboardRead ? <p>读取结果将进入当前模型上下文；若使用云端模型，会发送至该模型服务。请勿授权读取密码、API Key 等敏感内容。</p> : null}
           <div>
             <button type="button" className="secondary-button" disabled={resolving !== null} onClick={() => void resolve("deny")}>{resolving === "deny" ? "正在拒绝…" : "拒绝"}</button>
             <button type="button" className="primary-button" disabled={resolving !== null} onClick={() => void resolve("allow-once")}>{resolving === "allow-once" ? "正在执行…" : "仅允许一次"}</button>
@@ -346,7 +337,6 @@ const TranscriptItem = memo(function TranscriptItem({
     ? sanitizeRoomSpeakerOutput(entry.body, entry.status === "streaming")
     : entry.body;
   const longAssistant = entry.role === "assistant" && assistantBody.length > 160;
-  const collapsibleAssistant = entry.role === "assistant" && entry.status === "completed" && assistantBody.length > 900;
   const hasVisibleBody = entry.role === "user" || assistantBody.trim().length > 0;
   const speakerName = entry.role === "assistant"
     ? speakerDisplayName ?? speakerBot?.name ?? entry.speakerNameSnapshot ?? "Bot"
@@ -385,7 +375,7 @@ const TranscriptItem = memo(function TranscriptItem({
               </div>
             ) : null}
           {entry.role === "assistant"
-              ? <LongMessageView body={assistantBody} collapsible={collapsibleAssistant} />
+              ? <AssistantMarkdown body={assistantBody} />
               : <p className="user-message-body">{entry.body}</p>}
             {entry.attachments && entry.attachments.length > 0 ? (
               <div className="message-attachments" aria-label="消息附件">
@@ -440,9 +430,6 @@ const TranscriptItem = memo(function TranscriptItem({
               onResolve={onResolveApproval}
             />
           ) : null}
-          {entry.status === "streaming"
-            ? <div className="streaming-indicator">正在生成<span /></div>
-            : null}
           {entry.role === "assistant" && entry.status === "completed"
             ? <ArtifactStatusBar
                 writes={toolInvocations}
@@ -652,9 +639,6 @@ export function Conversation({
     if (!latestBatch) return [];
     return latestRoomTurnsByLogicalTurn(roomTurns, latestBatch.id);
   }, [latestBatch, roomTurns]);
-  const activeRoomTurn = latestTurns.find((turn) => turn.state === "running")
-    ?? latestTurns.find((turn) => turn.state === "queued")
-    ?? null;
   const latestFailedTurn = latestTurns.toReversed().find((turn) => ["failed", "cancelled", "interrupted"].includes(turn.state)) ?? null;
   const latestFailedTurnHasMessage = latestFailedTurn
     ? entries.some((entry) => entry.role === "assistant" && entry.sourceTurnId === latestFailedTurn.id)
@@ -1038,9 +1022,8 @@ export function Conversation({
       <footer className="composer-wrap">
         {closeNotice ? <div className="composer-notice" role="alert">{closeNotice}</div> : null}
         {error ? <div className="composer-error" role="alert">{error.safeMessage}</div> : null}
-        {submitting ? <div className="send-state">正在准备</div> : null}
-        {!room && !submitting && liveState && liveState.state !== "idle"
-          ? <div className={"send-state runtime-" + liveState.state}>{liveLabels[liveState.state]}</div>
+        {!room && liveState?.state === "stale"
+          ? <div className="send-state runtime-stale" role="status">连接可能已停滞，仍可停止本次运行</div>
           : null}
         {room && latestBatch && latestFailedTurn && (!latestFailedTurnHasMessage || canContinueRoomBatch) ? (
           <div className="composer-run-status" data-testid="room-batch-state">
@@ -1055,15 +1038,8 @@ export function Conversation({
               <button className="secondary-button continue-room-button" type="button" disabled={busy} onClick={() => onContinueRoomBatch(latestBatch.id)}>继续未开始成员</button>
             ) : null}
           </div>
-        ) : room && latestBatch && latestBatch.state === "running" ? (
-          <div className="room-run-indicator" data-testid="room-batch-state" role="status" aria-live="polite">
-            <span className="room-presence-dot" aria-hidden="true" />
-            <span>{activeRoomTurn
-              ? `${roomMemberIdentities.get(activeRoomTurn.memberBotId)?.inline ?? snapshotIdentities.get(activeRoomTurn.memberBotId) ?? activeRoomTurn.memberNameSnapshot} 正在执行`
-              : "协作团队正在执行"}</span>
-          </div>
-        ) : room && latestBatch && latestBatch.state !== "completed" ? (
-          <details className={`room-batch-state batch-${latestBatch.state}`} data-testid="room-batch-state" open={latestBatch.state === "running"}>
+        ) : room && latestBatch && !["completed", "running", "queued"].includes(latestBatch.state) ? (
+          <details className={`room-batch-state batch-${latestBatch.state}`} data-testid="room-batch-state">
             <summary>
               <span className="room-presence-dot" aria-hidden="true" />
               <strong>本轮状态：{latestBatch.state}</strong>

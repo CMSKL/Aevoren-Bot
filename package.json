@@ -1,7 +1,7 @@
 {
   "name": "aevoren-bot",
   "productName": "Aevoren Bot",
-  "version": "0.3.0-beta.16",
+  "version": "0.3.0-beta.17",
   "license": "Apache-2.0",
   "private": true,
   "description": "Aevoren Bot is a reliable local desktop workspace for persistent AI bots.",
@@ -53,7 +53,7 @@
     "verify": "pnpm validate && pnpm build && pnpm licenses:check && pnpm docs:check"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
     "croner": "10.0.1",
     "electron-updater": "6.8.9",
     "react": "19.3.0",

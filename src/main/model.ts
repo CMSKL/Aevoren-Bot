@@ -44,6 +44,8 @@ export type RoomContinuationDecision =
 export type ModelToolResponder = {
   respond?(content: string): Promise<void>;
   providerToolName?: string;
+  /** Native MCP request cancellation, in addition to the owning Runtime's signal. */
+  toolSignal?: AbortSignal;
 };
 
 export type ModelEvent =
@@ -68,6 +70,8 @@ export type ModelEvent =
   | { type: "completed"; finishReason: string };
 
 export type ModelRunContext = {
+  supportedToolNames?: readonly string[];
+  requestedWritePaths?: readonly string[];
   executorBotId: string;
   executionKey: string;
   roomId?: string;
@@ -777,7 +781,7 @@ export function structuredModelToolDefinitions(context?: ModelRunContext): Struc
           type: "object", additionalProperties: false,
           properties: {
             workspaceId: { type: "string", enum: workspaces.filter((workspace) => workspace.writeEnabled).map(({ id }) => id) },
-            path: { type: "string", minLength: 1, maxLength: 1_024, pattern: "\\.(?:md|csv)$" },
+            path: { type: "string", minLength: 1, maxLength: 1_024, pattern: "\\.(?:md|csv)$", ...(context?.requestedWritePaths?.length ? { enum: context.requestedWritePaths } : {}) },
             content: { type: "string", minLength: 1, maxLength: 262_144 },
           },
           required: ["workspaceId", "path", "content"],
@@ -838,7 +842,9 @@ export function structuredModelToolDefinitions(context?: ModelRunContext): Struc
       },
     });
   }
-  return definitions;
+  return context?.supportedToolNames
+    ? definitions.filter((definition) => context.supportedToolNames!.includes(definition.name))
+    : definitions;
 }
 
 export function parseStructuredModelToolCall(
@@ -877,6 +883,9 @@ export function parseStructuredModelToolCall(
   )[0];
   if (!event || !["workspace-tool", "network-tool", "mcp-tool", "device-tool", "computation-tool", "project-tool"].includes(event.type)) {
     throw new AevorenBotError("MODEL_NETWORK_TOOL_INVALID");
+  }
+  if (event.type === "workspace-tool" && event.tool.kind === "workspace-write" && context?.requestedWritePaths?.length && !context.requestedWritePaths.includes(event.tool.path)) {
+    throw new AevorenBotError("MODEL_WORKSPACE_TOOL_INVALID");
   }
   return event as Extract<ModelEvent, { type: "workspace-tool" | "network-tool" | "mcp-tool" | "device-tool" | "computation-tool" | "project-tool" }>;
 }

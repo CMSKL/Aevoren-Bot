@@ -55,11 +55,14 @@ test("renders Markdown during streaming and keeps the same semantic structure wh
 
     const assistant = page.locator("article.message-assistant");
     await expect(assistant).toHaveAttribute("data-status", "streaming");
+    await expect(page.getByRole("button", { name: "停止回复", exact: true })).toBeVisible();
+    await expect(page.locator(".streaming-indicator, .composer-wrap .send-state:not(.runtime-stale)")).toHaveCount(0);
     await expect(assistant.locator("h2", { hasText: "背景" })).toBeVisible();
     await expect(assistant).toHaveAttribute("data-status", "streaming");
     await expect(assistant).not.toContainText("## 背景");
 
     await expect(assistant).toHaveAttribute("data-status", "completed");
+    await expect(page.getByRole("button", { name: /收起详细内容|展开证据与完整过程/u })).toHaveCount(0);
     await expect(assistant.locator("h2")).toHaveCount(10);
     await expect(assistant.locator("ol > li")).toHaveCount(2);
     await expect(assistant.locator("h2", { hasText: "背景" })).toHaveCount(1);

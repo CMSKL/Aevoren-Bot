@@ -14,6 +14,7 @@ import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { ElectronUpdateAdapter } from "./electron-update-adapter";
+import { UpdateLogger } from "./update-logger";
 import { parsePendingUpdateReceipt, resolveUpdateChannel, UpdateService } from "./update-service";
 import { ProviderService } from "./provider-service";
 import { CapabilityRegistry } from "./capability-registry";
@@ -326,7 +327,7 @@ app.whenReady().then(async () => {
     currentVersion: app.getVersion(),
     disabled: process.env.AEVOREN_BOT_DISABLE_UPDATES === "1",
   });
-  updateService = new UpdateService(new ElectronUpdateAdapter(), {
+  updateService = new UpdateService(new ElectronUpdateAdapter(new UpdateLogger(join(app.getPath("userData"), "logs", "updates.log"))), {
     currentVersion: app.getVersion(),
     channel: updateChannel,
     intervalMs: generalSettings.getConfiguration().updateCheckIntervalMinutes * 60 * 1_000,
