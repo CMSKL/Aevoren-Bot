@@ -280,26 +280,3 @@ export const ArtifactCard = memo(function ArtifactCard({
     </article>
   );
 });
-
-function summaryLines(body: string): string[] {
-  const lines = body.split(/\r?\n/gu).map((line) => line.replace(/^#{1,6}\s+|^[-*]\s+/u, "").trim()).filter(Boolean);
-  const preferred = lines.filter((line) => /结论|交付|下一步|当前状态|推荐|汇总|完成/iu.test(line));
-  const selected = preferred.length > 0 ? preferred : lines;
-  return selected.slice(0, 3).map((line) => line.length > 140 ? `${line.slice(0, 139)}…` : line);
-}
-
-export const LongMessageView = memo(function LongMessageView({ body, collapsible }: { body: string; collapsible: boolean }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false);
-  if (!collapsible || expanded) {
-    return <div className="long-message-view"><AssistantMarkdown body={body} />{collapsible ? <button type="button" className="text-button long-message-toggle" onClick={() => setExpanded(false)}>收起详细内容</button> : null}</div>;
-  }
-  return (
-    <div className="long-message-view collapsed">
-      <div className="message-priority-summary">
-        <strong>结论、交付物与下一步</strong>
-        <ul>{summaryLines(body).map((line, index) => <li key={`${index}:${line}`}>{line}</li>)}</ul>
-      </div>
-      <button type="button" className="secondary-button long-message-toggle" aria-expanded="false" onClick={() => setExpanded(true)}>展开证据与完整过程</button>
-    </div>
-  );
-});

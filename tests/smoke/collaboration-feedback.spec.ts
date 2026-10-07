@@ -140,11 +140,10 @@ test("shows contextual approval, failure recovery, and artifact evidence without
     await page.screenshot({ path: join(tmpdir(), "aevoren-artifact-shelf.png") });
     await page.getByRole("button", { name: "关闭会话成果" }).last().click();
     await page.getByRole("region", { name: "交付物状态" }).getByRole("button", { name: "打开文件位置" }).click();
-    await expect(page.getByText("结论、交付物与下一步", { exact: true })).toBeVisible();
-    await expect(page.getByText(/UNIQUE_LONG_DETAIL_END/u)).toHaveCount(0);
-    await page.getByRole("button", { name: "展开证据与完整过程" }).click();
+    await expect(page.getByText("结论、交付物与下一步", { exact: true })).toHaveCount(0);
     await expect(page.getByText(/UNIQUE_LONG_DETAIL_END/u)).toBeVisible();
-    await page.getByRole("button", { name: "收起详细内容" }).click();
+    await expect(page.getByRole("button", { name: "展开证据与完整过程" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "收起详细内容" })).toHaveCount(0);
 
     await approvalCard.getByRole("radio", { name: /证据链设计/u }).check();
     await expect(approvalCard).toContainText("证据链设计");

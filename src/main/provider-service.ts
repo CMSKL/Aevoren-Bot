@@ -13,6 +13,7 @@ import { OpenAiCompatibleProvider, type ModelProvider } from "./model";
 import type { SecretCodec } from "./settings";
 import { CodexCliProvider, inspectCodexCli, inspectCodexCliFallback, type CodexCliInspection } from "./providers/codex-cli";
 import { ClaudeCliProvider, inspectClaudeCli, type ClaudeCliInspection } from "./providers/claude-cli";
+import { CLAUDE_HOST_TOOL_NAMES } from "./providers/claude-tool-bridge";
 import { OllamaCliProvider, inspectOllamaCli, type OllamaCliInspection } from "./providers/ollama-cli";
 import { AcpCliProvider, acpSpec, inspectAcpCli, type AcpCliInspection, type AcpCliSpec } from "./providers/acp-cli";
 import { findCliCandidates, resolveCliPath } from "./providers/cli-utils";
@@ -307,7 +308,11 @@ class CodexCliRuntime implements RuntimeProviderInstance {
 
 class ClaudeCliRuntime implements RuntimeProviderInstance {
   readonly driverKind = "claude-cli" as const;
-  readonly capabilities = CLAUDE_CAPABILITIES;
+  get capabilities(): ProviderCapabilities {
+    return this.configuration.enabled && this.inspection?.authenticated && this.inspection.hostToolsSupported && this.connectionError === null
+      ? { ...CLAUDE_CAPABILITIES, workspaceTools: true, networkTools: true, supportedToolNames: CLAUDE_HOST_TOOL_NAMES }
+      : CLAUDE_CAPABILITIES;
+  }
   readonly route = "claude-cli" as const;
   private inspection: ClaudeCliInspection | null = null;
   private inspectionError: string | null = null;
@@ -364,7 +369,7 @@ class ClaudeCliRuntime implements RuntimeProviderInstance {
     if (!path || (this.inspectOnDescribe && !this.inspection?.authenticated)) {
       throw new AevorenBotError("MODEL_PROVIDER_UNAVAILABLE", undefined, false, { reason: "authentication" });
     }
-    return new ClaudeCliProvider(path, modelId, join(this.workspaceDirectory, this.id));
+    return new ClaudeCliProvider(path, modelId, join(this.workspaceDirectory, this.id), this.inspection?.hostToolsSupported ?? false);
   }
 
   async testConnection(): Promise<void> {

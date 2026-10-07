@@ -503,7 +503,9 @@ export class McpService {
 
   private hasOAuthTokens(id: string): boolean {
     try {
-      return Boolean(this.readOAuth(id).tokens?.access_token);
+      const record = this.readOAuth(id);
+      return Boolean(record.tokens?.access_token && record.tokens.issuer?.trim() &&
+        (!record.clientInformation || record.clientInformation.issuer?.trim()));
     } catch {
       return false;
     }

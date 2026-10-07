@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.17] - 2026-10-07
+
+### Added
+
+- Compatible API-authenticated Claude Code CLIs can use six scoped Aevoren host tools through a per-Runtime authenticated MCP bridge: Workspace list, read, search, create-only write, web search and page fetch. Existing approvals and the Tool Journal remain authoritative; subscription-only OAuth tool mode is not included.
+- Bounded, redacted local update diagnostics support troubleshooting without exposing raw errors in the interface.
+
+### Changed
+
+- Long replies display their full Markdown without an extra summary/folding action. Routine connection and generation labels no longer duplicate the existing stop control; errors, approvals and artifacts remain available.
+- Explicit research requests require successful search/fetch evidence; requested artifact paths are enforced and requested file readback must match the saved SHA-256.
+
+### Fixed
+
+- Update notice actions are excluded from draggable title-bar regions, share safe action handling with Settings, and prevent duplicate requests or restart after a failed save.
+- Native tool refusals, failures and duplicate-write guards return results to the CLI instead of leaving it waiting indefinitely. Repeated MCP request IDs reuse the original result and cannot change arguments or cross Runtime boundaries.
+- Page-fetch journal metadata includes the actual source URL and retrieval timestamp for verifiable report provenance.
+- Upgraded the MCP SDK to 1.31.0 and source-map-js to 1.2.2 to address GHSA-6qxp-vccf-f47h and GHSA-68fv-2mgg-jv7q. MCP OAuth records retain their issuer binding; older unbound credentials stay encrypted but require explicit reauthorization before use.
+
 ## [0.3.0-beta.11] - 2026-09-24
 
 ### Added

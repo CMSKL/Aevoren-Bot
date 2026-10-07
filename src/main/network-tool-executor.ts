@@ -444,6 +444,7 @@ export class NetworkToolExecutor {
         metadata: {
           kind: tool.kind,
           provider: url.hostname,
+          url: source.url,
           retrievedAt,
           title: page.title,
           publishedAt: page.publishedAt,

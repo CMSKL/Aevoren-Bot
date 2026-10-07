@@ -295,6 +295,8 @@ export type DecisionJournalEntry = {
 };
 
 export type ProviderCapabilities = {
+  /** When specified, expose only these host tools; legacy adapters keep their existing set. */
+  supportedToolNames?: readonly string[];
   roomOwnerSelection: boolean;
   handoff: boolean;
   workspaceTools: boolean;

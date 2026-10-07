@@ -1,10 +1,15 @@
 import electronUpdater, { type ProgressInfo, type UpdateInfo } from "electron-updater";
 import type { UpdateProgress } from "@shared/contracts";
 import type { UpdateAdapter, UpdateAdapterConfiguration, UpdateCheckResultLike, UpdateInfoLike } from "./update-service";
+import type { UpdateLogger } from "./update-logger";
 
 const { autoUpdater } = electronUpdater;
 
 export class ElectronUpdateAdapter implements UpdateAdapter {
+  constructor(private readonly logger: UpdateLogger) {
+    autoUpdater.logger = logger;
+  }
+
   configure(configuration: UpdateAdapterConfiguration): void {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
@@ -13,7 +18,6 @@ export class ElectronUpdateAdapter implements UpdateAdapter {
     autoUpdater.channel = configuration.channel;
     autoUpdater.allowPrerelease = configuration.allowPrerelease;
     autoUpdater.allowDowngrade = false;
-    autoUpdater.logger = null;
   }
 
   onChecking(listener: () => void): void {
@@ -37,7 +41,10 @@ export class ElectronUpdateAdapter implements UpdateAdapter {
   }
 
   onError(listener: (error: unknown) => void): void {
-    autoUpdater.on("error", listener);
+    autoUpdater.on("error", (error: unknown) => {
+      this.logger.error(error);
+      listener(error);
+    });
   }
 
   async checkForUpdates(): Promise<UpdateCheckResultLike | null> {
@@ -51,6 +58,11 @@ export class ElectronUpdateAdapter implements UpdateAdapter {
   }
 
   quitAndInstall(): void {
-    autoUpdater.quitAndInstall(false, true);
+    try {
+      autoUpdater.quitAndInstall(false, true);
+    } catch (error) {
+      this.logger.error(error);
+      throw error;
+    }
   }
 }

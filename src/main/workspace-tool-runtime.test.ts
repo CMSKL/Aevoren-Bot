@@ -548,6 +548,70 @@ describe("Workspace tool Runtime wiring", () => {
     expect(repository.listToolInvocations(created.session.id)).toEqual([]);
   });
 
+  it("requires real search and fetch evidence for an explicit research task but preserves local-only planning", async () => {
+    for (const request of ["你帮我去调研一下个人网站如何做呢", "请调研个人网站如何做", "只规划一下调研方案，不联网"]) {
+      const repository = new AppRepository(":memory:");
+      repositories.push(repository);
+      const created = repository.createBot();
+      const provider: ModelProvider = {
+        async *run() {
+          yield { type: "started", requestId: "text-only-research" };
+          yield { type: "delta", text: "以下是基于训练知识的一般建议，未执行实际检索。" };
+          yield { type: "completed", finishReason: "stop" };
+        },
+        testConnection: async () => {},
+      };
+      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: request });
+      const planning = request.includes("不联网");
+      await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe(planning ? "completed" : "failed"));
+      if (!planning) expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TASK_REQUIREMENTS_UNMET");
+      expect(repository.listToolInvocations(created.session.id)).toEqual([]);
+    }
+  });
+
+  it("answers a duplicate native write without hanging and requires complete hash-matching readback", async () => {
+    for (const mode of ["complete", "missing", "truncated"] as const) {
+      const repository = new AppRepository(":memory:");
+      repositories.push(repository);
+      const root = directory();
+      mkdirSync(join(root, "01-inbox"));
+      const service = new WorkspaceService(repository);
+      const registered = await service.registerRoot(root);
+      repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: true });
+      const created = repository.createBot(registered.project.id);
+      const responses: string[] = [];
+      const provider: ModelProvider = {
+        async *run(_messages, signal) {
+          yield { type: "started", requestId: `native-write-${mode}` };
+          for (const content of ["# Public report\nVerified output.\n", "Must not overwrite"]) {
+            yield {
+              type: "workspace-tool", toolCallId: `native-write-${responses.length}`, providerToolName: "workspace_write", toolSignal: signal,
+              tool: { kind: "workspace-write", workspaceId: registered.workspace.id, path: "01-inbox/报告.md", content },
+              respond: async (value) => { responses.push(value); },
+            };
+          }
+          expect(responses[1]).toContain("WORKSPACE_ARTIFACT_ALREADY_EXISTS");
+          if (mode !== "missing") yield {
+            type: "workspace-tool", toolCallId: "native-readback", providerToolName: "workspace_read", toolSignal: signal,
+            tool: { kind: "workspace-read", workspaceId: registered.workspace.id, path: "01-inbox/报告.md", maxBytes: mode === "truncated" ? 8 : 4096 },
+            respond: async (value) => { responses.push(value); },
+          };
+          yield { type: "delta", text: "报告已由真实文件工具保存。" };
+          yield { type: "completed", finishReason: "stop" };
+        },
+        testConnection: async () => {},
+      };
+      const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
+      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+      const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "保存为 01-inbox/报告.md，保存后读取真实文件确认完整。" });
+      await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe(mode === "complete" ? "completed" : "failed"));
+      expect(repository.listToolInvocations(created.session.id).filter(tool => tool.toolKind === "workspace-write" && tool.state === "succeeded")).toHaveLength(1);
+      expect(readFileSync(join(root, "01-inbox", "报告.md"), "utf8")).toBe("# Public report\nVerified output.\n");
+      if (mode !== "complete") expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TASK_REQUIREMENTS_UNMET");
+    }
+  });
+
   it("rejects CSV metrics and length claims without their exact deterministic evidence tools", async () => {
     for (const fixture of [
       { request: "分析 metrics.csv 的浏览和互动指标", body: "总浏览 7700，总互动 85，最高互动率 4%。", code: "DATA_EVIDENCE_REQUIRED" },

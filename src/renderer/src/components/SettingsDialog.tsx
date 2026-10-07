@@ -6,6 +6,7 @@ import { CapabilitiesSettingsPanel } from "./CapabilitiesSettingsPanel";
 import { McpSettingsPanel } from "./McpSettingsPanel";
 import { ScopedMemorySettingsPanel } from "./ScopedMemorySettingsPanel";
 import { RoutinesSettingsPanel } from "./RoutinesSettingsPanel";
+import type { UpdateAction } from "../update-actions";
 
 type SettingsSection = "general" | "capabilities" | "memory" | "model" | "mcp" | "routines" | "updates";
 
@@ -18,6 +19,8 @@ type SettingsDialogProps = {
   autoApprovePublicReadTools: boolean;
   updateCheckIntervalMinutes: UpdateCheckIntervalMinutes;
   updateState: UpdateState | null;
+  updateActionPending?: UpdateAction | null;
+  updateActionError?: string | null;
   restartBlocked: boolean;
   activeBotId: string | null;
   onClose(): void;
@@ -67,6 +70,8 @@ export function SettingsDialog({
   autoApprovePublicReadTools,
   updateCheckIntervalMinutes,
   updateState,
+  updateActionPending,
+  updateActionError,
   restartBlocked,
   activeBotId,
   onClose,
@@ -148,7 +153,7 @@ export function SettingsDialog({
   }
 
   const progress = Math.round(updateState?.progress?.percent ?? 0);
-  const updateBusy = updateState ? ["checking", "available", "downloading", "installing"].includes(updateState.status) : true;
+  const updateBusy = Boolean(updateActionPending) || (updateState ? ["checking", "available", "downloading", "installing"].includes(updateState.status) : true);
 
   return (
     <div className="modal-backdrop settings-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
@@ -284,12 +289,14 @@ export function SettingsDialog({
               <div className="settings-update-progress" role="status" aria-label={`更新下载进度 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
             ) : null}
             {updateState?.status === "disabled" ? <p className="settings-security-note">未打包的开发版本不会连接更新服务器，也不会自动下载。</p> : null}
-            {updateState?.error ? <div className="dialog-error" role="alert">{updateState.error.safeMessage}</div> : null}
+            {updateActionError || updateState?.error ? <div className="dialog-error" role="alert">{updateActionError ?? updateState?.error?.safeMessage}</div> : null}
             <div className="settings-panel-actions">
-              {updateState?.status === "downloaded" ? (
+              {updateActionPending ? (
+                <button className="primary-button" type="button" disabled aria-busy="true">{updateActionPending === "install" ? "准备更新中…" : "检查中…"}</button>
+              ) : updateState?.status === "downloaded" ? (
                 <button className="primary-button" type="button" disabled={restartBlocked} onClick={onInstallUpdate}>{restartBlocked ? "任务完成后可重启" : "重启并更新"}</button>
               ) : updateState?.status === "error" || updateState?.status === "install-interrupted" ? (
-                <button className="primary-button" type="button" onClick={onRetryUpdate}>重试</button>
+                <button className="primary-button" type="button" disabled={updateBusy} onClick={onRetryUpdate}>重试</button>
               ) : (
                 <button className="secondary-button" type="button" disabled={updateBusy || updateState?.status === "disabled"} onClick={onCheckUpdate}>{updateState?.status === "checking" ? "检查中…" : "检查更新"}</button>
               )}

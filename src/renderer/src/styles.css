@@ -2065,8 +2065,7 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.message-user .entry-note,
-.message-user .streaming-indicator {
+.message-user .entry-note {
   text-align: right;
 }
 
@@ -2248,21 +2247,10 @@ textarea:focus-visible {
   font-style: italic;
 }
 
-.streaming-indicator,
 .entry-note {
   margin-top: 6px;
   color: var(--text-muted);
   font-size: 11px;
-}
-
-.streaming-indicator span {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-left: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: pulse 1s ease-in-out infinite;
 }
 
 .entry-note.error,
@@ -2319,8 +2307,7 @@ textarea:focus-visible {
 
 .artifact-status-bar,
 .run-status-card,
-.handoff-event-card,
-.message-priority-summary {
+.handoff-event-card {
   margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -2568,32 +2555,6 @@ textarea:focus-visible {
   margin-top: 5px;
 }
 
-.long-message-view.collapsed {
-  min-width: min(540px, 100%);
-}
-
-.message-priority-summary {
-  margin: 0;
-  padding: 10px 11px;
-  background: color-mix(in srgb, var(--success) 4%, var(--panel-bg));
-}
-
-.message-priority-summary > strong {
-  font-size: 11px;
-}
-
-.message-priority-summary ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.long-message-toggle {
-  margin: 8px 0 0;
-}
-
 .text-button {
   margin-left: 10px;
   padding: 0;
@@ -2730,22 +2691,6 @@ textarea:focus-visible {
   font-size: 9px;
 }
 
-.room-run-indicator {
-  display: flex;
-  width: min(720px, 100%);
-  min-height: 28px;
-  align-items: center;
-  gap: 8px;
-  margin: 0 auto 5px;
-  padding: 4px 7px;
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.room-run-indicator .room-presence-dot {
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
 .room-batch-state > summary {
   display: flex;
   min-height: 28px;
@@ -2787,10 +2732,6 @@ textarea:focus-visible {
   flex: 0 0 7px;
   border-radius: 50%;
   background: var(--success);
-}
-
-.batch-running .room-presence-dot {
-  animation: pulse 1.2s ease-in-out infinite;
 }
 
 .room-batch-chevron {
@@ -5750,6 +5691,7 @@ textarea:focus-visible {
 }
 
 .update-status-notice {
+  -webkit-app-region: no-drag;
   position: fixed;
   z-index: 80;
   top: 18px;
@@ -5793,6 +5735,7 @@ textarea:focus-visible {
 }
 
 .update-action {
+  -webkit-app-region: no-drag;
   min-height: 30px;
   padding: 0 12px;
   color: var(--accent-contrast);
@@ -5936,11 +5879,6 @@ textarea:focus-visible {
 
 :root[data-theme="dark"] .settings-dialog {
   border-color: var(--border-strong);
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 0.3; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1); }
 }
 
 @media (prefers-reduced-motion: reduce) {

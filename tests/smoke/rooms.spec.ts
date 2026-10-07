@@ -163,8 +163,8 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
     await page.getByLabel("消息").fill("请依次给出分析。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(page.locator(".room-run-indicator")).toBeVisible();
-    await expect(page.locator(".room-run-indicator")).toContainText("正在执行");
+    await expect(page.getByRole("button", { name: "停止群聊回复" })).toBeVisible();
+    await expect(page.locator(".room-run-indicator")).toHaveCount(0);
     await page.locator(".composer-wrap").screenshot({ path: "/tmp/aevoren-room-composer-running.png" });
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
     await expect(page.locator(".speaker-link")).toHaveText(["研究员"]);
@@ -444,7 +444,7 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     await mentionEveryone(launched.page);
     await launched.page.getByLabel("消息").fill("重载测试");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
+    await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible();
     const scopeErrors = await launched.page.evaluate(async () => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       const rooms = await api.rooms.list();
@@ -460,12 +460,12 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
       { ok: false, error: { code: "RUNTIME_CONTROL_SCOPE_INVALID", domain: "runtime", retryable: false, safeMessage: "群聊运行必须使用群聊控制。" } },
     ]);
     for (let reload = 0; reload < 5; reload += 1) {
-      await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
+      await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible();
       await launched.page.reload();
       await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible({ timeout: 2_000 });
     }
     for (let reload = 0; reload < 5; reload += 1) {
-      await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
+      await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible();
       await launched.page.reload();
       await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible({ timeout: 2_000 });
     }
@@ -474,7 +474,7 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     await mentionEveryone(launched.page);
     await launched.page.getByLabel("消息").fill("崩溃恢复测试");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
+    await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible();
     const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     await forceKill(application);
     application = undefined;
@@ -604,7 +604,7 @@ test("settles Cancel then SIGKILL without leaving a running Turn or auto-resumin
     await createRoom(launched.page, ["取消甲", "取消乙"]);
     await launched.page.getByLabel("消息").fill("取消后立即崩溃");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
+    await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible();
     await launched.page.getByRole("button", { name: "停止群聊回复" }).click();
     await forceKill(application);
     application = undefined;
@@ -641,7 +641,7 @@ test("preserves Room user-cancel intent through a normal close when the Provider
     await createRoom(launched.page, ["关闭取消甲", "关闭取消乙"]);
     await launched.page.getByLabel("消息").fill("取消后正常关闭");
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(launched.page.locator(".room-run-indicator")).toBeVisible();
+    await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible();
     await launched.page.getByRole("button", { name: "停止群聊回复" }).click();
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;

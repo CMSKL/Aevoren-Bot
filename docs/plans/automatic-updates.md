@@ -19,7 +19,8 @@ macOS 的 Squirrel.Mac 和 Windows 的 NSIS 更新器会先下载并验证更新
 - 更新下载完成前不能调用安装；运行中的 Direct/Room 任务会禁用“重启更新”。
 - Profile 在请求重启前先 Flush；保存失败时不会发起重启。
 - 现有 SQLite Schema 需要升级时，Migration 前先生成经过 `PRAGMA integrity_check` 的一致性备份及版本元数据；备份失败时拒绝迁移。
-- 错误状态只暴露稳定错误码和安全文案，不向 Renderer 或日志泄露 feed URL、令牌或原始异常。
+- 错误状态只向 Renderer 暴露稳定错误码和安全文案。更新器诊断写入本地用户数据目录 `logs/updates.log`，移除 URL、凭据和本机路径，保留错误码与检查/下载/安装信息；日志达到约 1 MB 时轮换为 `updates.log.previous`，日志写入失败不会阻止更新。
+- 手动检查与重试期间持续展示“检查中”；更新操作共用防重复提交保护，IPC 失败及重启前资料保存失败都有安全提示。后台定期检查仍保持安静。顶部通知与按钮显式排除窗口拖拽区域。
 
 ## 渠道
 

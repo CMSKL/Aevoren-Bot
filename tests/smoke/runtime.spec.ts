@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import type { AevorenBotApi } from "@shared/contracts";
+import type { AevorenBotApi, SessionLiveStateName } from "@shared/contracts";
 
 function environment(userDataDir: string, overrides: Record<string, string> = {}): Record<string, string> {
   const inherited = Object.fromEntries(
@@ -37,6 +37,21 @@ async function createAndSend(page: Page, text: string): Promise<void> {
   await page.getByRole("button", { name: "发送", exact: true }).click();
 }
 
+async function waitForLiveState(page: Page, state: SessionLiveStateName): Promise<void> {
+  await expect.poll(() => page.evaluate(async () => {
+    const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+    const bots = await api.bots.list();
+    if (!bots.ok || !bots.data[0]) throw new Error("Bot missing");
+    const session = await api.sessions.getMain(bots.data[0].id);
+    if (!session.ok) throw new Error("Session missing");
+    const snapshot = await api.runtime.getSessionSnapshot(session.data.id);
+    if (!snapshot.ok) throw new Error("Snapshot unavailable");
+    return snapshot.data.liveState.state;
+  })).toBe(state);
+  await expect(page.getByRole("button", { name: "停止回复" })).toBeVisible();
+  await expect(page.locator(".composer-wrap .send-state:not(.runtime-stale), .streaming-indicator")).toHaveCount(0);
+}
+
 async function requestWindowClose(application: ElectronApplication, timeoutMs = 3_000): Promise<boolean> {
   const process = application.process();
   const exited = new Promise<boolean>((resolve) => process.once("exit", () => resolve(true)));
@@ -57,21 +72,21 @@ async function forceKill(application: ElectronApplication): Promise<void> {
 
 test("reattaches the active runtime after renderer reloads in three phases", async () => {
   test.setTimeout(120_000);
-  const phases: Array<{ name: string; overrides: Record<string, string>; stateText: string }> = [
+  const phases: Array<{ name: string; overrides: Record<string, string>; state: SessionLiveStateName }> = [
     {
       name: "dispatching",
       overrides: { AEVOREN_BOT_FAKE_START_DELAY_MS: "500", AEVOREN_BOT_FAKE_DELAY_MS: "80" },
-      stateText: "正在连接模型",
+      state: "starting",
     },
     {
       name: "running",
       overrides: { AEVOREN_BOT_FAKE_DELAY_MS: "500" },
-      stateText: "模型已接受，正在运行",
+      state: "running",
     },
     {
       name: "streaming",
       overrides: { AEVOREN_BOT_FAKE_DELAY_MS: "250" },
-      stateText: "正在生成回复",
+      state: "composing",
     },
   ];
 
@@ -84,7 +99,7 @@ test("reattaches the active runtime after renderer reloads in three phases", asy
         application = launched.application;
         const page = launched.page;
         await createAndSend(page, `reload ${phase.name} ${attempt}`);
-        await expect(page.getByText(phase.stateText, { exact: true })).toBeVisible();
+        await waitForLiveState(page, phase.state);
         await page.reload();
         await expect(page.getByRole("button", { name: "停止回复" })).toBeVisible({ timeout: 2_000 });
         await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1, {
@@ -127,7 +142,7 @@ test("regenerates a failed accepted run without duplicating its user entry", asy
     await expect(page.locator('article.message-assistant[data-status="failed"]')).toHaveCount(1);
     await expect(page.getByRole("button", { name: "重试此步骤" })).toHaveCount(1);
     await page.getByRole("button", { name: "重试此步骤" }).click();
-    await expect(page.getByText("正在重新生成", { exact: true })).toBeVisible();
+    await waitForLiveState(page, "retrying");
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
     await application.close();
     application = undefined;
@@ -154,7 +169,7 @@ test("closes a streaming runtime as interrupted and does not restart it", async 
     let launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "500" });
     application = launched.application;
     await createAndSend(launched.page, "close during streaming");
-    await expect(launched.page.getByText("正在生成回复", { exact: true })).toBeVisible();
+    await waitForLiveState(launched.page, "composing");
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
 
@@ -183,12 +198,12 @@ test("recovers running, streaming and cancel-requested runs after SIGKILL", asyn
   test.setTimeout(45_000);
   const phases: Array<{
     name: string;
-    waitText: string;
+    state: SessionLiveStateName;
     cancelBeforeKill: boolean;
   }> = [
-    { name: "running", waitText: "模型已接受，正在运行", cancelBeforeKill: false },
-    { name: "streaming", waitText: "正在生成回复", cancelBeforeKill: false },
-    { name: "cancel-requested", waitText: "正在取消", cancelBeforeKill: true },
+    { name: "running", state: "running", cancelBeforeKill: false },
+    { name: "streaming", state: "composing", cancelBeforeKill: false },
+    { name: "cancel-requested", state: "cancelling", cancelBeforeKill: true },
   ];
 
   for (const phase of phases) {
@@ -202,10 +217,10 @@ test("recovers running, streaming and cancel-requested runs after SIGKILL", asyn
       application = launched.application;
       await createAndSend(launched.page, `SIGKILL ${phase.name}`);
       if (phase.cancelBeforeKill) {
-        await expect(launched.page.getByText("模型已接受，正在运行", { exact: true })).toBeVisible();
+        await waitForLiveState(launched.page, "running");
         await launched.page.getByRole("button", { name: "停止回复" }).click();
       }
-      await expect(launched.page.getByText(phase.waitText, { exact: true })).toBeVisible();
+      await waitForLiveState(launched.page, phase.state);
       await forceKill(application);
       application = undefined;
 
@@ -238,7 +253,7 @@ test("recovers a Direct pre-start SIGKILL as unknown without offering a safe ret
     let launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_START_DELAY_MS: "20000" });
     application = launched.application;
     await createAndSend(launched.page, "crash after Direct dispatch starts");
-    await expect(launched.page.getByText("正在连接模型", { exact: true })).toBeVisible();
+    await waitForLiveState(launched.page, "starting");
 
     const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     let database = new DatabaseSync(databasePath, { readOnly: true });

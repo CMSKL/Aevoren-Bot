@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { UpdateState } from "@shared/contracts";
 import { UpdateStatusNotice } from "./UpdateStatusNotice";
+import type { UpdateAction } from "../update-actions";
 
 const base: UpdateState = {
   channel: "stable",
@@ -13,9 +14,9 @@ const base: UpdateState = {
   error: null,
 };
 
-function render(state: UpdateState, restartBlocked = false): string {
+function render(state: UpdateState, restartBlocked = false, actionPending?: UpdateAction, actionError?: string): string {
   return renderToStaticMarkup(
-    <UpdateStatusNotice state={state} restartBlocked={restartBlocked} onRetry={() => undefined} onInstall={() => undefined} />,
+    <UpdateStatusNotice state={state} restartBlocked={restartBlocked} actionPending={actionPending} actionError={actionError} onRetry={() => undefined} onInstall={() => undefined} />,
   );
 }
 
@@ -63,5 +64,35 @@ describe("UpdateStatusNotice", () => {
     expect(html).toContain("上次更新未完成");
     expect(html).toContain("重新下载");
     expect(html).not.toContain("已更新至");
+  });
+
+  it("keeps manual checking visible and prevents duplicate actions", () => {
+    const html = render({ ...base, status: "checking" }, false, "retry");
+    expect(html).toContain("正在检查更新");
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain("disabled");
+    expect(html).not.toContain("自动更新失败");
+  });
+
+  it("keeps real download progress visible while a manual check awaits download", () => {
+    const html = render({ ...base, status: "downloading", availableVersion: "1.1.0", progress: { percent: 42, bytesPerSecond: 10, transferred: 42, total: 100 } }, false, "retry");
+    expect(html).toContain("42%");
+    expect(html).not.toContain("检查中");
+    expect(render({ ...base, status: "installing" }, false, "install")).toContain("正在重启并安装更新");
+  });
+
+  it("explains that restart is waiting for saved data", () => {
+    const html = render({ ...base, status: "downloaded", availableVersion: "1.1.0" }, false, "install");
+    expect(html).toContain("正在准备重启更新");
+    expect(html).toContain("正在保存资料");
+    expect(html).toContain("disabled");
+  });
+
+  it("preserves the ready update and displays a failed save", () => {
+    const html = render({ ...base, status: "downloaded", availableVersion: "1.1.0" }, false, undefined, "资料未能保存，请先保存后再重启更新。");
+    expect(html).toContain("v1.1.0 已准备好");
+    expect(html).toContain("资料未能保存");
+    expect(html).toContain("重启更新");
+    expect(html).not.toContain("正在重启并安装更新");
   });
 });

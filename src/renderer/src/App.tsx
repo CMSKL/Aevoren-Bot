@@ -39,6 +39,7 @@ import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { UpdateStatusNotice } from "./components/UpdateStatusNotice";
 import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
 import { mergeRoomRuntimeEvents } from "./room-runtime-state";
+import { updateActionErrorMessage, type UpdateAction } from "./update-actions";
 
 function mergeToolInvocation(current: ToolInvocation[], next: ToolInvocation): ToolInvocation[] {
   const existing = current.find((item) => item.id === next.id);
@@ -99,6 +100,9 @@ export function App(): React.JSX.Element {
   const [creatingBot, setCreatingBot] = useState(false);
   const [createError, setCreateError] = useState<AppError | null>(null);
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
+  const [updateActionPending, setUpdateActionPending] = useState<UpdateAction | null>(null);
+  const [updateActionError, setUpdateActionError] = useState<string | null>(null);
+  const updateActionInFlightRef = useRef(false);
   const [appearanceTheme, setAppearanceTheme] = useState<AppearanceTheme>("system");
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
@@ -187,7 +191,10 @@ export function App(): React.JSX.Element {
       setToolInvocations((current) => mergeToolInvocation(current, event.invocation));
       setApprovalRequests((current) => mergePendingApproval(current, event.approval));
     });
-    const unsubscribeUpdate = window.aevorenBot.events.subscribeUpdate((event) => setUpdateState(event.state));
+    const unsubscribeUpdate = window.aevorenBot.events.subscribeUpdate((event) => {
+      setUpdateState(event.state);
+      if (["available", "downloading", "downloaded", "up-to-date", "updated"].includes(event.state.status)) setUpdateActionError(null);
+    });
     const unsubscribeClose = window.aevorenBot.app.subscribeBeforeClose(() => {
       void flushActive().then((saved) => window.aevorenBot.app.confirmClose(saved));
     });
@@ -933,6 +940,37 @@ export function App(): React.JSX.Element {
   const activeDirectRun = liveState !== null && ["starting", "running", "composing", "retrying", "cancelling"].includes(liveState.state);
   const updateRestartBlocked = submitting || activeRoomBatch || activeDirectRun;
 
+  async function runUpdateAction(action: UpdateAction): Promise<void> {
+    if (updateActionInFlightRef.current) return;
+    if (action === "install" && updateRestartBlocked) {
+      setUpdateActionError("当前任务完成后即可重启更新。");
+      return;
+    }
+    updateActionInFlightRef.current = true;
+    setUpdateActionPending(action);
+    setUpdateActionError(null);
+    try {
+      if (action === "install" && !(await flushActive())) {
+        setUpdateActionError("资料未能保存，请先保存后再重启更新。");
+        return;
+      }
+      const result = await window.aevorenBot.updates[action === "install" ? "installAndRestart" : action]();
+      if (result.ok) setUpdateState(result.data);
+      else {
+        setUpdateActionError(updateActionErrorMessage(action, result.error));
+        if (result.error.code === "UPDATE_NOT_READY") {
+          const current = await window.aevorenBot.updates.getState();
+          if (current.ok) setUpdateState(current.data);
+        }
+      }
+    } catch {
+      setUpdateActionError(updateActionErrorMessage(action));
+    } finally {
+      updateActionInFlightRef.current = false;
+      setUpdateActionPending(null);
+    }
+  }
+
   return (
     <div className={`app-shell${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
       <Sidebar
@@ -1159,6 +1197,8 @@ export function App(): React.JSX.Element {
         autoApprovePublicReadTools={autoApprovePublicReadTools}
         updateCheckIntervalMinutes={updateCheckIntervalMinutes}
         updateState={updateState}
+        updateActionPending={updateActionPending}
+        updateActionError={updateActionError}
         restartBlocked={updateRestartBlocked}
         activeBotId={selectedBot?.id ?? null}
         onClose={closeSettings}
@@ -1188,20 +1228,9 @@ export function App(): React.JSX.Element {
           setUpdateCheckIntervalMinutes(result.data.updateCheckIntervalMinutes);
           return null;
         }}
-        onCheckUpdate={() => void window.aevorenBot.updates.check().then((result) => {
-          if (result.ok) setUpdateState(result.data);
-        })}
-        onRetryUpdate={() => void window.aevorenBot.updates.retry().then((result) => {
-          if (result.ok) setUpdateState(result.data);
-        })}
-        onInstallUpdate={() => {
-          void flushActive().then((saved) => {
-            if (!saved) return;
-            void window.aevorenBot.updates.installAndRestart().then((result) => {
-              if (result.ok) setUpdateState(result.data);
-            });
-          });
-        }}
+        onCheckUpdate={() => void runUpdateAction("check")}
+        onRetryUpdate={() => void runUpdateAction("retry")}
+        onInstallUpdate={() => void runUpdateAction("install")}
       />
       <WorkspaceDialog
         open={workspacesOpen}
@@ -1235,17 +1264,10 @@ export function App(): React.JSX.Element {
       <UpdateStatusNotice
         state={updateState}
         restartBlocked={updateRestartBlocked}
-        onRetry={() => void window.aevorenBot.updates.retry().then((result) => {
-          if (result.ok) setUpdateState(result.data);
-        })}
-        onInstall={() => {
-          void flushActive().then((saved) => {
-            if (!saved) return;
-            void window.aevorenBot.updates.installAndRestart().then((result) => {
-              if (result.ok) setUpdateState(result.data);
-            });
-          });
-        }}
+        actionPending={updateActionPending}
+        actionError={updateActionError}
+        onRetry={() => void runUpdateAction("retry")}
+        onInstall={() => void runUpdateAction("install")}
       />
     </div>
   );

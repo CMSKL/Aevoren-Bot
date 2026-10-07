@@ -14,7 +14,9 @@ Only one active Room batch runs per Session. Wait for the current batch, cancel 
 
 ## MCP or Workspace tools are unavailable
 
-Confirm the server is enabled, the exact read-only tool was reviewed, and the current Bot has scope. Every tool call still requires one-time approval. Workspace tools cannot write files, run shell commands, or access paths outside selected roots.
+Confirm the server is enabled, the exact read-only tool was reviewed, and the current Bot has scope. Calls require approval unless the user explicitly enabled the corresponding bounded automatic approval. Workspace writes require a writable folder and can only create new Markdown/CSV files; shell commands, overwrite and paths outside selected roots remain blocked.
+
+For Claude Code, rescan after upgrading and check [host-tool prerequisites](CONFIGURATION.md#claude-code-host-tools). Older CLIs and subscription-only authentication do not advertise these tools. If the per-Runtime MCP connection fails, the task reports a recoverable error instead of claiming that text-only output is verified research.
 
 ## The update notice shows an error
 

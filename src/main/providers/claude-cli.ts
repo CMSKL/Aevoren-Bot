@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import type { ChatMessage, ModelEvent, ModelProvider } from "../model";
+import { structuredModelToolDefinitions, type ChatMessage, type ModelEvent, type ModelProvider, type ModelRunContext } from "../model";
 import { AevorenBotError } from "../errors";
+import { ClaudeToolBridge } from "./claude-tool-bridge";
 import { cliEnvironment, cliShellOptions, probeCliVersion, resolveCliPath } from "./cli-utils";
 
 const execFileAsync = promisify(execFile);
@@ -47,16 +48,18 @@ export type ClaudeCliInspection = {
   path: string;
   version: string;
   authenticated: boolean;
+  hostToolsSupported: boolean;
   models: {
     default: string;
     options: Array<{ id: string; label: string; provider?: string; custom?: boolean }>;
   };
 };
 
-function claudeEnvironment(): NodeJS.ProcessEnv {
+function claudeEnvironment(hostTools = false): NodeJS.ProcessEnv {
   const environment = cliEnvironment();
-  Object.assign(environment, claudeReusableEnvironment(environment));
-  environment.CLAUDE_CODE_SAFE_MODE = "1";
+  Object.assign(environment, claudeReusableEnvironment(process.env));
+  if (hostTools) delete environment.CLAUDE_CODE_SAFE_MODE;
+  else environment.CLAUDE_CODE_SAFE_MODE = "1";
   environment.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = "1";
   delete environment.CLAUDECODE;
   delete environment.CLAUDE_CODE_ENTRYPOINT;
@@ -64,17 +67,21 @@ function claudeEnvironment(): NodeJS.ProcessEnv {
 }
 
 function claudeReusableEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const reusable: NodeJS.ProcessEnv = {};
+  for (const key of REUSABLE_CLAUDE_ENVIRONMENT_KEYS) {
+    const value = environment[key];
+    if (typeof value === "string" && value.length <= 16_384) reusable[key] = value;
+  }
   const configDirectory = environment.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude");
   let settings: unknown;
   try {
     settings = JSON.parse(readFileSync(join(configDirectory, "settings.json"), "utf8"));
   } catch {
-    return {};
+    return reusable;
   }
-  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return {};
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return reusable;
   const source = (settings as { env?: unknown }).env;
-  if (!source || typeof source !== "object" || Array.isArray(source)) return {};
-  const reusable: NodeJS.ProcessEnv = {};
+  if (!source || typeof source !== "object" || Array.isArray(source)) return reusable;
   for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
     if (REUSABLE_CLAUDE_ENVIRONMENT_KEYS.has(key) && typeof value === "string" && value.length <= 16_384) {
       reusable[key] = value;
@@ -152,6 +159,16 @@ export async function inspectClaudeCli(cliCommand: string): Promise<ClaudeCliIns
     }
   })();
   const configured = configuredModels(environment);
+  // The verified isolated mode never reads OAuth/keychain credentials. Do not
+  // advertise host tools for subscription-only auth; its existing text path
+  // stays available until that separate authentication mode is verified.
+  const bareAuth = Boolean(environment.ANTHROPIC_API_KEY || environment.ANTHROPIC_AUTH_TOKEN);
+  const hostToolsSupported = await (async (): Promise<boolean> => {
+    try {
+      const result = await execFileAsync(probe.path, ["--help"], { env: environment, timeout: 8_000, maxBuffer: 256 * 1024, ...cliShellOptions(probe.path) });
+      return bareAuth && ["--bare", "--restricted", "--strict-mcp-config", "--allowedTools"].every((flag) => result.stdout.includes(flag));
+    } catch { return false; }
+  })();
   const options: Array<{ id: string; label: string; provider?: string; custom?: boolean }> = configured.length > 0
     ? configured
     : FALLBACK_CLAUDE_MODELS.options.map((model) => ({ ...model }));
@@ -166,6 +183,7 @@ export async function inspectClaudeCli(cliCommand: string): Promise<ClaudeCliIns
     path: probe.path,
     version: probe.version,
     authenticated,
+    hostToolsSupported,
     models: { default: preferred ?? options[0]?.id ?? "", options },
   };
 }
@@ -209,47 +227,69 @@ export class ClaudeCliProvider implements ModelProvider {
     private readonly cliCommand: string,
     private readonly modelId: string,
     private readonly cwd: string,
+    private readonly hostToolsSupported = false,
   ) {}
 
-  async *run(messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
+  async *run(messages: ChatMessage[], signal: AbortSignal, context?: ModelRunContext): AsyncIterable<ModelEvent> {
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     const path = resolveCliPath(this.cliCommand, cliEnvironment());
     if (!path || !this.modelId) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
     mkdirSync(this.cwd, { recursive: true, mode: 0o700 });
-    const environment = claudeEnvironment();
-    const child = spawn(path, [
+    const events = new ClaudeEventQueue();
+    let requestId: string = randomUUID();
+    let started = false;
+    const accept = (): void => {
+      if (started) return;
+      started = true;
+      events.push({ type: "started", requestId });
+    };
+    const bridge = this.hostToolsSupported && context && structuredModelToolDefinitions(context).length > 0
+      ? new ClaudeToolBridge(context, (event) => { accept(); events.push(event); }, signal)
+      : null;
+    try {
+      if (bridge) await bridge.start(this.cwd);
+    } catch {
+      await bridge?.close();
+      throw new AevorenBotError("MODEL_HOST_TOOL_UNAVAILABLE");
+    }
+    const environment = claudeEnvironment(Boolean(bridge));
+    const args = [
       "-p",
       "--output-format", "stream-json",
       "--include-partial-messages",
       "--verbose",
       "--model", this.modelId,
-      "--safe-mode",
+      bridge ? "--bare" : "--safe-mode",
       "--restricted",
       "--strict-mcp-config",
-      "--mcp-config", '{"mcpServers":{}}',
+      "--mcp-config", bridge?.configPath ?? '{"mcpServers":{}}',
       "--tools", "",
       "--permission-mode", "dontAsk",
       "--permission-prompts", "none",
       "--no-chrome",
       "--no-session-persistence",
       "--prompt-suggestions", "false",
-    ], {
+    ];
+    if (bridge) args.push("--allowedTools", ...bridge.toolNames);
+    const child = spawn(path, args, {
       cwd: this.cwd,
       env: environment,
       stdio: ["pipe", "pipe", "pipe"],
       ...cliShellOptions(path),
     });
-    let processError: Error | null = null;
-    let requestId: string = randomUUID();
-    let started = false;
     let streamed = false;
     let completed = false;
     let assistantFallback = "";
-    child.once("error", (error) => { processError = error; });
-    const abort = (): void => { child.kill("SIGTERM"); };
+    child.once("error", () => events.fail(new AevorenBotError("MODEL_CLI_INVALID")));
+    const abort = (): void => { events.fail(new DOMException("Aborted", "AbortError")); child.kill("SIGTERM"); };
     signal.addEventListener("abort", abort, { once: true });
+    const heartbeat = setInterval(() => events.push({ type: "activity" }), 15_000);
+    heartbeat.unref();
     child.stdin.end(promptText(messages));
+    child.stderr.resume();
     const lines = createInterface({ input: child.stdout });
-    try {
+    void (async () => {
+      try {
       for await (const line of lines) {
         if (!line.trim()) continue;
         let frame: Record<string, unknown>;
@@ -258,17 +298,20 @@ export class ClaudeCliProvider implements ModelProvider {
         } catch {
           continue;
         }
-        if (frame.type === "system" && typeof frame.session_id === "string") requestId = frame.session_id;
+        if (frame.type === "system" && typeof frame.session_id === "string") {
+          requestId = frame.session_id;
+          if (bridge && frame.subtype === "init") {
+            const servers = Array.isArray(frame.mcp_servers) ? frame.mcp_servers as Array<{ name?: unknown; status?: unknown }> : [];
+            if (!servers.some((server) => server.name === "aevoren_host" && server.status === "connected")) throw new AevorenBotError("MODEL_HOST_TOOL_UNAVAILABLE");
+          }
+        }
         if (frame.type === "stream_event" && frame.event && typeof frame.event === "object") {
           const event = frame.event as Record<string, unknown>;
           const delta = event.delta && typeof event.delta === "object" ? event.delta as Record<string, unknown> : null;
           if (event.type === "content_block_delta" && delta?.type === "text_delta" && typeof delta.text === "string" && delta.text) {
-            if (!started) {
-              started = true;
-              yield { type: "started", requestId };
-            }
+            accept();
             streamed = true;
-            yield { type: "delta", text: delta.text };
+            events.push({ type: "delta", text: delta.text });
           }
           continue;
         }
@@ -278,21 +321,24 @@ export class ClaudeCliProvider implements ModelProvider {
         }
         if (frame.type !== "result") continue;
         if (frame.subtype !== "success" || frame.is_error === true) throw claudeResultError(frame);
-        if (!started) {
-          started = true;
-          yield { type: "started", requestId };
-        }
+        accept();
         const fallback = typeof frame.result === "string" ? frame.result : assistantFallback;
-        if (!streamed && fallback) yield { type: "delta", text: fallback };
+        if (!streamed && fallback) events.push({ type: "delta", text: fallback });
         completed = true;
-        yield { type: "completed", finishReason: "stop" };
+        events.push({ type: "completed", finishReason: "stop" });
+        events.end();
         return;
       }
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      if (processError) throw new AevorenBotError("MODEL_CLI_INVALID");
       if (!completed) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
+      } catch (error) { events.fail(error); }
+    })();
+    try {
+      for await (const event of events.iterate()) yield event;
     } finally {
+      clearInterval(heartbeat);
       signal.removeEventListener("abort", abort);
+      await bridge?.close();
       lines.close();
       if (child.exitCode === null) child.kill("SIGTERM");
     }
@@ -306,5 +352,23 @@ export class ClaudeCliProvider implements ModelProvider {
       if (event.type === "completed") completed = true;
     }
     if (!completed) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
+  }
+}
+
+class ClaudeEventQueue {
+  private readonly values: ModelEvent[] = [];
+  private wake: (() => void) | null = null;
+  private closed = false;
+  private error: unknown = null;
+  push(value: ModelEvent): void { if (!this.closed) { this.values.push(value); this.wake?.(); } }
+  end(): void { this.closed = true; this.wake?.(); }
+  fail(error: unknown): void { this.error = error; this.end(); }
+  async *iterate(): AsyncIterable<ModelEvent> {
+    while (true) {
+      if (this.values.length) { yield this.values.shift()!; continue; }
+      if (this.closed) { if (this.error) throw this.error; return; }
+      await new Promise<void>((resolve) => { this.wake = resolve; });
+      this.wake = null;
+    }
   }
 }
