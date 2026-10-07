@@ -30,6 +30,7 @@ test("uses real Claude native MCP through Aevoren approval and the Tool Journal"
   delete env.AEVOREN_BOT_FAKE_PROVIDER;
   delete env.AEVOREN_BOT_DB_PATH;
   const application = await electron.launch({ args: ["."], cwd: process.cwd(), env });
+  let retainEvidence = false;
   try {
     const page = await application.firstWindow();
     const errors: string[] = [];
@@ -90,16 +91,38 @@ test("uses real Claude native MCP through Aevoren approval and the Tool Journal"
     await page.screenshot({ path: join(tmpdir(), "aevoren-real-claude-host-tools.png") });
     const safety: Array<{ action: string; runState: string; toolStates: string[] }> = [];
     for (const action of ["deny", "cancel"] as const) {
-      await page.getByLabel("消息", { exact: true }).fill("请真实读取 public-mcp-doc.txt 的前 1000 字节。必须通过 workspace_read；不能用历史文字代替本次读取，不要联网。此次工具调用需要重新批准。");
+      let safetySessionId: string;
+      const safetyName = action === "cancel" ? "取消验证员" : "拒绝验证员";
+      {
+        // Both safety cases must initiate their own actual call. Do not depend
+        // on the model reusing or reconsidering another case's transcript.
+        const fresh = await page.evaluate(async ({ projectId, name }) => {
+          const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+          const next = await api.bots.create({ projectId });
+          if (!next.ok) throw new Error(next.error.code);
+          const updated = await api.bots.update({ id: next.data.bot.id, expectedVersion: next.data.bot.version, patch: {
+            name, instructions: "请真实使用 Workspace 工具读取用户指定的公开资料。需要授权时，通过发起工具调用请求宿主审批，不要只生成文字询问。不要联网或写文件。没有工具结果不能声称读取完成。",
+            modelSelection: { providerInstanceId: "claude.default", modelId: "k3" },
+          } });
+          if (!updated.ok) throw new Error(updated.error.code);
+          return next.data.session.id;
+        }, { projectId: registered.project.id, name: safetyName });
+        safetySessionId = fresh;
+        await page.reload();
+        await page.getByText(safetyName, { exact: true }).first().click();
+        await expect(page.getByRole("heading", { name: safetyName, exact: true })).toBeVisible();
+      }
+      await page.getByLabel("消息", { exact: true }).fill("请发起 workspace_read，读取公开资料工作区 public-mcp-doc.txt 的前 1000 字节。通过真实工具调用请求宿主审批，成功拿到结果后概述文档内容。不要联网，不要写文件。");
       await page.getByRole("button", { name: "发送", exact: true }).click();
       let handled = false;
       await expect.poll(async () => {
         const state = await page.evaluate(async (sessionId) => {
           const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
           return { pending: await api.approvals.listPending({ sessionId }), snapshot: await api.runtime.getSessionSnapshot(sessionId), tools: await api.tools.list({ sessionId }) };
-        }, created.session.id);
+        }, safetySessionId);
         if (!state.pending.ok || !state.snapshot.ok || !state.tools.ok) throw new Error("Safety evidence missing");
         const run = state.snapshot.data.runs.at(-1)!;
+        if (!run) return false;
         const tools = state.tools.data.filter(tool => tool.runtimeRunId === run.id);
         if (state.pending.data.length) {
           expect(tools.every(tool => tool.attemptCount === 0 && tool.startedAt === null)).toBe(true);
@@ -108,10 +131,11 @@ test("uses real Claude native MCP through Aevoren approval and the Tool Journal"
             const cancelled = await page.evaluate(async (runId) => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.runtime.cancel(runId), run.id);
             expect(cancelled.ok).toBe(true);
           } else for (const approval of state.pending.data) {
-            const denied = await page.evaluate(async (input) => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.approvals.resolve(input), { sessionId: created.session.id, id: approval.id, expectedVersion: approval.version, resolution: "deny" as const });
+            const denied = await page.evaluate(async (input) => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.approvals.resolve(input), { sessionId: safetySessionId, id: approval.id, expectedVersion: approval.version, resolution: "deny" as const });
             expect(denied.ok).toBe(true);
           }
         }
+        if (!handled && ["failed", "completed", "cancelled"].includes(run.state)) throw new Error(`Safety ${action} did not trigger an actual tool approval: ${run.state}/${run.lastErrorCode}; evidence ${data}`);
         if (!handled || !["failed", "cancelled"].includes(run.state)) return false;
         expect(run.state).toBe(action === "cancel" ? "cancelled" : "failed");
         expect(tools.length).toBeGreaterThan(0);
@@ -122,9 +146,12 @@ test("uses real Claude native MCP through Aevoren approval and the Tool Journal"
     }
     expect(errors).toEqual([]);
     writeFileSync(join(tmpdir(), "aevoren-real-claude-host-tools-result.json"), JSON.stringify({ completed, provider: "claude.default", model: "k3", initialApprovalChecked, safety, tools: result.tools.data.map(({ toolKind, state, resultDigest, toolCallId }) => ({ toolKind, state, resultDigest, toolCallId })) }, null, 2));
+  } catch (error) {
+    retainEvidence = true;
+    throw error;
   } finally {
     await application.close();
-    removeTestDirectory(data);
+    if (!retainEvidence) removeTestDirectory(data);
   }
 });
 
