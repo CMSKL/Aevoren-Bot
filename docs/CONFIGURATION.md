@@ -61,6 +61,8 @@ Workspace access is opt-in. By default Aevoren Bot can only list, search, and re
 
 **Settings → General → Automatically approve public read-only tools** separately covers only bounded public web search/fetch, weather, and time. It does not authorize Workspace, clipboard, MCP, external writes, or computer control.
 
+The public-query approval dialog can enable that same setting only after the user clicks **Allow public queries and remember**. Defaults remain unchanged. It then resolves only the current approval; it does not sweep or resume already-waiting operations in other tasks. The setting applies to subsequent requests until the user disables it. Tool execution records remain available on demand in the conversation's existing task-details panel.
+
 ## Message attachments
 
 The composer can attach up to six bounded text, code, CSV, JSON, YAML, or Markdown files. Main reads the selected files and stores only validated content and metadata linked to the message; arbitrary local paths are never exposed to the Renderer or the model. Binary and unsupported files are rejected in the current release line.

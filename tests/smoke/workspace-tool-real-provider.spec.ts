@@ -56,10 +56,10 @@ test("runs one approved workspace read through the configured real Provider", as
     await page.getByLabel("消息").fill("请读取 provider-check.txt，并按 Instructions 返回结果。");
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    const tool = page.getByTestId("workspace-tool-activity").last();
-    await expect(tool).toContainText("等待你的确认", { timeout: 90_000 });
+    const tool = page.getByTestId("tool-permission-dialog");
+    await expect(tool).toContainText("读取文件", { timeout: 90_000 });
     await tool.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(tool).toContainText("执行完成", { timeout: 30_000 });
+    await expect(tool).toBeHidden({ timeout: 30_000 });
     await expect(page.locator('article.message-assistant[data-status="completed"]').last()).toContainText(token, { timeout: 90_000 });
   } finally {
     await application.close();

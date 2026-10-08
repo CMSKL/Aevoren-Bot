@@ -36,6 +36,7 @@ import { AssistantMarkdown } from "./AssistantMarkdown";
 import { AttachmentIcon, CloseIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
 import { HeaderModelPicker } from "./HeaderModelPicker";
 import { ExpandableTrace, type ExpandableTraceKind, type ExpandableTraceTone } from "./ExpandableTrace";
+import { ToolPermissionDialog } from "./ToolPermissionDialog";
 import {
   ArtifactStatusBar,
   ArtifactCard,
@@ -91,13 +92,11 @@ type TranscriptItemProps = {
   handoffRejections: HandoffRejectionDisplay[];
   coordinationErrorCode: string | null;
   toolInvocations: ToolInvocation[];
-  approvalsByInvocation: ReadonlyMap<string, ApprovalRequest>;
   briefApproval: { roomId: string; sourceRuntimeRunId: string; briefInvocationId: string } | null;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onRetryRoomTurn(turnId: string): void;
   onOpenSpeaker(botId: string): void;
-  onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
   onRevealWorkspaceArtifact(workspaceId: string, path: string): void;
   onOpenWorkspaces(): void;
   onWorkflowAction(action: WorkflowAction): Promise<boolean>;
@@ -167,21 +166,12 @@ function completedTraceLabel(kind: ExpandableTraceKind): string {
 
 const ToolActivity = memo(function ToolActivity({
   invocation,
-  approval,
-  onResolve,
 }: {
   invocation: ToolInvocation;
-  approval?: ApprovalRequest;
-  onResolve(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
 }): React.JSX.Element {
-  const [resolving, setResolving] = useState<ApprovalResolution | null>(null);
   const query = invocation.arguments.kind === "workspace-search" || invocation.arguments.kind === "web-search"
     ? invocation.arguments.query
     : null;
-  const remote = invocation.effectClass === "read-remote";
-  const pure = invocation.effectClass === "pure";
-  const clipboardRead = invocation.toolKind === "clipboard-read";
-  const projectCreate = invocation.toolKind === "bot-create" || invocation.toolKind === "room-create";
   const targetLabel = invocation.arguments.kind === "mcp-call"
     ? `Server ${invocation.arguments.serverId.slice(0, 8)}…`
     : invocation.targetPath || "文件夹根目录";
@@ -201,21 +191,11 @@ const ToolActivity = memo(function ToolActivity({
     ? completedTraceLabel(traceKind)
     : toolStateLabels[invocation.state];
 
-  async function resolve(resolution: ApprovalResolution): Promise<void> {
-    if (!approval || resolving) return;
-    setResolving(resolution);
-    try {
-      await onResolve(approval, resolution);
-    } finally {
-      setResolving(null);
-    }
-  }
-
   return (
     <ExpandableTrace
       active={active}
       activeLabel={activeTraceLabel(traceKind)}
-      autoExpanded={active || invocation.state !== "succeeded"}
+      autoExpanded={false}
       className={`tool-${invocation.state}`}
       kind={traceKind}
       rows={[{
@@ -235,36 +215,14 @@ const ToolActivity = memo(function ToolActivity({
           {resultTime ? <span>时间：{resultTime}</span> : null}
         </div>
       ) : null}
-      {approval?.state === "pending" ? (
-        <div className="expandable-trace-actions" aria-label={remote ? "联网查询确认" : pure ? "系统信息确认" : clipboardRead ? "剪贴板读取确认" : "本地工具确认"}>
-          <p>{remote
-            ? "仅本次允许 Aevoren Bot 将上方查询内容发送给标明的外部只读数据服务。"
-            : pure
-              ? "仅本次允许 Aevoren Bot 读取本机系统时间；不会访问外部网络。"
-              : clipboardRead
-                ? "仅本次允许 Aevoren Bot 读取当前纯文本剪贴板内容；结果不会写入 Memory。"
-                : projectCreate
-                  ? "仅本次允许在此 Bot 所属项目创建这个 Bot 或群聊；不会启动新任务、修改已有成员或扩大权限。"
-                  : "仅本次允许 Aevoren Bot 访问这个已登记文件夹目标。"}</p>
-          {invocation.toolKind === "workspace-read" || clipboardRead ? <p>读取结果将进入当前模型上下文；若使用云端模型，会发送至该模型服务。请勿授权读取密码、API Key 等敏感内容。</p> : null}
-          <div>
-            <button type="button" className="secondary-button" disabled={resolving !== null} onClick={() => void resolve("deny")}>{resolving === "deny" ? "正在拒绝…" : "拒绝"}</button>
-            <button type="button" className="primary-button" disabled={resolving !== null} onClick={() => void resolve("allow-once")}>{resolving === "allow-once" ? "正在执行…" : "仅允许一次"}</button>
-          </div>
-        </div>
-      ) : null}
     </ExpandableTrace>
   );
 });
 
 const ToolActivityList = memo(function ToolActivityList({
   invocations,
-  approvalsByInvocation,
-  onResolve,
 }: {
   invocations: ToolInvocation[];
-  approvalsByInvocation: ReadonlyMap<string, ApprovalRequest>;
-  onResolve(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
 }): React.JSX.Element {
   const items = useMemo(() => groupToolActivity(invocations), [invocations]);
   return (
@@ -280,20 +238,16 @@ const ToolActivityList = memo(function ToolActivityList({
           <div className="tool-activity-run-items">
             {item.invocations.map((invocation) => (
               <ToolActivity
-                approval={approvalsByInvocation.get(invocation.id)}
                 invocation={invocation}
                 key={invocation.id}
-                onResolve={onResolve}
               />
             ))}
           </div>
         </details>
       ) : (
         <ToolActivity
-          approval={approvalsByInvocation.get(item.invocation.id)}
           invocation={item.invocation}
           key={item.id}
-          onResolve={onResolve}
         />
       ))}
     </div>
@@ -318,13 +272,11 @@ const TranscriptItem = memo(function TranscriptItem({
   handoffRejections,
   coordinationErrorCode,
   toolInvocations,
-  approvalsByInvocation,
   briefApproval,
   onRetryMessage,
   onRetryRun,
   onRetryRoomTurn,
   onOpenSpeaker,
-  onResolveApproval,
   onRevealWorkspaceArtifact,
   onOpenWorkspaces,
   onWorkflowAction,
@@ -423,13 +375,6 @@ const TranscriptItem = memo(function TranscriptItem({
               <details><summary>技术详情</summary><code>{coordinationErrorCode}</code></details>
             </div>
           ) : null}
-          {toolInvocations.length > 0 ? (
-            <ToolActivityList
-              approvalsByInvocation={approvalsByInvocation}
-              invocations={toolInvocations}
-              onResolve={onResolveApproval}
-            />
-          ) : null}
           {entry.role === "assistant" && entry.status === "completed"
             ? <ArtifactStatusBar
                 writes={toolInvocations}
@@ -511,6 +456,7 @@ type ConversationProps = {
   onBotUpdated(bot: Bot): void;
   onError(error: AppError | null): void;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
+  onRememberPublicRead?(approval: ApprovalRequest): Promise<boolean>;
   onRevealWorkspaceArtifact(workspaceId: string, path: string): Promise<boolean>;
   onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode, attachments?: AttachmentDraft[]): Promise<boolean>;
   onApproveBrief?(input: { roomId: string; sourceRuntimeRunId: string; briefInvocationId: string; sha256: string; candidate: "A" | "B" | "C"; clientNonce: string }): Promise<boolean>;
@@ -548,6 +494,7 @@ export function Conversation({
   onBotUpdated,
   onError,
   onResolveApproval,
+  onRememberPublicRead,
   onRevealWorkspaceArtifact,
   onSend,
   onApproveBrief,
@@ -564,6 +511,7 @@ export function Conversation({
   const [roomMentions, setRoomMentions] = useState<RoomMention[]>([]);
   const [routingPreference, setRoutingPreference] = useState<UserRoomRoutingMode>("automatic");
   const [artifactShelfScopeId, setArtifactShelfScopeId] = useState<string | null>(null);
+  const [taskDetailsTab, setTaskDetailsTab] = useState<"artifacts" | "records">("artifacts");
   const [retriedTurnIds, setRetriedTurnIds] = useState<Set<string>>(() => new Set());
   const [mentionQuery, setMentionQuery] = useState<ActiveMentionQuery | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
@@ -622,10 +570,14 @@ export function Conversation({
       briefInvocationId: latestBriefWrite.id,
     } : null;
   }, [entries, room, roomTurns, runsById, toolInvocations]);
-  const approvalsByInvocation = useMemo(
-    () => new Map(approvalRequests.map((approval) => [approval.toolInvocationId, approval])),
-    [approvalRequests],
-  );
+  const pendingTool = useMemo(() => {
+    const pending = new Map(approvalRequests.filter(approval => approval.state === "pending").map(approval => [approval.toolInvocationId, approval]));
+    const invocation = toolInvocations.find(tool => tool.state === "awaiting-approval" && pending.has(tool.id));
+    return invocation ? { invocation, approval: pending.get(invocation.id)! } : null;
+  }, [approvalRequests, toolInvocations]);
+  const permissionBotName = pendingTool && room
+    ? room.members.find(member => member.botId === pendingTool.invocation.executorBotId)?.bot.name ?? subjectName
+    : subjectName;
 
   useEffect(() => {
     if (!artifactShelfOpen) return;
@@ -876,17 +828,20 @@ export function Conversation({
             </label>
           ) : null}
           {bot ? <HeaderModelPicker bot={bot} busy={busy} onBotUpdated={onBotUpdated} onError={onError} /> : null}
-          {artifacts.length > 0 ? (
+          {toolInvocations.length > 0 ? (
             <button
               className="secondary-button model-settings-button has-artifacts"
               type="button"
-              aria-label={`打开会话成果，共 ${artifacts.length} 个`}
+              aria-label={artifacts.length > 0 ? `打开会话成果，共 ${artifacts.length} 个` : "打开任务详情"}
               aria-expanded={artifactShelfOpen}
-              title={`会话成果 · ${artifacts.length}`}
-              onClick={() => conversationScopeId && setArtifactShelfScopeId((current) => current === conversationScopeId ? null : conversationScopeId)}
+              title="任务详情"
+              onClick={() => {
+                setTaskDetailsTab(artifacts.length > 0 ? "artifacts" : "records");
+                if (conversationScopeId) setArtifactShelfScopeId(current => current === conversationScopeId ? null : conversationScopeId);
+              }}
             >
               <FolderIcon />
-              <span>成果 {artifacts.length}</span>
+              <span>{artifacts.length > 0 ? `成果 ${artifacts.length}` : "详情"}</span>
             </button>
           ) : null}
           <button className="mobile-panel-button" type="button" aria-label="打开 Bot 设置" onClick={onOpenProfile}>
@@ -909,14 +864,20 @@ export function Conversation({
       {artifactShelfOpen ? (
         <>
           <button className="artifact-shelf-backdrop" type="button" aria-label="关闭会话成果" onClick={() => setArtifactShelfScopeId(null)} />
-          <aside className="artifact-shelf" aria-label="会话成果">
+          <aside className="artifact-shelf task-details-shelf" aria-label="会话成果">
             <header>
-              <div><span>当前任务</span><strong>成果 {artifacts.length}</strong></div>
+              <div><span>{subjectName}</span><strong>任务详情</strong></div>
               <button className="artifact-shelf-close" type="button" aria-label="关闭会话成果" onClick={() => setArtifactShelfScopeId(null)}><CloseIcon /></button>
             </header>
-            <p>这里只显示已由真实工具保存的文件。模型文字不会自动成为成果。</p>
-            <div className="artifact-shelf-list">
-              {artifacts.map((artifact) => (
+            <div className="task-details-navigation">
+              <div role="tablist" aria-label="任务详情内容">
+                <button type="button" role="tab" id="task-artifacts-tab" aria-selected={taskDetailsTab === "artifacts"} aria-controls="task-details-content" onClick={() => setTaskDetailsTab("artifacts")}>成果 {artifacts.length}</button>
+                <button type="button" role="tab" id="task-records-tab" aria-selected={taskDetailsTab === "records"} aria-controls="task-details-content" onClick={() => setTaskDetailsTab("records")}>执行记录 {toolInvocations.length}</button>
+              </div>
+              <p>{taskDetailsTab === "artifacts" ? "这里只显示真实工具保存的文件。" : "记录来自实际工具调用，模型文字不会自动成为执行证据。"}</p>
+            </div>
+            <div className="artifact-shelf-list task-details-content" role="tabpanel" id="task-details-content" aria-labelledby={taskDetailsTab === "artifacts" ? "task-artifacts-tab" : "task-records-tab"}>
+              {taskDetailsTab === "records" ? <ToolActivityList invocations={toolInvocations} /> : artifacts.length === 0 ? <p className="task-details-empty">尚无已保存成果</p> : artifacts.map((artifact) => (
                 <ArtifactCard
                   artifact={artifact}
                   key={artifact.id}
@@ -1004,13 +965,11 @@ export function Conversation({
                 ? sourceTurn.outcome.summary.slice("handoff-failed:".length)
                 : null}
               toolInvocations={toolsByAssistant.get(entry.id) ?? []}
-              approvalsByInvocation={approvalsByInvocation}
               briefApproval={entry.id === briefApproval?.entryId ? briefApproval : null}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
               onRetryRoomTurn={(turnId) => void retryRoomTurn(turnId)}
               onOpenSpeaker={onOpenSpeaker}
-              onResolveApproval={onResolveApproval}
               onRevealWorkspaceArtifact={(workspaceId, path) => void onRevealWorkspaceArtifact(workspaceId, path)}
               onOpenWorkspaces={onOpenWorkspaces}
               onWorkflowAction={handleWorkflowAction}
@@ -1018,6 +977,19 @@ export function Conversation({
           );
         })}
       </section>
+
+      {pendingTool ? <ToolPermissionDialog
+        key={pendingTool.approval.id}
+        {...pendingTool}
+        botName={permissionBotName}
+        label={toolActionLabel(pendingTool.invocation)}
+        onResolve={onResolveApproval}
+        onRememberPublicRead={onRememberPublicRead}
+        onStop={() => {
+          if (activeBatch) onCancelRoomBatch(activeBatch.id);
+          else onCancelRun(pendingTool.invocation.runtimeRunId);
+        }}
+      /> : null}
 
       <footer className="composer-wrap">
         {closeNotice ? <div className="composer-notice" role="alert">{closeNotice}</div> : null}

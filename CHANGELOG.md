@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.18] - 2026-10-08
+
+### Changed
+
+- Routine tool activity no longer occupies the chat transcript. The existing task-details panel now provides separate artifact and read-only execution-record tabs.
+- Necessary approvals use a compact dialog with complete targets, privacy scope and a stop-task action instead of appearing below each reply.
+- The public-query dialog offers an explicit "allow and remember" entry to the existing public-read setting. Defaults remain off; only the current approval is resolved, and files, clipboard, MCP and writes retain their original permission boundaries.
+
+### Verified
+
+- Real Claude Code/k3 public search and page fetching continue after one explicit remembered consent; local-file requests still wait for approval and cancellation performs no read.
+- Permission and task-record views retain true Tool Journal states and responsive layouts at 1180, 1020, 620 and the 390-pixel minimum window width.
+
 ## [0.3.0-beta.17] - 2026-10-07
 
 ### Added
