@@ -76,10 +76,10 @@ test("routes one approved Room workspace read through the configured real Provid
     await input.press("Enter");
     await input.fill("请读取 room-provider-check.txt，并按 Instructions 返回结果。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    const tool = page.getByTestId("workspace-tool-activity").last();
-    await expect(tool).toContainText("等待你的确认", { timeout: 90_000 });
+    const tool = page.getByTestId("tool-permission-dialog");
+    await expect(tool).toContainText("读取文件", { timeout: 90_000 });
     await tool.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(tool).toContainText("执行完成", { timeout: 30_000 });
+    await expect(tool).toBeHidden({ timeout: 30_000 });
     const assistant = page.locator('article.message-assistant[data-status="completed"]').last();
     await expect(assistant).toContainText(token, { timeout: 90_000 });
     await expect(assistant.locator(".speaker-link")).toHaveText(targetBotName);

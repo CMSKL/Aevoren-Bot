@@ -52,11 +52,11 @@ test("connects one disabled-by-default stdio MCP server, exposes only its read-o
 
     await page.getByLabel("消息").fill("调用只读 MCP 工具");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    const activity = page.getByTestId("workspace-tool-activity").last();
+    const activity = page.getByTestId("tool-permission-dialog");
     await expect(activity).toContainText("外部工具");
-    await expect(activity.getByLabel("联网查询确认")).toContainText("外部只读数据服务");
+    await expect(activity.getByRole("button", { name: "允许公开查询并记住" })).toHaveCount(0);
     await activity.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(activity).toContainText("执行完成");
+    await expect(activity).toBeHidden();
     await expect(page.getByText(/MCP_FIXTURE_RESULT:smoke:anonymous/u).last()).toBeVisible();
 
     await page.getByRole("button", { name: "设置", exact: true }).click();

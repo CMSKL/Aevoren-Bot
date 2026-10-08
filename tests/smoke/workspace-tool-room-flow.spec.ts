@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openToolRecords } from "./tool-ui";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,10 +56,10 @@ test("routes approved workspace tools through one Room speaker and recovers a pe
     await input.press("Enter");
     await input.fill("请读取群聊工作区资料");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    const allowedTool = page.getByTestId("workspace-tool-activity").last();
-    await expect(allowedTool).toContainText("等待你的确认");
+    const allowedTool = page.getByTestId("tool-permission-dialog");
+    await expect(allowedTool).toContainText("读取文件");
     await allowedTool.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(allowedTool).toContainText("执行完成");
+    await expect(allowedTool).toBeHidden();
     await expect(page.getByText(new RegExp(marker)).last()).toBeVisible();
     await expect(page.locator(".speaker-link")).toHaveText([analyst.name]);
     await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
@@ -68,10 +69,10 @@ test("routes approved workspace tools through one Room speaker and recovers a pe
     await input.press("Enter");
     await input.fill("这次拒绝群聊读取");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    const deniedTool = page.getByTestId("workspace-tool-activity").last();
-    await expect(deniedTool).toContainText("等待你的确认");
+    const deniedTool = page.getByTestId("tool-permission-dialog");
+    await expect(deniedTool).toContainText("读取文件");
     await deniedTool.getByRole("button", { name: "拒绝" }).click();
-    await expect(deniedTool).toContainText("已拒绝");
+    await expect(deniedTool).toBeHidden();
     await expect(page.getByText(/TOOL_DENIED/).last()).toBeVisible();
     await expect(page.locator(".speaker-link")).toHaveText([analyst.name, reviewer.name]);
 
@@ -80,8 +81,8 @@ test("routes approved workspace tools through one Room speaker and recovers a pe
     await input.press("Enter");
     await input.fill("等待审批后模拟进程中断");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    const pendingTool = page.getByTestId("workspace-tool-activity").last();
-    await expect(pendingTool).toContainText("等待你的确认");
+    const pendingTool = page.getByTestId("tool-permission-dialog");
+    await expect(pendingTool).toContainText("读取文件");
     await forceKill(application);
     application = undefined;
 
@@ -89,6 +90,8 @@ test("routes approved workspace tools through one Room speaker and recovers a pe
     page = await application.firstWindow();
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     await page.locator(".bot-row").filter({ hasText: room.room.name }).click();
+    await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(0);
+    await openToolRecords(page);
     await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(3);
     await expect(page.getByTestId("workspace-tool-activity").nth(0)).toContainText("执行完成");
     await expect(page.getByTestId("workspace-tool-activity").nth(1)).toContainText("已拒绝");

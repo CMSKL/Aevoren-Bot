@@ -124,8 +124,8 @@ test("shows contextual approval, failure recovery, and artifact evidence without
     await expect(approvalCard).toBeVisible();
     await expect(page.locator("article.message-user").filter({ hasText: "普通文字，没有有效审批凭证" })).toBeVisible();
     await expect(briefMessage.getByRole("region", { name: "交付物状态" })).toContainText("02-briefs/options.md");
-    await expect(briefMessage.getByTestId("tool-activity-run")).toContainText("已完成 2 个步骤");
-    await expect(briefMessage.getByTestId("workspace-tool-activity")).toHaveCount(2);
+    await expect(briefMessage.getByTestId("tool-activity-run")).toHaveCount(0);
+    await expect(briefMessage.getByTestId("workspace-tool-activity")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /保存为 Markdown/u })).toHaveCount(0);
     await expect(page.locator(".conversation-header").getByTestId("brief-approval-card")).toHaveCount(0);
     await expect(approvalCard.getByRole("radio", { name: /证据链设计/u })).toBeVisible();
@@ -137,6 +137,9 @@ test("shows contextual approval, failure recovery, and artifact evidence without
     await expect(artifactsButton).toBeVisible();
     await artifactsButton.click();
     await expect(page.getByRole("complementary", { name: "会话成果" })).toContainText("options.md");
+    await page.getByRole("tab", { name: /^执行记录/u }).click();
+    await expect(page.getByRole("complementary", { name: "会话成果" }).getByTestId("tool-activity-run")).toContainText("已完成 2 个步骤");
+    await page.getByRole("tab", { name: /^成果/u }).click();
     await page.screenshot({ path: join(tmpdir(), "aevoren-artifact-shelf.png") });
     await page.getByRole("button", { name: "关闭会话成果" }).last().click();
     await page.getByRole("region", { name: "交付物状态" }).getByRole("button", { name: "打开文件位置" }).click();

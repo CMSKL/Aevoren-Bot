@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DEFAULT_PROJECT_ID } from "@shared/contracts";
+import { isPublicReadTool } from "@shared/tool-automation";
 import type {
   AppearanceTheme,
   AppError,
   ApprovalRequest,
+  ApprovalResolution,
   AttachmentDraft,
   Bot,
   BriefApprovalCommand,
@@ -971,6 +973,21 @@ export function App(): React.JSX.Element {
     }
   }
 
+  async function savePublicReadAutomation(enabled: boolean): Promise<AppError | null> {
+    const result = await window.aevorenBot.settings.saveGeneral({ autoApprovePublicReadTools: enabled });
+    if (!result.ok) return result.error;
+    setAutoApprovePublicReadTools(result.data.autoApprovePublicReadTools);
+    return null;
+  }
+
+  async function resolveToolApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean> {
+    const result = await window.aevorenBot.approvals.resolve({ sessionId: approval.sessionId, id: approval.id, expectedVersion: approval.version, resolution });
+    if (!result.ok) { setError(result.error); return false; }
+    setToolInvocations(current => mergeToolInvocation(current, result.data.invocation));
+    setApprovalRequests(current => mergePendingApproval(current, result.data.approval));
+    return true;
+  }
+
   return (
     <div className={`app-shell${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
       <Sidebar
@@ -1090,20 +1107,15 @@ export function App(): React.JSX.Element {
         }}
         onBotUpdated={updateBot}
         onError={setError}
-        onResolveApproval={async (approval, resolution) => {
-          const result = await window.aevorenBot.approvals.resolve({
-            sessionId: approval.sessionId,
-            id: approval.id,
-            expectedVersion: approval.version,
-            resolution,
-          });
-          if (!result.ok) {
-            setError(result.error);
-            return false;
-          }
-          setToolInvocations((current) => mergeToolInvocation(current, result.data.invocation));
-          setApprovalRequests((current) => mergePendingApproval(current, result.data.approval));
-          return true;
+        onResolveApproval={resolveToolApproval}
+        onRememberPublicRead={async (approval) => {
+          // This is a user-clicked entry to the existing opt-in setting, not a
+          // new default or a blanket grant for already-waiting operations.
+          const invocation = toolInvocations.find(tool => tool.id === approval.toolInvocationId && tool.sessionId === approval.sessionId);
+          if (!invocation || invocation.state !== "awaiting-approval" || !isPublicReadTool(invocation.toolKind)) return false;
+          const error = await savePublicReadAutomation(true);
+          if (error) { setError(error); return false; }
+          return resolveToolApproval(approval, "allow-once");
         }}
         onSend={sendMessage}
         onApproveBrief={approveBrief}
@@ -1216,12 +1228,7 @@ export function App(): React.JSX.Element {
           setLaunchAtLoginStatus(result.data.launchAtLoginStatus);
           return null;
         }}
-        onAutoApprovePublicReadToolsChange={async (enabled) => {
-          const result = await window.aevorenBot.settings.saveGeneral({ autoApprovePublicReadTools: enabled });
-          if (!result.ok) return result.error;
-          setAutoApprovePublicReadTools(result.data.autoApprovePublicReadTools);
-          return null;
-        }}
+        onAutoApprovePublicReadToolsChange={savePublicReadAutomation}
         onUpdateCheckIntervalChange={async (minutes) => {
           const result = await window.aevorenBot.settings.saveGeneral({ updateCheckIntervalMinutes: minutes });
           if (!result.ok) return result.error;

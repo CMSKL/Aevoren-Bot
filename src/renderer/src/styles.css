@@ -1749,6 +1749,39 @@ textarea:focus-visible {
   to { opacity: 1; transform: translateX(0); }
 }
 
+.task-details-navigation { padding: 0 16px 12px; }
+.task-details-navigation [role="tablist"] { display: flex; gap: 6px; }
+.task-details-navigation [role="tab"] { padding: 8px 10px; border: 0; border-radius: 8px; color: var(--text-muted); background: transparent; font: inherit; font-size: 13px; cursor: pointer; }
+.task-details-navigation [role="tab"][aria-selected="true"] { color: var(--text); background: var(--surface-soft); }
+.task-details-navigation p, .task-details-empty { color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+.task-details-content .expandable-trace-row { align-items: flex-start; }
+.task-details-content .expandable-trace-row-copy { display: grid; gap: 3px; }
+.task-details-content .expandable-trace-row-copy > span { white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; font-size: 12px; line-height: 1.6; }
+.task-details-content .expandable-trace-row-trailing { font-size: 11px; }
+
+.tool-permission-backdrop { position: fixed; z-index: 200; inset: 0; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, #000 50%, transparent); backdrop-filter: blur(3px); }
+.tool-permission-dialog { width: min(480px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; padding: 22px; border: 1px solid var(--border); border-radius: 16px; color: var(--text); background: var(--panel-bg); box-shadow: var(--shadow-dialog); outline: none; }
+.tool-permission-dialog > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.tool-permission-dialog > header span { color: var(--text-muted); font-size: 13px; }
+.tool-permission-dialog h2 { margin: 6px 0 14px; font-size: 18px; line-height: 1.4; }
+.tool-permission-dialog p { margin: 0 0 14px; color: var(--text-muted); font-size: 13px; line-height: 1.7; }
+.tool-permission-close { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; padding: 7px; border: 0; border-radius: 8px; color: var(--text-muted); background: transparent; cursor: pointer; }
+.tool-permission-close:hover { color: var(--text); background: var(--surface-soft); }
+.tool-permission-close svg { width: 18px; height: 18px; }
+.tool-permission-target { display: grid; gap: 6px; padding: 12px; margin-bottom: 14px; border-radius: 10px; background: var(--surface-soft); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.tool-permission-target span { white-space: pre-wrap; }
+.tool-permission-dialog .tool-permission-privacy { font-size: 12px; }
+.tool-permission-dialog .tool-permission-error { color: var(--danger); }
+.tool-permission-dialog > footer, .tool-permission-dialog > footer > div { display: flex; align-items: center; gap: 8px; }
+.tool-permission-dialog > footer { justify-content: space-between; margin-top: 18px; }
+.tool-permission-dialog :is(button,[role="tab"]):focus-visible, .task-details-navigation button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 540px) {
+  .tool-permission-dialog { padding: 18px; }
+  .tool-permission-dialog > footer { flex-direction: column-reverse; align-items: stretch; }
+  .tool-permission-dialog > footer > div { flex-direction: column-reverse; align-items: stretch; }
+  .tool-permission-dialog > footer button { min-height: 40px; }
+}
+
 .secondary-button,
 .primary-button {
   display: inline-flex;
