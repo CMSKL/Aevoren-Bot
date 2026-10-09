@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openWorkspaceTab } from "./navigation";
 import { expect, test, _electron as electron, type ElectronApplication } from "@playwright/test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,6 +42,7 @@ test("shows only public Workspace identity and revokes access without touching d
     await page.getByLabel("外观主题").selectOption("dark");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "关闭设置" }).click();
+    await openWorkspaceTab(page);
     const sidebarWorkspaces = page.locator(".sidebar-workspace");
     const workspaceRow = page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` });
     await expect(workspaceRow).toBeVisible();
@@ -131,17 +133,17 @@ test("shows only public Workspace identity and revokes access without touching d
   }
 });
 
-test("links legacy conversations to a real folder and restores the unified tree after restart", async () => {
+test("links existing project conversations to a real folder and restores the unified tree after restart", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-folder-link-smoke-"));
   const root = join(userDataDir, "团队工作区");
   mkdirSync(root);
   writeFileSync(join(root, "现有文档.md"), "# 保留原文件\n", "utf8");
   const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
-  const first = repository.createBot();
+  const first = repository.createBot(DEFAULT_PROJECT_ID);
   repository.updateBot(first.bot.id, first.bot.version, { name: "研究员" });
-  const second = repository.createBot();
+  const second = repository.createBot(DEFAULT_PROJECT_ID);
   repository.updateBot(second.bot.id, second.bot.version, { name: "编辑" });
-  const room = repository.createRoom({ name: "现有群聊", memberBotIds: [first.bot.id, second.bot.id] });
+  const room = repository.createRoom({ name: "现有群聊", memberBotIds: [first.bot.id, second.bot.id], projectId: DEFAULT_PROJECT_ID });
   const registered = await new WorkspaceService(repository).registerRoot(root);
   repository.setSetting("appearance.theme", "dark", false);
   repository.close();
@@ -152,6 +154,7 @@ test("links legacy conversations to a real folder and restores the unified tree 
     application = await electron.launch({ args: ["."], cwd: process.cwd(), env });
     let page = await application.firstWindow();
     page.on("pageerror", (error) => consoleErrors.push(error.message));
+    await openWorkspaceTab(page);
     await page.getByRole("button", { name: "关联文件夹", exact: true }).click();
     const project = page.locator('.sidebar-project').filter({ has: page.getByRole("button", { name: "团队工作区", exact: true }) });
     await expect(project).toHaveCount(1);
@@ -167,6 +170,7 @@ test("links legacy conversations to a real folder and restores the unified tree 
     application = await electron.launch({ args: ["."], cwd: process.cwd(), env });
     page = await application.firstWindow();
     page.on("pageerror", (error) => consoleErrors.push(error.message));
+    await openWorkspaceTab(page);
     await expect(page.getByRole("listitem", { name: "现有群聊" })).toBeVisible();
     await expect(page.getByRole("listitem", { name: "研究员" })).toBeVisible();
     const roomResult = await page.evaluate((id) => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.rooms.get(id), room.room.id);

@@ -20,7 +20,7 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await expect(page.locator(".brand")).toHaveText("Aevoren Bot");
   await expect(page).toHaveTitle("Aevoren Bot");
   expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getTitle())).toBe("Aevoren Bot");
-  await expect(page.getByText("从创建第一个 Bot 开始")).toBeVisible();
+  await expect(page.getByText("选择一个聊天", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();
   await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
@@ -111,6 +111,8 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
   await expect(page.getByText("做一个帮助团队整理产品需求的桌面应用。")).toBeVisible();
   await expect(page.getByText("待确认事项", { exact: true }).last()).toBeVisible();
+  await expect(page.locator(".app-shell")).toHaveClass(/inspector-collapsed/u);
+  await page.getByRole("button", { name: "展开详情面板" }).click();
   await expect(page.getByLabel("描述")).toHaveValue("关闭应用前未移焦，也必须可靠保存。");
   await expect(page.getByLabel("模型供应商")).toBeHidden();
   await page.locator(".inspector-advanced > summary").click();

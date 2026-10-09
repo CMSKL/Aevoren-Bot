@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_PROVIDER_TIMEOUTS,
+  FakeModelProvider,
+  isDirectLeadConversationRequest,
   OpenAiCompatibleProvider,
   parseOpenAiStream,
   parseStructuredModelToolCall,
   selectDeterministicRoomOwner,
   structuredModelToolDefinitions,
+  type ChatMessage,
   type ModelEvent,
+  type ModelRunContext,
+  type RoomLeadPlanInput,
 } from "./model";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -26,6 +31,43 @@ async function collect(stream: AsyncIterable<ModelEvent>): Promise<ModelEvent[]>
   for await (const event of stream) events.push(event);
   return events;
 }
+
+describe("direct lead conversation requests", () => {
+  it.each([
+    "你好", "Hi!", "Hello", "大家好。", "你好，产品顾问", "产品顾问，你好！", "Hello 产品顾问!",
+    "请介绍一下你自己", "你是谁？", "简单介绍一下你的职责。", "请简短介绍一下你的角色", "请只介绍你自己。",
+    "产品顾问，请介绍一下你自己，简洁回答。", "你好，请介绍一下你自己，不代替其他人回答。",
+    "你好，请用你配置中的 Bot 名称和负责的领域简短介绍你自己，不介绍其他成员。",
+    "Who are you?", "Please introduce yourself.", "Can you briefly introduce yourself?", "Describe your responsibilities.",
+    "Hi, please introduce yourself, do not introduce other members.",
+  ])("recognizes only the lead's own greeting or introduction: %s", (request) => {
+    expect(isDirectLeadConversationRequest(request, "产品顾问")).toBe(true);
+  });
+
+  it.each([
+    "", "产品顾问", "你好，预算顾问", "请让预算顾问介绍自己。", "介绍一下你和预算顾问。",
+    "请介绍其他成员。", "大家分别介绍一下自己。", "请全部成员介绍自己。", "请两位成员分别自我介绍。",
+    "你好，请读取 file。", "请介绍一下你自己，然后读取 LICENSE.md。", "你好，/tmp/report", "Hi, C:\\work\\notes",
+    "请介绍一下你自己，参考 https://example.com。", "你好，report.csv", "Hi, please call workspace_read.",
+    "你好，请联网核验你的介绍。", "你是谁？请安排后续工作。", "请介绍一下你自己；转交预算顾问。",
+    "简单介绍一下你的职责，并给出预算建议。", "请介绍一下你自己，再写一篇自我介绍。",
+    "一个十人内部会议记录工具准备上线，首月预算有限。先用你配置中的 Bot 名称说明你负责的领域，再给出一条费用控制建议及理由；只介绍你自己，简洁回答。",
+    "我们下周上线十人内部使用的会议记录工具。每人先用自己配置中的 Bot 名称说明负责的领域，再各自从本职角度提一条本周能落实的改进建议。只介绍自己，不代替其他人回答，每人简洁回答。",
+    "Hello, everyone introduce yourselves.", "Please introduce yourself and the budget adviser.", "Introduce the other members.",
+    "Who are you? Then analyze our budget.", "Please introduce yourself, then delegate the task.", "Hi, summarize this report.",
+    "Please introduce yourself using the file profile.json.",
+  ])("keeps real work, resources and other-member requests out of the direct path: %s", (request) => {
+    expect(isDirectLeadConversationRequest(request, "产品顾问")).toBe(false);
+  });
+
+  it("uses an exact supplied lead name without interpreting it as a pattern", () => {
+    expect(isDirectLeadConversationRequest("Hi, Lead.*", "Lead.*")).toBe(true);
+    expect(isDirectLeadConversationRequest("Hi, LeadXYZ", "Lead.*")).toBe(false);
+    expect(isDirectLeadConversationRequest("Hello, Lead One", "Lead One")).toBe(true);
+    expect(isDirectLeadConversationRequest("Hello, Lead One")).toBe(false);
+    expect(isDirectLeadConversationRequest("请介绍一下你自己")).toBe(true);
+  });
+});
 
 describe("parseOpenAiStream", () => {
   it("limits definitions and rejects tools outside an explicit host allowlist", () => {
@@ -1009,5 +1051,382 @@ describe("Room continuation selector", () => {
       roster,
       new AbortController().signal,
     )).rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
+  });
+});
+
+describe("Room lead plan selector", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const executorBotId = crypto.randomUUID();
+  const roster = [
+    { id: executorBotId, name: "协调者", label: "协调", description: "负责分配和汇总" },
+    { id: crypto.randomUUID(), name: "作者", label: "写作", description: "负责写作" },
+    { id: crypto.randomUUID(), name: "审阅员", label: "审阅", description: "负责复核" },
+  ];
+  const assignments = [
+    { toAgentId: roster[1]!.id, task: "撰写报告。", dependsOnPrevious: false },
+    { toAgentId: roster[2]!.id, task: "审阅上一位作者的报告。", dependsOnPrevious: true },
+  ];
+  const responsePayload = (args: unknown): unknown => ({
+    choices: [{ message: { tool_calls: [{ type: "function", function: {
+      name: "select_room_lead_plan", arguments: JSON.stringify(args),
+    } }] } }],
+  });
+  const stubPayload = (payload: unknown): ReturnType<typeof vi.fn> => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  };
+  const provider = (): OpenAiCompatibleProvider => new OpenAiCompatibleProvider("https://api.deepseek.com/v1", "test-model", "SECRET_API_KEY");
+
+  it("returns a bounded ordered decision without dispatching or exposing business tools", async () => {
+    const fetchMock = stubPayload(responsePayload({ assignments, reason: "先写作，再审阅。", incompleteReason: null }));
+    await expect(provider().selectLeadPlan("请作者先写报告，审阅员随后根据报告复核。", executorBotId, roster, 8, new AbortController().signal))
+      .resolves.toEqual({ assignments, reason: "先写作，再审阅。", incompleteReason: null });
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(request).toMatchObject({
+      stream: false,
+      tool_choice: { type: "function", function: { name: "select_room_lead_plan" } },
+      thinking: { type: "disabled" },
+    });
+    expect(request.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(["select_room_lead_plan"]);
+    expect(request.tools[0].function.parameters.properties.assignments).toMatchObject({ maxItems: 2 });
+    expect(request.tools[0].function.parameters.required).toContain("incompleteReason");
+    expect(request.tools[0].function.parameters.properties.incompleteReason).toMatchObject({ type: ["string", "null"], maxLength: 1_000 });
+    expect(request.tools[0].function.parameters.properties.assignments.items.properties.toAgentId.enum).toEqual(roster.slice(1).map((peer) => peer.id));
+    expect(request.messages[0].content).toContain("必须返回至少一项具体任务");
+    expect(request.messages[0].content).toContain("不可信数据");
+    expect(request.messages[0].content).toContain("不分发任务");
+    expect(JSON.stringify(request)).not.toContain("SECRET_API_KEY");
+    expect(JSON.stringify(request)).not.toContain("handoff_to_agent");
+  });
+
+  it("sends separate request and draft fields for two workers plus a Host-reserved final summary", async () => {
+    const input: RoomLeadPlanInput = {
+      rootRequest: "请作者写报告，审阅员读取报告并审阅，最后由协调者汇总两个成员的结果。",
+      coordinationDraft: "作者先写报告。\n审阅员随后复核，成员完成后我再汇总。",
+    };
+    const fetchMock = stubPayload(responsePayload({ assignments, reason: "两项成员任务完整覆盖业务要求，最后汇总由 Host 负责。", incompleteReason: null }));
+    await expect(provider().selectLeadPlan(input, executorBotId, roster, 2, new AbortController().signal))
+      .resolves.toEqual({ assignments, reason: "两项成员任务完整覆盖业务要求，最后汇总由 Host 负责。", incompleteReason: null });
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(JSON.parse(request.messages[1].content)).toEqual({
+      executorBotId, maxAssignments: 2, candidates: roster.slice(1),
+      rootRequest: input.rootRequest, coordinationDraft: input.coordinationDraft,
+    });
+    expect(request.messages[0].content).toContain("协调者最终汇总已由 Host 预留并自动安排，不占 assignments 容量");
+    expect(request.messages[0].content).toContain("任务尚未执行不代表计划不完整");
+    expect(request.messages[0].content).toContain("不得作为额外任务分配给协调者或其他成员");
+    expect(request.tools[0].function.parameters.properties.assignments).toMatchObject({ maxItems: 2, description: expect.stringContaining("Worker business tasks only") });
+    expect(request.tools[0].function.parameters.properties.assignments.items.properties.toAgentId.enum).not.toContain(executorBotId);
+    expect(request.tools[0].function.parameters.properties.incompleteReason.description).toContain("Use JSON null");
+  });
+
+  it("rejects a genuine third worker assignment instead of truncating it as a final summary", async () => {
+    const third = { id: crypto.randomUUID(), name: "数据员", label: "数据", description: "负责数据检查" };
+    const oversized = [...assignments, { toAgentId: third.id, task: "独立完成用户要求的数据检查。", dependsOnPrevious: false }];
+    stubPayload(responsePayload({ assignments: oversized, reason: "三位成员分别执行任务。", incompleteReason: null }));
+    await expect(provider().selectLeadPlan({ rootRequest: "请写作、审阅、检查数据，三项完成后协调者汇总。", coordinationDraft: "安排三位成员。" }, executorBotId, [...roster, third], 2, new AbortController().signal))
+      .rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
+  });
+
+  it("preserves a genuine uncovered-work reason even when two returned assignments fit", async () => {
+    const incompleteReason = "另有独立数据检查工作，无法纳入这两项成员任务。";
+    stubPayload(responsePayload({ assignments, reason: "完整业务计划超过容量。", incompleteReason }));
+    await expect(provider().selectLeadPlan({ rootRequest: "写作、审阅、检查数据三项均须完成。", coordinationDraft: "目前只能安排写作和审阅。" }, executorBotId, roster, 2, new AbortController().signal))
+      .resolves.toEqual({ assignments, reason: "完整业务计划超过容量。", incompleteReason });
+  });
+
+  it.each(["null", " NULL ", "none", "无"])("rejects the incompleteReason sentinel %j rather than treating it as completion", async (incompleteReason) => {
+    stubPayload(responsePayload({ assignments, reason: "两项计划。", incompleteReason }));
+    await expect(provider().selectLeadPlan({ rootRequest: "请写作并审阅。", coordinationDraft: "作者先写，审阅员后审。" }, executorBotId, roster, 2, new AbortController().signal))
+      .rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
+  });
+
+  it.each([
+    { rootRequest: "你好", coordinationDraft: "你好！" },
+    JSON.stringify({ userRequest: "你好", coordinationDraft: "你好！" }),
+    "你好",
+  ])("retains no-assignment greetings for typed and legacy inputs: %j", async (input) => {
+    const fetchMock = stubPayload(responsePayload({ assignments: [], reason: "问候已回复。", incompleteReason: null }));
+    await expect(provider().selectLeadPlan(input, executorBotId, roster, 0, new AbortController().signal))
+      .resolves.toEqual({ assignments: [], reason: "问候已回复。", incompleteReason: null });
+    await expect(new FakeModelProvider(0).selectLeadPlan(input, executorBotId, roster, 0, new AbortController().signal))
+      .resolves.toMatchObject({ assignments: [], incompleteReason: null });
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    const payload = JSON.parse(request.messages[1].content);
+    expect(payload).not.toHaveProperty("assistantDraft");
+    expect(payload).toMatchObject(input === "你好" ? { rootRequest: "", coordinationDraft: "你好" } : { rootRequest: "你好", coordinationDraft: "你好！" });
+  });
+
+  it("allows an empty plan for a response with no member work", async () => {
+    stubPayload(responsePayload({ assignments: [], reason: "  只需文字答复。  ", incompleteReason: null }));
+    await expect(provider().selectLeadPlan("这条消息无需成员执行。", executorBotId, roster, 2, new AbortController().signal))
+      .resolves.toEqual({ assignments: [], reason: "只需文字答复。", incompleteReason: null });
+  });
+
+  it("allows a greeting at zero capacity and advertises a zero-item plan schema", async () => {
+    const fetchMock = stubPayload(responsePayload({ assignments: [], reason: "问候已直接回复。", incompleteReason: null }));
+    await expect(provider().selectLeadPlan(JSON.stringify({ userRequest: "你好", coordinationDraft: "你好！" }), executorBotId, roster, 0, new AbortController().signal))
+      .resolves.toEqual({ assignments: [], reason: "问候已直接回复。", incompleteReason: null });
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(request.tools[0].function.parameters.properties.assignments.maxItems).toBe(0);
+    expect(request.messages[0].content).toContain("有实际待执行工作则必须返回非空 incompleteReason");
+  });
+
+  it.each([0, 1])("reports the missing work when capacity %i cannot cover the full plan", async (capacity) => {
+    const incompleteReason = `必须分别写作和审阅，但当前容量只有 ${capacity} 个成员任务；两项工作均未执行。`;
+    const fetchMock = stubPayload(responsePayload({ assignments: [], reason: "容量不足，交由 Host 标记未完成。", incompleteReason: `  ${incompleteReason}  ` }));
+    await expect(provider().selectLeadPlan("请作者先写报告，审阅员根据报告复核；两项都必须完成。", executorBotId, roster, capacity, new AbortController().signal))
+      .resolves.toEqual({ assignments: [], reason: "容量不足，交由 Host 标记未完成。", incompleteReason });
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(request.messages[0].content).toContain("禁止静默截断计划或声称完成");
+    expect(request.messages[0].content).toContain("Host 将拒绝执行整个不完整计划");
+  });
+
+  it.each([
+    ["unknown target", [{ ...assignments[0], toAgentId: crypto.randomUUID() }]],
+    ["lead target", [{ ...assignments[0], toAgentId: executorBotId }]],
+    ["duplicate target", [assignments[0], assignments[0]]],
+    ["first dependency", [{ ...assignments[0], dependsOnPrevious: true }]],
+    ["missing dependency", [{ toAgentId: roster[1]!.id, task: "write" }]],
+    ["nonboolean dependency", [{ ...assignments[0], dependsOnPrevious: "false" }]],
+    ["empty task", [{ ...assignments[0], task: " \n " }]],
+    ["oversized task", [{ ...assignments[0], task: "x".repeat(20_001) }]],
+    ["extra credential field", [{ ...assignments[0], apiKey: "sensitive" }]],
+    ["null assignment", [null]],
+    ["missing array", null],
+  ])("rejects an invalid plan: %s", async (_name, invalidAssignments) => {
+    stubPayload(responsePayload({ assignments: invalidAssignments, reason: "plan", incompleteReason: null }));
+    await expect(provider().selectLeadPlan("请执行分工。", executorBotId, roster, 2, new AbortController().signal))
+      .rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
+  });
+
+  it.each([0, 1])("enforces the caller's assignment budget %i in both schema and parser", async (capacity) => {
+    const fetchMock = stubPayload(responsePayload({ assignments, reason: "plan", incompleteReason: null }));
+    await expect(provider().selectLeadPlan("请两位执行。", executorBotId, roster, capacity, new AbortController().signal))
+      .rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(request.tools[0].function.parameters.properties.assignments.maxItems).toBe(capacity);
+  });
+
+  it.each([
+    ["null payload", null],
+    ["missing tool", { choices: [{ message: {} }] }],
+    ["multiple choices", { choices: [{ message: {} }, { message: {} }] }],
+    ["null choice", { choices: [null] }],
+    ["multiple calls", { choices: [{ message: { tool_calls: [{}, {}] } }] }],
+    ["wrong function", { choices: [{ message: { tool_calls: [{ type: "function", function: { name: "workspace_read", arguments: "{}" } }] } }] }],
+    ["invalid JSON", { choices: [{ message: { tool_calls: [{ type: "function", function: { name: "select_room_lead_plan", arguments: "{" } }] } }] }],
+    ["extra plan field", responsePayload({ assignments: [], reason: "plan", incompleteReason: null, dispatched: true })],
+    ["empty reason", responsePayload({ assignments: [], reason: " ", incompleteReason: null })],
+    ["missing incomplete reason", responsePayload({ assignments: [], reason: "plan" })],
+    ["nonstring incomplete reason", responsePayload({ assignments: [], reason: "plan", incompleteReason: false })],
+    ["empty incomplete reason", responsePayload({ assignments: [], reason: "plan", incompleteReason: " " })],
+    ["oversized incomplete reason", responsePayload({ assignments: [], reason: "plan", incompleteReason: "x".repeat(1_001) })],
+  ])("rejects malformed structured response: %s", async (_name, payload) => {
+    stubPayload(payload);
+    await expect(provider().selectLeadPlan("计划工作。", executorBotId, roster, 2, new AbortController().signal))
+      .rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
+  });
+
+  it.each([-1, 1.5, NaN])("rejects an invalid assignment limit before contacting the provider: %s", async (limit) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(provider().selectLeadPlan("计划工作。", executorBotId, roster, limit, new AbortController().signal))
+      .rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(new FakeModelProvider(0).selectLeadPlan("你好", executorBotId, roster, limit, new AbortController().signal))
+      .rejects.toMatchObject({ code: "MODEL_ROUTER_INVALID" });
+  });
+
+  it.each(["coordinate", "summary"] as const)("advertises no tools for a %s turn with empty runtime capabilities", async (roomTurnPurpose) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(streamFrom(['data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n']), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const context: ModelRunContext = {
+      executorBotId, executionKey: roomTurnPurpose, roomTurnPurpose, roomLeadBotId: executorBotId,
+      roomRoster: roster, workspaces: [], mcpTools: [], networkTools: false, deviceTools: false,
+      projectTools: false, textMeasureTools: false,
+    };
+    expect(structuredModelToolDefinitions(context)).toEqual([]);
+    await collect(provider().run([], new AbortController().signal, context));
+    const request = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(request).not.toHaveProperty("tools");
+    expect(request).not.toHaveProperty("tool_choice");
+  });
+
+  it("provides deterministic fake assignments and keeps coordination away from fake tools and handoffs", async () => {
+    vi.stubEnv("AEVOREN_BOT_FAKE_HANDOFF", "first-other");
+    vi.stubEnv("AEVOREN_BOT_FAKE_WORKSPACE_TOOL", "read");
+    const fake = new FakeModelProvider(0);
+    await expect(fake.selectLeadPlan("计划", executorBotId, roster, 1, new AbortController().signal)).resolves.toMatchObject({
+      assignments: [{ toAgentId: roster[1]!.id, dependsOnPrevious: false }],
+      incompleteReason: null,
+    });
+    const events = await collect(fake.run([], new AbortController().signal, {
+      executorBotId, executionKey: "coordinate", roomTurnPurpose: "coordinate", roomRoster: roster,
+      workspaces: [{ id: "workspace", name: "fixture", writeEnabled: true, automationEnabled: true }],
+    }));
+    expect(events.map((event) => event.type)).toEqual(["started", "delta", "completed"]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "delta", text: expect.stringContaining("待 Host 分发") }));
+  });
+
+  it("answers simple greetings directly and returns no fake assignments for the JSON root request", async () => {
+    const fake = new FakeModelProvider(0);
+    for (const userRequest of ["你好", "hi!"]) {
+      const events = await collect(fake.run([{ role: "user", content: userRequest }], new AbortController().signal, {
+        executorBotId, executionKey: `greeting-${userRequest}`, roomTurnPurpose: "coordinate", roomRoster: roster,
+      }));
+      expect(events).toContainEqual({ type: "delta", text: "你好！有什么我可以帮忙的？" });
+      expect(events.map((event) => event.type)).toEqual(["started", "delta", "completed"]);
+      await expect(fake.selectLeadPlan(JSON.stringify({ userRequest, coordinationDraft: "问候已回复。" }), executorBotId, roster, 2, new AbortController().signal))
+        .resolves.toMatchObject({ assignments: [], incompleteReason: null });
+    }
+    const plan = await fake.selectLeadPlan(JSON.stringify({ userRequest: "你好，请读取数据文件。", coordinationDraft: "你好！" }), executorBotId, roster, 2, new AbortController().signal);
+    expect(plan.assignments).toHaveLength(2);
+  });
+
+  it("uses the root self-introduction request even when the draft mentions or proposes another member", async () => {
+    const fake = new FakeModelProvider(0);
+    const rootRequest = "你好，请用你配置中的 Bot 名称和负责的领域简短介绍你自己，不介绍其他成员。";
+    await expect(fake.selectLeadPlan({ rootRequest, coordinationDraft: "我是协调者。请审阅员接着介绍自己的职责。" }, executorBotId, roster, 2, new AbortController().signal))
+      .resolves.toMatchObject({ assignments: [], incompleteReason: null });
+    await expect(fake.selectLeadPlan({ rootRequest: "你好，协调者", coordinationDraft: "作者负责写作。" }, executorBotId, roster, 0, new AbortController().signal))
+      .resolves.toMatchObject({ assignments: [], incompleteReason: null });
+    const events = await collect(fake.run([{ role: "user", content: rootRequest }], new AbortController().signal, {
+      executorBotId, executionKey: "lead-introduction", roomTurnPurpose: "coordinate", roomRoster: roster,
+    }));
+    expect(events).toContainEqual({ type: "delta", text: "我是协调者，负责分配和汇总" });
+    expect(events.some((event) => event.type === "handoff")).toBe(false);
+  });
+
+  it("does not infer a direct conversation from the draft when the root asks for work or is unavailable", async () => {
+    const fake = new FakeModelProvider(0);
+    for (const rootRequest of ["你好，请读取文件并形成报告。", "请每位成员分别介绍自己。", ""]) {
+      const plan = await fake.selectLeadPlan({ rootRequest, coordinationDraft: "你好！我是协调者。" }, executorBotId, roster, 2, new AbortController().signal);
+      expect(plan.assignments).toHaveLength(2);
+    }
+  });
+
+  it("keeps fake greetings complete at zero capacity while reporting unexecuted member work", async () => {
+    const fake = new FakeModelProvider(0);
+    await expect(fake.selectLeadPlan(JSON.stringify({ userRequest: "hi", coordinationDraft: "你好！" }), executorBotId, roster, 0, new AbortController().signal))
+      .resolves.toMatchObject({ assignments: [], incompleteReason: null });
+    await expect(fake.selectLeadPlan(JSON.stringify({ userRequest: "读取文件并写报告。", coordinationDraft: "计划工作。" }), executorBotId, roster, 0, new AbortController().signal))
+      .resolves.toMatchObject({ assignments: [], incompleteReason: "当前容量为零，用户请求中的成员工作尚未执行。" });
+  });
+
+  it("uses actual Host result states in the fake summary", async () => {
+    vi.stubEnv("AEVOREN_BOT_FAKE_HANDOFF", "first-other");
+    vi.stubEnv("AEVOREN_BOT_FAKE_WORKSPACE_TOOL", "read");
+    const fake = new FakeModelProvider(0);
+    const events = await collect(fake.run([], new AbortController().signal, {
+      executorBotId, executionKey: "summary", roomTurnPurpose: "summary", roomRoster: roster,
+      workspaces: [{ id: "workspace", name: "fixture", writeEnabled: true, automationEnabled: true }],
+      roomRunSummary: {
+        runId: "run", leadBotId: executorBotId, request: { entryId: "request", text: "完成报告" }, coordinationErrorCode: "PLAN_FAILED",
+        results: [{ turnId: "turn", logicalTurnId: "logical", agentId: roster[1]!.id, agentName: "作者", turnPurpose: "work", state: "failed", errorCode: "WORKSPACE_SCOPE_INVALID", outcome: null, body: "", assistantEntryId: null, artifacts: [] }],
+      },
+    }));
+    expect(events.map((event) => event.type)).toEqual(["started", "delta", "completed"]);
+    expect(events).toContainEqual({ type: "delta", text: expect.stringContaining("作者：未完成") });
+    expect(events).toContainEqual({ type: "delta", text: expect.stringContaining("任务安排未完成") });
+    expect(JSON.stringify(events)).not.toMatch(/WORKSPACE_SCOPE_INVALID|PLAN_FAILED|Host|Runtime/);
+  });
+});
+
+describe("fixed-plan work handoff correction", () => {
+  const call = (name: string, args: string, id = "call-extra") => ({ index: 0, id, type: "function", function: { name, arguments: args } });
+  const parsePlanned = (stream: ReadableStream<Uint8Array>): AsyncIterable<ModelEvent> => parseOpenAiStream(
+    stream, undefined, undefined, undefined, undefined, false, undefined, false, undefined, false, true,
+  );
+  const toolResponse = (name: string, args: unknown, id: string): Response => new Response(streamFrom([
+    `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [call(name, JSON.stringify(args), id)] }, finish_reason: "tool_calls" }] })}\n\n`,
+  ]), { status: 200 });
+
+  it.each(["finish-reason", "done", "buffered-finish"])("corrects an out-of-plan legacy handoff at the %s boundary without dispatching", async (terminal) => {
+    const args = JSON.stringify({ agentId: "outside-member", message: "继续执行", contextRefs: { legacy: true }, visibility: "direct" });
+    const data = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [call("handoff_to_agent", args)] }, ...(terminal === "done" ? {} : { finish_reason: "tool_calls" }) }] })}`;
+    const wire = terminal === "done" ? `${data}\n\ndata: [DONE]\n\n` : `${data}${terminal === "buffered-finish" ? "" : "\n\n"}`;
+    const split = Math.floor(wire.length / 2);
+    const events = await collect(parsePlanned(streamFrom([wire.slice(0, split), wire.slice(split)])));
+    expect(events).toContainEqual({
+      type: "tool-rejection", toolCallId: "call-extra", providerToolName: "handoff_to_agent", arguments: args,
+      code: "ROOM_HANDOFF_DISABLED", safeMessage: "后续成员已由应用安排。请完成当前成员自己的回复，不要执行或声称额外转交。",
+    });
+    expect(events.at(-1)).toEqual({ type: "completed", finishReason: terminal === "done" ? "done" : "tool_calls" });
+    expect(events.some((event) => event.type === "handoff")).toBe(false);
+  });
+
+  it.each([
+    ["unknown function", call("invented_tool", "{}"), "MODEL_HANDOFF_INVALID"],
+    ["invalid JSON", call("handoff_to_agent", "{"), "MODEL_HANDOFF_INVALID"],
+    ["array arguments", call("handoff_to_agent", "[]"), "MODEL_HANDOFF_INVALID"],
+    ["null arguments", call("handoff_to_agent", "null"), "MODEL_HANDOFF_INVALID"],
+    ["missing arguments", call("handoff_to_agent", ""), "MODEL_HANDOFF_INVALID"],
+    ["missing call ID", call("handoff_to_agent", "{}", ""), "MODEL_HANDOFF_INVALID"],
+    ["oversized call ID", call("handoff_to_agent", "{}", "x".repeat(201)), "MODEL_HANDOFF_INVALID"],
+    ["oversized JSON", call("handoff_to_agent", JSON.stringify({ message: "x".repeat(300_000) })), "MODEL_HANDOFF_INVALID"],
+    ["wrong call type", { ...call("handoff_to_agent", "{}"), type: "other" }, "MODEL_HANDOFF_INVALID"],
+    ["disabled network tool", call("web_fetch", "{}"), "MODEL_NETWORK_TOOL_INVALID"],
+  ])("preserves strict validation for %s in planned work", async (_name, toolCall, code) => {
+    const stream = streamFrom([`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [toolCall] }, finish_reason: "tool_calls" }] })}\n\n`]);
+    await expect(collect(parsePlanned(stream))).rejects.toMatchObject({ code });
+  });
+
+  it.each([
+    { roomTurnPurpose: "work" as const },
+    { roomTurnPurpose: "summary" as const, roomLeadBotId: "lead" },
+    { roomTurnPurpose: "coordinate" as const, roomLeadBotId: "lead" },
+    { roomLeadBotId: "lead" },
+  ])("does not enable retired handoff correction outside fixed-plan work: %j", async (scope) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(toolResponse("handoff_to_agent", { toAgentId: "peer", task: "继续" }, "handoff")));
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "model", "key");
+    await expect(collect(provider.run([], new AbortController().signal, { executorBotId: "worker", executionKey: "scope", ...scope })))
+      .rejects.toMatchObject({ code: "MODEL_HANDOFF_INVALID" });
+  });
+
+  it("continues after successful read/write tool results and a retired handoff decoded from API SSE", async () => {
+    const workspaceId = crypto.randomUUID();
+    const retiredArgs = { recipient: "retired-agent-outside-roster", instructions: "继续发布编辑任务。", contextRefs: "legacy-format" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(toolResponse("workspace_read", { workspaceId, path: "LICENSE.md", maxBytes: 65_536 }, "read-license"))
+      .mockResolvedValueOnce(toolResponse("workspace_write", { workspaceId, path: "license-note.md", content: "# Apache License 2.0\n许可证摘要。" }, "write-note"))
+      .mockResolvedValueOnce(toolResponse("handoff_to_agent", retiredArgs, "retired-handoff"))
+      .mockResolvedValueOnce(new Response(streamFrom(['data: {"choices":[{"index":0,"delta":{"content":"已读取 LICENSE.md，并保存 license-note.md。"},"finish_reason":"stop"}]}\n\n']), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAiCompatibleProvider("https://example.com/v1", "model", "key");
+    const context: ModelRunContext = {
+      executorBotId: crypto.randomUUID(), executionKey: "planned-license-work", roomLeadBotId: crypto.randomUUID(), roomTurnPurpose: "work",
+      workspaces: [{ id: workspaceId, name: "fixture", writeEnabled: true, automationEnabled: true }],
+    };
+    const messages: ChatMessage[] = [{ role: "user", content: "读取 LICENSE.md 并写入 license-note.md，后续成员已由应用安排。" }];
+    const allEvents: ModelEvent[] = [];
+    for (let round = 0; round < 4; round += 1) {
+      const events = await collect(provider.run(messages, new AbortController().signal, context));
+      allEvents.push(...events);
+      const event = events.find((candidate) => candidate.type === "workspace-tool" || candidate.type === "tool-rejection");
+      if (event?.type === "workspace-tool") {
+        const { kind, ...args } = event.tool;
+        messages.push({ role: "assistant", content: "", tool_calls: [{ id: event.toolCallId, type: "function", function: { name: event.providerToolName!, arguments: JSON.stringify(args) } }] });
+        messages.push({ role: "tool", tool_call_id: event.toolCallId, content: JSON.stringify(kind === "workspace-read"
+          ? { ok: true, content: "Apache License 2.0", truncated: false }
+          : { ok: true, path: "license-note.md", created: true }) });
+      } else if (event?.type === "tool-rejection") {
+        messages.push({ role: "assistant", content: "", tool_calls: [{ id: event.toolCallId, type: "function", function: { name: event.providerToolName, arguments: event.arguments } }] });
+        messages.push({ role: "tool", tool_call_id: event.toolCallId, content: JSON.stringify({ ok: false, code: event.code, safeMessage: event.safeMessage }) });
+      }
+    }
+    expect(allEvents.filter((event) => event.type === "workspace-tool").map((event) => event.tool.kind)).toEqual(["workspace-read", "workspace-write"]);
+    expect(allEvents.filter((event) => event.type === "tool-rejection")).toEqual([expect.objectContaining({ code: "ROOM_HANDOFF_DISABLED", arguments: JSON.stringify(retiredArgs) })]);
+    expect(allEvents.some((event) => event.type === "handoff")).toBe(false);
+    expect(allEvents.at(-2)).toEqual({ type: "delta", text: "已读取 LICENSE.md，并保存 license-note.md。" });
+    expect(allEvents.at(-1)).toEqual({ type: "completed", finishReason: "stop" });
+    const requests = fetchMock.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string) as { messages: ChatMessage[]; tools: Array<{ function: { name: string } }> });
+    expect(requests.every((request) => request.tools.every((tool) => tool.function.name !== "handoff_to_agent"))).toBe(true);
+    expect(requests[3]!.messages.filter((message) => message.role === "tool")).toEqual([
+      expect.objectContaining({ tool_call_id: "read-license", content: expect.stringContaining('"ok":true') }),
+      expect.objectContaining({ tool_call_id: "write-note", content: expect.stringContaining('"created":true') }),
+      expect.objectContaining({ tool_call_id: "retired-handoff", content: expect.stringContaining("ROOM_HANDOFF_DISABLED") }),
+    ]);
   });
 });

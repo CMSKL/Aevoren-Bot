@@ -3,6 +3,7 @@ import type { AppError, Bot, BotPatch, McpServerInfo, ModelSelection, ProviderIn
 import { CheckIcon, CloseIcon } from "./Icons";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { MemoryPanel, type MemoryPanelHandle } from "./MemoryPanel";
+import { ConversationWorkspace, type ConversationWorkspaceProps } from "./ConversationWorkspace";
 
 type ProfileDraft = Pick<Bot, "name" | "label" | "description" | "instructions">;
 export type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
@@ -15,7 +16,8 @@ export type ProfileInspectorHandle = {
 type ProfileInspectorProps = {
   id?: string;
   bot: Bot | null;
-  workspaceId: string | null;
+  workspaceIds: string[];
+  conversationWorkspace: ConversationWorkspaceProps;
   mobileOpen: boolean;
   onBotUpdated(bot: Bot): void;
   onError(error: AppError | null): void;
@@ -41,7 +43,7 @@ function sameDraft(left: ProfileDraft, right: ProfileDraft): boolean {
 }
 
 export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspectorProps>(function ProfileInspector(
-  { id, bot, workspaceId, mobileOpen, onBotUpdated, onError, onMobileClose },
+  { id, bot, workspaceIds, conversationWorkspace, mobileOpen, onBotUpdated, onError, onMobileClose },
   ref,
 ) {
   const [draft, setDraft] = useState<ProfileDraft | null>(bot ? toDraft(bot) : null);
@@ -49,7 +51,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   const [providers, setProviders] = useState<ProviderInstanceInfo[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const fileWorkspaces = workspaceId ? workspaces.filter((workspace) => workspace.id === workspaceId) : workspaces;
+  const fileWorkspaces = workspaces.filter((workspace) => workspaceIds.includes(workspace.id));
   const [modelSaving, setModelSaving] = useState(false);
   const [mcpSaving, setMcpSaving] = useState(false);
   const [memoryScopeSaving, setMemoryScopeSaving] = useState(false);
@@ -282,6 +284,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
         </div>
       </header>
 
+      <ConversationWorkspace {...conversationWorkspace} />
       <div className="inspector-avatar-hero avatar-settings">
         <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={92} title={`${bot.name || "Bot"}头像`} />
       </div>
@@ -327,8 +330,8 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
         </section>
           <section className="permission-explainer">
             <strong>文件访问</strong>
-            <p>由左侧所属工作区的文件夹授权决定 Bot 可以读取或新建哪些文件；它不会自动把内容注入长期记忆。</p>
-            <span>{fileWorkspaces.length > 0 ? `已授权 ${fileWorkspaces.length} 个文件夹` : "尚未授权文件夹"}</span>
+            <p>仅可访问当前聊天已授权的文件夹；文件授权不会自动把内容注入长期记忆。</p>
+            <span>{fileWorkspaces.length > 0 ? `已授权 ${fileWorkspaces.length} 个文件夹：${fileWorkspaces.map((workspace) => workspace.name).join("、")}` : "当前聊天未授权文件夹"}</span>
           </section>
           <div className="field mcp-access-field">
             <span>外部工具（MCP）</span>

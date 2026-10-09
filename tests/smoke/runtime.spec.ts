@@ -388,7 +388,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     ]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations,
-    ).toSorted())).toEqual(["deleteBatch"]);
+    ).toSorted())).toEqual(["clear", "deleteBatch", "list", "setHidden", "setPinned", "setProject", "setUnread"]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.artifacts,
     ).toSorted())).toEqual(["reveal", "save"]);

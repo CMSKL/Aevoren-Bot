@@ -91,6 +91,8 @@ type TranscriptItemProps = {
   handoffs: HandoffDisplay[];
   handoffRejections: HandoffRejectionDisplay[];
   coordinationErrorCode: string | null;
+  turnPurpose: RoomTurn["turnPurpose"];
+  taskPartial: boolean;
   toolInvocations: ToolInvocation[];
   briefApproval: { roomId: string; sourceRuntimeRunId: string; briefInvocationId: string } | null;
   onRetryMessage(clientNonce: string): void;
@@ -115,6 +117,13 @@ const toolStateLabels: Record<ToolInvocation["state"], string> = {
   cancelled: "已取消",
   "failed-before-execution": "执行前失败",
   "interrupted-unknown": "执行被中断",
+};
+
+const roomBatchLabels: Record<RoomBatch["state"], string> = {
+  queued: "待处理", running: "处理中", completed: "已完成", partial: "部分完成", cancelled: "已停止", interrupted: "已中断",
+};
+const roomTurnLabels: Record<RoomTurn["state"], string> = {
+  queued: "待执行", running: "处理中", completed: "已完成", failed: "未完成", cancelled: "已停止", interrupted: "已中断",
 };
 
 function toolActionLabel(invocation: ToolInvocation): string {
@@ -271,6 +280,8 @@ const TranscriptItem = memo(function TranscriptItem({
   handoffs,
   handoffRejections,
   coordinationErrorCode,
+  turnPurpose,
+  taskPartial,
   toolInvocations,
   briefApproval,
   onRetryMessage,
@@ -298,6 +309,7 @@ const TranscriptItem = memo(function TranscriptItem({
     <article
       className={`message message-${entry.role}${longAssistant ? " message-long" : ""}${groupedWithPrevious ? " message-group-continuation" : ""}${groupedWithNext ? " message-group-has-next" : ""}${isSuperseded ? " message-superseded" : ""}`}
       data-status={entry.status}
+      data-turn-purpose={turnPurpose}
     >
       <div className="message-row">
         {entry.role === "assistant" ? (
@@ -315,6 +327,7 @@ const TranscriptItem = memo(function TranscriptItem({
                 <button className="speaker-link" type="button" onClick={() => onOpenSpeaker(entry.speakerBotId!)}>{speakerName}</button>
               ) : <strong>{speakerName}</strong>}
               <time>{timeFormatter.format(new Date(entry.createdAt))}</time>
+              {turnPurpose === "summary" ? <span>汇总</span> : turnPurpose === "coordinate" ? <span>协调</span> : null}
             </header>
           ) : null}
           {isSuperseded ? <div className="superseded-attempt-note"><span aria-hidden="true">↻</span>较早失败版本，已由后续重试替代</div> : null}
@@ -352,7 +365,7 @@ const TranscriptItem = memo(function TranscriptItem({
                   delivery={handoff.progress.deliveryLabel}
                   execution={handoff.progress.executionLabel}
                   tone={handoff.progress.tone}
-                  createdAt={handoff.createdAt}
+                  createdAt={handoff.deliveryAttempt?.acceptedAt ?? handoff.createdAt}
                 />
               ))}
             </div>
@@ -385,6 +398,9 @@ const TranscriptItem = memo(function TranscriptItem({
           {briefApproval ? (
             <BriefApprovalCard key={briefApproval.briefInvocationId} {...briefApproval} busy={busy} onAction={onWorkflowAction} />
           ) : null}
+          {turnPurpose === "summary" && entry.status === "completed" && taskPartial ? (
+            <div className="entry-note warning" role="status">本轮仅部分完成。以上汇总不代表所有成员任务成功；已保存成果仍可在任务详情中查看。</div>
+          ) : null}
           {cancelled ? (
             <div className="entry-note warning">
               {entry.role === "assistant" ? "回复已停止。" : "消息已取消。"}
@@ -396,7 +412,12 @@ const TranscriptItem = memo(function TranscriptItem({
               ) : null}
             </div>
           ) : null}
-          {failed && entry.role === "assistant" ? (
+          {failed && entry.role === "assistant" && turnPurpose === "summary" ? (
+            <div className="entry-note warning" role="status">
+              汇总未完成，成员已经完成的工作和保存的文件仍然保留。
+              {canRetryRoomTurn && entry.sourceTurnId ? <button type="button" className="text-button" disabled={busy} onClick={() => onRetryRoomTurn(entry.sourceTurnId!)}>重试汇总</button> : null}
+            </div>
+          ) : failed && entry.role === "assistant" ? (
             canRetryRoomTurn && entry.sourceTurnId ? (
               <div className="room-inline-failure" data-testid="room-batch-state">
                 <RunFailureCard
@@ -601,6 +622,7 @@ export function Conversation({
   );
   const latestFailedRun = latestFailedTurn?.runtimeRunId ? runsById.get(latestFailedTurn.runtimeRunId) ?? null : null;
   const latestFailedTools = latestFailedRun ? toolInvocations.filter((invocation) => invocation.runtimeRunId === latestFailedRun.id) : [];
+  const waitingForBriefApproval = latestTurns.some(turn => turn.lastErrorCode === "HUMAN_APPROVAL_REQUIRED") && briefApproval !== null;
   const roomTurnState = useMemo(() => {
     const byId = new Map(roomTurns.map((turn) => [turn.id, turn]));
     const latestByLogicalTurn = new Map<string, RoomTurn>();
@@ -625,7 +647,10 @@ export function Conversation({
     const runsById = new Map(runs.map((run) => [run.id, run]));
     const result = new Map<string, HandoffDisplay[]>();
     for (const handoff of roomHandoffs.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))) {
-      const sourceTurn = roomTurnState.byId.get(handoff.fromTurnId);
+      const originalSourceTurn = roomTurnState.byId.get(handoff.fromTurnId);
+      const sourceTurn = handoff.deliveryAttempt && originalSourceTurn
+        ? roomTurnState.latestByLogicalTurn.get(`${originalSourceTurn.batchId}:${originalSourceTurn.logicalTurnId}`) ?? originalSourceTurn
+        : originalSourceTurn;
       const targetTurn = roomTurnState.byId.get(handoff.targetTurnId);
       const latestTargetTurn = targetTurn
         ? roomTurnState.latestByLogicalTurn.get(`${targetTurn.batchId}:${targetTurn.logicalTurnId}`) ?? targetTurn
@@ -804,7 +829,9 @@ export function Conversation({
         </button>
         <div className="conversation-title">
           <h1>{subjectName}</h1>
-          <p>{room?.room.description || bot?.description || (room ? `${room.members.length} 个 Bot 协作，未点名时自动选择。` : bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
+          <p>{room?.room.leadBotId
+            ? `协调者：${roomMemberIdentities.get(room.room.leadBotId)?.inline ?? "待更换"} · ${room.room.description || `${room.members.length} 位成员`}`
+            : room?.room.description || bot?.description || (room ? `${room.members.length} 个 Bot 协作，未点名时自动选择。` : bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
         </div>
         <div className="conversation-actions">
           {room ? (
@@ -904,8 +931,8 @@ export function Conversation({
         {loading ? <div className="center-state">正在加载会话…</div> : null}
         {!loading && !bot && !room ? (
           <div className="center-state">
-            <strong>从创建第一个 Bot 开始</strong>
-            <span>明确选择创建后，再为它定义名称和职责。</span>
+            <strong>选择一个聊天</strong>
+            <span>从联系人发消息，或点击“+”创建 Bot 或群聊。</span>
           </div>
         ) : null}
         {!loading && (bot || room) && entries.length === 0 ? (
@@ -964,6 +991,8 @@ export function Conversation({
               coordinationErrorCode={sourceTurn?.outcome?.summary?.startsWith("handoff-failed:")
                 ? sourceTurn.outcome.summary.slice("handoff-failed:".length)
                 : null}
+              turnPurpose={sourceTurn?.turnPurpose}
+              taskPartial={Boolean(sourceTurn && roomBatches.find(batch => batch.id === sourceTurn.batchId)?.state === "partial")}
               toolInvocations={toolsByAssistant.get(entry.id) ?? []}
               briefApproval={entry.id === briefApproval?.entryId ? briefApproval : null}
               onRetryMessage={onRetryMessage}
@@ -993,13 +1022,18 @@ export function Conversation({
 
       <footer className="composer-wrap">
         {closeNotice ? <div className="composer-notice" role="alert">{closeNotice}</div> : null}
-        {error ? <div className="composer-error" role="alert">{error.safeMessage}</div> : null}
+        {error && !(waitingForBriefApproval && error.code === "HUMAN_APPROVAL_REQUIRED") ? <div className="composer-error" role="alert">{error.safeMessage}</div> : null}
         {!room && liveState?.state === "stale"
           ? <div className="send-state runtime-stale" role="status">连接可能已停滞，仍可停止本次运行</div>
           : null}
-        {room && latestBatch && latestFailedTurn && (!latestFailedTurnHasMessage || canContinueRoomBatch) ? (
+        {room && waitingForBriefApproval ? (
+          <div className="composer-notice" role="status">等待你批准选题。已生成的 Brief 保留，批准后继续后续工作。</div>
+        ) : room && latestBatch && latestFailedTurn && (!latestFailedTurnHasMessage || canContinueRoomBatch) ? (
           <div className="composer-run-status" data-testid="room-batch-state">
-            {!latestFailedTurnHasMessage ? <RunFailureCard
+            {!latestFailedTurnHasMessage && latestFailedTurn.turnPurpose === "summary" ? <div className="entry-note warning" role="status">
+              汇总未完成，成员的有效结果和文件已保留。
+              <button className="text-button" type="button" disabled={busy} onClick={() => void retryRoomTurn(latestFailedTurn.id)}>重试汇总</button>
+            </div> : !latestFailedTurnHasMessage ? <RunFailureCard
               step={roomMemberIdentities.get(latestFailedTurn.memberBotId)?.inline ?? latestFailedTurn.memberNameSnapshot}
               errorCode={latestFailedTurn.lastErrorCode ?? latestFailedRun?.lastErrorCode}
               invocations={latestFailedTools}
@@ -1014,14 +1048,13 @@ export function Conversation({
           <details className={`room-batch-state batch-${latestBatch.state}`} data-testid="room-batch-state">
             <summary>
               <span className="room-presence-dot" aria-hidden="true" />
-              <strong>本轮状态：{latestBatch.state}</strong>
-              <small>{latestBatch.state}</small>
+              <strong>本轮状态：{roomBatchLabels[latestBatch.state]}</strong>
               <span className="room-batch-chevron" aria-hidden="true">›</span>
             </summary>
             <div className="room-turn-list">
               {latestTurns.map((turn) => (
                 <span className={`room-turn-state turn-${turn.state}`} key={turn.id}>
-                  {roomMemberIdentities.get(turn.memberBotId)?.inline ?? snapshotIdentities.get(turn.memberBotId) ?? turn.memberNameSnapshot}：{turn.state}
+                  {roomMemberIdentities.get(turn.memberBotId)?.inline ?? snapshotIdentities.get(turn.memberBotId) ?? turn.memberNameSnapshot}{turn.turnPurpose === "summary" ? " · 汇总" : ""}：{roomTurnLabels[turn.state]}
                   {(turn.state === "failed" || turn.state === "cancelled" || turn.state === "interrupted" && turn.promptCutoffSeq !== null) && !busy ? (
                     <button className="text-button" type="button" onClick={() => onRetryRoomTurn(turn.id)}>重试</button>
                   ) : null}

@@ -23,6 +23,7 @@ test("routes one approved Room workspace read through the configured real Provid
   let targetBotName: string;
   try {
     const suffix = Date.now().toString(36);
+    const registered = await new WorkspaceService(repository).registerRoot(root);
     const targetCreated = repository.createBot();
     targetBotName = `Room Workspace 真实验收-${suffix}`;
     const target = repository.updateBot(targetCreated.bot.id, targetCreated.bot.version, {
@@ -37,11 +38,11 @@ test("routes one approved Room workspace read through the configured real Provid
     const room = repository.createRoom({
       name: `Room Workspace E2E-${suffix}`,
       memberBotIds: [target.id, peer.id],
+      projectId: registered.project.id,
     });
     roomId = room.room.id;
     sessionId = room.session.id;
     targetBotId = target.id;
-    await new WorkspaceService(repository).registerRoot(root);
   } finally {
     repository.close();
   }

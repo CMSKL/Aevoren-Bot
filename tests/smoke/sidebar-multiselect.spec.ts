@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import type { AevorenBotApi } from "@shared/contracts";
+import { DEFAULT_PROJECT_ID } from "@shared/contracts";
 import { AppRepository } from "../../src/main/database";
 
 function environment(userDataDir: string, overrides: Record<string, string> = {}): Record<string, string> {
@@ -35,16 +36,16 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
   let application: ElectronApplication | undefined;
   try {
     const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
-    const memberA = repository.createBot();
+    const memberA = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(memberA.bot.id, memberA.bot.version, { name: "成员甲" });
-    const memberB = repository.createBot();
+    const memberB = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(memberB.bot.id, memberB.bot.version, { name: "成员乙" });
     for (const name of ["Bot A", "Bot B", "Bot C", "Bot D"]) {
-      const created = repository.createBot();
+      const created = repository.createBot(DEFAULT_PROJECT_ID);
       repository.updateBot(created.bot.id, created.bot.version, { name });
     }
     for (const name of ["群聊一", "群聊二", "群聊三"]) {
-      repository.createRoom({ memberBotIds: [memberA.bot.id, memberB.bot.id], name });
+      repository.createRoom({ memberBotIds: [memberA.bot.id, memberB.bot.id], name, projectId: DEFAULT_PROJECT_ID });
     }
     repository.close();
 
@@ -52,6 +53,7 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
     application = launched.application;
     const page = launched.page;
     const consoleErrors: string[] = [];
+    await page.getByRole("tab", { name: "工作区", exact: true }).click();
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     const invalidBatch = await page.evaluate((id) =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations.deleteBatch({ botIds: [id], roomIds: [] }), memberA.bot.id);
@@ -170,11 +172,11 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
   let application: ElectronApplication | undefined;
   try {
     const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
-    const first = repository.createBot();
+    const first = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(first.bot.id, first.bot.version, { name: "工作区研究员" });
-    const second = repository.createBot();
+    const second = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(second.bot.id, second.bot.version, { name: "工作区审校员" });
-    repository.createRoom({ name: "工作区群聊", memberBotIds: [first.bot.id, second.bot.id] });
+    repository.createRoom({ name: "工作区群聊", memberBotIds: [first.bot.id, second.bot.id], projectId: DEFAULT_PROJECT_ID });
     repository.setSetting("appearance.theme", "dark", false);
     repository.close();
 
@@ -182,6 +184,7 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     application = launched.application;
     const page = launched.page;
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    await page.getByRole("tab", { name: "工作区", exact: true }).click();
     const consoleErrors: string[] = [];
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
 
@@ -266,15 +269,16 @@ test("keeps the entire batch and selection when one selected Bot is running", as
   let application: ElectronApplication | undefined;
   try {
     const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
-    const busy = repository.createBot();
+    const busy = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(busy.bot.id, busy.bot.version, { name: "运行中 Bot" });
-    const other = repository.createBot();
+    const other = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(other.bot.id, other.bot.version, { name: "同行 Bot" });
     repository.close();
 
     const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_START_DELAY_MS: "5000" });
     application = launched.application;
     const page = launched.page;
+    await page.getByRole("tab", { name: "工作区", exact: true }).click();
     await row(page, "运行中 Bot").click({ modifiers: ["Meta"] });
     await row(page, "同行 Bot").click({ modifiers: ["Meta"] });
     await expect(multiSelected(page)).toHaveCount(2);

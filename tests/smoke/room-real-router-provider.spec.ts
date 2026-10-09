@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
+import { openInspector } from "./navigation";
 
 const isolatedDatabase = process.env.AEVOREN_BOT_REAL_PROVIDER_DB_PATH;
 
@@ -48,6 +49,8 @@ test("routes one no-mention request through the real selector with at most two P
     const page = await application.firstWindow();
     await page.locator(".bot-row").filter({ hasText: roomName }).click();
     await expect(page.getByRole("heading", { name: roomName })).toBeVisible();
+    await openInspector(page);
+    await expect(page.getByLabel("群协调者", { exact: true })).toHaveValue("");
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
 
     await page.getByLabel("消息").fill("请分析本季度财务预算、成本结构和费用控制重点，并用一句话回答。");

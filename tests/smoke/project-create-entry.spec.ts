@@ -20,6 +20,7 @@ test("creates Bots and Rooms from each project heading without leaking the activ
     const page = await application.firstWindow();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    await page.getByRole("tab", { name: "工作区", exact: true }).click();
     const group = page.locator('.sidebar-project').filter({ has: page.getByRole("button", { name: "项目乙", exact: true }) });
     await group.getByRole("button", { name: "在 项目乙 新建 Bot" }).click();
     await expect(group.locator(".bot-row")).toHaveCount(1);
@@ -28,9 +29,9 @@ test("creates Bots and Rooms from each project heading without leaking the activ
     await group.getByRole("button", { name: "在 项目乙 新建群聊" }).click();
     const chooser = page.getByRole("dialog", { name: "新建群聊" });
     await expect(chooser).toBeVisible();
-    await expect(chooser).not.toContainText("甲项目 Bot");
+    await expect(chooser).toContainText("甲项目 Bot");
     const options = chooser.locator(".recipient-options > button");
-    await expect(options).toHaveCount(2);
+    await expect(options).toHaveCount(3);
     await options.nth(0).click();
     await options.nth(1).click();
     await chooser.getByRole("button", { name: "创建群聊", exact: true }).click();

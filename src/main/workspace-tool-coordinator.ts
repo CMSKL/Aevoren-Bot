@@ -45,8 +45,10 @@ export class WorkspaceToolCoordinator {
     signal: AbortSignal,
   ): Promise<WorkspaceToolOutcome> {
     if (tool.kind === "bot-create" && containsLikelySecret(JSON.stringify(tool))) throw new AevorenBotError("PROJECT_PROFILE_SENSITIVE");
+    const runtime = this.repository.getRuntimeRun(runtimeRunId);
+    this.repository.assertSessionExecutor(runtime.sessionId, runtime.executorBotId);
     if ("workspaceId" in tool) {
-      this.repository.assertBotWorkspaceAccess(this.repository.getRuntimeRun(runtimeRunId).executorBotId, tool.workspaceId);
+      this.repository.assertSessionWorkspaceAccess(runtime.sessionId, runtime.executorBotId, tool.workspaceId, tool.kind);
     }
     const prepared = this.repository.prepareToolInvocation({
       runtimeRunId,
@@ -67,7 +69,8 @@ export class WorkspaceToolCoordinator {
     if (
       prepared.invocation.toolKind === "text-measure" || prepared.invocation.toolKind === "project-bots" ||
       autoApprovePublicRead ||
-      prepared.invocation.workspaceId && this.repository.getWorkspace(prepared.invocation.workspaceId).automationEnabled
+      prepared.invocation.workspaceId && this.repository.listSessionWorkspaces(runtime.sessionId, runtime.executorBotId)
+        .some((workspace) => workspace.id === prepared.invocation.workspaceId && workspace.automationEnabled)
     ) {
       return this.executeAutomatically(prepared.approval.id, signal);
     }
@@ -96,9 +99,12 @@ export class WorkspaceToolCoordinator {
   private async executeAutomatically(approvalId: string, signal: AbortSignal): Promise<WorkspaceToolOutcome> {
     const pending = this.repository.getApprovalRequest(approvalId);
     this.emitCurrent(approvalId);
-    const decided = this.repository.resolveToolApproval(approvalId, pending.version, "allow-once");
-    this.emitCurrent(approvalId);
     try {
+      if (pending.workspaceId) {
+        this.repository.assertSessionWorkspaceAccess(pending.sessionId, pending.executorBotId, pending.workspaceId, "automation");
+      }
+      const decided = this.repository.resolveToolApproval(approvalId, pending.version, "allow-once");
+      this.emitCurrent(approvalId);
       const result = await this.executor.execute(decided.invocation.id, signal);
       const current = { invocation: result.invocation, approval: this.repository.getApprovalRequest(approvalId) };
       void this.recordToolResultShadow(current.invocation, current.approval, result.content);
@@ -106,7 +112,10 @@ export class WorkspaceToolCoordinator {
       return { toolCallId: result.invocation.toolCallId, tool: result.invocation.arguments, content: result.content };
     } catch (error) {
       const appError = asAppError(error);
-      const current = this.repository.getToolInvocation(decided.invocation.id);
+      let current = this.repository.getToolInvocation(pending.toolInvocationId);
+      if (["awaiting-approval", "approved"].includes(current.state)) {
+        current = this.repository.cancelToolInvocation(current.id);
+      }
       this.emitCurrent(approvalId);
       if (error instanceof DOMException && error.name === "AbortError") throw error;
       return {
@@ -184,7 +193,27 @@ export class WorkspaceToolCoordinator {
     if (resolution === "allow-once" && !waiter) {
       throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: "detached" });
     }
-    const decided = this.repository.resolveToolApproval(id, expectedVersion, resolution);
+    let decided: ToolApprovalResult;
+    try {
+      decided = this.repository.resolveToolApproval(id, expectedVersion, resolution);
+    } catch (error) {
+      // A stale UI version can be retried. A revoked/expired approval must also
+      // release the model waiting on it, even when approval itself never commits.
+      if (waiter && !["APPROVAL_VERSION_CONFLICT", "APPROVAL_ALREADY_RESOLVED"].includes(asAppError(error).code)) {
+        let current = this.repository.getToolInvocation(approval.toolInvocationId);
+        if (["awaiting-approval", "approved"].includes(current.state)) {
+          current = this.repository.cancelToolInvocation(current.id);
+        }
+        this.clearWaiter(id);
+        this.emitCurrent(id);
+        waiter.resolve({
+          toolCallId: current.toolCallId,
+          tool: current.arguments,
+          content: JSON.stringify({ ok: false, error: { code: asAppError(error).code } }),
+        });
+      }
+      throw error;
+    }
     this.emitCurrent(id);
     if (resolution === "deny") {
       if (waiter) {
@@ -198,6 +227,7 @@ export class WorkspaceToolCoordinator {
       return decided;
     }
 
+    clearTimeout(waiter!.timer);
     try {
       const result = await this.executor.execute(decided.invocation.id, waiter!.signal);
       const current = { invocation: result.invocation, approval: this.repository.getApprovalRequest(id) };

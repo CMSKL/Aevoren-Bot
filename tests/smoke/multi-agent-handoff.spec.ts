@@ -138,7 +138,7 @@ test("runs and restores a visible A-to-B fake handoff without responsive overflo
       }
     ).aevorenBot.roomRuntime.retryTurn(turnId), failedTargetTurnId);
     expect(retryResult.ok).toBe(true);
-    await expect(launched.page.getByTestId("room-handoff-list")).toContainText("投递：失败");
+    await expect(launched.page.getByTestId("room-handoff-list")).toContainText("投递：重试 1 · 已接收");
     await expect(launched.page.getByTestId("room-handoff-list")).toContainText("执行：已完成");
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(3);
 

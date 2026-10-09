@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,6 +61,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     });
     await page.locator(".bot-row").filter({ hasText: seeded.roomName }).click();
     await expect(page.getByRole("heading", { name: seeded.roomName })).toBeVisible();
+    await openInspector(page);
     await page.getByRole("button", { name: /管理群聊成员/u }).click();
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
     await expect(page.locator(".room-routing-hint")).toHaveCount(0);

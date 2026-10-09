@@ -144,9 +144,9 @@ export class WorkspaceToolExecutor {
       throw cancelled();
     }
 
-    this.repository.transitionToolInvocation(id, "dispatching");
     try {
-      if (initial.workspaceId) this.repository.assertBotWorkspaceAccess(initial.executorBotId, initial.workspaceId);
+      this.repository.transitionToolInvocation(id, "dispatching");
+      this.assertInvocationAccess(initial);
       if (initial.workspaceId && initial.toolKind !== "workspace-write") {
         const targetType = initial.toolKind === "workspace-read" ? "file" : "directory";
         await this.workspaceService.resolveExistingTarget(initial.workspaceId, initial.targetPath, targetType);
@@ -158,8 +158,9 @@ export class WorkspaceToolExecutor {
         return this.repository.executeProjectCreation(id);
       }
 
-      const result = await this.run(initial.arguments, signal, initial.executorBotId);
+      const result = await this.run(initial.arguments, signal, initial);
       checkCancellation(signal);
+      this.assertInvocationAccess(initial);
       const invocation = this.repository.completeToolInvocation(id, digestResult(result.content), result.metadata);
       return { invocation, content: result.content };
     } catch (error) {
@@ -171,15 +172,30 @@ export class WorkspaceToolExecutor {
         }
       } else if (current.state === "dispatching" || current.state === "running") {
         this.repository.failToolInvocation(id, normalized.code);
+      } else if (current.state === "approved") {
+        // A dispatch-time permission check can reject before the state changes.
+        this.repository.cancelToolInvocation(id);
       }
       throw normalized;
+    }
+  }
+
+  private assertInvocationAccess(invocation: ToolInvocation): void {
+    this.repository.assertSessionExecutor(invocation.sessionId, invocation.executorBotId);
+    if (!invocation.workspaceId) return;
+    this.repository.assertSessionWorkspaceAccess(
+      invocation.sessionId, invocation.executorBotId, invocation.workspaceId, invocation.toolKind,
+    );
+    const workspace = this.repository.getWorkspace(invocation.workspaceId);
+    if (invocation.toolKind === "workspace-write" && !workspace.writeEnabled) {
+      throw new AevorenBotError("WORKSPACE_WRITE_NOT_ENABLED");
     }
   }
 
   private async run(
     tool: ToolRequest,
     signal: AbortSignal,
-    executorBotId: string,
+    invocation: ToolInvocation,
   ): Promise<{ content: string; metadata: ResultMetadata }> {
     if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "time-now") {
       if (!this.networkTools) throw new AevorenBotError("NETWORK_TOOL_UNAVAILABLE");
@@ -195,7 +211,7 @@ export class WorkspaceToolExecutor {
     }
     if (tool.kind === "text-measure") return this.measureText(tool as ComputationToolRequest);
     if (tool.kind === "project-bots") {
-      const result = this.repository.projectBotCatalog(executorBotId);
+      const result = this.repository.projectBotCatalog(invocation.executorBotId, invocation.sessionId);
       return { content: JSON.stringify({ ok: true, ...result }), metadata: { projectId: result.projectId, count: result.bots.length } };
     }
     if (tool.kind === "bot-create" || tool.kind === "room-create") throw new AevorenBotError("TOOL_STATE_INVALID");
@@ -207,7 +223,7 @@ export class WorkspaceToolExecutor {
       case "workspace-search":
         return this.search(tool, signal);
       case "workspace-write":
-        return this.write(tool, signal);
+        return this.write(tool, signal, () => this.assertInvocationAccess(invocation));
     }
   }
 
@@ -355,12 +371,15 @@ export class WorkspaceToolExecutor {
   private async write(
     tool: Extract<WorkspaceToolRequest, { kind: "workspace-write" }>,
     signal: AbortSignal,
+    assertAccess: () => void,
   ): Promise<{ content: string; metadata: ResultMetadata }> {
     checkCancellation(signal);
     const bytes = Buffer.byteLength(tool.content, "utf8");
     if (bytes < 1 || bytes > MAX_WRITE_BYTES) throw new AevorenBotError("WORKSPACE_WRITE_FAILED");
     if (containsLikelySecret(tool.content)) throw new AevorenBotError("WORKSPACE_WRITE_SECRET_BLOCKED");
     const target = await this.workspaceService.resolveNewTextTarget(tool.workspaceId, tool.path);
+    assertAccess();
+    checkCancellation(signal);
     const temporaryPath = join(target.canonicalParent, `.aevoren-${randomUUID()}.tmp`);
     const noFollowFlag = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
     let handle: Awaited<ReturnType<typeof open>> | null = null;
@@ -370,6 +389,11 @@ export class WorkspaceToolExecutor {
       await handle.sync();
       await handle.close();
       handle = null;
+      const latest = await this.workspaceService.resolveNewTextTarget(tool.workspaceId, tool.path);
+      if (latest.canonicalPath !== target.canonicalPath || latest.canonicalParent !== target.canonicalParent) {
+        throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+      }
+      assertAccess();
       checkCancellation(signal);
       await link(temporaryPath, target.canonicalPath);
       await unlink(temporaryPath);

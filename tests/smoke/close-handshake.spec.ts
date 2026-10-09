@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openInspector } from "./navigation";
 import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -112,6 +113,7 @@ test("flushes a dirty profile and preserves its database hash across three resta
       launched = await launch(userDataDir);
       application = launched.application;
       page = launched.page;
+      await openInspector(page);
       await expect(page.getByLabel("描述")).toHaveValue("关闭前未移焦也必须保存");
       expect(databaseHash(databasePath)).toBe(expectedHash);
       expect(await requestWindowClose(application)).toBe(true);
@@ -170,6 +172,7 @@ test("flushes a dirty profile through the application quit path", async () => {
     launched = await launch(userDataDir);
     application = launched.application;
     page = launched.page;
+    await openInspector(page);
     await expect(page.getByLabel("描述")).toHaveValue("Quit 路径也必须保存");
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;

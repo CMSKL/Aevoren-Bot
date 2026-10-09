@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +33,7 @@ function selectBot(page: Page, name: string) {
 }
 
 async function openAdvancedSettings(page: Page): Promise<void> {
+  await openInspector(page);
   const details = page.locator("details.inspector-advanced");
   if (!await details.evaluate((element) => (element as HTMLDetailsElement).open)) {
     await details.locator("summary").click();
@@ -154,6 +156,7 @@ test("blocks Bot switching on a stale Memory version and preserves the draft", a
     await page.getByRole("button", { name: "添加 Memory" }).click();
     await createBot(page, "Memory Bot B");
     await selectBot(page, "Memory Bot A").click();
+    await openAdvancedSettings(page);
     await expect(page.getByLabel("Memory 1")).toHaveValue("初始事实");
 
     const externalUpdate = await page.evaluate(async () => {

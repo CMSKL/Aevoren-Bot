@@ -6,6 +6,7 @@ import { AppRepository } from "../../src/main/database";
 import { IPC } from "../../src/shared/channels";
 import type { AevorenBotApi, UpdateState } from "../../src/shared/contracts";
 import { removeTestDirectory } from "./test-cleanup";
+import { openInspector } from "./navigation";
 
 type DiagnosticMain = typeof globalThis & {
   updateRetryHandler?: (...args: unknown[]) => unknown;
@@ -36,6 +37,7 @@ test("excludes update actions from drag regions and handles real IPC/save failur
     const page = await application.firstWindow();
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
+    await openInspector(page);
     await expect(page.getByLabel("名称", { exact: true })).toHaveValue("更新按钮验收");
     const current = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.updates.getState());
     if (!current.ok) throw Error("Cannot read real update state");

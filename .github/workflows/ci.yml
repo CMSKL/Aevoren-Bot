@@ -81,7 +81,7 @@ jobs:
           # GitHub-hosted Windows runners have no interactive desktop. The
           # Playwright Electron connection still exercises the full Renderer.
           AEVOREN_BOT_TEST_HIDDEN: "1"
-        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts
+        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts tests/smoke/p0-navigation.spec.ts
       - run: pnpm package:win
       - name: Verify unsigned Windows installer artifact
         shell: pwsh

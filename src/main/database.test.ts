@@ -184,10 +184,12 @@ describe("AppRepository", () => {
     expect(() => repository.createProject("content project")).toThrow(AevorenBotError);
     const projectBot = repository.createBot(project.id).bot;
     const anotherProjectBot = repository.createBot(project.id).bot;
-    const projectRoom = repository.createRoom({ memberBotIds: [projectBot.id, anotherProjectBot.id] }).room;
+    const projectRoom = repository.createRoom({ projectId: project.id, memberBotIds: [projectBot.id, anotherProjectBot.id] }).room;
     expect(projectBot.projectId).toBe(project.id);
     expect(projectRoom.projectId).toBe(project.id);
-    expect(() => repository.createRoom({ memberBotIds: ["legacy-bot", projectBot.id] })).toThrow(AevorenBotError);
+    const globalRoom = repository.createRoom({ memberBotIds: ["legacy-bot", projectBot.id] });
+    expect(globalRoom.members.map(member => member.botId)).toEqual(["legacy-bot", projectBot.id]);
+    expect(repository.listSessionWorkspaces(globalRoom.session.id, projectBot.id)).toEqual([]);
     const projectTeam = repository.createContentTeamTemplate(project.id);
     expect(projectTeam.room.room.projectId).toBe(project.id);
     expect(projectTeam.bots.every((bot) => bot.projectId === project.id)).toBe(true);

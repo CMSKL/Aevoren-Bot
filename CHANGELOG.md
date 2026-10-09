@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+### Added
+
+- Chats, Contacts and Workspaces navigation with recent mixed conversations, global Agent profiles, search and unread filtering.
+- Independent persisted chat state, separate remove/clear/delete actions and unread notifications for completed background replies.
+- Conversation-specific folder grants and explicit Memory audiences, preserving existing scopes through backed-up migrations without granting new chats access to other projects.
+- Optional fixed Room coordinators with Host-owned ordered assignments, verified artifact handover and one tool-free final summary. Explicit mentions and Everyone keep their fixed dispatch semantics; existing content-team approval gates remain in place.
+
+### Changed
+
+- Agents can join groups across projects; file tools, approvals and inherited evidence are checked against the receiving conversation's current authorization.
+- Necessary details stay collapsible; ordinary new chats start without folder access and can bind a workspace from chat details.
+- Source-based file tasks require successful source reads before report creation. Failed downstream work does not erase successful upstream artifacts or turn a partial group task into a completed task.
+
+### Fixed
+
+- Retrying a failed assigned member resumes its unexecuted dependency chain. Handoff cards distinguish the original delivery from its latest retry using persisted acceptance records.
+- Other Agents' messages are model-facing quoted context, not the current Agent's own assistant history; original authorship and transcript records are preserved.
+- Named root-level output files, invalid control characters and future-tense coordination plans are validated without treating intentions as completed tool execution.
+
 ## [0.3.0-beta.18] - 2026-10-08
 
 ### Changed

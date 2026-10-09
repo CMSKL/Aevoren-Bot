@@ -4,6 +4,7 @@ export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
 
 export type Bot = {
   id: string;
+  /** Legacy origin only. Current chat association and tool access come from ConversationSummary/session scope, never this field. */
   projectId: string;
   name: string;
   label: string;
@@ -38,6 +39,21 @@ export type ConversationBatchDeleteInput = {
 export type ConversationBatchDeleteResult = {
   bots: BotDeleteResult[];
   rooms: RoomDeleteResult[];
+};
+
+/** A chat is backed by its existing Session; removing it does not remove its contact. */
+export type ConversationSummary = {
+  sessionId: string;
+  botId: string | null;
+  roomId: string | null;
+  projectId: string | null;
+  workspaceIds: string[];
+  pinnedAt: string | null;
+  hiddenAt: string | null;
+  hasUnread: boolean;
+  lastMessage: string | null;
+  lastActivityAt: string;
+  version: number;
 };
 
 export type MemorySource = "manual-user" | "model-captured";
@@ -682,9 +698,11 @@ export type ToolApprovalResult = {
 
 export type Room = {
   id: string;
+  /** Legacy origin only. Current chat association and tool access come from ConversationSummary/session scope, never this field. */
   projectId: string;
   name: string;
   description: string;
+  leadBotId?: string | null;
   version: number;
   membershipVersion: number;
   archivedAt: string | null;
@@ -695,7 +713,7 @@ export type Room = {
   updatedAt: string;
 };
 
-export type RoomPatch = Partial<Pick<Room, "name" | "description">>;
+export type RoomPatch = Partial<Pick<Room, "name" | "description" | "leadBotId">>;
 
 export type RoomDeleteResult = {
   id: string;
@@ -731,6 +749,8 @@ export type AgentTurnOutcome = {
 };
 
 export type AgentTurnOrigin = "initial" | "handoff" | "retry";
+export type RoomTurnPurpose = "coordinate" | "work" | "summary";
+export type RoomSummaryState = "not-required" | "pending" | "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted" | "skipped";
 export type HandoffVisibility = "room" | "direct";
 export type HandoffState = "queued" | "dispatching" | "accepted" | "failed" | "cancelled";
 export type RoomRoutingMode = "legacy" | "automatic" | "explicit" | "everyone";
@@ -746,6 +766,11 @@ export type RoomRun = {
   routingMode: RoomRoutingMode;
   routingReason: string | null;
   orchestrationEnabled: boolean;
+  leadBotId?: string | null;
+  summaryState?: RoomSummaryState;
+  summaryTurnId?: string | null;
+  summarySkipReason?: string | null;
+  coordinationErrorCode?: string | null;
   state: RoomRunState;
   membershipVersion: number;
   maxTurns: number;
@@ -774,6 +799,8 @@ export type AgentTurn = {
   nonce: string;
   hop: number;
   origin: AgentTurnOrigin;
+  turnPurpose?: RoomTurnPurpose;
+  dependencyLogicalTurnId?: string | null;
   inputGeneration: number;
   inputSeq: number;
   position: number;
@@ -790,6 +817,34 @@ export type AgentTurn = {
 };
 
 export type RoomTurn = AgentTurn;
+
+export type RoomRunSummary = {
+  runId: string;
+  leadBotId: string;
+  request: { entryId: string; text: string };
+  coordinationErrorCode: string | null;
+  results: Array<{
+    turnId: string;
+    logicalTurnId: string;
+    agentId: string;
+    agentName: string;
+    turnPurpose: "coordinate" | "work";
+    state: AgentTurnState;
+    errorCode: string | null;
+    outcome: AgentTurnOutcome | null;
+    body: string;
+    assistantEntryId: string | null;
+    tools?: Array<{ kind: ToolRequest["kind"]; resultDigest: string }>;
+    artifacts: Array<{
+      invocationId: string;
+      sourceRuntimeRunId: string;
+      workspaceId: string;
+      path: string;
+      sha256: string;
+      bytes: number;
+    }>;
+  }>;
+};
 
 export type AgentHandoff = {
   id: string;
@@ -814,7 +869,16 @@ export type RoomHandoff = AgentHandoff;
 export type RoomHandoffView = Pick<
   RoomHandoff,
   "id" | "runId" | "fromTurnId" | "toAgentId" | "targetTurnId" | "task" | "state" | "version" | "createdAt" | "updatedAt" | "finishedAt"
->;
+> & {
+  /** Latest retry delivery, derived from its persisted Turn/Runtime; original delivery remains unchanged. */
+  deliveryAttempt?: {
+    attemptNo: number;
+    turnId: string;
+    state: HandoffState;
+    acceptedAt: string | null;
+    version: number;
+  };
+};
 
 export type RoomHandoffRejectionView = {
   id: string;
@@ -828,6 +892,7 @@ export type RoomHandoffRejectionView = {
 export type InitialAgentTurnInput = {
   agentId: string;
   nonce: string;
+  turnPurpose?: RoomTurnPurpose;
 };
 
 export type CreateRoomRunInput = {
@@ -845,6 +910,7 @@ export type CreateRoomRunInput = {
   routingMode?: RoomRoutingMode;
   routingReason?: string | null;
   orchestrationEnabled?: boolean;
+  leadBotId?: string | null;
 };
 
 export type CreateHandoffInput = {
@@ -1155,7 +1221,7 @@ export interface AevorenBotApi {
     reveal(path: string): Promise<ApiResult<boolean>>;
   };
   capabilities: {
-    getSnapshot(input?: { botId?: string }): Promise<ApiResult<CapabilitySnapshot>>;
+    getSnapshot(input?: { botId?: string; sessionId?: string }): Promise<ApiResult<CapabilitySnapshot>>;
   };
   mcp: {
     list(): Promise<ApiResult<McpServerInfo[]>>;
@@ -1177,6 +1243,12 @@ export interface AevorenBotApi {
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<void>>;
   };
   conversations: {
+    list(): Promise<ApiResult<ConversationSummary[]>>;
+    setPinned(input: { sessionId: string; pinned: boolean }): Promise<ApiResult<ConversationSummary>>;
+    setUnread(input: { sessionId: string; unread: boolean }): Promise<ApiResult<ConversationSummary>>;
+    setHidden(input: { sessionId: string; hidden: boolean }): Promise<ApiResult<ConversationSummary>>;
+    setProject(input: { sessionId: string; projectId: string | null; expectedVersion: number }): Promise<ApiResult<ConversationSummary>>;
+    clear(sessionId: string): Promise<ApiResult<Session>>;
     deleteBatch(input: ConversationBatchDeleteInput): Promise<ApiResult<ConversationBatchDeleteResult>>;
   };
   teams: {
@@ -1233,7 +1305,7 @@ export interface AevorenBotApi {
     getBriefApproval(input: { roomId: string; sourceRuntimeRunId: string }): Promise<ApiResult<BriefApprovalView>>;
     approveBrief(input: BriefApprovalCommand): Promise<ApiResult<RoomSendResult>>;
     list(input?: { includeArchived?: boolean }): Promise<ApiResult<Room[]>>;
-    create(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string }): Promise<ApiResult<RoomDetail>>;
+    create(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string; leadBotId?: string | null }): Promise<ApiResult<RoomDetail>>;
     get(id: string): Promise<ApiResult<RoomDetail>>;
     update(input: { id: string; expectedVersion: number; patch: RoomPatch }): Promise<ApiResult<Room>>;
     archive(input: { id: string; archived: boolean }): Promise<ApiResult<Room>>;

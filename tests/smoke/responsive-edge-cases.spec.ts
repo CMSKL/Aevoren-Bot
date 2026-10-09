@@ -430,7 +430,7 @@ test("keeps a long sidebar scrollable without pushing the conversation below the
 
     const scrollResult = await page.locator(".bot-list").evaluate((list) => {
       list.scrollTop = list.scrollHeight;
-      const lastRow = list.querySelector<HTMLElement>('.bot-row[aria-label="滚动验收 Bot 12"]');
+      const lastRow = [...list.querySelectorAll<HTMLElement>(".bot-row")].at(-1);
       if (!lastRow) throw new Error("missing final sidebar row");
       const listRect = list.getBoundingClientRect();
       const rowRect = lastRow.getBoundingClientRect();

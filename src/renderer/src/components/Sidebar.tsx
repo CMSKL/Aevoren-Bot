@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import type { Bot, ConversationBatchDeleteInput, Project, Room, Workspace } from "@shared/contracts";
+import type { Bot, ConversationBatchDeleteInput, ConversationSummary, Project, Room, Workspace } from "@shared/contracts";
+import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import { buildBotIdentityMap } from "../bot-identity";
 import { BatchContextMenu } from "./BatchContextMenu";
 import { BotAvatarIcon } from "./BotAvatarIcon";
@@ -10,6 +11,13 @@ import { RoomContextMenu } from "./RoomContextMenu";
 type SidebarProps = {
   bots: Bot[];
   rooms: Room[];
+  conversations: ConversationSummary[];
+  tab: "chats" | "contacts" | "workspace";
+  selectedContactId: string | null;
+  onTabChange(tab: "chats" | "contacts" | "workspace"): void;
+  onSelectContact(bot: Bot): void;
+  onHideBatch(input: ConversationBatchDeleteInput): Promise<boolean>;
+  onClearConversation(conversation: ConversationSummary): void;
   projects: Project[];
   activeProjectId: string;
   workspaces: Workspace[];
@@ -99,8 +107,15 @@ function orderVisibleRooms(rooms: Room[]): Room[] {
 }
 
 export function Sidebar({
-  bots,
-  rooms,
+  bots: sourceBots,
+  rooms: sourceRooms,
+  conversations,
+  tab,
+  selectedContactId,
+  onTabChange,
+  onSelectContact,
+  onHideBatch,
+  onClearConversation,
   projects,
   activeProjectId,
   workspaces,
@@ -141,6 +156,17 @@ export function Sidebar({
   onHideBot,
   onDeleteBot,
 }: SidebarProps): React.JSX.Element {
+  const [query, setQuery] = useState("");
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const summaryByKey = useMemo(() => new Map(conversations.map((item) => [item.botId ? botKey(item.botId) : roomKey(item.roomId!), item])), [conversations]);
+  const bots = useMemo(() => sourceBots.map((bot) => {
+    const summary = summaryByKey.get(botKey(bot.id));
+    return { ...bot, pinnedAt: summary?.pinnedAt ?? null, hiddenAt: summary?.hiddenAt ?? null, hasUnread: summary?.hasUnread ?? false };
+  }), [sourceBots, summaryByKey]);
+  const rooms = useMemo(() => sourceRooms.map((room) => {
+    const summary = summaryByKey.get(roomKey(room.id));
+    return { ...room, pinnedAt: summary?.pinnedAt ?? null, hiddenAt: summary?.hiddenAt ?? null, hasUnread: summary?.hasUnread ?? false };
+  }), [sourceRooms, summaryByKey]);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [hiddenOpen, setHiddenOpen] = useState(false);
   const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
@@ -176,6 +202,23 @@ export function Sidebar({
   const renameInFlightRef = useRef(false);
   const roomRenameInFlightRef = useRef(false);
   const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);
+  const botById = useMemo(() => new Map(bots.map((bot) => [bot.id, bot])), [bots]);
+  const roomById = useMemo(() => new Map(rooms.map((room) => [room.id, room])), [rooms]);
+  const recentConversations = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return conversations.filter((item) => {
+      const bot = item.botId ? botById.get(item.botId) : undefined;
+      const room = item.roomId ? roomById.get(item.roomId) : undefined;
+      if ((!bot && !room) || item.hiddenAt || room?.archivedAt || (unreadOnly && !item.hasUnread)) return false;
+      return !normalized || `${bot?.name ?? room?.name ?? ""}\n${bot?.label ?? ""}\n${item.lastMessage ?? ""}`.toLocaleLowerCase().includes(normalized);
+    }).toSorted((left, right) => Number(!!right.pinnedAt) - Number(!!left.pinnedAt)
+      || right.lastActivityAt.localeCompare(left.lastActivityAt) || left.sessionId.localeCompare(right.sessionId));
+  }, [botById, conversations, query, roomById, unreadOnly]);
+  const contacts = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return bots.filter((bot) => !normalized || `${bot.name}\n${bot.label}\n${bot.description}`.toLocaleLowerCase().includes(normalized))
+      .toSorted((left, right) => left.name.localeCompare(right.name, "zh-CN") || left.id.localeCompare(right.id));
+  }, [bots, query]);
   const activeRooms = useMemo(
     () => orderVisibleRooms(rooms.filter((room) => room.archivedAt === null && room.hiddenAt === null)),
     [rooms],
@@ -189,20 +232,23 @@ export function Sidebar({
   const hiddenBots = useMemo(() => bots.filter((bot) => bot.hiddenAt !== null), [bots]);
   const projectGroups = useMemo(() => projects.map((project) => ({
     project,
-    activeRooms: activeRooms.filter((room) => room.projectId === project.id),
-    hiddenRooms: hiddenRooms.filter((room) => room.projectId === project.id),
-    archivedRooms: archivedRooms.filter((room) => room.projectId === project.id),
-    visibleBots: visibleBots.filter((bot) => bot.projectId === project.id),
-    hiddenBots: hiddenBots.filter((bot) => bot.projectId === project.id),
-  })), [activeRooms, archivedRooms, hiddenBots, hiddenRooms, projects, visibleBots]);
+    activeRooms: activeRooms.filter((room) => summaryByKey.get(roomKey(room.id))?.projectId === project.id),
+    hiddenRooms: hiddenRooms.filter((room) => summaryByKey.get(roomKey(room.id))?.projectId === project.id),
+    archivedRooms: archivedRooms.filter((room) => summaryByKey.get(roomKey(room.id))?.projectId === project.id),
+    visibleBots: visibleBots.filter((bot) => summaryByKey.get(botKey(bot.id))?.projectId === project.id),
+    hiddenBots: hiddenBots.filter((bot) => summaryByKey.get(botKey(bot.id))?.projectId === project.id),
+  })), [activeRooms, archivedRooms, hiddenBots, hiddenRooms, projects, summaryByKey, visibleBots]);
   const contextBot = contextMenu ? bots.find((bot) => bot.id === contextMenu.botId) ?? null : null;
   const contextRoom = roomContextMenu ? rooms.find((room) => room.id === roomContextMenu.roomId) ?? null : null;
-  const conversationOrder = useMemo<ConversationKey[]>(() => projectGroups.flatMap(({ project, activeRooms: projectRooms, visibleBots: projectBots }) => (
+  const conversationOrder = useMemo<ConversationKey[]>(() => tab === "chats"
+    ? recentConversations.map((item) => item.botId ? botKey(item.botId) : roomKey(item.roomId!))
+    : tab === "contacts" ? contacts.map((bot) => botKey(bot.id))
+    : !workspaceExpanded ? [] : projectGroups.flatMap(({ project, activeRooms: projectRooms, visibleBots: projectBots }) => (
     collapsedProjectIds.has(project.id) ? [] : [
       ...(collapsedRoomGroupIds.has(project.id) ? [] : projectRooms).map((room) => roomKey(room.id)),
       ...(collapsedBotGroupIds.has(project.id) ? [] : projectBots).map((bot) => botKey(bot.id)),
     ]
-  )), [collapsedBotGroupIds, collapsedProjectIds, collapsedRoomGroupIds, projectGroups]);
+  )), [collapsedBotGroupIds, collapsedProjectIds, collapsedRoomGroupIds, contacts, projectGroups, recentConversations, tab, workspaceExpanded]);
   const visibleSelectedKeys = useMemo(() => {
     const available = new Set(conversationOrder);
     return new Set([...selectedKeys].filter((key) => available.has(key)));
@@ -211,14 +257,14 @@ export function Sidebar({
   const batchDialogInput = batchDeleteTarget ? batchInput(batchDeleteTarget) : null;
   const batchDialogCount = batchDialogInput ? batchDialogInput.botIds.length + batchDialogInput.roomIds.length : 0;
   const batchDialogTitle = batchDialogInput
-    ? batchDialogInput.roomIds.length === 0
+    ? tab === "chats" ? `移除 ${batchDialogCount} 个聊天？` : tab === "contacts" ? `删除 ${batchDialogCount} 个联系人？` : batchDialogInput.roomIds.length === 0
       ? `删除 ${batchDialogCount} 个 Bot？`
       : batchDialogInput.botIds.length === 0
         ? `删除 ${batchDialogCount} 个群聊？`
         : `删除 ${batchDialogCount} 个项目？`
     : "";
   const batchDialogDescription = batchDialogInput
-    ? batchDialogInput.roomIds.length === 0
+    ? tab === "chats" ? "聊天会从列表中移除，消息记录、联系人和工作区文件都会保留。" : batchDialogInput.roomIds.length === 0
       ? "这会永久删除所选 Bot 的单聊记录，并将它们移出群聊。群聊历史发言仍会保留。"
       : batchDialogInput.botIds.length === 0
         ? "这会永久删除所选群聊及其聊天历史。群聊中的 Bot 不会被删除，此操作无法撤销。"
@@ -383,7 +429,7 @@ export function Sidebar({
   function showContextMenu(bot: Bot, clientX: number, clientY: number, fallback: DOMRect): void {
     if (busy || pendingBotId) return;
     const width = 218;
-    const height = bot.hiddenAt ? 310 : 350;
+    const height = bot.hiddenAt ? 350 : 390;
     const preferredX = clientX || fallback.right;
     const preferredY = clientY || fallback.top;
     setContextMenu({
@@ -405,7 +451,7 @@ export function Sidebar({
   function showRoomContextMenu(room: Room, clientX: number, clientY: number, fallback: DOMRect): void {
     if (busy || pendingRoomId) return;
     const width = 218;
-    const height = room.hiddenAt ? 220 : 290;
+    const height = room.hiddenAt ? 260 : 330;
     const preferredX = clientX || fallback.right;
     const preferredY = clientY || fallback.top;
     setRoomContextMenu({
@@ -415,7 +461,7 @@ export function Sidebar({
     });
   }
 
-  async function perform(bot: Bot, operation: () => Promise<boolean>, successMessage: string): Promise<boolean> {
+  async function perform(bot: Bot, operation: () => Promise<boolean>, successMessage: string | null): Promise<boolean> {
     if (pendingBotId) return false;
     setPendingBotId(bot.id);
     setNotice(null);
@@ -425,7 +471,7 @@ export function Sidebar({
     return succeeded;
   }
 
-  async function performRoom(room: Room, operation: () => Promise<boolean>, successMessage: string): Promise<boolean> {
+  async function performRoom(room: Room, operation: () => Promise<boolean>, successMessage: string | null): Promise<boolean> {
     if (pendingRoomId) return false;
     setPendingRoomId(room.id);
     setNotice(null);
@@ -439,16 +485,16 @@ export function Sidebar({
     if (!batchDialogInput || batchDeletePending) return;
     setBatchDeletePending(true);
     setNotice(null);
-    const succeeded = await onDeleteBatch(batchDialogInput);
+    const succeeded = await (tab === "chats" ? onHideBatch(batchDialogInput) : onDeleteBatch(batchDialogInput));
     setBatchDeletePending(false);
     if (!succeeded) {
-      setNotice("批量删除未完成，请重试。");
+      setNotice("批量操作未完成，请重试。");
       return;
     }
     const count = batchDialogInput.botIds.length + batchDialogInput.roomIds.length;
     setBatchDeleteTarget(null);
     clearMultiSelection();
-    setNotice(`已删除 ${count} 个项目。`);
+    setNotice(tab === "chats" ? `已移除 ${count} 个聊天。` : `已删除 ${count} 个项目。`);
   }
 
   function beginRename(bot: Bot): void {
@@ -513,6 +559,7 @@ export function Sidebar({
 
   function renderRoomRow(room: Room): React.JSX.Element {
     const key = roomKey(room.id);
+    const summary = summaryByKey.get(key);
     const batchSelectable = conversationOrder.includes(key);
     const multiSelected = visibleSelectedKeys.has(key);
     if (renamingRoomId === room.id) {
@@ -573,7 +620,7 @@ export function Sidebar({
         data-multi-selected={multiSelected ? "true" : undefined}
       >
         <span className="bot-icon">{multiSelected ? <CheckIcon /> : <RoomIcon />}</span>
-        <span className="bot-copy"><strong>{room.name}</strong><small>多 Bot 群聊</small></span>
+        <span className="bot-copy"><strong>{room.name}</strong><small>{tab === "chats" ? sanitizeRoomSpeakerOutput(summary?.lastMessage ?? "", true) || "暂无消息 · 群聊" : "多 Bot 群聊"}</small></span>
         <span className="bot-row-state" aria-hidden="true">
           {room.pinnedAt ? <PinIcon /> : null}
           {room.hasUnread ? <i /> : null}
@@ -585,11 +632,14 @@ export function Sidebar({
   function renderBotRow(bot: Bot): React.JSX.Element {
     const identity = botIdentities.get(bot.id)!;
     const key = botKey(bot.id);
+    const summary = summaryByKey.get(key);
+    const selected = bot.id === (tab === "contacts" ? selectedContactId : selectedBotId);
+    const select = (): void => tab === "contacts" ? onSelectContact(bot) : onSelectBot(bot);
     const batchSelectable = conversationOrder.includes(key);
     const multiSelected = visibleSelectedKeys.has(key);
     if (renamingId === bot.id) {
       return (
-        <div className={`bot-row renaming${bot.id === selectedBotId ? " selected" : ""}`} key={bot.id} role="listitem">
+        <div className={`bot-row renaming${selected ? " selected" : ""}`} key={bot.id} role="listitem">
           <span className="bot-icon bot-avatar-container"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={28} /></span>
           <input
             ref={renameRef}
@@ -621,13 +671,13 @@ export function Sidebar({
           else rowRefs.current.delete(bot.id);
         }}
         type="button"
-        className={`bot-row${bot.id === selectedBotId ? " selected" : ""}${multiSelected ? " multi-selected" : ""}`}
+        className={`bot-row${selected ? " selected" : ""}${multiSelected ? " multi-selected" : ""}`}
         key={bot.id}
         onClick={(event) => {
-          if (batchSelectable) handleSelection(event, key, () => onSelectBot(bot));
+          if (batchSelectable) handleSelection(event, key, select);
           else {
             clearMultiSelection();
-            onSelectBot(bot);
+            select();
           }
         }}
         onContextMenu={(event) => openContextMenu(event, bot)}
@@ -649,11 +699,11 @@ export function Sidebar({
         </span>
         <span className="bot-copy">
           <strong>{identity.primary}</strong>
-          <small>{identity.secondary}</small>
+          <small>{tab === "chats" ? `${identity.disambiguated ? `${identity.secondary} · ` : ""}${summary?.lastMessage || "暂无消息"}` : identity.secondary}</small>
         </span>
         <span className="bot-row-state" aria-hidden="true">
-          {bot.pinnedAt ? <PinIcon /> : null}
-          {bot.hasUnread ? <i /> : null}
+          {tab !== "contacts" && bot.pinnedAt ? <PinIcon /> : null}
+          {tab !== "contacts" && bot.hasUnread ? <i /> : null}
         </span>
       </button>
     );
@@ -669,7 +719,7 @@ export function Sidebar({
               <button
                 className="sidebar-selection-action danger"
                 type="button"
-                aria-label={`删除已选择的 ${visibleSelectedKeys.size} 项`}
+                aria-label={`${tab === "chats" ? "移除" : "删除"}已选择的 ${visibleSelectedKeys.size} 项`}
                 onClick={() => setBatchDeleteTarget(conversationOrder.filter((key) => visibleSelectedKeys.has(key)))}
                 disabled={batchDeletePending}
               >
@@ -695,8 +745,42 @@ export function Sidebar({
           </>
         )}
       </div>
-      <div className="bot-list">
-        <section className="sidebar-workspace" aria-label="工作区">
+      <div className="sidebar-tabs" role="tablist" aria-label="导航">
+        {([ ["chats", "聊天"], ["contacts", "联系人"], ["workspace", "工作区"] ] as const).map(([value, label]) => <button
+          key={value} id={`navigation-${value}`} type="button" role="tab" aria-selected={tab === value} aria-controls="sidebar-tab-content" tabIndex={tab === value ? 0 : -1}
+          onClick={() => { clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(value); }}
+          onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const values = ["chats", "contacts", "workspace"] as const;
+            const index = event.key === "Home" ? 0 : event.key === "End" ? 2 : (values.indexOf(tab) + (event.key === "ArrowRight" ? 1 : 2)) % 3;
+            clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(values[index]!);
+            document.getElementById(`navigation-${values[index]}`)?.focus();
+          }}
+        >{label}</button>)}
+      </div>
+      {tab !== "workspace" ? <div className="sidebar-search">
+        <input type="search" aria-label={tab === "chats" ? "搜索聊天" : "搜索联系人"} placeholder={tab === "chats" ? "搜索聊天" : "搜索联系人"} value={query} onChange={(event) => { clearMultiSelection(); setQuery(event.target.value); }} />
+        {tab === "chats" ? <button type="button" className="sidebar-unread-filter" aria-pressed={unreadOnly} onClick={() => { clearMultiSelection(); setUnreadOnly((current) => !current); }}>未读</button> : null}
+      </div> : null}
+      <div className="bot-list" id="sidebar-tab-content" role="tabpanel" aria-labelledby={`navigation-${tab}`}>
+        {tab === "chats" ? <>
+          <div role="list" aria-label="最近聊天">
+            {recentConversations.map((item) => item.botId ? renderBotRow(botById.get(item.botId)!) : renderRoomRow(roomById.get(item.roomId!)!))}
+            {recentConversations.length === 0 ? <div className="bot-list-empty">{query || unreadOnly ? "没有匹配的聊天" : "还没有聊天。点击新建聊天开始。"}</div> : null}
+          </div>
+          {hiddenBots.length + hiddenRooms.length > 0 ? <>
+            <button className="archived-toggle" type="button" aria-expanded={hiddenOpen} onClick={() => setHiddenOpen((open) => !open)}>已移除的聊天 ({hiddenBots.length + hiddenRooms.length})</button>
+            {hiddenOpen ? <div role="list">{hiddenRooms.map(renderRoomRow)}{hiddenBots.map(renderBotRow)}</div> : null}
+          </> : null}
+          {archivedRooms.length > 0 ? <>
+            <button className="archived-toggle" type="button" aria-expanded={archivedOpen} onClick={() => setArchivedOpen((open) => !open)}>已归档 ({archivedRooms.length})</button>
+            {archivedOpen ? archivedRooms.map((room) => <div className="archived-room-row" key={room.id}><span>{room.name}</span><button className="text-button" type="button" onClick={() => onRestoreRoom(room)}>恢复</button></div>) : null}
+          </> : null}
+        </> : tab === "contacts" ? <div role="list" aria-label="全部联系人">
+          {contacts.map(renderBotRow)}
+          {contacts.length === 0 ? <div className="bot-list-empty">{query ? "没有匹配的联系人" : "还没有联系人。新建一个 Bot 开始。"}</div> : null}
+        </div> : <section className="sidebar-workspace" aria-label="工作区">
           <div className="sidebar-workspace-heading">
             <button
               className="sidebar-workspace-toggle"
@@ -848,7 +932,7 @@ export function Sidebar({
             })}
             {projects.length === 0 ? <div className="bot-list-empty">正在加载项目…</div> : null}
           </div>
-        </section>
+        </section>}
       </div>
 
       <div className="sidebar-footer">
@@ -861,7 +945,7 @@ export function Sidebar({
       {notice ? <div className="bot-action-notice" role="status">{notice}</div> : null}
       {batchContextMenu && batchMenuInput ? (
         <BatchContextMenu
-          label={batchDeleteLabel(batchMenuInput)}
+          label={tab === "chats" ? `移除 ${batchContextMenu.keys.length} 个聊天` : tab === "contacts" ? `删除 ${batchContextMenu.keys.length} 个联系人` : batchDeleteLabel(batchMenuInput)}
           x={batchContextMenu.x}
           y={batchContextMenu.y}
           onClose={closeBatchContextMenu}
@@ -880,7 +964,8 @@ export function Sidebar({
           onEdit={() => onEditBot(contextBot)}
           onDuplicate={() => void perform(contextBot, () => onDuplicateBot(contextBot), "副本已创建。")}
           onCopyId={() => void perform(contextBot, () => onCopyBotId(contextBot), "对话 ID 已复制。")}
-          onHide={() => void perform(contextBot, () => onHideBot(contextBot, !contextBot.hiddenAt), contextBot.hiddenAt ? "Bot 已恢复。" : "Bot 已隐藏。")}
+          onHide={() => void perform(contextBot, () => onHideBot(contextBot, !contextBot.hiddenAt), contextBot.hiddenAt ? null : "聊天已移除，记录保留。")}
+          onClear={() => { const summary = summaryByKey.get(botKey(contextBot.id)); if (summary) onClearConversation(summary); }}
           onDelete={() => setDeleteTarget(contextBot)}
         />
       ) : null}
@@ -894,7 +979,8 @@ export function Sidebar({
           onUnread={() => void performRoom(contextRoom, () => onMarkRoomUnread(contextRoom, !contextRoom.hasUnread), contextRoom.hasUnread ? "已标为已读。" : "已标为未读。")}
           onRename={() => beginRoomRename(contextRoom)}
           onCopyId={() => void performRoom(contextRoom, () => onCopyRoomId(contextRoom), "对话 ID 已复制。")}
-          onHide={() => void performRoom(contextRoom, () => onHideRoom(contextRoom, !contextRoom.hiddenAt), contextRoom.hiddenAt ? "群聊已恢复。" : "群聊已隐藏。")}
+          onHide={() => void performRoom(contextRoom, () => onHideRoom(contextRoom, !contextRoom.hiddenAt), contextRoom.hiddenAt ? null : "聊天已移除，记录保留。")}
+          onClear={() => { const summary = summaryByKey.get(roomKey(contextRoom.id)); if (summary) onClearConversation(summary); }}
           onArchive={() => void performRoom(contextRoom, () => onArchiveRoom(contextRoom), "群聊已归档。")}
           onDelete={() => setRoomDeleteTarget(contextRoom)}
         />
@@ -1009,7 +1095,7 @@ export function Sidebar({
                 className="danger-confirm-button"
                 disabled={batchDeletePending}
                 onClick={() => void performBatchDelete()}
-              >{batchDeletePending ? "删除中…" : "删除"}</button>
+              >{batchDeletePending ? "处理中…" : tab === "chats" ? "移除聊天" : "删除"}</button>
             </div>
           </section>
         </div>

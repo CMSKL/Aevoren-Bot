@@ -10,7 +10,7 @@
 
 请先阅读[项目门户](docs/PORTAL.md)、[安装指南](docs/INSTALLATION.md)或[用户指南](docs/USER_GUIDE.md)。
 
-Aevoren Bot 是一个本地优先的 macOS AI Bot 工作台，用于持久化 Bot 对话和有边界的多 Bot 协作。对话、显式 Memory、工具审批、Tool Journal 和运行恢复都保存在用户自己的电脑上。
+Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天、联系人和工作区组织长期使用的 Bot、群协作与项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
 
 > **预发布状态：** 已签名的 macOS Beta 安装包通过 [GitHub Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 分发。当前正式签名目标为 macOS 13+ Apple silicon；Windows 10/11 x64 仍处于 MVP 验证阶段。本地未签名构建不代表官方发行版。
 
@@ -18,12 +18,15 @@ Aevoren Bot 是一个本地优先的 macOS AI Bot 工作台，用于持久化 Bo
 
 - 基于 SQLite Transcript、Send Journal、稳定 Nonce、幂等重试、取消和崩溃恢复的流式对话。
 - 单 Bot 对话和 2–6 个成员的 Room，支持显式 `@Bot`、自动 owner 选择、边界内 handoff、speaker 身份和循环抑制。
-- 自动发现 Codex CLI、Claude Code、Ollama 和支持的 ACP CLI，并提供 OpenAI-compatible 兜底。
+- 支持 API、Claude Code、Codex CLI，自动扫描两种 CLI 的安装、登录与模型信息。
+- 文本/代码附件、经过校验的内容读取，以及在任务详情中集中查看的真实 Markdown/CSV 交付物。
+- 聊天状态与 Agent 身份分离：最近会话、全局联系人、回复未读，以及独立的移除聊天、清空记录和删除联系人操作。
+- 可选固定群协调者，按顺序安排成员工作并统一汇总真实结果；指定 Bot 和全员模式保持独立回复，失败步骤可重试，不重复已完成产出。
 - Codex App Server Dynamic Tools，通过显式 Approval 和 Tool Journal 边界接入。
 - User、Bot、Workspace 作用域的显式 Memory，模型不能静默写入长期 Memory。
 - 用户授权的 Workspace 列表/读取/搜索，以及可选的仅新建 Markdown/CSV 成果；绝不覆盖已有文件。
 - 内容团队只在需要用户决策时显示 Brief 批准/退回/放弃操作，并提供结构化失败恢复、真实执行证据与交付文件状态；模型文字不会被当作工具成功。
-- 只读时间、天气、有限 Wikipedia 搜索、安全的公开 HTTPS 页面读取和经过审查的 MCP 工具。
+- 只读时间、天气、公开网页搜索、安全的公开 HTTPS 页面读取和经过审查的 MCP 工具。
 - MCP stdio 和 Streamable HTTP，支持 OAuth 2.1/PKCE、加密凭据、Bot 作用域、精确工具审查和一次性审批。
 - 一次性、间隔和 cron Routine，包含历史、通知、后台窗口行为和可选 macOS 登录启动。
 - 沙箱 Renderer、类型化 Preload API、加密密钥、有界工具输入、私网拒绝以及签名/公证发布门禁。
@@ -34,7 +37,8 @@ Aevoren Bot 是一个本地优先的 macOS AI Bot 工作台，用于持久化 Bo
 | --- | --- |
 | macOS 13+ Apple silicon | 当前开发和发行目标 |
 | Intel macOS | 未测试、未发行 |
-| Windows / Linux | 未测试、未发行 |
+| Windows 10/11 x64 | MVP 源码、冒烟与打包验证目标；签名公开安装包待配置 |
+| Linux | 未测试、未发行 |
 | Mobile | 尚未实现 |
 
 ## 源码运行
@@ -43,8 +47,8 @@ Aevoren Bot 是一个本地优先的 macOS AI Bot 工作台，用于持久化 Bo
 
 - Node.js 24；
 - pnpm 11.19.0；
-- Xcode Command Line Tools；
-- macOS 13 或更高版本，Apple silicon。
+- macOS 使用 Xcode Command Line Tools，Windows 使用 PowerShell；
+- macOS 13+ Apple silicon，或 Windows 10/11 x64。
 
 ```bash
 git clone https://github.com/CMSKL/Aevoren-Bot.git
@@ -60,14 +64,14 @@ Fake Provider 是确定性的，不需要账号或 API Key。源码构建、数�
 打开**设置 → 模型与 CLI**。Aevoren Bot 会扫描常见安装目录和 `PATH`，只读取对应适配器所需的 CLI 安装、登录和模型信息。
 
 - **API：** OpenAI-compatible Base URL、API Key、模型发现和真实请求验证；
-- **Claude Code：** 模型及登录状态发现和文本对话；在具备等价且经过验证的协议前，不开放宿主工具；
+- **Claude Code：** 模型及登录状态发现和对话；兼容的 API 认证安装可调用六项受限工作区与联网工具，订阅 OAuth 工具模式尚未接入；
 - **Codex CLI：** 模型发现、文本对话和宿主 Dynamic Tool 支持。
 
 其他 Provider 和 CLI 适配器不属于第一阶段产品范围，也不会显示在模型界面中。
 
 保存的 API Key 和 OAuth 凭据由 Electron `safeStorage` 加密，之后不会返回给 Renderer。MCP、Workspace、Routine 和环境变量说明见[配置指南](docs/CONFIGURATION.md)，经用户审核的 Memory 捕获及作用域规则见 [Memory 架构](docs/MEMORY.md)。
 
-左侧“工作区”标题右侧的 **+** 用于选择本地文件夹，选中的文件夹直接成为群聊和 Bot 的上层工作区。重复选择不会重复创建；工作区名称旁的设置按钮管理该文件夹的访问权限。旧项目可通过“关联文件夹”保留原有会话与配置；取消授权不会删除本地文件或会话。
+在**聊天**继续私聊或群聊，在**联系人**查看、管理和联系 Agent，在**工作区**管理项目文件及相关聊天。“工作区”标题右侧的 **+** 用于选择本地文件夹，重复选择不会重复创建。Agent 可以加入不同项目的群，但文件权限按聊天隔离。新建普通聊天默认不关联目录，可在详情的“当前聊天工作区”中选择；旧聊天保留迁移前的目录授权快照。移除聊天保留历史与联系人；清空记录保留联系人、已接受记忆和实际文件。
 
 ## 安全模型
 

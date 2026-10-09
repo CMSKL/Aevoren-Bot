@@ -7,6 +7,8 @@ import type {
   RuntimeEvent,
   RuntimeRoute,
   RuntimeRun,
+  RoomRunSummary,
+  RoomTurnPurpose,
   SessionLiveState,
   TranscriptEvent,
   TranscriptStatus,
@@ -17,6 +19,7 @@ import type { AppRepository } from "./database";
 import {
   FakeModelProvider,
   selectDeterministicRoomOwner,
+  isDirectLeadConversationRequest,
   type ChatMessage,
   type ModelEvent,
   type ModelProvider,
@@ -24,6 +27,7 @@ import {
   type RoomPeer,
   type RoomContinuationDecision,
   type RoomOwnerSelection,
+  type RoomLeadPlan,
 } from "./model";
 import { buildPrompt } from "./prompt";
 import type { ProviderResolver } from "./providers/contracts";
@@ -31,6 +35,9 @@ import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import type { McpService } from "./mcp-service";
 import { choiceQuestion, type DecisionService } from "./decision-service";
 import type { MemoryCaptureService } from "./memory-capture-service";
+import { requestedReadPaths } from "./workspace-read-requirements";
+import { requestedWritePaths } from "./workspace-write-requirements";
+import { workspaceRelativePathSchema } from "@shared/schemas";
 
 export type RuntimeExecutorEvents = {
   transcript: (event: TranscriptEvent) => void;
@@ -56,6 +63,10 @@ export type RuntimeExecutionInput = {
     sourceTurnId: string;
     roster?: RoomPeer[];
     orchestrationEnabled?: boolean;
+    leadBotId?: string | null;
+    turnPurpose?: RoomTurnPurpose;
+    maxAssignments?: number;
+    runSummary?: RoomRunSummary;
   };
   incomingHandoff?: ModelRunContext["incomingHandoff"];
   executionReceipt?: ExecutionEvidenceReceipt;
@@ -63,6 +74,7 @@ export type RuntimeExecutionInput = {
   onDispatchStart?(): void;
   onProviderStarted?(requestId: string): void;
   onHandoff?(event: Extract<ModelEvent, { type: "handoff" }>): boolean | void;
+  onLeadPlan?(plan: RoomLeadPlan): void;
 };
 
 export type RuntimeExecutionResult = {
@@ -73,7 +85,7 @@ export type RuntimeExecutionResult = {
 };
 
 export type CapabilitySnapshotSource = {
-  forPrompt(botId: string, selection: ModelSelection, room: boolean): CapabilityPromptSnapshot;
+  forPrompt(botId: string, selection: ModelSelection, room: boolean, sessionId?: string): CapabilityPromptSnapshot;
 };
 
 type AbortReason = "user" | "deadline" | "app-shutdown";
@@ -87,6 +99,9 @@ type ActiveRun = {
   modelSelection: ModelSelection;
   attribution?: RuntimeExecutionInput["attribution"];
   fixedRoomRouting: boolean;
+  turnPurpose: RoomTurnPurpose;
+  maxAssignments: number;
+  onLeadPlan?: RuntimeExecutionInput["onLeadPlan"];
   evidenceCorrectionAttempts: number;
   providerContext: ModelRunContext;
   executorBotName: string;
@@ -105,6 +120,7 @@ type ActiveRun = {
   handoffError: AppError | null;
   evidenceRequestText: string;
   rootRequirements: string;
+  summaryMissingRequirements: string[];
   maxWorkspaceWrites: number | null;
   maxToolRounds: number;
   maxTextMeasures: number | null;
@@ -118,6 +134,7 @@ const DELTA_FLUSH_MS = 50;
 const DELTA_FLUSH_CHARS = 512;
 const SHUTDOWN_DRAIN_MS = 2_000;
 const MAX_TOOL_ROUNDS = 16;
+const ROOM_LEAD_PLAN_TIMEOUT_MS = 30_000;
 const MAX_MEASUREMENT_TOOL_ROUNDS = 32;
 const CONTENT_TEAM_ROLES = new Set(["情报侦察员", "选题策划师", "内容主笔", "事实编辑", "数据复盘师"]);
 
@@ -131,6 +148,79 @@ function claimsRemoteEvidence(body: string): boolean {
 
 function claimsWorkspaceWrite(body: string): boolean {
   return /(?:已|已经|成功|完成|真实).{0,16}(?:写入|保存|落盘|生成).{0,32}(?:文件|Markdown|工作区|草稿|审校稿|Brief|报告)|(?:文件|Markdown|草稿|审校稿|Brief|报告).{0,20}(?:已|已经|成功|完成|真实).{0,8}(?:写入|保存|落盘|生成)|(?:workspace_write).{0,20}(?:成功|完成|已调用)|\b(?:wrote|saved|created)\s+(?:the\s+)?(?:file|markdown|draft|brief|report)\b/iu.test(body);
+}
+
+function coordinationProseForEvidence(body: string): string {
+  return body.replace(/```([a-z0-9_-]*)[ \t]*\r?\n([\s\S]*?)```/giu, (block, language: string, source: string) => {
+    if (/^(?:javascript|typescript|js|ts|python|py|bash|sh|sql)$/iu.test(language)) return "\n（代码引用）\n";
+    if (language && language.toLowerCase() !== "json") return block;
+    try {
+      const value: unknown = JSON.parse(source);
+      if (!value || typeof value !== "object" || Array.isArray(value)) return block;
+      const plan = value as Record<string, unknown>;
+      if (!Array.isArray(plan.assignments) || !plan.assignments.every((assignment) => assignment &&
+        typeof assignment === "object" && !Array.isArray(assignment) && typeof assignment.task === "string")) return block;
+      // Only task instructions inside an explicit plan are quotations. Keep all
+      // other fields and surrounding prose subject to the completion-claim guard.
+      return JSON.stringify({ ...plan, assignments: plan.assignments.map((assignment: Record<string, unknown>) => ({
+        ...assignment, task: "（待执行的成员任务引用）",
+      })) }, null, 2);
+    } catch { return block; }
+  });
+}
+
+function claimsCompletedCoordinationAction(body: string): boolean {
+  // A plan can contain imperative tool steps and conditional completion. Inspect
+  // each predicate, never let another sentence's "not completed" waive a claim.
+  const text = coordinationProseForEvidence(body).replace(/`([^`\n]+)`/gu, (_quoted, value: string) => /\.[a-z]{1,10}$/iu.test(value) ? "文件" : value)
+    .replace(/\b(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:md|csv|txt|json|pdf|html?)\b/giu, "file")
+    .replace(/\*\*|__/gu, "");
+  const clauses = text.split(/[\n。！？!?；;，,]+|\.(?=\s|$)|但是|不过|然而|但|并且|而且|并(?=已)|\b(?:but|however)\b|\band\s+(?=(?:I|we|they|he|she|the\s+(?:file|report|agent|editor))\b)/giu);
+  const actionPattern = /读取|读入|阅读|打开|解析|写入|保存|落盘|生成|创建|核验|验证|抓取|访问|检索|\b(?:workspace_read|workspace_write|web_fetch|web_search|read|reading|wrote|written|saved|saving|created|creating|fetched|verified|loaded|parsed|opened)\b/giu;
+  for (const clause of clauses) {
+    const actions = [...clause.matchAll(actionPattern)];
+    for (const [index, action] of actions.entries()) {
+      const start = action.index!;
+      const end = start + action[0].length;
+      const before = clause.slice(0, start).split(/[:：]/u).at(-1)!;
+      const after = clause.slice(end);
+      const next = clause.slice(end, actions[index + 1]?.index);
+      const predicate = before.slice(-60);
+      const prerequisite = /(?:完成|成功|完毕|结束|就绪)(?:之后|以后|后|时)([^。；;,]{0,30})$/u.exec(before);
+      const followsPrerequisite = prerequisite && !/(?:已经|已)|\b(?:have|has|had|was|were)\b/iu.test(prerequisite[1]!);
+      if (/^\s*(?:如果|若|假如|一旦|只要|当|等到|待|if\b|once\b|when\b|after\b|before\b|until\b)/iu.test(before) ||
+        followsPrerequisite ||
+        /(?<![稍随])(?:之后|以后|后)(?!续|台|面|者)|(?:成功|完成|完毕)时/u.test(after)) continue;
+      if (/(?:未|没有|没|无法|不能|不曾|不代表|不表示|不意味着|不(?:要|得)?声称)[^。；;，,]{0,18}$/u.test(predicate) ||
+        /\b(?:not|never|neither|cannot|can't|haven't|hasn't|hadn't|didn't|unable\s+to)\b[^.!?;,]{0,28}$/iu.test(predicate) ||
+        /^\s*(?:尚未|未|没有|不曾|无法)/u.test(next)) continue;
+
+      const aspects = [...predicate.matchAll(/已经|已/gu)];
+      const aspect = aspects.at(-1);
+      const gap = aspect ? predicate.slice(aspect.index! + aspect[0].length) : "";
+      const delegated = /^(?:按.{0,8})?(?:安排|派发|分配|计划|要求|请|让|准备|等待|通知|建议|决定|承诺|委托)/u.test(gap.trim());
+      const strongPast = Boolean(aspect && gap.length <= 30 && !delegated);
+      const future = /将|会|拟|计划|准备|打算|安排|派发|分配|要求|让|建议|请|需要|应当|应该|必须|\b(?:will|shall|would|should|must|may|might|can|could|plan|planning|intend|propose|please|to)\b/iu.test(predicate);
+      const chineseCompleted = strongPast || !future && (
+        /(?:成功|完成)[^。；;，,]{0,18}$/u.test(predicate) ||
+        /(?:均|都)?(?:已(?:经)?)?(?:成功|完成|完毕|好了|了)\s*$/u.test(next)
+      );
+      const englishCompleted = !future && (
+        /^(?:wrote|written|saved|created|fetched|verified|loaded|parsed|opened)$/iu.test(action[0]) ||
+        /\b(?:have|has|had|was|were|been)(?:\s+(?:already|successfully|fully|been))*\s*$/iu.test(predicate) ||
+        /^read$/iu.test(action[0]) && /\b(?:I|we|they|he|she|the\s+(?:agent|researcher|editor|member))(?:\s+already)?\s*$/iu.test(predicate) ||
+        /^\s*(?:the\s+)?(?:file|report|document|source)?\s*(?:is|are|was|were)?\s*(?:complete|completed|done|successful)\s*$/iu.test(next)
+      );
+      if (!chineseCompleted && !englishCompleted) continue;
+      if (/^(?:生成|创建|created|creating)$/iu.test(action[0]) &&
+        !/文件|文档|报告|草稿|成果|CSV|Markdown|Brief|\b(?:file|document|report|draft|artifact)\b/iu.test(clause)) continue;
+      if (/^(?:读取|阅读|read|reading)$/iu.test(action[0]) &&
+        /^(?:了)?\s*(?:(?:你|用户|当前|本次)的?)?(?:请求|要求|问题|消息|指令)|^\s*(?:(?:the|your|user's|current)\s+)*(?:request|instructions?|message)\b/iu.test(after) &&
+        !/文件|文档|\bfile\b/iu.test(after)) continue;
+      return true;
+    }
+  }
+  return false;
 }
 
 function requestsCsvAnalysis(value: string): boolean {
@@ -148,11 +238,6 @@ function requestsExactMeasurement(value: string): boolean {
 function requestsLiveResearch(value: string): boolean {
   if (/(?:不要|不得|禁止|无需|不需要|不允许).{0,12}(?:联网|外网|搜索|调用工具)|不联网|(?:只|仅).{0,8}(?:群内|本地|已提供)/iu.test(value)) return false;
   return /(?:去|联网|真实|实际)调研|调研一下|(?:请|帮我|帮我们)(?:你|先)?调研|research the (?:web|latest|current)/iu.test(value);
-}
-
-function requestedWritePaths(value: string): string[] {
-  const paths = [...value.matchAll(/(?:保存(?:为|到|至)?|写入|新建|创建)[^。\n；;]{0,80}?((?:[\p{L}\p{N}_.-]+\/)+[\p{L}\p{N}_.-]+\.(?:md|csv))/giu)].map(match => match[1]!.normalize("NFC"));
-  return [...new Set(paths)];
 }
 
 function requiresToolCall(value: string): boolean {
@@ -246,7 +331,26 @@ export class RuntimeExecutor {
     const inputSeq = input.inputSeq ?? user.seq;
     const promptCutoffSeq = input.promptCutoffSeq ?? inputSeq;
     const modelSelection = input.modelSelection ?? bot.modelSelection;
-    const capabilitySnapshot = this.capabilitySnapshots?.forPrompt(bot.id, modelSelection, Boolean(input.room));
+    const turnPurpose = input.room?.turnPurpose ?? "work";
+    const toolsAllowed = turnPurpose === "work";
+    let roomSummary = input.room?.runSummary;
+    const summaryMissingRequirements = turnPurpose === "summary" && roomSummary
+      ? this.missingTeamRequirements(session.id, roomSummary)
+      : [];
+    if (turnPurpose === "summary" && roomSummary) {
+      const batch = this.repository.getRoomRun(roomSummary.runId);
+      if (batch.sessionId !== session.id || batch.leadBotId !== bot.id) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      const updated = this.repository.setRoomTaskRequirementsMet(roomSummary.runId, summaryMissingRequirements.length === 0);
+      roomSummary = { ...roomSummary, coordinationErrorCode: updated.coordinationErrorCode ?? null };
+    }
+    if (input.room?.leadBotId && !toolsAllowed) this.assertLeadAvailable(input.room.leadBotId, modelSelection);
+    this.repository.assertSessionExecutor(session.id, bot.id);
+    const availableCapabilities = this.capabilitySnapshots?.forPrompt(bot.id, modelSelection, Boolean(input.room), session.id);
+    const capabilitySnapshot = availableCapabilities && !toolsAllowed
+      ? { ...availableCapabilities, availableTools: [], capabilities: availableCapabilities.capabilities.map((capability) => ({
+          ...capability, availability: "unavailable" as const, reason: "当前回合仅协调或汇总，不执行工具。",
+        })) }
+      : availableCapabilities;
     const prompt = buildPrompt(
       bot,
       session,
@@ -260,12 +364,15 @@ export class RuntimeExecutor {
             roomMembershipVersion: input.room.membershipVersion,
             sourceTurnId: input.room.sourceTurnId,
             orchestrationEnabled: input.room.orchestrationEnabled,
+            turnPurpose,
+            ...(input.room.leadBotId ? { leadBotId: input.room.leadBotId } : {}),
+            ...(roomSummary ? { roomRunSummary: roomSummary, summaryMissingRequirements } : {}),
             ...(input.room.roster ? { roomRoster: input.room.roster } : {}),
             ...(input.incomingHandoff ? { handoff: input.incomingHandoff } : {}),
-            ...(input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
+            ...(toolsAllowed && input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
           }
         : undefined,
-      this.repository.listRuntimeMemories(bot.id),
+      turnPurpose === "summary" ? [] : this.repository.listRuntimeMemories(bot.id, session.id),
       capabilitySnapshot,
     );
     const route = this.route(modelSelection);
@@ -288,21 +395,22 @@ export class RuntimeExecutor {
       this.repository.transitionRuntimeRun(run.id, "failed", { errorCode: asAppError(error).code });
       throw error;
     }
-    const evidenceRequestText = input.incomingHandoff?.task ?? user.body;
+    const evidenceRequestText = toolsAllowed ? input.incomingHandoff?.task ?? user.body : "";
     const rootRequirements = input.executionReceipt?.taskRequirements.text ?? user.body;
     const evidenceToolNames = new Set(input.room && !input.incomingHandoff ? [] : requiredToolNames(evidenceRequestText));
+    if (toolsAllowed && requestedReadPaths(evidenceRequestText).length > 0) evidenceToolNames.add("workspace_read");
     if (input.executionReceipt?.artifacts.length) evidenceToolNames.add("workspace_read");
     if (bot.name === "事实编辑" && /审校|审查|review/iu.test(evidenceRequestText)) {
       evidenceToolNames.add("workspace_write");
     }
     const isScopedHandoff = Boolean(input.incomingHandoff);
-    const allowNetworkTools = providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsNetworkTools(evidenceRequestText));
-    const allowMcpTools = providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsMcpTools(evidenceRequestText));
-    const allowDeviceTools = providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsDeviceTools(evidenceRequestText));
+    const allowNetworkTools = toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsNetworkTools(evidenceRequestText));
+    const allowMcpTools = toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsMcpTools(evidenceRequestText));
+    const allowDeviceTools = toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsDeviceTools(evidenceRequestText));
     if (/text_measure/iu.test(bot.instructions) && /写|草稿|审校|长度|draft|review/iu.test(evidenceRequestText)) {
       evidenceToolNames.add("text_measure");
     }
-    if (input.room?.orchestrationEnabled) {
+    if (toolsAllowed && input.room?.orchestrationEnabled) {
       const requiredByRole: Record<string, string[]> = {
         情报侦察员: ["web_fetch", "workspace_write"],
         选题策划师: ["workspace_read", "workspace_write"],
@@ -321,25 +429,32 @@ export class RuntimeExecutor {
       modelSelection,
       attribution: input.attribution,
       fixedRoomRouting: input.room?.orchestrationEnabled === false,
+      turnPurpose,
+      maxAssignments: input.room?.maxAssignments ?? 0,
+      onLeadPlan: input.onLeadPlan,
       evidenceCorrectionAttempts: 0,
       providerContext: {
         supportedToolNames: providerCapabilities?.supportedToolNames,
         requestedWritePaths: requestedWritePaths(evidenceRequestText),
         executorBotId: bot.id,
         executionKey: input.executionKey,
-        ...(input.room ? { roomId: input.room.id, sourceTurnId: input.room.sourceTurnId } : {}),
+        ...(input.room ? {
+          roomId: input.room.id, sourceTurnId: input.room.sourceTurnId, roomTurnPurpose: turnPurpose,
+          ...(input.room.leadBotId ? { roomLeadBotId: input.room.leadBotId } : {}),
+          ...(roomSummary ? { roomRunSummary: roomSummary } : {}),
+        } : {}),
         ...(input.room?.roster ? { roomRoster: input.room.roster } : {}),
         ...(input.incomingHandoff ? { incomingHandoff: input.incomingHandoff } : {}),
-        ...(input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
-        workspaces: providerCapabilities?.workspaceTools === true
-          ? this.repository.listBotWorkspaces(bot.id).map(({ id, name, writeEnabled, automationEnabled }) => ({ id, name, writeEnabled, automationEnabled }))
+        ...(toolsAllowed && input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
+        workspaces: toolsAllowed && providerCapabilities?.workspaceTools === true
+          ? this.repository.listSessionWorkspaces(session.id, bot.id).map(({ id, name, writeEnabled, automationEnabled }) => ({ id, name, writeEnabled, automationEnabled }))
           : [],
         networkTools: allowNetworkTools,
         mcpTools: allowMcpTools ? this.mcpTools?.availableTools(bot.id) ?? [] : [],
         deviceTools: allowDeviceTools,
-        requireToolCall: requiresToolCall(evidenceRequestText) || Boolean(input.executionReceipt?.artifacts.length),
-        textMeasureTools: evidenceToolNames.has("text_measure"),
-        projectTools: (providerCapabilities?.workspaceTools === true || providerCapabilities?.networkTools === true) && requestsProjectManagement(rootRequirements),
+        requireToolCall: toolsAllowed && (requiresToolCall(evidenceRequestText) || Boolean(input.executionReceipt?.artifacts.length)),
+        textMeasureTools: toolsAllowed && evidenceToolNames.has("text_measure"),
+        projectTools: toolsAllowed && (providerCapabilities?.workspaceTools === true || providerCapabilities?.networkTools === true) && requestsProjectManagement(rootRequirements),
         requiredToolNames: [...evidenceToolNames],
       },
       executorBotName: bot.name,
@@ -358,6 +473,7 @@ export class RuntimeExecutor {
       handoffError: null,
       evidenceRequestText,
       rootRequirements,
+      summaryMissingRequirements,
       maxWorkspaceWrites: configuredWorkspaceWriteLimit(bot.instructions),
       maxToolRounds: requestsExactMeasurement(evidenceRequestText) ? MAX_MEASUREMENT_TOOL_ROUNDS : MAX_TOOL_ROUNDS,
       maxTextMeasures: configuredTextMeasureLimit(bot),
@@ -440,6 +556,22 @@ export class RuntimeExecutor {
     return result;
   }
 
+  assertLeadAvailable(botId: string, selection = this.repository.getBot(botId).modelSelection): void {
+    try {
+      if (!this.providerOverride && !this.fakeProvider) {
+        const metadata = this.providers?.getCached?.(selection.providerInstanceId);
+        if (!selection.modelId || !this.providers?.getCapabilities(selection).handoff ||
+          metadata && (!metadata.enabled || metadata.status !== "available" ||
+            !metadata.models.options.some((model) => model.id === selection.modelId))) {
+          throw new AevorenBotError("ROOM_LEAD_UNAVAILABLE");
+        }
+      }
+      if (!this.createProvider(selection).selectLeadPlan) throw new AevorenBotError("ROOM_LEAD_UNAVAILABLE");
+    } catch {
+      throw new AevorenBotError("ROOM_LEAD_UNAVAILABLE");
+    }
+  }
+
   async shutdown(): Promise<void> {
     if (this.shuttingDown && this.inFlight.size === 0) return;
     this.shuttingDown = true;
@@ -513,6 +645,9 @@ export class RuntimeExecutor {
         if (["completed", "failed", "cancelled", "interrupted"].includes(persistedRun.state)) {
           return { run: persistedRun, providerStarted: active.providerStarted };
         }
+        if (active.turnPurpose !== "work" && (event.type.endsWith("-tool") || event.type === "handoff" || event.type === "tool-rejection")) {
+          throw new AevorenBotError("ROOM_SUMMARY_TOOLS_DISABLED");
+        }
         if (event.type === "started") {
           if (roundProviderStarted) throw new AevorenBotError("RUNTIME_STATE_INVALID");
           roundProviderStarted = true;
@@ -557,13 +692,14 @@ export class RuntimeExecutor {
         if (event.type === "handoff") {
           if (!active.providerStarted) throw new AevorenBotError("RUNTIME_STATE_INVALID");
           if (!active.onHandoff) {
-            if (!active.fixedRoomRouting) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+            const plannedWork = Boolean(active.providerContext.roomLeadBotId) && active.turnPurpose === "work";
+            if (!active.fixedRoomRouting && !plannedWork) throw new AevorenBotError("RUNTIME_STATE_INVALID");
             if (roundToolCount === 0) {
               if (toolRounds >= active.maxToolRounds) throw new AevorenBotError("TOOL_ROUND_LIMIT_EXCEEDED");
               toolRounds += 1;
             }
             roundToolCount += 1;
-            rejectedFixedHandoff = true;
+            rejectedFixedHandoff = active.fixedRoomRouting;
             roundActions.push({
               kind: "tool",
               call: {
@@ -585,7 +721,9 @@ export class RuntimeExecutor {
                 content: JSON.stringify({
                   ok: false,
                   code: "ROOM_HANDOFF_DISABLED",
-                  safeMessage: "当前是固定响应模式，本回合不能转交其他 Bot。请完成自己的回复，不要声称其他 Bot 已接力。",
+                  safeMessage: plannedWork
+                    ? "后续成员已按本轮计划安排，本回合不能重复转交。请保留已经完成的成果并完成自己的简短回复，不要重复执行工具。"
+                    : "当前是固定响应模式，本回合不能转交其他 Bot。请完成自己的回复，不要声称其他 Bot 已接力。",
                 }),
               },
             });
@@ -669,6 +807,36 @@ export class RuntimeExecutor {
             });
             continue;
           }
+          if (event.type === "workspace-tool" && event.tool.kind === "workspace-write") {
+            const path = workspaceRelativePathSchema.safeParse(event.tool.path);
+            const expectedPaths = active.providerContext.requestedWritePaths ?? [];
+            if (!path.success || expectedPaths.length > 0 && !expectedPaths.includes(path.data)) {
+              if (roundToolCount === 0) {
+                if (toolRounds >= active.maxToolRounds) throw new AevorenBotError("TOOL_ROUND_LIMIT_EXCEEDED");
+                toolRounds += 1;
+              }
+              roundToolCount += 1;
+              const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
+              await recordOrRespond({
+                kind: "tool",
+                call: { id: event.toolCallId, type: "function", function: {
+                  name: event.providerToolName ?? "workspace_write", arguments: JSON.stringify(argumentsValue),
+                } },
+                result: { role: "tool", tool_call_id: event.toolCallId, content: JSON.stringify({
+                  ok: false,
+                  code: path.success ? "WORKSPACE_WRITE_PATH_REQUIRED" : "WORKSPACE_TOOL_ARGUMENTS_INVALID",
+                  safeMessage: path.success
+                    ? "文件尚未写入。请使用当前任务明确指定的输出路径，重新提交完整写入参数。不能用其他文件名代替所需成果。"
+                    : "文件尚未写入。相对路径不能包含换行、控制字符、绝对路径或越界片段；请修正路径后重新提交，不要声称文件已创建。",
+                  ...(expectedPaths.length > 0 ? { expectedPaths } : {}),
+                }) },
+              });
+              run = this.repository.touchRuntimeRun(runId);
+              this.emitRuntime(run);
+              this.armStaleTimer(active);
+              continue;
+            }
+          }
           if (event.type === "workspace-tool" && event.tool.kind === "workspace-write" && active.executorBotName === "数据复盘师") {
             const validation = this.validateCsvReport(active, event.tool.content);
             if (!validation.ok) {
@@ -737,8 +905,30 @@ export class RuntimeExecutor {
             }
           }
           if (event.type === "workspace-tool" && event.tool.kind === "workspace-write") {
-            if (active.providerContext.requestedWritePaths?.length && !active.providerContext.requestedWritePaths.includes(event.tool.path)) throw new AevorenBotError("TASK_REQUIREMENTS_UNMET", undefined, true, { requirement: "requested-artifact-path" });
-            this.assertReceiptReads(active);
+            const missingSources = this.missingSourceReads(active, event.tool.path);
+            if (missingSources.length > 0) {
+              if (roundToolCount === 0) {
+                if (toolRounds >= active.maxToolRounds) throw new AevorenBotError("TOOL_ROUND_LIMIT_EXCEEDED");
+                toolRounds += 1;
+              }
+              roundToolCount += 1;
+              const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
+              await recordOrRespond({
+                kind: "tool",
+                call: { id: event.toolCallId, type: "function", function: {
+                  name: event.providerToolName ?? "workspace_write", arguments: JSON.stringify(argumentsValue),
+                } },
+                result: { role: "tool", tool_call_id: event.toolCallId, content: JSON.stringify({
+                  ok: false, code: "WORKSPACE_SOURCE_READ_REQUIRED",
+                  safeMessage: "文件尚未写入。请先在本回合使用 workspace_read 读取以下来源，再依据真实内容生成并写入成果。继承的文件须完整读取且与既有工件校验值一致。不要再次提交未经来源核验的内容。",
+                  missingSources,
+                }) },
+              });
+              run = this.repository.touchRuntimeRun(runId);
+              this.emitRuntime(run);
+              this.armStaleTimer(active);
+              continue;
+            }
             if (active.executorBotName === "数据复盘师") {
               const hasCsv = this.repository.listToolInvocations(active.sessionId).some((tool) =>
                 tool.runtimeRunId === active.runId && tool.toolKind === "workspace-read" && tool.state === "succeeded" &&
@@ -943,7 +1133,7 @@ export class RuntimeExecutor {
             run = this.repository.transitionRuntimeRun(runId, "completed");
             this.emitRuntime(run);
             const user = this.repository.getUserMessage(active.clientNonce);
-            this.memoryCapture?.enqueue({
+            if (active.turnPurpose === "work") this.memoryCapture?.enqueue({
               botId: active.providerContext.executorBotId,
               sourceEntryId: user.id,
               userText: user.body,
@@ -995,7 +1185,8 @@ export class RuntimeExecutor {
             this.assertToolEvidence(active);
           } catch (error) {
             const appError = asAppError(error);
-            if (!active.fixedRoomRouting || appError.code !== "TOOL_EVIDENCE_REQUIRED" || active.evidenceCorrectionAttempts >= 1) {
+            const coordinating = active.turnPurpose === "coordinate";
+            if ((!active.fixedRoomRouting && !coordinating) || appError.code !== "TOOL_EVIDENCE_REQUIRED" || active.evidenceCorrectionAttempts >= 1) {
               throw error;
             }
             active.evidenceCorrectionAttempts += 1;
@@ -1003,9 +1194,16 @@ export class RuntimeExecutor {
             active.messages.push({
               role: "system",
               content: JSON.stringify({
-                notice: "FIXED_ROOM_EVIDENCE_REPAIR",
+                notice: coordinating ? "COORDINATE_EVIDENCE_REPAIR" : "FIXED_ROOM_EVIDENCE_REPAIR",
                 reason: "The preceding draft claimed a tool action without a matching successful Tool Journal record in this Runtime.",
-                rules: [
+                rules: coordinating ? [
+                  "This is the only correction attempt. Do not repeat any claim that a tool action has already succeeded.",
+                  "You still have no tools. Do not read, write, fetch, verify, or dispatch anything during this reply.",
+                  isDirectLeadConversationRequest(active.rootRequirements, active.executorBotName)
+                    ? "The user only requested a greeting or your own introduction. Answer directly in one or two sentences using your own configured identity; do not introduce or assign other members."
+                    : "Rewrite as only one or two natural sentences in the user's language: say you are preparing to ask the named members to perform their assigned work in order. Use future intent, not completed-action statements.",
+                  "Do not output JSON, code blocks, technical status tables, or requests for repeated confirmation. An explicit human approval gate must still be respected.",
+                ] : [
                   "Do not repeat or imply that unverified action succeeded.",
                   "If the current request needs a file, network, or other tool result and the tool is available, perform that action now and rely only on its successful result.",
                   "If the source, permission, or tool is unavailable, explicitly state that the action was not completed and identify the missing input or authorization.",
@@ -1027,6 +1225,7 @@ export class RuntimeExecutor {
             active.handoffEmitted = accepted || active.handoffEmitted;
           }
           pendingHandoffs.clear();
+          if (active.turnPurpose === "coordinate") await this.dispatchLeadPlan(provider, active);
           const continuation = await this.selectRoomContinuation(provider, active);
           if (continuation?.action === "handoff") {
             const accepted = active.onHandoff?.({
@@ -1043,7 +1242,7 @@ export class RuntimeExecutor {
           run = this.repository.transitionRuntimeRun(runId, "completed");
           this.emitRuntime(run);
           const user = this.repository.getUserMessage(active.clientNonce);
-          this.memoryCapture?.enqueue({
+          if (active.turnPurpose === "work") this.memoryCapture?.enqueue({
             botId: active.providerContext.executorBotId,
             sourceEntryId: user.id,
             userText: user.body,
@@ -1109,7 +1308,33 @@ export class RuntimeExecutor {
   }
 
   private assertToolEvidence(active: ActiveRun): void {
+    if (active.turnPurpose === "coordinate") {
+      if (claimsCompletedCoordinationAction(active.body)) {
+        throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "coordinate-unverified-action" });
+      }
+      return;
+    }
+    if (active.turnPurpose !== "work") {
+      const evidence = active.providerContext.roomRunSummary?.results.flatMap((result) => result.tools ?? []) ?? [];
+      const hasKind = (...kinds: string[]): boolean => evidence.some((tool) => kinds.includes(tool.kind));
+      if (active.turnPurpose === "summary" && !active.body.trim()) throw new AevorenBotError("MODEL_STREAM_INVALID");
+      if (active.turnPurpose === "summary" && active.summaryMissingRequirements.length > 0 &&
+        /(?:全部|所有)(?:的)?(?:任务|工作)(?:都|均)?(?:已|已经)完成|\ball\s+(?:requested\s+)?(?:tasks|work)\s+(?:are\s+|is\s+)?(?:completed|complete|done)\b/iu.test(active.body) &&
+        !/尚未|未完成|未执行|失败|\b(?:not|failed|incomplete)\b/iu.test(active.body)) {
+        throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "accurate-team-summary" });
+      }
+      const unable = /无法|未能|尚未|没有权限|未完成|未执行|失败|unable|not completed|failed/iu.test(active.body);
+      if (!unable && (claimsWorkspaceRead(active.body) && !hasKind("workspace-read") ||
+        claimsWorkspaceWrite(active.body) && !hasKind("workspace-write") ||
+        claimsRemoteEvidence(active.body) && !hasKind("web-search", "web-fetch"))) {
+        throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED");
+      }
+      return;
+    }
     this.assertReceiptReads(active);
+    if (this.missingSourceReads(active).length > 0) {
+      throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "required-source-read" });
+    }
     const succeeded = this.repository.listToolInvocations(active.sessionId)
       .filter((invocation) => invocation.runtimeRunId === active.runId && invocation.state === "succeeded");
     const hasKind = (...kinds: Array<(typeof succeeded)[number]["toolKind"]>): boolean =>
@@ -1161,6 +1386,45 @@ export class RuntimeExecutor {
     }
   }
 
+  private missingTeamRequirements(sessionId: string, summary: RoomRunSummary): string[] {
+    const text = summary.request.text;
+    const evidence = summary.results.flatMap((result) => result.tools ?? []);
+    const hasKind = (kind: string): boolean => evidence.some((tool) => tool.kind === kind);
+    const kinds: Record<string, { kind: string; label: string }> = {
+      web_search: { kind: "web-search", label: "公开资料检索" },
+      web_fetch: { kind: "web-fetch", label: "网页读取" },
+      workspace_read: { kind: "workspace-read", label: "来源文件读取" },
+      workspace_write: { kind: "workspace-write", label: "成果文件保存" },
+      text_measure: { kind: "text-measure", label: "确定性文字计数" },
+    };
+    const missing: string[] = [];
+    for (const name of requiresToolCall(text) ? requiredToolNames(text) : []) {
+      if (kinds[name] && !hasKind(kinds[name].kind)) missing.push(`尚未完成原任务要求的${kinds[name].label}。`);
+    }
+    const artifacts = summary.results.flatMap((result) => result.artifacts);
+    const sourceRuns = new Set(summary.results.flatMap((result) => {
+      const turn = this.repository.getRoomTurn(result.turnId);
+      return turn.runtimeRunId ? [turn.runtimeRunId] : [];
+    }));
+    const verifiedDigests = new Set(evidence.map((tool) => tool.resultDigest));
+    const reads = this.repository.listToolInvocations(sessionId).filter((tool) => (
+      sourceRuns.has(tool.runtimeRunId) && tool.toolKind === "workspace-read" && tool.state === "succeeded" &&
+      tool.resultDigest !== null && verifiedDigests.has(tool.resultDigest)
+    ));
+    for (const path of requestedReadPaths(text)) {
+      const artifact = artifacts.find((candidate) => candidate.path === path);
+      if (!reads.some((read) => read.targetPath === path && (!artifact ||
+        read.workspaceId === artifact.workspaceId && read.resultMetadata?.truncated === false && read.resultMetadata.sha256 === artifact.sha256))) {
+        missing.push(`尚未完成来源文件 ${path} 的有效读取。`);
+      }
+    }
+    for (const path of requestedWritePaths(text)) {
+      if (!artifacts.some((artifact) => artifact.path === path)) missing.push(`尚未生成要求的成果文件 ${path}。`);
+    }
+    if (requiresToolCall(text) && evidence.length === 0) missing.push("原任务要求的实际操作尚未完成。");
+    return missing;
+  }
+
   private assertReceiptReads(active: ActiveRun): void {
     const receipt = active.providerContext.executionReceipt;
     if (!receipt) return;
@@ -1174,6 +1438,31 @@ export class RuntimeExecutor {
         throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "verified-upstream-artifact-read" });
       }
     }
+  }
+
+  private missingSourceReads(active: ActiveRun, outputPath?: string): Array<{ path: string; workspaceId?: string; sha256?: string }> {
+    const paths = requestedReadPaths(active.evidenceRequestText).filter((path) => path !== outputPath);
+    const receipt = active.providerContext.executionReceipt;
+    const inherited = receipt?.artifacts.filter((artifact) => artifact.sourceRuntimeRunId === receipt.sourceRuntimeRunId) ?? [];
+    const summary = active.providerContext.roomRunSummary;
+    const dependency = summary && active.providerContext.sourceTurnId
+      ? this.repository.getRoomTurn(active.providerContext.sourceTurnId).dependencyLogicalTurnId
+      : null;
+    const supplied = (summary?.results ?? []).flatMap((result) => result.artifacts.filter((artifact) =>
+      result.logicalTurnId === dependency || paths.includes(artifact.path) || active.evidenceRequestText.includes(artifact.path),
+    ));
+    const specific = [...inherited, ...supplied].filter((artifact) => artifact.path !== outputPath);
+    const required = [
+      ...paths.filter((path) => !specific.some((artifact) => artifact.path === path)).map((path) => ({ path })),
+      ...specific.map(({ path, workspaceId, sha256 }) => ({ path, workspaceId, sha256 })),
+    ];
+    const reads = this.repository.listToolInvocations(active.sessionId).filter((tool) =>
+      tool.runtimeRunId === active.runId && tool.toolKind === "workspace-read" && tool.state === "succeeded",
+    );
+    return [...new Map(required.map((source) => [`${"workspaceId" in source ? source.workspaceId : ""}:${source.path}`, source])).values()]
+      .filter((source) => !reads.some((read) => read.targetPath === source.path &&
+        (!("workspaceId" in source) || read.workspaceId === source.workspaceId) &&
+        (!("sha256" in source) || read.resultMetadata?.truncated === false && read.resultMetadata.sha256 === source.sha256)));
   }
 
   private validateCsvReport(active: ActiveRun, content: string):
@@ -1252,6 +1541,7 @@ export class RuntimeExecutor {
   ): Promise<RoomContinuationDecision | null> {
     const roster = active.providerContext.roomRoster;
     if (
+      active.turnPurpose !== "work" ||
       active.handoffEmitted ||
       !active.onHandoff ||
       !roster
@@ -1278,6 +1568,62 @@ export class RuntimeExecutor {
     } catch (error) {
       active.handoffError = asAppError(error);
       return null;
+    }
+  }
+
+  private async dispatchLeadPlan(provider: ModelProvider, active: ActiveRun): Promise<void> {
+    const selector = provider.selectLeadPlan;
+    const roster = active.providerContext.roomRoster;
+    if (active.maxAssignments < 0) throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "summary-reserve" });
+    if (!selector || !roster || !active.onLeadPlan) {
+      throw new AevorenBotError("ROOM_LEAD_PLAN_INVALID");
+    }
+    if (isDirectLeadConversationRequest(active.rootRequirements, active.executorBotName)) {
+      active.onLeadPlan({ assignments: [], reason: "当前用户只要求协调者本人问候或自我介绍，无需成员任务。", incompleteReason: null });
+      return;
+    }
+    const signal = AbortSignal.any([active.controller.signal, AbortSignal.timeout(ROOM_LEAD_PLAN_TIMEOUT_MS)]);
+    let abort!: () => void;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(new AevorenBotError(signal.reason?.name === "TimeoutError" ? "MODEL_ROUTER_TIMEOUT" : "MESSAGE_CANCELLED"));
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
+    let observedPlan: RoomLeadPlan | undefined;
+    try {
+      const plan = await Promise.race([
+        selector.call(provider, { rootRequest: active.rootRequirements, coordinationDraft: active.body },
+          active.providerContext.executorBotId, roster, active.maxAssignments, signal),
+        aborted,
+      ]);
+      observedPlan = plan;
+      if (active.controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      if (plan?.incompleteReason) throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "incomplete-plan" });
+      if (plan && Array.isArray(plan.assignments) && plan.assignments.length > active.maxAssignments) {
+        throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-assignments" });
+      }
+      if (!plan || !Array.isArray(plan.assignments) ||
+        plan.assignments.length === 0 && requiresToolCall(active.rootRequirements)) {
+        throw new AevorenBotError("ROOM_LEAD_PLAN_INVALID");
+      }
+      active.onLeadPlan(plan);
+    } catch (error) {
+      if (active.controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      const reportedReason = error instanceof AevorenBotError ? error.details?.reason : undefined;
+      const reason = typeof reportedReason === "string" && [
+        "summary-reserve", "incomplete-plan", "max-assignments", "max-turns", "max-hops", "max-targets-per-turn", "deadline", "winding-down", "run-state",
+      ].includes(reportedReason) ? reportedReason : "validation";
+      console.warn("[lead-plan-validation] rejected", {
+        code: error instanceof AevorenBotError ? error.code : "UNEXPECTED_PLAN_ERROR",
+        reason,
+        assignmentLimit: active.maxAssignments,
+        returnedAssignments: Array.isArray(observedPlan?.assignments) ? observedPlan.assignments.length : null,
+        incompleteReasonCharacters: typeof observedPlan?.incompleteReason === "string" ? observedPlan.incompleteReason.length : 0,
+      });
+      if (error instanceof AevorenBotError && ["ROOM_RUN_LIMIT_EXCEEDED", "HUMAN_APPROVAL_REQUIRED", "MODEL_ROUTER_TIMEOUT"].includes(error.code)) throw error;
+      throw new AevorenBotError("ROOM_LEAD_PLAN_INVALID");
+    } finally {
+      signal.removeEventListener("abort", abort);
     }
   }
 

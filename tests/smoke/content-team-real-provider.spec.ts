@@ -117,7 +117,7 @@ test("runs the real content team from public release research through approval, 
     repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: true });
     repository.setSetting("tools.autoApprovePublicRead", "true", false);
     repository.deleteSetting("template.content-team.roomId");
-    const team = repository.createContentTeamTemplate();
+    const team = repository.createContentTeamTemplate(registered.project.id);
     roomId = repository.updateRoom(team.room.room.id, team.room.room.version, { name: roomName }).id;
     sessionId = team.room.session.id;
   } finally { repository.close(); }

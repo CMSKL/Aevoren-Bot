@@ -1,10 +1,12 @@
-import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { AppError, Bot, RoomDetail, RoomPatch } from "@shared/contracts";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import type { AppError, Bot, ProviderInstanceInfo, RoomDetail, RoomPatch } from "@shared/contracts";
+import { eligibleRoomLeads } from "../room-leads";
 import { buildBotIdentityMap } from "../bot-identity";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { CheckIcon, CloseIcon } from "./Icons";
+import { ConversationWorkspace, type ConversationWorkspaceProps } from "./ConversationWorkspace";
 
-type Draft = Pick<RoomDetail["room"], "name" | "description">;
+type Draft = Pick<RoomDetail["room"], "name" | "description"> & { leadBotId: string | null };
 type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
 
 export type RoomInspectorHandle = { flush(): Promise<boolean> };
@@ -13,6 +15,7 @@ type Props = {
   id?: string;
   detail: RoomDetail | null;
   bots: Bot[];
+  conversationWorkspace: ConversationWorkspaceProps;
   active: boolean;
   mobileOpen: boolean;
   onDetailUpdated(detail: RoomDetail): void;
@@ -22,15 +25,15 @@ type Props = {
 };
 
 function toDraft(detail: RoomDetail): Draft {
-  return { name: detail.room.name, description: detail.room.description };
+  return { name: detail.room.name, description: detail.room.description, leadBotId: detail.room.leadBotId ?? null };
 }
 
 function same(left: Draft, right: Draft): boolean {
-  return left.name === right.name && left.description === right.description;
+  return left.name === right.name && left.description === right.description && left.leadBotId === right.leadBotId;
 }
 
 export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function RoomInspector(
-  { id, detail, bots, active, mobileOpen, onDetailUpdated, onError, onOpenBot, onMobileClose },
+  { id, detail, bots, conversationWorkspace, active, mobileOpen, onDetailUpdated, onError, onOpenBot, onMobileClose },
   ref,
 ) {
   const [draft, setDraft] = useState<Draft | null>(detail ? toDraft(detail) : null);
@@ -38,16 +41,29 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const [selectedBotId, setSelectedBotId] = useState("");
   const [memberPending, setMemberPending] = useState(false);
   const [membersExpanded, setMembersExpanded] = useState(false);
+  const [providers, setProviders] = useState<ProviderInstanceInfo[]>([]);
   const draftRef = useRef(draft);
   const savedRef = useRef<Draft | null>(detail ? toDraft(detail) : null);
   const detailRef = useRef(detail);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
   const availableBots = useMemo(
-    () => bots.filter((bot) => bot.projectId === detail?.room.projectId && bot.hiddenAt === null && !detail?.members.some((member) => member.botId === bot.id)),
+    () => bots.filter((bot) => !detail?.members.some((member) => member.botId === bot.id)),
     [bots, detail],
   );
   const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);
+  const eligibleLeads = eligibleRoomLeads(detail?.members.map(member => member.bot) ?? [], providers);
+  useEffect(() => {
+    let cancelled = false;
+    const load = (): void => { void window.aevorenBot.providers.list().then(result => {
+      if (cancelled) return;
+      if (result.ok) setProviders(result.data);
+      else onError(result.error);
+    }); };
+    load();
+    window.addEventListener("aevoren:providers-changed", load);
+    return () => { cancelled = true; window.removeEventListener("aevoren:providers-changed", load); };
+  }, [onError]);
 
   async function saveCurrent(): Promise<boolean> {
     const currentDetail = detailRef.current;
@@ -62,7 +78,11 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
     const operation = window.aevorenBot.rooms.update({
       id: currentDetail.room.id,
       expectedVersion: currentDetail.room.version,
-      patch: snapshot as RoomPatch,
+      patch: {
+        name: snapshot.name,
+        description: snapshot.description,
+        ...(snapshot.leadBotId !== savedRef.current.leadBotId ? { leadBotId: snapshot.leadBotId } : {}),
+      } as RoomPatch,
     }).then((result) => {
       if (!result.ok) {
         setStatus("failed");
@@ -95,7 +115,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
 
   useImperativeHandle(ref, () => ({ flush }));
 
-  function update(field: keyof Draft, value: string): void {
+  function update<K extends keyof Draft>(field: K, value: Draft[K]): void {
     if (!draftRef.current) return;
     const next = { ...draftRef.current, [field]: value };
     draftRef.current = next;
@@ -141,6 +161,18 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
           <button className="drawer-close-button" type="button" aria-label="关闭群聊设置" onClick={onMobileClose}><CloseIcon /></button>
         </div>
       </header>
+      <ConversationWorkspace {...conversationWorkspace} />
+      <label className="field inspector-primary-field">
+        <span>群协调者</span>
+        <select aria-label="群协调者" value={draft.leadBotId ?? ""} disabled={active || memberPending || status === "saving"} onChange={(event) => update("leadBotId", event.target.value || null)} onBlur={() => void flush()}>
+          <option value="">每轮自动选择负责人</option>
+          {draft.leadBotId && !eligibleLeads.some(bot => bot.id === draft.leadBotId)
+            ? <option value={draft.leadBotId} disabled>{detail.members.find(member => member.botId === draft.leadBotId)?.bot.name ?? "原协调者"} · 当前不可用</option> : null}
+          {eligibleLeads.map(bot => <option key={bot.id} value={bot.id}>{botIdentities.get(bot.id)?.inline ?? bot.name}</option>)}
+        </select>
+        <small>协调者负责分工并汇总结果；明确 @成员时直接交给该成员。</small>
+        {eligibleLeads.length === 0 ? <small>配置支持协作的 API 联系人后，可设为固定协调者。</small> : null}
+      </label>
       <button
         className="room-avatar-stack"
         type="button"

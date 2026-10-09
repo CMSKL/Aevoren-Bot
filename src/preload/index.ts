@@ -33,6 +33,12 @@ const api: AevorenBotApi = {
     delete: (input) => ipcRenderer.invoke(IPC.routinesDelete, input),
   },
   conversations: {
+    list: () => ipcRenderer.invoke(IPC.conversationsList),
+    setPinned: (input) => ipcRenderer.invoke(IPC.conversationsSetPinned, input),
+    setUnread: (input) => ipcRenderer.invoke(IPC.conversationsSetUnread, input),
+    setHidden: (input) => ipcRenderer.invoke(IPC.conversationsSetHidden, input),
+    clear: (sessionId) => ipcRenderer.invoke(IPC.conversationsClear, sessionId),
+    setProject: (input) => ipcRenderer.invoke(IPC.conversationsSetProject, input),
     deleteBatch: (input) => ipcRenderer.invoke(IPC.conversationsDeleteBatch, input),
   },
   teams: {

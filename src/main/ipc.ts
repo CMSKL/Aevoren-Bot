@@ -14,6 +14,10 @@ import {
   botUpdateSchema,
   capabilitySnapshotInputSchema,
   conversationBatchDeleteSchema,
+  conversationPinnedSchema,
+  conversationUnreadSchema,
+  conversationHiddenSchema,
+  conversationProjectSchema,
   generalSettingsSchema,
   memoryCreateSchema,
   memoryListSchema,
@@ -106,6 +110,24 @@ function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
 export function registerIpc(dependencies: IpcDependencies): void {
   const { window, repository, providers, generalSettings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
 
+  const roomLead = async (memberBotIds: string[], requested: string | null | undefined): Promise<string | null> => {
+    if (requested === null) return null;
+    if (requested !== undefined && !memberBotIds.includes(requested)) throw new AevorenBotError("ROOM_LEAD_UNAVAILABLE");
+    const available = await providers.list();
+    const eligible = memberBotIds.filter((id) => {
+      const selection = repository.getBot(id).modelSelection;
+      const provider = available.find((candidate) => candidate.id === selection.providerInstanceId);
+      return provider?.enabled && provider.status === "available" && provider.capabilities.handoff &&
+        Boolean(selection.modelId) && provider.models.options.some((model) => model.id === selection.modelId);
+    });
+    const leadBotId = requested === undefined ? eligible[0] ?? null : requested;
+    if (leadBotId) {
+      if (!eligible.includes(leadBotId)) throw new AevorenBotError("ROOM_LEAD_UNAVAILABLE");
+      roomCoordinator.assertLeadAvailable(memberBotIds, leadBotId);
+    }
+    return leadBotId;
+  };
+
   const handle = <TArgs extends unknown[], TResult>(
     channel: string,
     operation: (event: IpcMainInvokeEvent, ...args: TArgs) => TResult | Promise<TResult>,
@@ -158,6 +180,24 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.routinesDelete, (_event, input: unknown) => {
     const parsed = routineMutationSchema.parse(input);
     return dependencies.routineService.delete(parsed.id, parsed.expectedVersion);
+  });
+  handle(IPC.conversationsList, () => repository.listConversations());
+  handle(IPC.conversationsSetPinned, (_event, input: unknown) => {
+    const parsed = conversationPinnedSchema.parse(input);
+    return repository.setConversationPinned(parsed.sessionId, parsed.pinned);
+  });
+  handle(IPC.conversationsSetUnread, (_event, input: unknown) => {
+    const parsed = conversationUnreadSchema.parse(input);
+    return repository.setConversationUnread(parsed.sessionId, parsed.unread);
+  });
+  handle(IPC.conversationsSetHidden, (_event, input: unknown) => {
+    const parsed = conversationHiddenSchema.parse(input);
+    return repository.setConversationHidden(parsed.sessionId, parsed.hidden);
+  });
+  handle(IPC.conversationsClear, (_event, sessionId: unknown) => repository.clearConversation(sessionIdSchema.parse(sessionId)));
+  handle(IPC.conversationsSetProject, (_event, input: unknown) => {
+    const parsed = conversationProjectSchema.parse(input);
+    return repository.setConversationProject(parsed.sessionId, parsed.projectId, parsed.expectedVersion);
   });
   handle(IPC.conversationsDeleteBatch, (_event, input: unknown) =>
     repository.deleteConversations(conversationBatchDeleteSchema.parse(input)),
@@ -273,10 +313,16 @@ export function registerIpc(dependencies: IpcDependencies): void {
     return workspaceToolCoordinator.resolve(parsed.sessionId, parsed.id, parsed.expectedVersion, parsed.resolution);
   });
   handle(IPC.roomsList, (_event, input: unknown) => repository.listRooms(roomListSchema.parse(input)?.includeArchived ?? false));
-  handle(IPC.roomsCreate, (_event, input: unknown) => repository.createRoom(roomCreateSchema.parse(input)));
+  handle(IPC.roomsCreate, async (_event, input: unknown) => {
+    const parsed = roomCreateSchema.parse(input);
+    return repository.createRoom({ ...parsed, leadBotId: await roomLead(parsed.memberBotIds, parsed.leadBotId) });
+  });
   handle(IPC.roomsGet, (_event, id: unknown) => repository.getRoomDetail(roomIdSchema.parse(id)));
-  handle(IPC.roomsUpdate, (_event, input: unknown) => {
+  handle(IPC.roomsUpdate, async (_event, input: unknown) => {
     const parsed = roomUpdateSchema.parse(input);
+    if (parsed.patch.leadBotId !== undefined) {
+      await roomLead(repository.listRoomMembers(parsed.id).map((member) => member.botId), parsed.patch.leadBotId);
+    }
     return repository.updateRoom(parsed.id, parsed.expectedVersion, parsed.patch);
   });
   handle(IPC.roomsArchive, (_event, input: unknown) => {

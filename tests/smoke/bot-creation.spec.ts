@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -134,6 +135,7 @@ test("creates one neutral Bot and one MAIN session under a duplicate trigger, th
     application = launched.application;
     page = launched.page;
     await expect(page.getByRole("heading", { name: "研究助手" })).toBeVisible();
+    await openInspector(page);
     await expect(page.getByLabel("名称")).toHaveValue("研究助手");
     await expect(page.getByLabel("标签（可选）")).toHaveValue("研究");
     await expect(page.getByLabel("描述")).toHaveValue("整理材料并给出可核验的研究结论。");

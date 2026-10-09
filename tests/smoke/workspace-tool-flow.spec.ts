@@ -14,9 +14,9 @@ test("approves, denies, and restores one workspace tool flow without exposing jo
   const databasePath = join(userDataDir, "aevoren-bot.sqlite");
   writeFileSync(join(workspaceRoot, "brief.txt"), "E2E_WORKSPACE_CONTENT", "utf8");
   const repository = new AppRepository(databasePath);
-  repository.createBot();
+  const registered = await new WorkspaceService(repository).registerRoot(workspaceRoot);
+  repository.createBot(registered.project.id);
   repository.setSetting("tools.autoApprovePublicRead", "true", false);
-  await new WorkspaceService(repository).registerRoot(workspaceRoot);
   repository.close();
 
   let application: ElectronApplication | undefined;

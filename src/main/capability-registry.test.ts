@@ -37,10 +37,11 @@ describe("CapabilityRegistry", () => {
   it("advertises only the limited adapter's actual host tools, not unrelated capabilities", async () => {
     const repository = new AppRepository(":memory:");
     repositories.push(repository);
-    const bot = repository.createBot().bot;
+    const registered = repository.registerWorkspaceRoot("/private/tmp/limited-tool-scope", "限定工作区");
+    const bot = repository.createBot(registered.project.id).bot;
     const current = provider();
     current.capabilities = { roomOwnerSelection: false, handoff: false, workspaceTools: true, networkTools: true, supportedToolNames: ["workspace_list", "workspace_read", "workspace_search", "workspace_write", "web_search", "web_fetch"] };
-    const workspace = repository.registerWorkspaceRoot("/private/tmp/limited-tool-scope", "限定工作区").workspace;
+    const workspace = registered.workspace;
     repository.updateWorkspacePermissions(workspace.id, workspace.version, { writeEnabled: true, automationEnabled: false });
     const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities }, { name: "Aevoren Bot", version: "1", platform: "darwin", architecture: "arm64", packaged: false });
     const snapshot = await registry.getSnapshot({ botId: bot.id });
@@ -87,7 +88,8 @@ describe("CapabilityRegistry", () => {
       adapterKind: "connector",
     });
 
-    repository.registerWorkspaceRoot("/private/tmp/capability-secret-root", "Fixture Workspace");
+    const registered = repository.registerWorkspaceRoot("/private/tmp/capability-secret-root", "Fixture Workspace");
+    repository.setConversationProject(created.session.id, registered.project.id, repository.getConversation(created.session.id).version);
     const afterGrant = await registry.getSnapshot({ botId: bot.id });
     expect(afterGrant.availableTools).toEqual([
       "project_list_bots", "bot_create", "room_create",

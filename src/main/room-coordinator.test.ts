@@ -116,7 +116,7 @@ describe("RoomCoordinator", () => {
     expect(repository.listDecisionJournals()).toHaveLength(0);
   });
 
-  it("injects each Room executor's own Memory without leaking peer Memory", async () => {
+  it("keeps private Bot Memory out of a newly created Room", async () => {
     const captured: ChatMessage[][] = [];
     const provider: ModelProvider = {
       async *run(messages) {
@@ -132,11 +132,13 @@ describe("RoomCoordinator", () => {
 
     const sent = coordinator.send(command(detail, bots.map(({ bot }) => bot.id)));
     await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
-    expect(JSON.stringify(captured[0])).toContain("ROOM_MEMORY_A");
+    expect(JSON.stringify(captured[0])).not.toContain("ROOM_MEMORY_A");
     expect(JSON.stringify(captured[0])).not.toContain("ROOM_MEMORY_B");
-    expect(JSON.stringify(captured[1])).toContain("ROOM_MEMORY_B");
+    expect(JSON.stringify(captured[1])).not.toContain("ROOM_MEMORY_B");
+    expect(repository.listRuntimeMemories(bots[0]!.bot.id).map(memory => memory.content)).toContain("ROOM_MEMORY_A");
+    expect(repository.listRuntimeMemories(bots[1]!.bot.id).map(memory => memory.content)).toContain("ROOM_MEMORY_B");
     expect(JSON.stringify(captured[1])).not.toContain("ROOM_MEMORY_A");
-    expect(repository.listRuntimeRuns(detail.session.id).every((run) => run.promptManifest.schemaVersion === 3)).toBe(true);
+    expect(repository.listRuntimeRuns(detail.session.id).every((run) => run.promptManifest.schemaVersion === 2)).toBe(true);
   });
 
   it("deduplicates the same command and rejects a changed command before another provider call", async () => {
@@ -198,9 +200,10 @@ describe("RoomCoordinator", () => {
     const sent = coordinator.send(command(detail, bots.map(({ bot }) => bot.id)));
     await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
 
-    expect(captured[1]!.some((message) =>
-      message.content === `[room-speaker id="${bots[0]!.bot.id}" name="Member 1"]\nfirst answer`,
-    )).toBe(true);
+    const quoted = captured[1]!.find((message) => message.content?.startsWith('{"notice":"UNTRUSTED_PEER_MESSAGE'));
+    expect(quoted?.role).toBe("user");
+    expect(JSON.parse(quoted!.content!)).toMatchObject({ originalRole: "assistant", speakerBotId: bots[0]!.bot.id,
+      quote: `[room-speaker id="${bots[0]!.bot.id}" name="Member 1"]\nfirst answer` });
     const assistants = repository.listTranscript(detail.session.id).filter((entry) => entry.role === "assistant");
     expect(assistants).toHaveLength(2);
     expect(assistants.map((entry) => [entry.speakerBotId, entry.speakerNameSnapshot, Boolean(entry.sourceTurnId)])).toEqual([
@@ -215,6 +218,8 @@ describe("RoomCoordinator", () => {
       roomMembershipVersion: 1,
     });
     expect(JSON.stringify(secondRun.promptManifest)).not.toContain("first answer");
+    expect(secondRun.promptManifest.blocks.find((block) => block.sourceEntryId === assistants[0]!.id))
+      .toMatchObject({ authority: "assistant", speakerBotId: bots[0]!.bot.id });
   });
 
   it("removes a leaked attribution envelope before persistence and subsequent Room prompts", async () => {
@@ -240,9 +245,13 @@ describe("RoomCoordinator", () => {
     expect(assistants.map((entry) => entry.body)).toEqual(["intro\nfirst answer", "second answer"]);
     expect(JSON.stringify(transcriptEvents.mock.calls)).not.toContain("room-speaker");
     expect(captured[1]!.some((message) => message.content === leakedMarker)).toBe(false);
-    expect(captured[1]!.some((message) =>
-      message.content === `[room-speaker id="${bots[0]!.bot.id}" name="Member 1"]\nintro\nfirst answer`,
-    )).toBe(true);
+    const quoted = captured[1]!.find((message) => message.content?.startsWith('{"notice":"UNTRUSTED_PEER_MESSAGE'));
+    expect(quoted?.role).toBe("user");
+    expect(JSON.parse(quoted!.content!)).toMatchObject({ originalRole: "assistant", speakerBotId: bots[0]!.bot.id,
+      quote: `[room-speaker id="${bots[0]!.bot.id}" name="Member 1"]\nintro\nfirst answer` });
+    const secondRun = repository.listRuntimeRuns(detail.session.id)[1]!;
+    expect(secondRun.promptManifest.blocks.find((block) => block.sourceEntryId === assistants[0]!.id))
+      .toMatchObject({ authority: "assistant", speakerBotId: bots[0]!.bot.id });
   });
 
   it("continues after a middle member failure and marks the batch partial", async () => {

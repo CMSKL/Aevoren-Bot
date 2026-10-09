@@ -20,14 +20,14 @@ test("runs one approved workspace read through the configured real Provider", as
   let botName: string;
   let sessionId: string;
   try {
-    const created = repository.createBot();
+    const registered = await new WorkspaceService(repository).registerRoot(root);
+    const created = repository.createBot(registered.project.id);
     botName = `Workspace 真实验收-${Date.now().toString(36)}`;
     sessionId = created.session.id;
     repository.updateBot(created.bot.id, created.bot.version, {
       name: botName,
       instructions: "必须先且只调用一次 workspace_read，读取用户指定的文件；得到工具结果后，只输出文件原文。不要调用其他工具。",
     });
-    await new WorkspaceService(repository).registerRoot(root);
   } finally {
     repository.close();
   }
