@@ -287,6 +287,9 @@ img { max-width: 100%; }
 }
 
 @media (max-width: 300px) {
+  .inspector-header { flex-wrap: wrap; }
+  .inspector-header h2 { white-space: nowrap; }
+  .inspector-header-actions { flex-shrink: 0; margin-left: auto; }
   .sidebar-list-header { display: grid; grid-template-columns: minmax(0, 1fr) 36px; align-content: center; gap: 6px; padding: 10px 8px; }
   .sidebar-search { grid-column: 1 / -1; width: 100%; }
   .sidebar-search > svg { display: none; }

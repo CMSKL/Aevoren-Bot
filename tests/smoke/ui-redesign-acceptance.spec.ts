@@ -212,134 +212,149 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
   }
 });
 
-test("keeps both themes, seven settings pages, navigation, and drawers usable at four viewport widths", async () => {
-  const testInfo = test.info();
-  test.setTimeout(120_000);
-  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-ui-responsive-"));
-  let application: ElectronApplication | undefined;
-  const errors: string[] = [];
-  try {
-    const launched = await launch(userDataDir);
-    application = launched.application;
-    const page = launched.page;
-    watchErrors(page, errors);
-    await checkPage(page);
-    await seedBots(page, ["cobalt"]);
-    await page.evaluate(async () => {
-      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
-      for (let index = 0; index < 18; index += 1) {
-        const memory = await api.memories.create({ scope: "user", scopeKey: "user", content: `布局验收记忆 ${index + 1}：长列表中每一条记忆都能滚动到达并编辑。` });
-        if (!memory.ok) throw new Error(memory.error.safeMessage);
-      }
-    });
-    for (const theme of ["light", "dark"] as const) {
-      for (const width of [1180, 1020, 620, 390]) {
-        const viewport = await resize(application, page, width);
-        testInfo.annotations.push({ type: "viewport", description: `${theme}: ${viewport.width} × ${viewport.height}` });
-        await openSettings(page);
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1180, 1020, 620, 390]) {
+    test(`keeps seven settings pages, navigation, and drawers usable: ${theme}, ${width}px`, async () => {
+      const testInfo = test.info();
+      test.setTimeout(60_000);
+      const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-ui-responsive-"));
+      let application: ElectronApplication | undefined;
+      const errors: string[] = [];
+      try {
+        const launched = await test.step("launch isolated Electron application", () => launch(userDataDir));
+        application = launched.application;
+        const page = launched.page;
+        page.setDefaultTimeout(10_000);
+        page.setDefaultNavigationTimeout(15_000);
+        watchErrors(page, errors);
+        await test.step("verify application identity and create persisted UI resources", async () => {
+          await checkPage(page);
+          await seedBots(page, ["cobalt"]);
+          await page.evaluate(async () => {
+            const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+            for (let index = 0; index < 18; index += 1) {
+              const memory = await api.memories.create({ scope: "user", scopeKey: "user", content: `布局验收记忆 ${index + 1}：长列表中每一条记忆都能滚动到达并编辑。` });
+              if (!memory.ok) throw new Error(memory.error.safeMessage);
+            }
+          });
+        });
+        await test.step(`set ${width}px viewport and ${theme} theme`, async () => {
+          const viewport = await resize(launched.application, page, width);
+          testInfo.annotations.push({ type: "viewport", description: `${theme}: ${viewport.width} × ${viewport.height}` });
+          await openSettings(page);
+          const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+          await dialog.getByLabel("外观主题").selectOption(theme);
+          await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+        });
         const dialog = page.getByRole("dialog", { name: "设置", exact: true });
-        await dialog.getByLabel("外观主题").selectOption(theme);
-        await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
         const navigation = dialog.locator(".settings-nav nav");
         if (width <= 620) {
-          expect(await navigation.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
-          await navigation.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
-          await expect.poll(() => navigation.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+          await test.step("verify horizontal settings navigation scroll", async () => {
+            expect(await navigation.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+            await navigation.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+            await expect.poll(() => navigation.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+          });
         }
         for (const section of ["通用", "能力与权限", "长期记忆", "模型与 CLI", "MCP", "主动服务", "版本更新"]) {
-          const tab = navigation.getByRole("button", { name: section, exact: true });
-          await tab.click();
-          await expect(tab).toHaveAttribute("aria-current", "page");
-          await expect(dialog.getByRole("heading", { name: section, exact: true })).toBeVisible();
-          await checkHorizontalLayout(page);
-          if (section === "长期记忆") {
-            await expect(dialog.locator(".scoped-memory-item")).toHaveCount(18);
-            const content = dialog.locator(".settings-content");
-            expect(await content.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-            await content.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-            await expect.poll(() => content.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-            await expect(dialog.locator(".scoped-memory-item textarea").last()).toBeInViewport();
-            const geometry = await dialog.evaluate((element) => {
-              const content = element.querySelector<HTMLElement>(".settings-content");
-              const toolbar = element.querySelector<HTMLElement>(".settings-toolbar");
-              const close = element.querySelector<HTMLElement>(".settings-close-button");
-              const editor = [...element.querySelectorAll<HTMLTextAreaElement>(".scoped-memory-item textarea")].at(-1);
-              if (!content || !toolbar || !close || !editor) throw new Error("Missing settings scroll or toolbar controls");
-              const contentRect = content.getBoundingClientRect();
-              const toolbarRect = toolbar.getBoundingClientRect();
-              const closeRect = close.getBoundingClientRect();
-              const editorRect = editor.getBoundingClientRect();
-              return {
-                scrollRemaining: content.scrollHeight - content.scrollTop - content.clientHeight,
-                closeInsideContent: content.contains(close),
-                closeInsideToolbar: toolbar.contains(close),
-                closeWidth: closeRect.width,
-                closeHeight: closeRect.height,
-                toolbarBottom: toolbarRect.bottom,
-                contentTop: contentRect.top,
-                closeBottom: closeRect.bottom,
-                editorTop: editorRect.top,
-                editorBottom: editorRect.bottom,
-                contentBottom: contentRect.bottom,
-                editorOverlapsClose: editorRect.left < closeRect.right && editorRect.right > closeRect.left
-                  && editorRect.top < closeRect.bottom && editorRect.bottom > closeRect.top,
-              };
-            });
-            expect(geometry.scrollRemaining).toBeLessThanOrEqual(1);
-            expect(geometry.closeInsideContent).toBe(false);
-            expect(geometry.closeInsideToolbar).toBe(true);
-            expect(geometry.closeWidth).toBeGreaterThanOrEqual(40);
-            expect(geometry.closeHeight).toBeGreaterThanOrEqual(40);
-            expect(geometry.contentTop).toBeGreaterThanOrEqual(geometry.toolbarBottom - 1);
-            expect(geometry.closeBottom).toBeLessThanOrEqual(geometry.contentTop + 1);
-            expect(geometry.editorTop).toBeGreaterThanOrEqual(geometry.contentTop - 1);
-            expect(geometry.editorBottom).toBeLessThanOrEqual(geometry.contentBottom + 1);
-            expect(geometry.editorOverlapsClose).toBe(false);
-            await page.screenshot({ path: testInfo.outputPath(`memory-${theme}-${width}.png`) });
-          }
+          await test.step(`open and verify settings page: ${section}`, async () => {
+            const tab = navigation.getByRole("button", { name: section, exact: true });
+            await tab.click();
+            await expect(tab).toHaveAttribute("aria-current", "page");
+            await expect(dialog.getByRole("heading", { name: section, exact: true })).toBeVisible();
+            await checkHorizontalLayout(page);
+            if (section === "长期记忆") {
+              await expect(dialog.locator(".scoped-memory-item")).toHaveCount(18);
+              const content = dialog.locator(".settings-content");
+              expect(await content.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+              await content.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+              await expect.poll(() => content.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+              await expect(dialog.locator(".scoped-memory-item textarea").last()).toBeInViewport();
+              const geometry = await dialog.evaluate((element) => {
+                const content = element.querySelector<HTMLElement>(".settings-content");
+                const toolbar = element.querySelector<HTMLElement>(".settings-toolbar");
+                const close = element.querySelector<HTMLElement>(".settings-close-button");
+                const editor = [...element.querySelectorAll<HTMLTextAreaElement>(".scoped-memory-item textarea")].at(-1);
+                if (!content || !toolbar || !close || !editor) throw new Error("Missing settings scroll or toolbar controls");
+                const contentRect = content.getBoundingClientRect();
+                const toolbarRect = toolbar.getBoundingClientRect();
+                const closeRect = close.getBoundingClientRect();
+                const editorRect = editor.getBoundingClientRect();
+                return {
+                  scrollRemaining: content.scrollHeight - content.scrollTop - content.clientHeight,
+                  closeInsideContent: content.contains(close),
+                  closeInsideToolbar: toolbar.contains(close),
+                  closeWidth: closeRect.width,
+                  closeHeight: closeRect.height,
+                  toolbarBottom: toolbarRect.bottom,
+                  contentTop: contentRect.top,
+                  closeBottom: closeRect.bottom,
+                  editorTop: editorRect.top,
+                  editorBottom: editorRect.bottom,
+                  contentBottom: contentRect.bottom,
+                  editorOverlapsClose: editorRect.left < closeRect.right && editorRect.right > closeRect.left
+                    && editorRect.top < closeRect.bottom && editorRect.bottom > closeRect.top,
+                };
+              });
+              expect(geometry.scrollRemaining).toBeLessThanOrEqual(1);
+              expect(geometry.closeInsideContent).toBe(false);
+              expect(geometry.closeInsideToolbar).toBe(true);
+              expect(geometry.closeWidth).toBeGreaterThanOrEqual(40);
+              expect(geometry.closeHeight).toBeGreaterThanOrEqual(40);
+              expect(geometry.contentTop).toBeGreaterThanOrEqual(geometry.toolbarBottom - 1);
+              expect(geometry.closeBottom).toBeLessThanOrEqual(geometry.contentTop + 1);
+              expect(geometry.editorTop).toBeGreaterThanOrEqual(geometry.contentTop - 1);
+              expect(geometry.editorBottom).toBeLessThanOrEqual(geometry.contentBottom + 1);
+              expect(geometry.editorOverlapsClose).toBe(false);
+              await page.screenshot({ path: testInfo.outputPath(`memory-${theme}-${width}.png`) });
+            }
+          });
         }
-        await dialog.getByRole("button", { name: "关闭设置", exact: true }).click();
-        await expect(dialog).toBeHidden();
-        await checkHorizontalLayout(page);
-        await openSidebar(page);
-        await page.getByRole("tab", { name: "联系人", exact: true }).click();
-        await expect(page.getByRole("tab", { name: "联系人", exact: true })).toHaveAttribute("aria-selected", "true");
-        await openSidebar(page);
-        await page.getByLabel("搜索联系人", { exact: true }).fill("没有这个联系人");
-        await expect(page.locator(".sidebar .bot-row")).toHaveCount(0);
-        await page.getByLabel("搜索联系人", { exact: true }).fill("界面验收");
-        await expect(page.locator(".sidebar .bot-row")).toHaveCount(1);
-        await openSidebar(page);
-        await page.getByRole("tab", { name: "工作区", exact: true }).click();
-        await expect(page.getByRole("tab", { name: "工作区", exact: true })).toHaveAttribute("aria-selected", "true");
-        await openSidebar(page);
-        await page.getByRole("tab", { name: "聊天", exact: true }).click();
-        await openSidebar(page);
-        await expect(page.getByLabel("搜索聊天", { exact: true })).toHaveValue("");
-        await checkHorizontalLayout(page);
+        await test.step("verify closing settings, contact search, and workspace/chat navigation", async () => {
+          await dialog.getByRole("button", { name: "关闭设置", exact: true }).click();
+          await expect(dialog).toBeHidden();
+          await checkHorizontalLayout(page);
+          await openSidebar(page);
+          await page.getByRole("tab", { name: "联系人", exact: true }).click();
+          await expect(page.getByRole("tab", { name: "联系人", exact: true })).toHaveAttribute("aria-selected", "true");
+          await openSidebar(page);
+          await page.getByLabel("搜索联系人", { exact: true }).fill("没有这个联系人");
+          await expect(page.locator(".sidebar .bot-row")).toHaveCount(0);
+          await page.getByLabel("搜索联系人", { exact: true }).fill("界面验收");
+          await expect(page.locator(".sidebar .bot-row")).toHaveCount(1);
+          await openSidebar(page);
+          await page.getByRole("tab", { name: "工作区", exact: true }).click();
+          await expect(page.getByRole("tab", { name: "工作区", exact: true })).toHaveAttribute("aria-selected", "true");
+          await openSidebar(page);
+          await page.getByRole("tab", { name: "聊天", exact: true }).click();
+          await openSidebar(page);
+          await expect(page.getByLabel("搜索聊天", { exact: true })).toHaveValue("");
+          await checkHorizontalLayout(page);
+        });
         if (width <= 620) {
-          await page.getByRole("button", { name: "关闭 Bot 列表", exact: true }).click();
-          await expect(page.locator(".sidebar")).toBeHidden();
-          await page.getByRole("button", { name: "聊天选项", exact: true }).click();
-          await page.getByRole("menuitem", { name: "Bot 设置", exact: true }).click();
-          await expect(page.locator(".inspector.mobile-open")).toBeVisible();
-          await expect(page.locator(".inspector").getByLabel("名称", { exact: true })).toHaveValue("界面验收 Bot 1");
-          await checkHorizontalLayout(page);
-          await page.screenshot({ path: testInfo.outputPath(`inspector-${theme}-${width}.png`) });
-          await page.getByRole("button", { name: "关闭 Bot 设置", exact: true }).click();
-          await expect(page.locator(".inspector")).toBeHidden();
+          await test.step("verify sidebar dismissal and Bot inspector drawer", async () => {
+            await page.getByRole("button", { name: "关闭 Bot 列表", exact: true }).click();
+            await expect(page.locator(".sidebar")).toBeHidden();
+            await page.getByRole("button", { name: "聊天选项", exact: true }).click();
+            await page.getByRole("menuitem", { name: "Bot 设置", exact: true }).click();
+            await expect(page.locator(".inspector.mobile-open")).toBeVisible();
+            await expect(page.locator(".inspector").getByLabel("名称", { exact: true })).toHaveValue("界面验收 Bot 1");
+            await checkHorizontalLayout(page);
+            await page.screenshot({ path: testInfo.outputPath(`inspector-${theme}-${width}.png`) });
+            await page.getByRole("button", { name: "关闭 Bot 设置", exact: true }).click();
+            await expect(page.locator(".inspector")).toBeHidden();
+          });
         }
+        await test.step("verify renderer has no console or page errors", async () => { expect(errors).toEqual([]); });
+      } catch (error) {
+        if (application) {
+          const failurePage = await application.firstWindow().catch(() => null);
+          await failurePage?.screenshot({ path: testInfo.outputPath("failure.png"), timeout: 5_000 }).catch(() => {});
+        }
+        throw error;
+      } finally {
+        if (application) await application.close();
+        removeTestDirectory(userDataDir);
       }
-    }
-    expect(errors).toEqual([]);
-  } catch (error) {
-    if (application) {
-      const failurePage = await application.firstWindow().catch(() => null);
-      await failurePage?.screenshot({ path: testInfo.outputPath("failure.png") }).catch(() => {});
-    }
-    throw error;
-  } finally {
-    if (application) await application.close();
-    removeTestDirectory(userDataDir);
+    });
   }
-});
+}
