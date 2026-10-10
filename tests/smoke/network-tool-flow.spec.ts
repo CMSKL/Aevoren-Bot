@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
+import { openToolRecords } from "./tool-ui";
 
 test("approves, executes, restores, and audits one read-only real-time tool without storing its result body", async () => {
   test.setTimeout(30_000);
@@ -36,7 +37,7 @@ test("approves, executes, restores, and audits one read-only real-time tool with
     await permission.getByRole("button", { name: "仅允许一次" }).click();
     await expect(permission).toBeHidden();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
-    await page.getByRole("button", { name: "打开任务详情", exact: true }).click();
+    await openToolRecords(page);
     const tool = page.getByTestId("workspace-tool-activity").last();
     const traceHeader = tool.locator(".expandable-trace-header");
     const traceBody = tool.locator(".expandable-trace-collapse");
@@ -58,7 +59,7 @@ test("approves, executes, restores, and audits one read-only real-time tool with
     application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
     page = await application.firstWindow();
     await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(0);
-    await page.getByRole("button", { name: "打开任务详情", exact: true }).click();
+    await openToolRecords(page);
     await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(1);
     await expect(page.getByTestId("workspace-tool-activity")).toContainText("执行完成");
     await application.close();

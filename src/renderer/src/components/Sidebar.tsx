@@ -5,8 +5,9 @@ import { buildBotIdentityMap } from "../bot-identity";
 import { BatchContextMenu } from "./BatchContextMenu";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { BotContextMenu } from "./BotContextMenu";
-import { BotIcon, CheckIcon, CloseIcon, FolderIcon, PinIcon, PlusIcon, RoomIcon, SettingsIcon, TrashIcon, ChevronDownIcon } from "./Icons";
+import { BotIcon, ChatIcon, CheckIcon, CloseIcon, ContactsIcon, FolderIcon, PencilIcon, PinIcon, PlusIcon, RoomIcon, SearchIcon, SettingsIcon, TrashIcon, ChevronDownIcon, WorkspaceIcon } from "./Icons";
 import { RoomContextMenu } from "./RoomContextMenu";
+import { UserAvatar } from "./UserAvatar";
 
 type SidebarProps = {
   bots: Bot[];
@@ -28,6 +29,8 @@ type SidebarProps = {
   workspaceError: string | null;
   creationError: string | null;
   mobileOpen: boolean;
+  userProfile?: { name?: string; avatarUrl?: string | null };
+  roomBotsById?: ReadonlyMap<string, readonly Bot[]>;
   createButtonRef: RefObject<HTMLButtonElement | null>;
   onCreateProject(): void;
   onBindProject(projectId: string): void;
@@ -37,6 +40,7 @@ type SidebarProps = {
   onCreateBot(projectId: string): void;
   onCreateRoom(projectId: string): void;
   onOpenSettings(): void;
+  onOpenUserProfile?(): void;
   onMobileClose(): void;
   onSelectBot(bot: Bot): void;
   onSelectRoom(room: Room): void;
@@ -64,6 +68,31 @@ type ConversationKey = `bot:${string}` | `room:${string}`;
 type BatchContextMenuState = { keys: ConversationKey[]; triggerKey: ConversationKey; x: number; y: number };
 
 const EMPTY_SELECTION = new Set<ConversationKey>();
+const activityTimeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+const activityDateFormatter = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit" });
+
+function formatActivityTime(value: string | undefined): string {
+  if (!value) return "";
+  const activity = new Date(value);
+  if (Number.isNaN(activity.getTime())) return "";
+  const today = new Date();
+  const isToday = activity.getFullYear() === today.getFullYear()
+    && activity.getMonth() === today.getMonth()
+    && activity.getDate() === today.getDate();
+  return isToday ? activityTimeFormatter.format(activity) : activityDateFormatter.format(activity);
+}
+
+function RoomAvatar({ bots, userProfile }: { bots: readonly Bot[] | undefined; userProfile?: { name?: string; avatarUrl?: string | null } }): React.JSX.Element {
+  const members = bots?.slice(0, 3) ?? [];
+  return (
+    <span className={`conversation-room-avatar${members.length > 0 ? " is-collage" : ""}`} data-member-count={members.length > 0 ? members.length + 1 : 0} aria-hidden="true">
+      {members.length === 0 ? <RoomIcon /> : members.map((bot) => (
+        <BotAvatarIcon key={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={23} />
+      ))}
+      {members.length > 0 ? <UserAvatar name={userProfile?.name} avatarUrl={userProfile?.avatarUrl} size={23} /> : null}
+    </span>
+  );
+}
 
 function botKey(id: string): ConversationKey {
   return `bot:${id}`;
@@ -126,6 +155,8 @@ export function Sidebar({
   workspaceError,
   creationError,
   mobileOpen,
+  userProfile,
+  roomBotsById,
   createButtonRef,
   onCreateProject,
   onBindProject,
@@ -135,6 +166,7 @@ export function Sidebar({
   onCreateBot,
   onCreateRoom,
   onOpenSettings,
+  onOpenUserProfile,
   onMobileClose,
   onSelectBot,
   onSelectRoom,
@@ -564,8 +596,8 @@ export function Sidebar({
     const multiSelected = visibleSelectedKeys.has(key);
     if (renamingRoomId === room.id) {
       return (
-        <div className={`bot-row renaming${room.id === selectedRoomId ? " selected" : ""}`} key={room.id} role="listitem">
-          <span className="bot-icon"><RoomIcon /></span>
+        <div className={`bot-row conversation-row renaming${room.id === selectedRoomId ? " selected" : ""}`} key={room.id} role="listitem">
+          <span className="bot-icon conversation-avatar"><RoomAvatar bots={roomBotsById?.get(room.id)} userProfile={userProfile} /></span>
           <input
             ref={roomRenameRef}
             className="bot-rename-input"
@@ -596,7 +628,7 @@ export function Sidebar({
           else roomRowRefs.current.delete(room.id);
         }}
         type="button"
-        className={`bot-row${room.id === selectedRoomId ? " selected" : ""}${multiSelected ? " multi-selected" : ""}`}
+        className={`bot-row conversation-row${room.id === selectedRoomId ? " selected" : ""}${multiSelected ? " multi-selected" : ""}`}
         key={room.id}
         onClick={(event) => {
           if (batchSelectable) handleSelection(event, key, () => onSelectRoom(room));
@@ -619,11 +651,14 @@ export function Sidebar({
         aria-haspopup="menu"
         data-multi-selected={multiSelected ? "true" : undefined}
       >
-        <span className="bot-icon">{multiSelected ? <CheckIcon /> : <RoomIcon />}</span>
+        <span className="bot-icon conversation-avatar">{multiSelected ? <CheckIcon /> : <RoomAvatar bots={roomBotsById?.get(room.id)} userProfile={userProfile} />}</span>
         <span className="bot-copy"><strong>{room.name}</strong><small>{tab === "chats" ? sanitizeRoomSpeakerOutput(summary?.lastMessage ?? "", true) || "暂无消息 · 群聊" : "多 Bot 群聊"}</small></span>
         <span className="bot-row-state" aria-hidden="true">
-          {room.pinnedAt ? <PinIcon /> : null}
-          {room.hasUnread ? <i /> : null}
+          {tab === "chats" && summary ? <time className="conversation-time" dateTime={summary.lastActivityAt}>{formatActivityTime(summary.lastActivityAt)}</time> : null}
+          <span className="conversation-row-indicators">
+            {room.pinnedAt ? <PinIcon /> : null}
+            {room.hasUnread ? <i /> : null}
+          </span>
         </span>
       </button>
     );
@@ -639,8 +674,8 @@ export function Sidebar({
     const multiSelected = visibleSelectedKeys.has(key);
     if (renamingId === bot.id) {
       return (
-        <div className={`bot-row renaming${selected ? " selected" : ""}`} key={bot.id} role="listitem">
-          <span className="bot-icon bot-avatar-container"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={28} /></span>
+        <div className={`bot-row conversation-row renaming${selected ? " selected" : ""}`} key={bot.id} role="listitem">
+          <span className="bot-icon bot-avatar-container conversation-avatar"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span>
           <input
             ref={renameRef}
             className="bot-rename-input"
@@ -671,7 +706,7 @@ export function Sidebar({
           else rowRefs.current.delete(bot.id);
         }}
         type="button"
-        className={`bot-row${selected ? " selected" : ""}${multiSelected ? " multi-selected" : ""}`}
+        className={`bot-row conversation-row${selected ? " selected" : ""}${multiSelected ? " multi-selected" : ""}`}
         key={bot.id}
         onClick={(event) => {
           if (batchSelectable) handleSelection(event, key, select);
@@ -694,16 +729,19 @@ export function Sidebar({
         aria-haspopup="menu"
         data-multi-selected={multiSelected ? "true" : undefined}
       >
-        <span className={`bot-icon${multiSelected ? "" : " bot-avatar-container"}`}>
-          {multiSelected ? <CheckIcon /> : <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={28} />}
+        <span className={`bot-icon conversation-avatar${multiSelected ? "" : " bot-avatar-container"}`}>
+          {multiSelected ? <CheckIcon /> : <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} />}
         </span>
         <span className="bot-copy">
           <strong>{identity.primary}</strong>
           <small>{tab === "chats" ? `${identity.disambiguated ? `${identity.secondary} · ` : ""}${summary?.lastMessage || "暂无消息"}` : identity.secondary}</small>
         </span>
         <span className="bot-row-state" aria-hidden="true">
-          {tab !== "contacts" && bot.pinnedAt ? <PinIcon /> : null}
-          {tab !== "contacts" && bot.hasUnread ? <i /> : null}
+          {tab === "chats" && summary ? <time className="conversation-time" dateTime={summary.lastActivityAt}>{formatActivityTime(summary.lastActivityAt)}</time> : null}
+          <span className="conversation-row-indicators">
+            {tab !== "contacts" && bot.pinnedAt ? <PinIcon /> : null}
+            {tab !== "contacts" && bot.hasUnread ? <i /> : null}
+          </span>
         </span>
       </button>
     );
@@ -711,58 +749,90 @@ export function Sidebar({
 
   return (
     <aside className={`sidebar${mobileOpen ? " mobile-open" : ""}`} aria-label="聊天列表">
-      <div className="sidebar-header">
-        {visibleSelectedKeys.size > 0 ? (
-          <>
-            <div className="brand sidebar-selection-count">已选择 {visibleSelectedKeys.size} 项</div>
-            <div className="sidebar-header-actions sidebar-selection-actions">
-              <button
-                className="sidebar-selection-action danger"
-                type="button"
-                aria-label={`${tab === "chats" ? "移除" : "删除"}已选择的 ${visibleSelectedKeys.size} 项`}
-                onClick={() => setBatchDeleteTarget(conversationOrder.filter((key) => visibleSelectedKeys.has(key)))}
-                disabled={batchDeletePending}
-              >
-                <TrashIcon />
-              </button>
-              <button className="sidebar-selection-action" type="button" aria-label="清除多选" onClick={clearMultiSelection} disabled={batchDeletePending}>
-                <CloseIcon />
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="brand">Aevoren Bot</div>
-            <div className="sidebar-header-actions">
-              <button ref={createButtonRef} className="new-bot-button" type="button" aria-label="新建聊天" onClick={onCreate} disabled={busy}>
+      <nav className="nav-rail" aria-label="主导航">
+        <button
+          className="nav-rail-profile"
+          type="button"
+          aria-label="打开个人资料"
+          title="个人资料与头像"
+          onClick={onOpenUserProfile}
+          disabled={!onOpenUserProfile}
+        >
+          <UserAvatar avatarUrl={userProfile?.avatarUrl} name={userProfile?.name} size={48} />
+          <span className="nav-profile-edit" aria-hidden="true"><PencilIcon /></span>
+        </button>
+        <div className="nav-rail-tabs" role="tablist" aria-label="导航" aria-orientation="vertical">
+          {([ ["chats", "聊天", ChatIcon], ["contacts", "联系人", ContactsIcon], ["workspace", "工作区", WorkspaceIcon] ] as const).map(([value, label, Icon]) => (
+            <button
+              className={`nav-rail-button${tab === value ? " active" : ""}`}
+              key={value}
+              id={`navigation-${value}`}
+              type="button"
+              role="tab"
+              aria-label={label}
+              aria-selected={tab === value}
+              aria-controls="sidebar-tab-content"
+              tabIndex={tab === value ? 0 : -1}
+              onClick={() => { clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(value); }}
+              onKeyDown={(event) => {
+                if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                event.preventDefault();
+                const values = ["chats", "contacts", "workspace"] as const;
+                const forward = event.key === "ArrowDown" || event.key === "ArrowRight";
+                const index = event.key === "Home" ? 0 : event.key === "End" ? 2 : (values.indexOf(tab) + (forward ? 1 : 2)) % 3;
+                clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(values[index]!);
+                document.getElementById(`navigation-${values[index]}`)?.focus();
+              }}
+            >
+              <Icon weight={value === "chats" && tab === value ? "fill" : "light"} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+        <button className="nav-rail-button nav-rail-settings sidebar-settings-button" type="button" onClick={onOpenSettings}>
+          <SettingsIcon />
+          <span>设置</span>
+        </button>
+      </nav>
+
+      <section className="sidebar-list" aria-label={tab === "chats" ? "聊天" : tab === "contacts" ? "联系人" : "工作区"}>
+        <div className="sidebar-header sidebar-list-header">
+          {visibleSelectedKeys.size > 0 ? (
+            <>
+              <div className="sidebar-selection-count">已选择 {visibleSelectedKeys.size} 项</div>
+              <div className="sidebar-header-actions sidebar-selection-actions">
+                <button
+                  className="sidebar-selection-action danger"
+                  type="button"
+                  aria-label={`${tab === "chats" ? "移除" : "删除"}已选择的 ${visibleSelectedKeys.size} 项`}
+                  onClick={() => setBatchDeleteTarget(conversationOrder.filter((key) => visibleSelectedKeys.has(key)))}
+                  disabled={batchDeletePending}
+                >
+                  <TrashIcon />
+                </button>
+                <button className="sidebar-selection-action" type="button" aria-label="清除多选" onClick={clearMultiSelection} disabled={batchDeletePending}>
+                  <CloseIcon />
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {tab !== "workspace" ? (
+                <div className="sidebar-search">
+                  <SearchIcon />
+                  <input type="search" aria-label={tab === "chats" ? "搜索聊天" : "搜索联系人"} placeholder={tab === "chats" ? "搜索聊天" : "搜索联系人"} value={query} onChange={(event) => { clearMultiSelection(); setQuery(event.target.value); }} />
+                  {tab === "chats" ? <button type="button" className="sidebar-unread-filter" aria-pressed={unreadOnly} title="只看未读聊天" onClick={() => { clearMultiSelection(); setUnreadOnly((current) => !current); }}>未读</button> : null}
+                </div>
+              ) : <h2 className="sidebar-list-title">工作区</h2>}
+              <button ref={createButtonRef} className="new-bot-button" type="button" aria-label={tab === "workspace" ? "新建工作区" : "新建聊天"} title={tab === "workspace" ? "添加文件夹工作区" : "新建聊天"} onClick={tab === "workspace" ? onCreateProject : onCreate} disabled={busy || (tab === "workspace" && addingWorkspace)}>
                 <PlusIcon />
-                <span>新建聊天</span>
               </button>
-              <button className="drawer-close-button" type="button" aria-label="关闭 Bot 列表" onClick={onMobileClose}>
-                <CloseIcon />
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-      <div className="sidebar-tabs" role="tablist" aria-label="导航">
-        {([ ["chats", "聊天"], ["contacts", "联系人"], ["workspace", "工作区"] ] as const).map(([value, label]) => <button
-          key={value} id={`navigation-${value}`} type="button" role="tab" aria-selected={tab === value} aria-controls="sidebar-tab-content" tabIndex={tab === value ? 0 : -1}
-          onClick={() => { clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(value); }}
-          onKeyDown={(event) => {
-            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-            event.preventDefault();
-            const values = ["chats", "contacts", "workspace"] as const;
-            const index = event.key === "Home" ? 0 : event.key === "End" ? 2 : (values.indexOf(tab) + (event.key === "ArrowRight" ? 1 : 2)) % 3;
-            clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(values[index]!);
-            document.getElementById(`navigation-${values[index]}`)?.focus();
-          }}
-        >{label}</button>)}
-      </div>
-      {tab !== "workspace" ? <div className="sidebar-search">
-        <input type="search" aria-label={tab === "chats" ? "搜索聊天" : "搜索联系人"} placeholder={tab === "chats" ? "搜索聊天" : "搜索联系人"} value={query} onChange={(event) => { clearMultiSelection(); setQuery(event.target.value); }} />
-        {tab === "chats" ? <button type="button" className="sidebar-unread-filter" aria-pressed={unreadOnly} onClick={() => { clearMultiSelection(); setUnreadOnly((current) => !current); }}>未读</button> : null}
-      </div> : null}
+            </>
+          )}
+          <button className="drawer-close-button" type="button" aria-label="关闭 Bot 列表" onClick={onMobileClose}>
+            <CloseIcon />
+          </button>
+        </div>
       <div className="bot-list" id="sidebar-tab-content" role="tabpanel" aria-labelledby={`navigation-${tab}`}>
         {tab === "chats" ? <>
           <div role="list" aria-label="最近聊天">
@@ -789,18 +859,8 @@ export function Sidebar({
               aria-controls="sidebar-workspace-content"
               onClick={() => setWorkspaceExpanded((expanded) => !expanded)}
             >
-              <span>工作区</span>
+              <span>项目</span>
               <ChevronDownIcon className={workspaceExpanded ? "" : "collapsed"} />
-            </button>
-            <button
-              className="sidebar-workspace-add"
-              type="button"
-              aria-label="新建工作区"
-              title="新建工作区"
-              onClick={onCreateProject}
-              disabled={busy || addingWorkspace}
-            >
-              <PlusIcon />
             </button>
           </div>
           {workspaceError ? <div className="dialog-error" role="alert">{workspaceError}</div> : null}
@@ -935,12 +995,7 @@ export function Sidebar({
         </section>}
       </div>
 
-      <div className="sidebar-footer">
-        <button className="sidebar-settings-button" type="button" onClick={onOpenSettings}>
-          <SettingsIcon />
-          <span>设置</span>
-        </button>
-      </div>
+      </section>
 
       {notice ? <div className="bot-action-notice" role="status">{notice}</div> : null}
       {batchContextMenu && batchMenuInput ? (

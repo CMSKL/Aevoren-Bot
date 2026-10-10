@@ -184,7 +184,7 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
         </button>
       </div>
 
-      <div className="provider-engine-grid">
+      <div className="provider-engine-grid settings-list">
         {groupedProviders.flatMap((group, groupIndex) => [
           <div className={`provider-engine-group-heading ${groupIndex > 0 ? "spaced" : ""}`} key={`heading-${group.id}`}>
             <h3>{group.label}</h3>
@@ -195,7 +195,7 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
             const state = providerDisplayState(provider);
             return (
               <div
-                className="settings-card settings-model-card provider-settings-card provider-engine-card"
+                className="settings-card settings-model-card provider-settings-card provider-engine-card settings-list-row"
                 data-expanded={expandedProviderId === provider.id}
                 data-provider-state={state}
                 key={provider.id}

@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { closeInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +34,8 @@ async function launch(
 async function createAndSend(page: Page, text: string): Promise<void> {
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();
+  await expect(page.locator(".inspector")).toBeVisible();
+  await closeInspector(page);
   await page.locator('textarea[aria-label="消息"]').fill(text);
   await page.getByRole("button", { name: "发送", exact: true }).click();
 }
@@ -384,7 +387,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "teams", "tools", "transcript", "updates", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
     ]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations,

@@ -1,4 +1,6 @@
 export const IPC = {
+  userProfileGet: "user-profile:get",
+  userProfileUpdate: "user-profile:update",
   attachmentsPick: "attachments:pick",
   artifactsSave: "artifacts:save",
   artifactsReveal: "artifacts:reveal",

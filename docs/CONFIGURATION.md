@@ -1,5 +1,9 @@
 # Configuration
 
+## Local interface preferences
+
+**Settings → General** offers Dark and Daylight themes. Click the personal avatar in the left navigation to change the displayed nickname and image. Selected PNG/JPEG/WebP images are cropped locally to a centered 256×256 PNG and stored with the local UI preferences. They are not sent to a model or uploaded to an account service. Bot portraits remain stable across the list, message, group and detail views without modifying the saved Bot or conversation identity.
+
 ## Model sources
 
 Aevoren Bot's first-phase model scope contains exactly three sources:

@@ -8,6 +8,7 @@ import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { copyRealApiProfile } from "./real-api-profile";
 import { removeTestDirectory } from "./test-cleanup";
+import { openMessageEvidence } from "./navigation";
 
 for (const { workerSource, restoreMissingSource } of [
   { workerSource: "openai-compatible.default", restoreMissingSource: false },
@@ -159,6 +160,7 @@ for (const { workerSource, restoreMissingSource } of [
           const editorRun = state.runtime.data.runs.find(run => run.id === editorTurn.runtimeRunId)!;
           expect(delivery).toMatchObject({ state: "cancelled", deliveryAttempt: { attemptNo: 2, turnId: editorTurn.id, state: "accepted", acceptedAt: editorRun.acceptedAt } });
           expect(editorRun.acceptedAt).not.toBeNull();
+          await openMessageEvidence(page);
           await expect(page.getByText(/重试 1 · 已接收/u).first()).toBeVisible();
         }
         const editorWrite = state.tools.data.find(tool => tool.executorBotId === editor.id && tool.toolKind === "workspace-write" && tool.targetPath === "guide-note.md" && tool.state === "succeeded");

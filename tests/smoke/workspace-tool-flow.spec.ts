@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
+import { openToolRecords } from "./tool-ui";
 
 test("approves, denies, and restores one workspace tool flow without exposing journal content", async () => {
   test.setTimeout(60_000);
@@ -65,7 +66,7 @@ test("approves, denies, and restores one workspace tool flow without exposing jo
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 740));
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(390);
     await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(0);
-    await page.getByRole("button", { name: "打开任务详情", exact: true }).click();
+    await openToolRecords(page);
     await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(2);
     await expect(page.getByTestId("workspace-tool-activity").first()).toContainText("执行完成");
     await expect(page.getByTestId("workspace-tool-activity").last()).toContainText("已拒绝");

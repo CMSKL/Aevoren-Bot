@@ -3,7 +3,7 @@ import type { AppError, Bot, ProviderInstanceInfo } from "@shared/contracts";
 import { eligibleRoomLeads } from "../room-leads";
 import { buildBotIdentityMap } from "../bot-identity";
 import { BotAvatarIcon } from "./BotAvatarIcon";
-import { PlusIcon, RoomIcon } from "./Icons";
+import { CloseIcon, PlusIcon, RoomIcon } from "./Icons";
 
 type NewBotChooserProps = {
   bots: Bot[];
@@ -91,15 +91,15 @@ export function NewBotChooser({
           />
           <button
             type="button"
-            className="icon-button"
+            className="icon-button dialog-close-button"
             aria-label="关闭新聊天"
             disabled={creating}
             onClick={onClose}
           >
-            ×
+            <CloseIcon />
           </button>
         </header>
-        <div className="recipient-options">
+        <div className="recipient-options settings-list">
           {!initialGroupMode ? <button
             ref={createRef}
             className="recipient-option create-option"

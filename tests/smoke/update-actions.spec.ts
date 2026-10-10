@@ -6,7 +6,7 @@ import { AppRepository } from "../../src/main/database";
 import { IPC } from "../../src/shared/channels";
 import type { AevorenBotApi, UpdateState } from "../../src/shared/contracts";
 import { removeTestDirectory } from "./test-cleanup";
-import { openInspector } from "./navigation";
+import { closeInspector, openInspector } from "./navigation";
 
 type DiagnosticMain = typeof globalThis & {
   updateRetryHandler?: (...args: unknown[]) => unknown;
@@ -39,6 +39,7 @@ test("excludes update actions from drag regions and handles real IPC/save failur
     page.on("pageerror", error => errors.push(error.message));
     await openInspector(page);
     await expect(page.getByLabel("名称", { exact: true })).toHaveValue("更新按钮验收");
+    await closeInspector(page);
     const current = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.updates.getState());
     if (!current.ok) throw Error("Cannot read real update state");
     expect(current.data.status).toBe("disabled");
@@ -125,9 +126,10 @@ test("excludes update actions from drag regions and handles real IPC/save failur
         return original(...args);
       });
     }, IPC.updatesInstallAndRestart);
+    await openInspector(page);
     await page.getByLabel("名称", { exact: true }).fill("");
     await presentState(application, ready);
-    await page.getByRole("button", { name: "重启更新", exact: true }).click();
+    await page.getByRole("button", { name: "重启更新", exact: true }).evaluate((button) => (button as HTMLButtonElement).click());
     await expect(page.getByText("资料未能保存，请先保存后再重启更新。", { exact: true })).toBeVisible();
     expect(await application.evaluate(() => (globalThis as DiagnosticMain).installCount)).toBe(0);
     expect(errors).toEqual([]);

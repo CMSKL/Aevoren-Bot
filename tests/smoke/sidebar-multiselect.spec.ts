@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { closeInspector, openBotList } from "./navigation";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,7 +82,7 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
     await dialog.getByRole("button", { name: "取消" }).click();
     await expect(multiSelected(page)).toHaveCount(3);
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await openBotList(page);
     await row(page, "Bot B").click({ button: "right" });
     batchMenu = page.getByRole("menu", { name: "批量操作" });
     const compactBounds = await batchMenu.boundingBox();
@@ -189,7 +190,7 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
 
     const workspace = page.locator(".sidebar-workspace");
-    const workspaceToggle = workspace.getByRole("button", { name: "工作区", exact: true });
+    const workspaceToggle = workspace.getByRole("button", { name: "项目", exact: true });
     const projectToggle = page.getByRole("button", { name: "默认项目", exact: true });
     const roomGroup = page.locator(".sidebar-workspace-section").nth(0);
     const botGroup = page.locator(".sidebar-workspace-section").nth(1);
@@ -207,10 +208,11 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     const createdProject = page.getByRole("button", { name: "产品规划", exact: true });
     await expect(createdProject).toBeVisible();
     await expect(createdProject).toHaveClass(/active/u);
-    await page.getByRole("button", { name: "新建聊天", exact: true }).click();
-    await page.getByRole("button", { name: "创建新 Bot", exact: true }).click();
+    await page.getByRole("button", { name: "在 产品规划 新建 Bot", exact: true }).click();
     const createdBotRow = page.locator('section[aria-label="项目 产品规划"] .bot-row').filter({ hasText: "新建 Bot" });
     await expect(createdBotRow).toBeVisible();
+    await expect(page.locator(".inspector")).toBeVisible();
+    await closeInspector(page);
     const scopedBots = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.bots.list());
     const listedProjects = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.projects.list());
     expect(scopedBots.ok).toBe(true);
@@ -252,7 +254,7 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await openBotList(page);
     await expect(page.locator(".sidebar")).toBeVisible();
     await expect(page.locator(".sidebar-workspace-toggle").first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

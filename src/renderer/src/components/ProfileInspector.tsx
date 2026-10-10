@@ -257,7 +257,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   if (!bot || !draft) {
     return (
       <aside id={id} className={`inspector inspector-empty${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
-        <button className="drawer-close-button" type="button" aria-label="关闭 Bot 设置" onClick={onMobileClose}>
+        <button className="drawer-close-button dialog-close-button" type="button" aria-label="关闭 Bot 设置" title="关闭 Bot 设置" onClick={onMobileClose}>
           <CloseIcon />
         </button>
         <span>创建 Bot 后，可在这里定义它的职责。</span>
@@ -270,7 +270,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   return (
     <aside id={id} className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="Bot 设置">
       <header className="inspector-header">
-        <h2>设置</h2>
+        <h2>Bot 资料</h2>
         <div className="inspector-header-actions">
           <div className={`save-status status-${status}`} data-testid="profile-save-status">
             {status === "saving" ? "保存中…" : null}
@@ -278,13 +278,14 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
             {status === "failed" ? "保存失败" : null}
             {status === "idle" || status === "saved" ? <><CheckIcon />已保存</> : null}
           </div>
-          <button className="drawer-close-button" type="button" aria-label="关闭 Bot 设置" onClick={onMobileClose}>
+          <button className="drawer-close-button dialog-close-button" type="button" aria-label="关闭 Bot 设置" title="关闭 Bot 设置" onClick={onMobileClose}>
             <CloseIcon />
           </button>
         </div>
       </header>
 
       <ConversationWorkspace {...conversationWorkspace} />
+      <section className="inspector-group inspector-profile-fields" aria-label="Bot 资料">
       <div className="inspector-avatar-hero avatar-settings">
         <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={92} title={`${bot.name || "Bot"}头像`} />
       </div>
@@ -298,8 +299,9 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
       </label>
       <label className="field inspector-primary-field">
           <span>描述</span>
-          <textarea value={draft.description} maxLength={2_000} rows={6} placeholder="详细说明用途和工作方式" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
+          <textarea value={draft.description} maxLength={2_000} rows={4} placeholder="详细说明用途和工作方式" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
       </label>
+      </section>
 
       <details className="inspector-advanced" key={bot.id}>
         <summary>高级设置</summary>

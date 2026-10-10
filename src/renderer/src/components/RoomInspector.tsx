@@ -51,7 +51,9 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
     () => bots.filter((bot) => !detail?.members.some((member) => member.botId === bot.id)),
     [bots, detail],
   );
-  const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);
+  const botIdentities = useMemo(() => buildBotIdentityMap([
+    ...new Map([...bots, ...(detail?.members.map((member) => member.bot) ?? [])].map((bot) => [bot.id, bot])).values(),
+  ]), [bots, detail]);
   const eligibleLeads = eligibleRoomLeads(detail?.members.map(member => member.bot) ?? [], providers);
   useEffect(() => {
     let cancelled = false;
@@ -145,12 +147,15 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
     onDetailUpdated(result.data);
   }
 
-  if (!detail || !draft) return <aside id={id} className="inspector inspector-empty" aria-label="群聊设置" />;
+  if (!detail || !draft) return <aside id={id} className={`inspector inspector-empty${mobileOpen ? " mobile-open" : ""}`} aria-label="群聊设置">
+    <button className="drawer-close-button dialog-close-button" type="button" aria-label="关闭群聊设置" title="关闭群聊设置" onClick={onMobileClose}><CloseIcon /></button>
+    <span>选择群聊后，可在这里查看成员和协作设置。</span>
+  </aside>;
 
   return (
     <aside id={id} className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="群聊设置">
       <header className="inspector-header">
-        <h2>设置</h2>
+        <h2>群聊详情</h2>
         <div className="inspector-header-actions">
           <div className={`save-status status-${status}`} data-testid="room-save-status">
             {status === "saving" ? "保存中…" : null}
@@ -158,10 +163,11 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
             {status === "failed" ? "保存失败" : null}
             {status === "idle" || status === "saved" ? <><CheckIcon />已保存</> : null}
           </div>
-          <button className="drawer-close-button" type="button" aria-label="关闭群聊设置" onClick={onMobileClose}><CloseIcon /></button>
+          <button className="drawer-close-button dialog-close-button" type="button" aria-label="关闭群聊设置" title="关闭群聊设置" onClick={onMobileClose}><CloseIcon /></button>
         </div>
       </header>
       <ConversationWorkspace {...conversationWorkspace} />
+      <section className="inspector-group inspector-profile-fields" aria-label="群聊资料">
       <label className="field inspector-primary-field">
         <span>群协调者</span>
         <select aria-label="群协调者" value={draft.leadBotId ?? ""} disabled={active || memberPending || status === "saving"} onChange={(event) => update("leadBotId", event.target.value || null)} onBlur={() => void flush()}>
@@ -192,13 +198,15 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
       </label>
       <label className="field inspector-primary-field">
         <span>描述</span>
-        <textarea value={draft.description} maxLength={2_000} rows={7} placeholder="说明这个群聊的协作目标" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
+        <textarea value={draft.description} maxLength={2_000} rows={4} placeholder="说明这个群聊的协作目标" onChange={(event) => update("description", event.target.value)} onBlur={() => void flush()} />
       </label>
+      </section>
       {status === "failed" ? <button className="secondary-button full-width" type="button" onClick={() => void flush()}>重试保存</button> : null}
-      <section className="room-members-manager" id={`room-members-${detail.room.id}`} hidden={!membersExpanded} aria-label="群聊成员">
+      <section className="room-members-manager settings-list" id={`room-members-${detail.room.id}`} hidden={!membersExpanded} aria-label="群聊成员">
+            <h3 className="inspector-section-title">成员</h3>
             {detail.members.map((member) => {
               const identity = botIdentities.get(member.botId)!;
-              return <div className="room-member-row" key={member.botId}>
+              return <div className="room-member-row settings-list-row" key={member.botId}>
                 <button className="member-main-link" type="button" title={identity.inline} onClick={() => onOpenBot(member.bot)}>
                   <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={20} />
                   <span>{identity.inline}</span>

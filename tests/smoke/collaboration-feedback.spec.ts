@@ -7,6 +7,7 @@ import type { AevorenBotApi, PromptManifest } from "@shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { removeTestDirectory } from "./test-cleanup";
+import { openConversationMenu } from "./navigation";
 
 test("shows contextual approval, failure recovery, and artifact evidence without a persistent stage tracker", async () => {
   test.setTimeout(45_000);
@@ -131,9 +132,14 @@ test("shows contextual approval, failure recovery, and artifact evidence without
     await expect(approvalCard.getByRole("radio", { name: /证据链设计/u })).toBeVisible();
     await expect(approvalCard).not.toContainText("这不是文件中的真实候选标题");
     await expect(approvalCard.getByRole("button", { name: "批准并交给主笔", exact: true })).toBeDisabled();
-    await expect(page.getByRole("region", { name: "交付物状态" }).getByText("02-briefs/options.md", { exact: true })).toBeVisible();
-    await expect(page.getByRole("region", { name: "交付物状态" })).toContainText("1 个成果");
-    const artifactsButton = page.getByRole("button", { name: "打开会话成果，共 1 个" });
+    const artifactStatus = page.getByRole("region", { name: "交付物状态" });
+    await expect(artifactStatus.locator(".artifact-card")).toHaveCount(1);
+    await expect(artifactStatus.locator(".artifact-card")).toBeVisible();
+    await expect(artifactStatus).toContainText("options.md");
+    await expect(artifactStatus).toContainText("已保存");
+    await expect(artifactStatus.locator(".artifact-card-path")).toHaveAttribute("title", "02-briefs/options.md");
+    const menu = await openConversationMenu(page);
+    const artifactsButton = menu.getByRole("menuitem", { name: "打开会话成果，共 1 个" });
     await expect(artifactsButton).toBeVisible();
     await artifactsButton.click();
     await expect(page.getByRole("complementary", { name: "会话成果" })).toContainText("options.md");

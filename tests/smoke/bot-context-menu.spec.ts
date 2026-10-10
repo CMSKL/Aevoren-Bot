@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { openInspector } from "./navigation";
+import { openBotList, openInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -168,7 +168,7 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     await expect(row(page, "Beta").locator(".bot-row-state i")).toHaveCount(1);
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await openBotList(page);
     menu = await menuFor(page, "研究 助手");
     const bounds = await menu.boundingBox();
     expect(bounds).not.toBeNull();

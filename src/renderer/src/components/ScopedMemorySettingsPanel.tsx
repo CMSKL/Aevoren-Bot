@@ -153,18 +153,18 @@ export function ScopedMemorySettingsPanel({ active }: ScopedMemorySettingsPanelP
         <h2>长期记忆</h2>
         <p>后台只从用户消息提取候选；批准后才进入长期记忆。当前消息始终优先于已有记忆。</p>
       </div>
-      <div className="settings-card">
+      <div className="settings-card settings-form-group">
         <label className="settings-row">
           <span><strong>后台生成候选</strong><small>仅分析当前用户消息；失败不会影响正式回复</small></span>
           <input aria-label="后台生成 Memory 候选" type="checkbox" checked={captureEnabled} disabled={capturePending} onChange={(event) => void changeCapture(event.target.checked)} />
         </label>
       </div>
-      {proposals.length > 0 ? <section className="memory-proposals" aria-label="待确认 Memory">
+      {proposals.length > 0 ? <section className="memory-proposals settings-list" aria-label="待确认 Memory">
         <div className="settings-subsection-heading">
           <strong>待确认</strong>
           <span>{proposals.length} 条</span>
         </div>
-        {proposals.map((proposal) => <article className="settings-card memory-proposal" key={proposal.id}>
+        {proposals.map((proposal) => <article className="settings-card memory-proposal settings-list-row" key={proposal.id}>
           <div className="memory-proposal-meta">
             <span>{proposal.scope === "user" ? "全部 Bot" : proposal.scope === "workspace" ? "Workspace" : "Bot 专属"}</span>
             <span>{proposal.reason}</span>
@@ -182,7 +182,7 @@ export function ScopedMemorySettingsPanel({ active }: ScopedMemorySettingsPanelP
           </footer>
         </article>)}
       </section> : null}
-      <label className="settings-field-row settings-card memory-scope-picker">
+      <label className="settings-field-row settings-card settings-form-group memory-scope-picker">
         <span><strong>记忆范围</strong><small>切换范围不会复制或合并现有记忆</small></span>
         <select aria-label="Memory 范围" value={selectedScope} onChange={(event) => setSelectedScope(event.target.value)}>
           <option value="user">用户偏好（全部 Bot）</option>
@@ -190,7 +190,7 @@ export function ScopedMemorySettingsPanel({ active }: ScopedMemorySettingsPanelP
         </select>
       </label>
 
-      <div className="settings-card scoped-memory-create">
+      <div className="settings-card settings-form-group scoped-memory-create">
         <select aria-label="新增 Memory 类型" value={newKind} onChange={(event) => setNewKind(event.target.value as MemoryKind)}>
           <MemoryKindOptions />
         </select>
@@ -198,9 +198,9 @@ export function ScopedMemorySettingsPanel({ active }: ScopedMemorySettingsPanelP
         <button className="primary-button" type="button" disabled={busy !== null || !newDraft.trim()} onClick={() => void create()}>{busy === "create" ? "添加中…" : "添加 Memory"}</button>
       </div>
 
-      <div className="scoped-memory-list">
+      <div className="scoped-memory-list settings-list">
         {items.length === 0 ? <div className="workspace-empty">这个范围还没有 Memory。</div> : items.map((item) => (
-          <article className={`settings-card scoped-memory-item${item.deletedAt ? " deleted" : ""}`} key={item.id}>
+          <article className={`settings-card scoped-memory-item settings-list-row${item.deletedAt ? " deleted" : ""}`} key={item.id}>
             <select aria-label={`Memory 类型 ${item.id}`} value={kinds[item.id] ?? item.kind} disabled={item.deletedAt !== null || busy === item.id} onChange={(event) => setKinds((current) => ({ ...current, [item.id]: event.target.value as MemoryKind }))}>
               <MemoryKindOptions />
             </select>

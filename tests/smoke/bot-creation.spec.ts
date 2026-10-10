@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { openInspector } from "./navigation";
+import { closeInspector, openInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +40,7 @@ function databaseAvatar(userDataDir: string): { shape: string; color: string } {
 }
 
 async function openChooser(page: Page): Promise<ReturnType<Page["getByRole"]>> {
+  await closeInspector(page);
   await page.locator(".new-bot-button").click();
   const dialog = page.getByRole("dialog", { name: "新建聊天" });
   await expect(dialog).toBeVisible();
@@ -102,6 +103,8 @@ test("creates one neutral Bot and one MAIN session under a duplicate trigger, th
 
     await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
     await expect(page.locator(".bot-row.selected")).toHaveCount(1);
+    await expect(page.locator(".inspector")).toBeVisible();
+    await openInspector(page);
     await expect(page.getByLabel("名称")).toHaveValue("新建 Bot");
     await expect(page.getByLabel("标签（可选）")).toHaveValue("");
     await expect(page.getByLabel("标签（可选）")).toHaveAttribute("placeholder", "研究、市场、行政");
@@ -214,12 +217,16 @@ test("filters and selects an existing Bot without creating another resource", as
 
     let dialog = await openChooser(page);
     await dialog.getByRole("button", { name: "创建新 Bot" }).click();
+    await expect(page.locator(".inspector")).toBeVisible();
+    await openInspector(page);
     await page.getByLabel("名称").fill("Alpha");
     await page.getByLabel("名称").blur();
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
 
     dialog = await openChooser(page);
     await dialog.getByRole("button", { name: "创建新 Bot" }).click();
+    await expect(page.locator(".inspector")).toBeVisible();
+    await openInspector(page);
     await page.getByLabel("名称").fill("Beta");
     await page.getByLabel("名称").blur();
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_PROJECT_ID } from "@shared/contracts";
 import { isPublicReadTool } from "@shared/tool-automation";
 import type {
@@ -30,6 +30,7 @@ import type {
   TranscriptEvent,
   UpdateCheckIntervalMinutes,
   UpdateState,
+  UserProfile,
   Workspace,
 } from "@shared/contracts";
 import { Conversation } from "./components/Conversation";
@@ -41,6 +42,7 @@ import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspec
 import { Sidebar } from "./components/Sidebar";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { UpdateStatusNotice } from "./components/UpdateStatusNotice";
+import { UserProfileDialog } from "./components/UserProfileDialog";
 import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
 import { mergeRoomRuntimeEvents } from "./room-runtime-state";
 import { updateActionErrorMessage, type UpdateAction } from "./update-actions";
@@ -98,6 +100,9 @@ export function App(): React.JSX.Element {
   const [error, setError] = useState<AppError | null>(null);
   const [closeNotice, setCloseNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [userProfileOpen, setUserProfileOpen] = useState(false);
+  const [userProfile, setUserProfile] = useState<UserProfile>({ name: "我", avatarUrl: null });
+  const [roomMemberIds, setRoomMemberIds] = useState<Record<string, string[]>>({});
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [managedWorkspaceId, setManagedWorkspaceId] = useState<string | null>(null);
@@ -115,6 +120,7 @@ export function App(): React.JSX.Element {
   const [updateActionError, setUpdateActionError] = useState<string | null>(null);
   const updateActionInFlightRef = useRef(false);
   const [appearanceTheme, setAppearanceTheme] = useState<AppearanceTheme>("system");
+  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => document.documentElement.dataset.theme === "dark" ? "dark" : "light");
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
   const [launchAtLoginStatus, setLaunchAtLoginStatus] = useState<LoginItemStatus>("unsupported");
@@ -171,6 +177,31 @@ export function App(): React.JSX.Element {
     return await profileRef.current?.flush() ?? true;
   }, []);
   const closeSettings = useCallback((): void => setSettingsOpen(false), []);
+  const roomBotsById = useMemo(() => {
+    const contacts = new Map(bots.map(bot => [bot.id, bot]));
+    const result = new Map(Object.entries(roomMemberIds).map(([id, memberIds]) => [id, memberIds.flatMap(memberId => contacts.has(memberId) ? [contacts.get(memberId)!] : [])]));
+    if (selectedRoom) result.set(selectedRoom.room.id, selectedRoom.members.map(member => contacts.get(member.botId) ?? member.bot));
+    return result;
+  }, [bots, roomMemberIds, selectedRoom]);
+
+  useEffect(() => {
+    let active = true;
+    void window.aevorenBot.userProfile.get().then(result => {
+      if (active && result.ok) setUserProfile(result.data);
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.allSettled(rooms.map(async room => ({ id: room.id, result: await window.aevorenBot.rooms.get(room.id) })))
+      .then(results => {
+        if (!active) return;
+        setRoomMemberIds(Object.fromEntries(results.flatMap(result => result.status === "fulfilled" && result.value.result.ok
+          ? [[result.value.id, result.value.result.data.members.map(member => member.botId)]] : [])));
+      });
+    return () => { active = false; };
+  }, [rooms]);
 
   useEffect(() => {
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -309,9 +340,11 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
     const applyTheme = (): void => {
-      document.documentElement.dataset.theme = appearanceTheme === "system"
+      const theme = appearanceTheme === "system"
         ? systemTheme.matches ? "dark" : "light"
         : appearanceTheme;
+      document.documentElement.dataset.theme = theme;
+      setResolvedTheme(theme);
     };
     applyTheme();
     if (appearanceTheme !== "system") return;
@@ -545,21 +578,20 @@ export function App(): React.JSX.Element {
 
   const closeMobilePanel = useCallback(async (): Promise<void> => {
     if (mobilePanel === "profile" && !(await flushActive())) return;
+    if (mobilePanel === "profile") setInspectorCollapsed(true);
     setMobilePanel(null);
   }, [flushActive, mobilePanel]);
 
   const closeInspector = useCallback(async (): Promise<void> => {
-    if (window.matchMedia("(max-width: 1180px)").matches) {
-      await closeMobilePanel();
-      return;
-    }
-    if (await flushActive()) setInspectorCollapsed(true);
-  }, [closeMobilePanel, flushActive]);
+    if (await flushActive()) { setInspectorCollapsed(true); setMobilePanel(null); }
+  }, [flushActive]);
 
   const toggleInspector = useCallback(async (): Promise<void> => {
     if (!(await flushActive())) return;
-    setInspectorCollapsed((current) => !current);
-  }, [flushActive]);
+    const opening = mobilePanel !== "profile";
+    setInspectorCollapsed(!opening);
+    setMobilePanel(opening ? "profile" : null);
+  }, [flushActive, mobilePanel]);
 
   useEffect(() => {
     if (!mobilePanel) return;
@@ -590,7 +622,7 @@ export function App(): React.JSX.Element {
       await openBot(result.data.bot, false);
       if (sidebarTab === "contacts") setSidebarTab("chats");
       setInspectorCollapsed(false);
-      setMobilePanel(window.matchMedia("(max-width: 1180px)").matches ? "profile" : null);
+      setMobilePanel("profile");
       await refreshConversations();
     } catch {
       setCreateError({ code: "INTERNAL_ERROR", domain: "internal", retryable: true, safeMessage: "Bot 创建未完成，请稍后重试。" });
@@ -716,7 +748,7 @@ export function App(): React.JSX.Element {
     if (sessionStorage.getItem("aevoren-bot:selected") !== `bot:${bot.id}`) return;
     setSidebarTab("chats");
     setInspectorCollapsed(false);
-    setMobilePanel(window.matchMedia("(max-width: 1180px)").matches ? "profile" : null);
+    setMobilePanel("profile");
     window.setTimeout(() => {
       if (sessionStorage.getItem("aevoren-bot:selected") !== `bot:${bot.id}` || document.activeElement !== document.body) return;
       profileRef.current?.focusName();
@@ -1168,6 +1200,9 @@ export function App(): React.JSX.Element {
   return (
     <div className={`app-shell${inspectorCollapsed || sidebarTab === "contacts" ? " inspector-collapsed" : ""}`}>
       <Sidebar
+        userProfile={userProfile}
+        roomBotsById={roomBotsById}
+        onOpenUserProfile={() => { void flushActive().then(saved => { if (saved) setUserProfileOpen(true); }); }}
         bots={bots}
         rooms={rooms}
         conversations={conversations}
@@ -1265,6 +1300,7 @@ export function App(): React.JSX.Element {
         onEdit={(bot) => void editBot(bot)}
         onAddToRoom={addContactToRoom}
       /> : <Conversation
+        userProfile={userProfile}
         key={selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
         bot={selectedBot}
         room={selectedRoom}
@@ -1282,7 +1318,7 @@ export function App(): React.JSX.Element {
         error={error}
         closeNotice={closeNotice}
         onOpenBots={() => setMobilePanel("bots")}
-        onOpenProfile={() => setMobilePanel("profile")}
+        onOpenProfile={() => { setInspectorCollapsed(false); setMobilePanel("profile"); }}
         inspectorCollapsed={inspectorCollapsed}
         onToggleInspector={() => void toggleInspector()}
         onOpenWorkspaces={() => setWorkspacesOpen(true)}
@@ -1398,10 +1434,21 @@ export function App(): React.JSX.Element {
           onMobileClose={() => void closeInspector()}
         />
       )}
-      {mobilePanel ? <button className="drawer-backdrop" type="button" aria-label="关闭侧边面板" onClick={() => void closeMobilePanel()} /> : null}
+      {mobilePanel ? <button className="drawer-backdrop" type="button" aria-label="关闭侧边面板" onClick={() => mobilePanel === "profile" ? void closeInspector() : void closeMobilePanel()} /> : null}
+      {userProfileOpen ? <UserProfileDialog
+        profile={userProfile}
+        onClose={() => setUserProfileOpen(false)}
+        onSave={async (profile) => {
+          const result = await window.aevorenBot.userProfile.update(profile);
+          if (!result.ok) return false;
+          setUserProfile(result.data);
+          return true;
+        }}
+      /> : null}
       <SettingsDialog
         open={settingsOpen}
         theme={appearanceTheme}
+        resolvedTheme={resolvedTheme}
         launchAtLogin={launchAtLogin}
         launchAtLoginSupported={launchAtLoginSupported}
         launchAtLoginStatus={launchAtLoginStatus}

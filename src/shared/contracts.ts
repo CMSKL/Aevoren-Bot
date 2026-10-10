@@ -1212,7 +1212,16 @@ export type RoutineRun = {
   finishedAt: string | null;
 };
 
+export type UserProfile = {
+  name: string;
+  avatarUrl: string | null;
+};
+
 export interface AevorenBotApi {
+  userProfile: {
+    get(): Promise<ApiResult<UserProfile>>;
+    update(input: UserProfile): Promise<ApiResult<UserProfile>>;
+  };
   attachments: {
     pick(): Promise<ApiResult<AttachmentDraft[]>>;
   };

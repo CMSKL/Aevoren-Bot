@@ -81,7 +81,7 @@ jobs:
           # GitHub-hosted Windows runners have no interactive desktop. The
           # Playwright Electron connection still exercises the full Renderer.
           AEVOREN_BOT_TEST_HIDDEN: "1"
-        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts tests/smoke/p0-navigation.spec.ts
+        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts tests/smoke/p0-navigation.spec.ts tests/smoke/ui-redesign-acceptance.spec.ts
       - run: pnpm package:win
       - name: Verify unsigned Windows installer artifact
         shell: pwsh
@@ -105,3 +105,11 @@ jobs:
           Start-Sleep -Seconds 8
           if ($child.HasExited) { throw "Installed Windows application exited during startup" }
           Stop-Process -Id $child.Id -Force
+      - name: Validate both themes and avatar persistence in the installed Windows package
+        shell: pwsh
+        env:
+          AEVOREN_BOT_TEST_HIDDEN: "1"
+        run: |
+          $env:AEVOREN_PACKAGED_APP_PATH = Join-Path $env:RUNNER_TEMP "Aevoren Bot/Aevoren Bot.exe"
+          pnpm exec playwright test tests/smoke/ui-redesign-acceptance.spec.ts
+          if ($LASTEXITCODE -ne 0) { throw "Installed Windows UI acceptance failed" }

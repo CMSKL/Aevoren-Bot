@@ -3,6 +3,10 @@ import { IPC } from "@shared/channels";
 import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
 
 const api: AevorenBotApi = {
+  userProfile: {
+    get: () => ipcRenderer.invoke(IPC.userProfileGet),
+    update: (input) => ipcRenderer.invoke(IPC.userProfileUpdate, input),
+  },
   attachments: {
     pick: () => ipcRenderer.invoke(IPC.attachmentsPick),
   },

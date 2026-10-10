@@ -71,6 +71,7 @@ import type { UpdateService } from "./update-service";
 import type { CapabilityRegistry } from "./capability-registry";
 import type { McpService } from "./mcp-service";
 import type { RoutineService } from "./routine-service";
+import { UserProfileService } from "./user-profile-service";
 
 type IpcDependencies = {
   window: BrowserWindow;
@@ -109,6 +110,7 @@ function assertTrusted(event: IpcMainInvokeEvent, window: BrowserWindow): void {
 
 export function registerIpc(dependencies: IpcDependencies): void {
   const { window, repository, providers, generalSettings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
+  const userProfile = new UserProfileService(repository);
 
   const roomLead = async (memberBotIds: string[], requested: string | null | undefined): Promise<string | null> => {
     if (requested === null) return null;
@@ -140,6 +142,8 @@ export function registerIpc(dependencies: IpcDependencies): void {
     );
   };
 
+  handle(IPC.userProfileGet, () => userProfile.get());
+  handle(IPC.userProfileUpdate, (_event, input: unknown) => userProfile.update(input));
   handle(IPC.attachmentsPick, () => dependencies.pickAttachments());
   handle(IPC.artifactsSave, (_event, input: unknown) => dependencies.saveArtifact(artifactSaveSchema.parse(input)));
   handle(IPC.artifactsReveal, (_event, path: unknown) => dependencies.revealArtifact(artifactRevealSchema.parse(path)));

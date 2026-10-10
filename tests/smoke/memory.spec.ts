@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { openInspector } from "./navigation";
+import { closeInspector, openInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,12 +20,16 @@ async function launch(userDataDir: string): Promise<{ application: ElectronAppli
 }
 
 async function createBot(page: Page, name: string): Promise<void> {
+  await closeInspector(page);
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();
+  await expect(page.locator(".inspector")).toBeVisible();
+  await openInspector(page);
   await expect(page.getByLabel("名称")).toHaveValue("新建 Bot");
   await page.getByLabel("名称").fill(name);
   await page.getByLabel("名称").blur();
   await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+  await closeInspector(page);
 }
 
 function selectBot(page: Page, name: string) {
@@ -91,7 +95,7 @@ test("creates, flushes, restores and lays out explicit Memory without touching d
     await expect(page.getByLabel("Memory 1")).toBeEnabled();
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 640));
-    await page.getByRole("button", { name: "打开 Bot 设置" }).click();
+    await openInspector(page);
     await expect(page.locator(".inspector")).toBeVisible();
     await openAdvancedSettings(page);
     await page.waitForTimeout(220);
@@ -121,7 +125,7 @@ test("creates, flushes, restores and lays out explicit Memory without touching d
     await page.getByLabel("新增 Memory").fill("关闭详情前创建的新 Memory");
     await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
     await expect(page.locator(".inspector")).not.toBeVisible();
-    await page.getByRole("button", { name: "打开 Bot 设置" }).click();
+    await openInspector(page);
     await openAdvancedSettings(page);
     await expect(page.getByLabel("Memory 1")).toHaveValue("关闭详情前保存的已有 Memory");
     await expect(page.getByLabel("Memory 2")).toHaveValue("关闭详情前创建的新 Memory");
@@ -173,7 +177,7 @@ test("blocks Bot switching on a stale Memory version and preserves the draft", a
 
     await openAdvancedSettings(page);
     await page.getByLabel("Memory 1").fill("本地未保存草稿");
-    await selectBot(page, "Memory Bot B").click();
+    await selectBot(page, "Memory Bot B").evaluate((row) => (row as HTMLElement).click());
     await expect(page.locator(".bot-row.selected")).toContainText("Memory Bot A");
     await expect(page.getByLabel("Memory 1")).toHaveValue("本地未保存草稿");
     await expect(page.getByTestId("memory-status")).toHaveText("保存失败");
@@ -183,6 +187,7 @@ test("blocks Bot switching on a stale Memory version and preserves the draft", a
 
     await page.getByRole("button", { name: "重新加载" }).click();
     await expect(page.getByLabel("Memory 1")).toHaveValue("外部更新事实");
+    await closeInspector(page);
     await selectBot(page, "Memory Bot B").click();
     await expect(page.locator(".bot-row.selected")).toContainText("Memory Bot B");
     await application.close();

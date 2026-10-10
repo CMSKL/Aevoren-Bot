@@ -71,7 +71,7 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
       >
         <header>
           <div><span>{botName}</span><h2 id={titleId}>{publicRead ? "允许公开信息查询？" : `允许${label}？`}</h2></div>
-          <button type="button" className="tool-permission-close" aria-label="拒绝" title="拒绝此次操作" disabled={busy} onClick={() => void decide("deny")}><CloseIcon /></button>
+          <button type="button" className="tool-permission-close dialog-close-button" aria-label="拒绝" title="拒绝此次操作" disabled={busy} onClick={() => void decide("deny")}><CloseIcon /></button>
         </header>
         <p id={descriptionId}>{invocation.toolKind === "time-now" ? "本次只读取本机系统时间，不会访问外部网络。" : publicRead
           ? "搜索关键词或网页地址会发送至相应服务。你可以记住公开查询授权，后续无需逐次确认。"

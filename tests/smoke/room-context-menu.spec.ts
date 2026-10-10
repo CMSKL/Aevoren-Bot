@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openBotList } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -128,7 +129,7 @@ test("supports the first Grok-style Room context actions without touching the in
     await expect(roomRow(page, "新 协作室")).toBeVisible();
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await openBotList(page);
     menu = await roomMenu(page, "新 协作室");
     const bounds = await menu.boundingBox();
     expect(bounds).not.toBeNull();

@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { openWorkspaceTab } from "./navigation";
+import { openBotList, openWorkspaceTab } from "./navigation";
 import { expect, test, _electron as electron, type ElectronApplication } from "@playwright/test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -104,10 +104,11 @@ test("shows only public Workspace identity and revokes access without touching d
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-added-sidebar.png" });
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await openBotList(page);
     await expect(addedWorkspaceRow).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-added-sidebar-compact.png" });
+    await page.getByRole("button", { name: "关闭 Bot 列表", exact: true }).click();
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
     await page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` }).click();
@@ -178,10 +179,7 @@ test("links existing project conversations to a real folder and restores the uni
     for (const width of [1180, 1020, 620, 390]) {
       await application.evaluate(({ BrowserWindow }, nextWidth) => BrowserWindow.getAllWindows()[0]?.setSize(nextWidth, 844), width);
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
-      if (width <= 1020) {
-        const openSidebar = page.getByRole("button", { name: "打开 Bot 列表" });
-        if (await openSidebar.isVisible() && !(await page.locator(".sidebar").getAttribute("class"))?.includes("mobile-open")) await openSidebar.click();
-      }
+      await openBotList(page);
       await expect(page.getByRole("button", { name: "团队工作区", exact: true })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.locator(".sidebar").screenshot({ path: `/tmp/aevoren-folder-workspace-${width}.png` });

@@ -52,9 +52,9 @@ function ContactProfile({ bot, rooms, busy, provider, providerLoadState, onSend,
   }
 
   return (
-    <section className="contact-detail-card" aria-label="联系人资料">
+    <section className="contact-detail-card contact-profile-panel" aria-label="联系人资料">
       <div className="contact-detail-identity">
-        <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={72} />
+        <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={72} title={`${bot.name}头像`} />
         <h2>{bot.name}</h2>
         {bot.label ? <p className="contact-detail-label">{bot.label}</p> : null}
       </div>
@@ -68,6 +68,7 @@ function ContactProfile({ bot, rooms, busy, provider, providerLoadState, onSend,
         <button className="primary-button" type="button" disabled={disabled} onClick={() => onSend(bot)}>发消息</button>
         <button className="secondary-button" type="button" disabled={disabled} onClick={() => onEdit(bot)}>编辑资料</button>
       </div>
+      <section className="contact-room-group settings-form-group" aria-label="加入群聊">
       <label className="field">
         <span>加入已有群聊</span>
         <select
@@ -86,6 +87,7 @@ function ContactProfile({ bot, rooms, busy, provider, providerLoadState, onSend,
       <button className="secondary-button" type="button" disabled={disabled || !selectedRoom} onClick={() => void addToRoom()}>
         {pending ? "加入中…" : "加入群聊"}
       </button>
+      </section>
       <p className="contact-detail-notice" role="status">{notice}</p>
     </section>
   );
