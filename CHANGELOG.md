@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Fixed
 
+- macOS-specific language trimming no longer removes Windows locale packs, preventing installed Windows renderers from crashing when native form controls initialize.
 - Details drawers open and close at every window size, and short or zoomed navigation remains scrollable so Settings stays reachable.
 - Retrying a failed assigned member resumes its unexecuted dependency chain. Handoff cards distinguish the original delivery from its latest retry using persisted acceptance records.
 - Other Agents' messages are model-facing quoted context, not the current Agent's own assistant history; original authorship and transcript records are preserved.

@@ -44,8 +44,7 @@ async function attachProcessDiagnostics(application: ElectronApplication): Promi
 
 async function launch(userDataDir: string): Promise<{ application: ElectronApplication; page: Page }> {
   const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
-  // Match the Windows CI install/start check; this is not a product GPU diagnosis.
-  const args = [...(executablePath ? [] : ["."]), ...(process.platform === "win32" && process.env.CI === "true" ? ["--disable-gpu"] : [])];
+  const args = executablePath ? [] : ["."];
   const application = await electron.launch({
     ...(executablePath ? { executablePath } : {}),
     args,
