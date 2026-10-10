@@ -10,10 +10,19 @@ import { removeTestDirectory } from "./test-cleanup";
 
 // Browser plugin not available. Use the repository's Playwright/Electron workflow.
 // The fake provider isolates UI fixtures; these tests make no model-response claims.
-const processDiagnostics = new WeakMap<ElectronApplication, { args: string[]; stderr: string }>();
+const processDiagnostics = new WeakMap<ElectronApplication, {
+  child: ReturnType<ElectronApplication["process"]>;
+  pid: number | undefined;
+  args: string[];
+  stderr: string;
+  closing: boolean;
+}>();
 
 async function closeApplication(application: ElectronApplication): Promise<void> {
-  const child = application.process();
+  const diagnostics = processDiagnostics.get(application);
+  if (!diagnostics || diagnostics.closing) return;
+  diagnostics.closing = true;
+  const child = diagnostics.child;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
@@ -21,8 +30,7 @@ async function closeApplication(application: ElectronApplication): Promise<void>
       new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Electron close timed out")), 3_000); }),
     ]);
   } catch (error) {
-    const diagnostics = processDiagnostics.get(application);
-    if (diagnostics) diagnostics.stderr += `\n[smoke-cleanup] ${String(error)}\n`;
+    diagnostics.stderr += `\n[smoke-cleanup] ${String(error)}\n`;
     if (child.exitCode === null && child.signalCode === null) {
       if (process.platform === "win32" && child.pid !== undefined) {
         try { execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { timeout: 2_000, stdio: "ignore" }); }
@@ -37,23 +45,25 @@ async function closeApplication(application: ElectronApplication): Promise<void>
 async function attachProcessDiagnostics(application: ElectronApplication): Promise<void> {
   const diagnostics = processDiagnostics.get(application);
   await test.info().attach("electron-process-diagnostics.txt", {
-    body: Buffer.from(`PID: ${application.process().pid}\nArgs: ${JSON.stringify(diagnostics?.args)}\n${diagnostics?.stderr ?? "No stderr captured"}`),
+    body: Buffer.from(`PID: ${diagnostics?.pid}\nArgs: ${JSON.stringify(diagnostics?.args)}\n${diagnostics?.stderr ?? "No stderr captured"}`),
     contentType: "text/plain",
   }).catch(() => {});
 }
 
 async function launch(userDataDir: string): Promise<{ application: ElectronApplication; page: Page }> {
   const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
-  const args = executablePath ? [] : ["."];
+  // Windows CI has no interactive GPU desktop; keep screenshots enabled via software rendering.
+  const args = [...(executablePath ? [] : ["."]), ...(process.platform === "win32" && process.env.CI === "true" ? ["--disable-gpu"] : [])];
   const application = await electron.launch({
     ...(executablePath ? { executablePath } : {}),
     args,
     cwd: process.cwd(),
     env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
-  const diagnostics = { args, stderr: "" };
+  const child = application.process();
+  const diagnostics = { child, pid: child.pid, args, stderr: "", closing: false };
   processDiagnostics.set(application, diagnostics);
-  application.process().stderr?.on("data", (chunk: Buffer) => {
+  child.stderr?.on("data", (chunk: Buffer) => {
     diagnostics.stderr = `${diagnostics.stderr}${chunk.toString()}`.slice(-256 * 1_024);
   });
   try {
