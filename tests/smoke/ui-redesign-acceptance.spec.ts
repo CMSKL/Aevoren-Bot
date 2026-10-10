@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,6 +91,51 @@ async function launch(userDataDir: string): Promise<{ application: ElectronAppli
 function watchErrors(page: Page, errors: string[]): void {
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+}
+
+async function captureScreenshot(application: ElectronApplication, page: Page, path: string): Promise<void> {
+  if (!process.env.AEVOREN_PACKAGED_APP_PATH) {
+    await page.screenshot({ path });
+    return;
+  }
+  const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio }));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const capture = await Promise.race([
+      application.evaluate(async ({ BrowserWindow }, scaleFactor) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        if (!window) throw new Error("Missing application window for screenshot");
+        await window.webContents.executeJavaScript("Promise.all([document.fonts.ready, ...Array.from(document.images, image => image.decode())])");
+        // Start hidden capture first so the final image includes the newly painted frame.
+        await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+        const image = await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+        if (image.isEmpty()) throw new Error("Native screenshot is empty");
+        const bitmap = image.toBitmap({ scaleFactor });
+        let hasColorVariation = false;
+        let hasVisiblePixel = false;
+        for (let offset = 0; offset < bitmap.length; offset += 4) {
+          if (bitmap[offset + 3]! > 0) hasVisiblePixel = true;
+          if (bitmap[offset] !== bitmap[0] || bitmap[offset + 1] !== bitmap[1] || bitmap[offset + 2] !== bitmap[2]) hasColorVariation = true;
+          if (hasVisiblePixel && hasColorVariation) break;
+        }
+        return { png: image.toPNG({ scaleFactor }).toString("base64"), hasColorVariation, hasVisiblePixel };
+      }, viewport.dpr),
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Native screenshot capture timed out after 10000ms")), 10_000); }),
+    ]);
+    const png = Buffer.from(capture.png, "base64");
+    expect(png.length).toBeGreaterThan(33);
+    expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    expect(capture.hasVisiblePixel).toBe(true);
+    expect(capture.hasColorVariation).toBe(true);
+    const width = png.readUInt32BE(16);
+    const height = png.readUInt32BE(20);
+    expect(width).toBe(Math.round(viewport.width * viewport.dpr));
+    expect(height).toBe(Math.round(viewport.height * viewport.dpr));
+    writeFileSync(path, png);
+    test.info().annotations.push({ type: "native-screenshot", description: `${width} × ${height} pixels; ${viewport.width} × ${viewport.height} viewport; DPR ${viewport.dpr}` });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function checkPage(page: Page): Promise<void> {
@@ -204,7 +249,7 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
     })).toBe(true);
     const assetUrls = await page.locator(".sidebar img.bot-avatar-icon, .nav-rail-profile img.user-avatar").evaluateAll((images) => images.map((image) => (image as HTMLImageElement).currentSrc));
     expect(new Set(assetUrls).size).toBe(8);
-    await page.screenshot({ path: testInfo.outputPath("all-avatar-assets.png") });
+    await captureScreenshot(application, page, testInfo.outputPath("all-avatar-assets.png"));
 
     await page.getByRole("button", { name: "打开个人资料", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "个人资料", exact: true });
@@ -267,13 +312,13 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
     await page.getByRole("button", { name: "打开个人资料", exact: true }).click();
     await expect(page.getByLabel("昵称", { exact: true })).toHaveValue("头像验收用户");
     await expect(page.locator(".user-profile-avatar img")).toHaveAttribute("src", uploadedAvatar!);
-    await page.screenshot({ path: testInfo.outputPath("profile-after-restart.png") });
+    await captureScreenshot(application, page, testInfo.outputPath("profile-after-restart.png"));
     expect(errors).toEqual([]);
   } catch (error) {
     failed = true;
     if (application) {
       const failurePage = application.windows()[0];
-      await failurePage?.screenshot({ path: testInfo.outputPath("failure.png"), timeout: 2_000 }).catch(() => {});
+      if (failurePage) await captureScreenshot(application, failurePage, testInfo.outputPath("failure.png")).catch(() => {});
     }
     throw error;
   } finally {
@@ -379,7 +424,7 @@ for (const theme of ["light", "dark"] as const) {
               expect(geometry.editorTop).toBeGreaterThanOrEqual(geometry.contentTop - 1);
               expect(geometry.editorBottom).toBeLessThanOrEqual(geometry.contentBottom + 1);
               expect(geometry.editorOverlapsClose).toBe(false);
-              await page.screenshot({ path: testInfo.outputPath(`memory-${theme}-${width}.png`) });
+              await captureScreenshot(launched.application, page, testInfo.outputPath(`memory-${theme}-${width}.png`));
             }
           });
         }
@@ -413,7 +458,7 @@ for (const theme of ["light", "dark"] as const) {
             await expect(page.locator(".inspector.mobile-open")).toBeVisible();
             await expect(page.locator(".inspector").getByLabel("名称", { exact: true })).toHaveValue("界面验收 Bot 1");
             await checkHorizontalLayout(page);
-            await page.screenshot({ path: testInfo.outputPath(`inspector-${theme}-${width}.png`) });
+            await captureScreenshot(launched.application, page, testInfo.outputPath(`inspector-${theme}-${width}.png`));
             await page.getByRole("button", { name: "关闭 Bot 设置", exact: true }).click();
             await expect(page.locator(".inspector")).toBeHidden();
           });
@@ -423,7 +468,7 @@ for (const theme of ["light", "dark"] as const) {
         failed = true;
         if (application) {
           const failurePage = application.windows()[0];
-          await failurePage?.screenshot({ path: testInfo.outputPath("failure.png"), timeout: 2_000 }).catch(() => {});
+          if (failurePage) await captureScreenshot(application, failurePage, testInfo.outputPath("failure.png")).catch(() => {});
         }
         throw error;
       } finally {

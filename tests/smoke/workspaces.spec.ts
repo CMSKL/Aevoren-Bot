@@ -79,7 +79,8 @@ test("shows only public Workspace identity and revokes access without touching d
     ), { workspaceId: registered.workspace.id });
     expect(unsafeReveal).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
 
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 640));
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(390, 640));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
     const compactLayout = await dialog.evaluate((element) => {
       const rect = element.getBoundingClientRect();
       return {
@@ -90,7 +91,8 @@ test("shows only public Workspace identity and revokes access without touching d
     expect(compactLayout).toEqual({ withinViewport: true, contentContained: true });
 
     await dialog.getByRole("button", { name: "完成" }).click();
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1440, 900));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440);
     await page.getByRole("button", { name: "新建工作区", exact: true }).click();
     const addedWorkspaceName = workspaceRootToAdd.split(/[\\/]/u).at(-1)!;
     const addedWorkspaceRow = page.getByRole("button", { name: `管理工作区 ${addedWorkspaceName}` });
@@ -103,14 +105,16 @@ test("shows only public Workspace identity and revokes access without touching d
     await expect(page.locator(".bot-action-notice")).toHaveCount(0);
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-added-sidebar.png" });
 
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(390, 844));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
     await openBotList(page);
     await expect(addedWorkspaceRow).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-added-sidebar-compact.png" });
     await page.getByRole("button", { name: "关闭 Bot 列表", exact: true }).click();
 
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1440, 900));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440);
     await page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` }).click();
     const reopenedDialog = page.getByRole("dialog", { name: "工作区权限" });
     await reopenedDialog.locator(".workspace-row").filter({ hasText: registered.workspace.name }).getByRole("button", { name: "取消授权" }).click();
@@ -177,7 +181,7 @@ test("links existing project conversations to a real folder and restores the uni
     const roomResult = await page.evaluate((id) => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.rooms.get(id), room.room.id);
     expect(roomResult).toMatchObject({ ok: true, data: { room: { id: room.room.id, projectId: DEFAULT_PROJECT_ID } } });
     for (const width of [1180, 1020, 620, 390]) {
-      await application.evaluate(({ BrowserWindow }, nextWidth) => BrowserWindow.getAllWindows()[0]?.setSize(nextWidth, 844), width);
+      await application.evaluate(({ BrowserWindow }, nextWidth) => BrowserWindow.getAllWindows()[0]?.setContentSize(nextWidth, 844), width);
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
       await openBotList(page);
       await expect(page.getByRole("button", { name: "团队工作区", exact: true })).toBeVisible();
