@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
-## [0.3.0-beta.19] - 2026-10-10
+## [0.3.0-beta.20] - 2026-10-10
+
+Version 0.3.0-beta.19 was not published: the release gate rejected personal paths in the QA documentation. This version removes those paths and checks the same gate in CI before promotion.
 
 ### Added
 

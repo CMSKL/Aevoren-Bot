@@ -18,8 +18,8 @@ final result: passed（本机 macOS UI 与真实业务回归；不代表 Windows
 
 两个原图实测均为 **1651 × 953 px**：
 
-- 暗黑：`/Users/machao/.codex/generated_images/01a084c2-a976-7160-a989-9ba7d44cb675/exec-b048d0b0-ff04-486b-8378-af51bd39e384.png`。
-- 白昼：`/Users/machao/.codex/generated_images/01a084c2-a976-7160-a989-9ba7d44cb675/exec-8adc1a19-b46c-4040-a568-1605f6ca5bec.png`。
+- 暗黑：已确认的生成图 `exec-b048d0b0-ff04-486b-8378-af51bd39e384.png`，原件保留在维护者的本地设计记录中。
+- 白昼：已确认的生成图 `exec-8adc1a19-b46c-4040-a568-1605f6ca5bec.png`，原件保留在维护者的本地设计记录中。
 
 最终实际应用截图：`/private/tmp/aevoren-ui-redesign-reference/{dark,light}.png`；iteration 5 截图：`/private/tmp/aevoren-ui-iteration5-reference/{dark,light}.png`。CSS viewport **1440 × 832**，截图密度 `scale: "css"`。
 
