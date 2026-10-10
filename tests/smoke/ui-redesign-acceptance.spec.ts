@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,15 +10,73 @@ import { removeTestDirectory } from "./test-cleanup";
 
 // Browser plugin not available. Use the repository's Playwright/Electron workflow.
 // The fake provider isolates UI fixtures; these tests make no model-response claims.
+const processDiagnostics = new WeakMap<ElectronApplication, { args: string[]; stderr: string }>();
+
+async function closeApplication(application: ElectronApplication): Promise<void> {
+  const child = application.process();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      application.close(),
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Electron close timed out")), 3_000); }),
+    ]);
+  } catch (error) {
+    const diagnostics = processDiagnostics.get(application);
+    if (diagnostics) diagnostics.stderr += `\n[smoke-cleanup] ${String(error)}\n`;
+    if (child.exitCode === null && child.signalCode === null) {
+      if (process.platform === "win32" && child.pid !== undefined) {
+        try { execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { timeout: 2_000, stdio: "ignore" }); }
+        catch { child.kill("SIGKILL"); }
+      } else child.kill("SIGKILL");
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function attachProcessDiagnostics(application: ElectronApplication): Promise<void> {
+  const diagnostics = processDiagnostics.get(application);
+  await test.info().attach("electron-process-diagnostics.txt", {
+    body: Buffer.from(`PID: ${application.process().pid}\nArgs: ${JSON.stringify(diagnostics?.args)}\n${diagnostics?.stderr ?? "No stderr captured"}`),
+    contentType: "text/plain",
+  }).catch(() => {});
+}
+
 async function launch(userDataDir: string): Promise<{ application: ElectronApplication; page: Page }> {
   const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
+  // Match the Windows CI install/start check; this is not a product GPU diagnosis.
+  const args = [...(executablePath ? [] : ["."]), ...(process.platform === "win32" && process.env.CI === "true" ? ["--disable-gpu"] : [])];
   const application = await electron.launch({
     ...(executablePath ? { executablePath } : {}),
-    args: executablePath ? [] : ["."],
+    args,
     cwd: process.cwd(),
     env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
-  return { application, page: await application.firstWindow() };
+  const diagnostics = { args, stderr: "" };
+  processDiagnostics.set(application, diagnostics);
+  application.process().stderr?.on("data", (chunk: Buffer) => {
+    diagnostics.stderr = `${diagnostics.stderr}${chunk.toString()}`.slice(-256 * 1_024);
+  });
+  try {
+    await application.evaluate(({ app, webContents }) => {
+      const observed = new Set<number>();
+      const observe = (contents: Electron.WebContents): void => {
+        if (observed.has(contents.id)) return;
+        observed.add(contents.id);
+        const identity = { webContentsId: contents.id, type: contents.getType() };
+        contents.on("render-process-gone", (_event, details) => {
+          process.stderr.write(`[render-process-gone] ${JSON.stringify({ at: new Date().toISOString(), ...identity, ...details })}\n`);
+        });
+      };
+      app.on("web-contents-created", (_event, contents) => observe(contents));
+      webContents.getAllWebContents().forEach(observe);
+    });
+    return { application, page: await application.firstWindow({ timeout: 10_000 }) };
+  } catch (error) {
+    await closeApplication(application);
+    await attachProcessDiagnostics(application);
+    throw error;
+  }
 }
 
 function watchErrors(page: Page, errors: string[]): void {
@@ -121,6 +180,7 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
   test.setTimeout(60_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-ui-profile-"));
   let application: ElectronApplication | undefined;
+  let failed = false;
   const errors: string[] = [];
   try {
     let launched = await launch(userDataDir);
@@ -178,7 +238,7 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
     await dialog.getByRole("button", { name: "保存", exact: true }).click();
     await expect(dialog).toBeHidden();
     await expect(page.locator(".nav-rail-profile img")).toHaveAttribute("src", uploadedAvatar!);
-    await application.close();
+    await closeApplication(application);
     application = undefined;
 
     const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
@@ -201,13 +261,17 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
     await page.screenshot({ path: testInfo.outputPath("profile-after-restart.png") });
     expect(errors).toEqual([]);
   } catch (error) {
+    failed = true;
     if (application) {
-      const failurePage = await application.firstWindow().catch(() => null);
-      await failurePage?.screenshot({ path: testInfo.outputPath("failure.png") }).catch(() => {});
+      const failurePage = application.windows()[0];
+      await failurePage?.screenshot({ path: testInfo.outputPath("failure.png"), timeout: 2_000 }).catch(() => {});
     }
     throw error;
   } finally {
-    if (application) await application.close();
+    if (application) {
+      await closeApplication(application);
+      if (failed) await attachProcessDiagnostics(application);
+    }
     removeTestDirectory(userDataDir);
   }
 });
@@ -219,6 +283,7 @@ for (const theme of ["light", "dark"] as const) {
       test.setTimeout(60_000);
       const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-ui-responsive-"));
       let application: ElectronApplication | undefined;
+      let failed = false;
       const errors: string[] = [];
       try {
         const launched = await test.step("launch isolated Electron application", () => launch(userDataDir));
@@ -346,13 +411,17 @@ for (const theme of ["light", "dark"] as const) {
         }
         await test.step("verify renderer has no console or page errors", async () => { expect(errors).toEqual([]); });
       } catch (error) {
+        failed = true;
         if (application) {
-          const failurePage = await application.firstWindow().catch(() => null);
-          await failurePage?.screenshot({ path: testInfo.outputPath("failure.png"), timeout: 5_000 }).catch(() => {});
+          const failurePage = application.windows()[0];
+          await failurePage?.screenshot({ path: testInfo.outputPath("failure.png"), timeout: 2_000 }).catch(() => {});
         }
         throw error;
       } finally {
-        if (application) await application.close();
+        if (application) {
+          await closeApplication(application);
+          if (failed) await attachProcessDiagnostics(application);
+        }
         removeTestDirectory(userDataDir);
       }
     });
