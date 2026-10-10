@@ -4,6 +4,16 @@ import { BellIcon, RefreshIcon, TrashIcon } from "./Icons";
 
 type RoutinesSettingsPanelProps = { active: boolean };
 
+const routineRunLabels: Record<RoutineRun["state"], string> = {
+  queued: "待处理",
+  waiting: "等待中",
+  running: "运行中",
+  completed: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
+  missed: "错过执行时间",
+};
+
 function scheduleLabel(schedule: RoutineSchedule): string {
   if (schedule.type === "once") return `一次 · ${new Date(schedule.at).toLocaleString("zh-CN")}`;
   if (schedule.type === "interval") return `每 ${schedule.everyMinutes} 分钟`;
@@ -98,7 +108,7 @@ export function RoutinesSettingsPanel({ active }: RoutinesSettingsPanelProps): R
 
   return <div className="settings-panel-form routines-settings-panel">
     <div className="settings-section-heading capability-heading"><span><h2>主动服务</h2><p>创建一次性、周期或 Cron Routine。新任务默认暂停；启用后关闭窗口仍会在后台等待触发。</p></span><button className="secondary-button" type="button" onClick={() => void load()} disabled={busy !== null}><RefreshIcon />刷新</button></div>
-    <div className="settings-card routine-editor">
+    <div className="settings-card settings-form-group routine-editor">
       <label className="settings-field-row"><span><strong>名称</strong></span><input aria-label="Routine 名称" value={name} onChange={(event) => setName(event.target.value)} /></label>
       <label className="mcp-text-field"><span>任务提示</span><textarea aria-label="Routine 提示" rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label>
       <label className="settings-field-row"><span><strong>Bot</strong></span><select aria-label="Routine Bot" value={botId} onChange={(event) => setBotId(event.target.value)}>{bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select></label>
@@ -108,9 +118,9 @@ export function RoutinesSettingsPanel({ active }: RoutinesSettingsPanelProps): R
       {scheduleType === "cron" ? <><label className="settings-field-row"><span><strong>Cron</strong><small>五段表达式</small></span><input aria-label="Routine Cron" value={cronExpression} onChange={(event) => setCronExpression(event.target.value)} /></label><label className="settings-field-row"><span><strong>时区</strong></span><input aria-label="Routine 时区" value={timeZone} onChange={(event) => setTimeZone(event.target.value)} /></label></> : null}
       <div className="settings-panel-actions"><button className="primary-button" type="button" disabled={busy !== null || !name.trim() || !prompt.trim() || !botId} onClick={() => void create()}>{busy === "create" ? "创建中…" : "创建为暂停状态"}</button></div>
     </div>
-    <div className="routine-list">{routines.map((routine) => <article className="settings-card routine-card" key={routine.id}><header><span><strong>{routine.name}</strong><small>{scheduleLabel(routine.schedule)}</small></span><span className={`capability-state ${routine.enabled ? "capability-state-granted" : ""}`}>{routine.enabled ? "已启用" : "已暂停"}</span></header><p>{routine.prompt}</p><small>下次：{routine.nextRunAt ? new Date(routine.nextRunAt).toLocaleString("zh-CN") : "—"}</small><footer><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => void runNow(routine)}>立即运行</button><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => void toggle(routine)}>{routine.enabled ? "暂停" : "启用"}</button><button className="icon-button danger" type="button" aria-label={`删除 Routine ${routine.name}`} disabled={busy !== null} onClick={() => void remove(routine)}><TrashIcon /></button></footer></article>)}</div>
+    <div className="routine-list settings-list">{routines.map((routine) => <article className="settings-card routine-card settings-list-row" key={routine.id}><header><span><strong>{routine.name}</strong><small>{scheduleLabel(routine.schedule)}</small></span><span className={`capability-state ${routine.enabled ? "capability-state-granted" : ""}`}>{routine.enabled ? "已启用" : "已暂停"}</span></header><p>{routine.prompt}</p><small>下次：{routine.nextRunAt ? new Date(routine.nextRunAt).toLocaleString("zh-CN") : "—"}</small><footer><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => void runNow(routine)}>立即运行</button><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => void toggle(routine)}>{routine.enabled ? "暂停" : "启用"}</button><button className="icon-button danger" type="button" aria-label={`删除 Routine ${routine.name}`} disabled={busy !== null} onClick={() => void remove(routine)}><TrashIcon /></button></footer></article>)}</div>
     <h3 className="capability-section-title">最近运行</h3>
-    <div className="settings-card routine-run-list">{runs.length === 0 ? <div className="workspace-empty">尚无运行记录。</div> : runs.slice(0, 20).map((run) => <div className="settings-row" key={run.id}><span><strong>{run.routineName}</strong><small>{new Date(run.scheduledFor).toLocaleString("zh-CN")} · {run.trigger}</small></span><span className={`settings-status settings-status-${run.state === "completed" ? "updated" : run.state === "failed" ? "error" : "idle"}`}>{run.state}</span></div>)}</div>
+    <div className="settings-card settings-form-group routine-run-list">{runs.length === 0 ? <div className="workspace-empty">尚无运行记录。</div> : runs.slice(0, 20).map((run) => <div className="settings-row" key={run.id}><span><strong>{run.routineName}</strong><small>{new Date(run.scheduledFor).toLocaleString("zh-CN")} · {run.trigger === "manual" ? "手动触发" : "计划触发"}</small></span><span className={`settings-status settings-status-${run.state === "completed" ? "updated" : run.state === "failed" ? "error" : "idle"}`}>{routineRunLabels[run.state]}</span></div>)}</div>
     <p className="settings-security-note"><BellIcon /> 后台 Routine 遇到工具审批时会暂停并通知，不会自动放行。</p>
     {error ? <div className="dialog-error" role="alert">{error.safeMessage}</div> : null}
   </div>;

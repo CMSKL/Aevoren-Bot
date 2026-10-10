@@ -13,6 +13,7 @@ type SettingsSection = "general" | "capabilities" | "memory" | "model" | "mcp" |
 type SettingsDialogProps = {
   open: boolean;
   theme: AppearanceTheme;
+  resolvedTheme?: Exclude<AppearanceTheme, "system">;
   launchAtLogin: boolean;
   launchAtLoginSupported: boolean;
   launchAtLoginStatus: LoginItemStatus;
@@ -33,10 +34,9 @@ type SettingsDialogProps = {
   onInstallUpdate(): void;
 };
 
-const themeLabels: Record<AppearanceTheme, string> = {
-  system: "跟随系统",
-  light: "浅色",
-  dark: "深色",
+const themeLabels: Record<Exclude<AppearanceTheme, "system">, string> = {
+  dark: "暗黑",
+  light: "白昼",
 };
 
 const loginItemStatusLabels: Record<LoginItemStatus, string> = {
@@ -64,6 +64,7 @@ const updateStatusLabels: Record<UpdateState["status"], string> = {
 export function SettingsDialog({
   open,
   theme,
+  resolvedTheme,
   launchAtLogin,
   launchAtLoginSupported,
   launchAtLoginStatus,
@@ -93,6 +94,9 @@ export function SettingsDialog({
   const [updateIntervalPending, setUpdateIntervalPending] = useState(false);
   const [updateIntervalError, setUpdateIntervalError] = useState<AppError | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const displayedTheme = theme === "system"
+    ? resolvedTheme ?? (document.documentElement.dataset.theme === "dark" ? "dark" : "light")
+    : theme;
 
   const close = useCallback((): void => {
     setSection("general");
@@ -157,7 +161,7 @@ export function SettingsDialog({
 
   return (
     <div className="modal-backdrop settings-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <section className="settings-dialog settings-hub" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <section className="settings-dialog settings-hub settings-grouped-layout" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <aside className="settings-nav" aria-label="设置分类">
           <div className="settings-nav-title" id="settings-title">设置</div>
           <nav>
@@ -171,8 +175,11 @@ export function SettingsDialog({
           </nav>
         </aside>
 
-        <div className="settings-content">
-          <button ref={closeButtonRef} className="settings-close-button" type="button" aria-label="关闭设置" onClick={close}><CloseIcon /></button>
+        <div className="settings-main">
+          <div className="settings-toolbar">
+            <button ref={closeButtonRef} className="settings-close-button dialog-close-button" type="button" aria-label="关闭设置" title="关闭设置" onClick={close}><CloseIcon /></button>
+          </div>
+          <div className="settings-content">
 
           {section === "general" ? <section className="settings-panel" aria-labelledby="settings-general-title">
             <div className="settings-section-heading">
@@ -180,17 +187,17 @@ export function SettingsDialog({
               <p>调整 Aevoren Bot 在这台电脑上的基础偏好。</p>
             </div>
             <h3>外观</h3>
-            <div className="settings-card">
+            <div className="settings-card settings-form-group">
               <label className="settings-row">
                 <span><strong>主题</strong><small>选择界面的明暗外观</small></span>
-                <select aria-label="外观主题" value={theme} disabled={themePending} onChange={(event) => void changeTheme(event.target.value as AppearanceTheme)}>
-                  {(Object.keys(themeLabels) as AppearanceTheme[]).map((value) => <option key={value} value={value}>{themeLabels[value]}</option>)}
+                <select aria-label="外观主题" value={displayedTheme} disabled={themePending} onChange={(event) => void changeTheme(event.target.value as Exclude<AppearanceTheme, "system">)}>
+                  {(Object.keys(themeLabels) as Array<Exclude<AppearanceTheme, "system">>).map((value) => <option key={value} value={value}>{themeLabels[value]}</option>)}
                 </select>
               </label>
             </div>
             {themeError ? <div className="dialog-error" role="alert">{themeError.safeMessage}</div> : null}
             <h3>工具自动化</h3>
-            <div className="settings-card">
+            <div className="settings-card settings-form-group">
               <label className="settings-row">
                 <span>
                   <strong>自动批准公开只读工具</strong>
@@ -207,7 +214,7 @@ export function SettingsDialog({
             </div>
             {toolApprovalError ? <div className="dialog-error" role="alert">{toolApprovalError.safeMessage}</div> : null}
             <h3>后台与启动</h3>
-            <div className="settings-card">
+            <div className="settings-card settings-form-group">
               <label className="settings-row">
                 <span>
                   <strong>登录时启动</strong>
@@ -250,7 +257,7 @@ export function SettingsDialog({
               <h2 id="settings-update-title">版本更新</h2>
               <p>从可信发布源检查并下载 Aevoren Bot 新版本。</p>
             </div>
-            <div className="settings-card">
+            <div className="settings-card settings-form-group">
               <label className="settings-row">
                 <span>
                   <strong>自动检查并下载</strong>
@@ -269,7 +276,7 @@ export function SettingsDialog({
               </label>
             </div>
             {updateIntervalError ? <div className="dialog-error" role="alert">{updateIntervalError.safeMessage}</div> : null}
-            <div className="settings-card">
+            <div className="settings-card settings-form-group">
               <div className="settings-row">
                 <span><strong>当前版本</strong><small>{updateState?.channel === "development" ? "开发环境" : updateState?.channel === "beta" ? "Beta 渠道" : "Stable 渠道"}</small></span>
                 <span className="settings-value">v{updateState?.currentVersion ?? "—"}</span>
@@ -302,6 +309,7 @@ export function SettingsDialog({
               )}
             </div>
           </section> : null}
+          </div>
         </div>
       </section>
     </div>

@@ -65,6 +65,22 @@ describe("mergeRoomRuntimeEvents", () => {
     expect(merged.rejections).toEqual([value]);
   });
 
+  it("updates retry delivery at the same original Handoff version and ignores stale attempts", () => {
+    const original = handoff(2, "cancelled");
+    const retry = (attemptNo: number, version: number, state: RoomHandoffView["state"]): RoomHandoffView => ({
+      ...original, deliveryAttempt: { attemptNo, version, state, turnId: `retry-${attemptNo}`,
+        acceptedAt: state === "accepted" ? "2026-01-01T00:01:00.000Z" : null },
+    });
+    const queued = mergeRoomRuntimeEvents([], [], [original], [], [event(retry(2, 1, "queued"))]);
+    expect(queued.handoffs[0]).toMatchObject({ state: "cancelled", deliveryAttempt: { attemptNo: 2, state: "queued" } });
+    const accepted = mergeRoomRuntimeEvents(queued.batches, queued.turns, queued.handoffs, [], [event(retry(2, 5, "accepted"))]);
+    expect(accepted.handoffs[0]).toMatchObject({ state: "cancelled", deliveryAttempt: { attemptNo: 2, state: "accepted" } });
+    const stale = mergeRoomRuntimeEvents(accepted.batches, accepted.turns, accepted.handoffs, [], [event(retry(2, 1, "queued")), event(original)]);
+    expect(stale.handoffs).toEqual(accepted.handoffs);
+    const next = mergeRoomRuntimeEvents(stale.batches, stale.turns, stale.handoffs, [], [event(retry(3, 1, "queued")), event(retry(2, 100, "accepted"))]);
+    expect(next.handoffs[0]).toMatchObject({ state: "cancelled", deliveryAttempt: { attemptNo: 3, state: "queued", acceptedAt: null } });
+  });
+
   it("accepts a legacy buffered event that predates rejection projections", () => {
     const legacy = { ...event(handoff(1, "queued")), rejections: undefined } as unknown as RoomRuntimeEvent;
     expect(mergeRoomRuntimeEvents([], [], [], [], [legacy]).rejections).toEqual([]);
@@ -130,6 +146,17 @@ describe("mergeRoomRuntimeEvents", () => {
       deliveryLabel: "已取消",
       executionLabel: "已完成",
       tone: "success",
+    });
+    const recovered = { ...handoff(3, "cancelled"), deliveryAttempt: {
+      attemptNo: 2, turnId: retry.id, state: "accepted" as const, acceptedAt: "2026-01-01T00:01:00.000Z", version: 4,
+    } };
+    expect(roomHandoffProgress(recovered, latest)).toEqual({
+      deliveryLabel: "重试 1 · 已接收", executionLabel: "已完成", tone: "success",
+    });
+    expect(recovered.state).toBe("cancelled");
+    const failedRetry = target("target-retry", 2, "failed");
+    expect(roomHandoffProgress({ ...recovered, deliveryAttempt: { ...recovered.deliveryAttempt, state: "failed", acceptedAt: null } }, failedRetry)).toEqual({
+      deliveryLabel: "重试 1 · 失败", executionLabel: "执行失败", tone: "danger",
     });
   });
 });

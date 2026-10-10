@@ -39,14 +39,15 @@ test("creates, runs, restores, and keeps one enabled Routine alive after the win
     await expect.poll(async () => {
       await page.getByRole("button", { name: "刷新", exact: true }).click();
       return page.locator(".routine-run-list").textContent();
-    }).toContain("completed");
+    }).toContain("已完成");
     await page.getByRole("button", { name: "关闭设置" }).click();
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
     await expect.poll(() => application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible())).toBe(false);
     expect(application.process().exitCode).toBeNull();
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.show());
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.showInactive());
     await expect.poll(() => application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible())).toBe(true);
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.hide());
     await expect(page.getByRole("heading", { name: "Routine Bot" })).toBeVisible();
 
     await application.close();

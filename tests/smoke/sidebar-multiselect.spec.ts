@@ -1,10 +1,12 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { closeInspector, openBotList } from "./navigation";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import type { AevorenBotApi } from "@shared/contracts";
+import { DEFAULT_PROJECT_ID } from "@shared/contracts";
 import { AppRepository } from "../../src/main/database";
 
 function environment(userDataDir: string, overrides: Record<string, string> = {}): Record<string, string> {
@@ -35,16 +37,16 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
   let application: ElectronApplication | undefined;
   try {
     const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
-    const memberA = repository.createBot();
+    const memberA = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(memberA.bot.id, memberA.bot.version, { name: "成员甲" });
-    const memberB = repository.createBot();
+    const memberB = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(memberB.bot.id, memberB.bot.version, { name: "成员乙" });
     for (const name of ["Bot A", "Bot B", "Bot C", "Bot D"]) {
-      const created = repository.createBot();
+      const created = repository.createBot(DEFAULT_PROJECT_ID);
       repository.updateBot(created.bot.id, created.bot.version, { name });
     }
     for (const name of ["群聊一", "群聊二", "群聊三"]) {
-      repository.createRoom({ memberBotIds: [memberA.bot.id, memberB.bot.id], name });
+      repository.createRoom({ memberBotIds: [memberA.bot.id, memberB.bot.id], name, projectId: DEFAULT_PROJECT_ID });
     }
     repository.close();
 
@@ -52,6 +54,7 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
     application = launched.application;
     const page = launched.page;
     const consoleErrors: string[] = [];
+    await page.getByRole("tab", { name: "工作区", exact: true }).click();
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     const invalidBatch = await page.evaluate((id) =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations.deleteBatch({ botIds: [id], roomIds: [] }), memberA.bot.id);
@@ -79,7 +82,7 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
     await dialog.getByRole("button", { name: "取消" }).click();
     await expect(multiSelected(page)).toHaveCount(3);
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await openBotList(page);
     await row(page, "Bot B").click({ button: "right" });
     batchMenu = page.getByRole("menu", { name: "批量操作" });
     const compactBounds = await batchMenu.boundingBox();
@@ -170,11 +173,11 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
   let application: ElectronApplication | undefined;
   try {
     const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
-    const first = repository.createBot();
+    const first = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(first.bot.id, first.bot.version, { name: "工作区研究员" });
-    const second = repository.createBot();
+    const second = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(second.bot.id, second.bot.version, { name: "工作区审校员" });
-    repository.createRoom({ name: "工作区群聊", memberBotIds: [first.bot.id, second.bot.id] });
+    repository.createRoom({ name: "工作区群聊", memberBotIds: [first.bot.id, second.bot.id], projectId: DEFAULT_PROJECT_ID });
     repository.setSetting("appearance.theme", "dark", false);
     repository.close();
 
@@ -182,11 +185,12 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     application = launched.application;
     const page = launched.page;
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    await page.getByRole("tab", { name: "工作区", exact: true }).click();
     const consoleErrors: string[] = [];
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
 
     const workspace = page.locator(".sidebar-workspace");
-    const workspaceToggle = workspace.getByRole("button", { name: "工作区", exact: true });
+    const workspaceToggle = workspace.getByRole("button", { name: "项目", exact: true });
     const projectToggle = page.getByRole("button", { name: "默认项目", exact: true });
     const roomGroup = page.locator(".sidebar-workspace-section").nth(0);
     const botGroup = page.locator(".sidebar-workspace-section").nth(1);
@@ -204,10 +208,11 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     const createdProject = page.getByRole("button", { name: "产品规划", exact: true });
     await expect(createdProject).toBeVisible();
     await expect(createdProject).toHaveClass(/active/u);
-    await page.getByRole("button", { name: "新建聊天", exact: true }).click();
-    await page.getByRole("button", { name: "创建新 Bot", exact: true }).click();
+    await page.getByRole("button", { name: "在 产品规划 新建 Bot", exact: true }).click();
     const createdBotRow = page.locator('section[aria-label="项目 产品规划"] .bot-row').filter({ hasText: "新建 Bot" });
     await expect(createdBotRow).toBeVisible();
+    await expect(page.locator(".inspector")).toBeVisible();
+    await closeInspector(page);
     const scopedBots = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.bots.list());
     const listedProjects = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.projects.list());
     expect(scopedBots.ok).toBe(true);
@@ -249,7 +254,7 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await openBotList(page);
     await expect(page.locator(".sidebar")).toBeVisible();
     await expect(page.locator(".sidebar-workspace-toggle").first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -266,15 +271,16 @@ test("keeps the entire batch and selection when one selected Bot is running", as
   let application: ElectronApplication | undefined;
   try {
     const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
-    const busy = repository.createBot();
+    const busy = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(busy.bot.id, busy.bot.version, { name: "运行中 Bot" });
-    const other = repository.createBot();
+    const other = repository.createBot(DEFAULT_PROJECT_ID);
     repository.updateBot(other.bot.id, other.bot.version, { name: "同行 Bot" });
     repository.close();
 
     const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_START_DELAY_MS: "5000" });
     application = launched.application;
     const page = launched.page;
+    await page.getByRole("tab", { name: "工作区", exact: true }).click();
     await row(page, "运行中 Bot").click({ modifiers: ["Meta"] });
     await row(page, "同行 Bot").click({ modifiers: ["Meta"] });
     await expect(multiSelected(page)).toHaveCount(2);

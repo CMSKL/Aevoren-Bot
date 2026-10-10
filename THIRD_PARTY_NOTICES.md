@@ -8,6 +8,7 @@ The license identifiers below are informational; the corresponding license texts
 | --- | --- | --- | --- |
 | @hono/node-server | 2.1.1 | MIT | [link](https://github.com/honojs/node-server) |
 | @modelcontextprotocol/sdk | 1.31.0 | MIT | [link](https://modelcontextprotocol.io) |
+| @phosphor-icons/react | 2.1.10 | MIT | [link](https://phosphoricons.com) |
 | @types/debug | 4.1.13 | MIT | [link](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/debug) |
 | @types/estree | 1.0.9 | MIT | [link](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree) |
 | @types/estree-jsx | 1.0.5 | MIT | [link](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree-jsx) |

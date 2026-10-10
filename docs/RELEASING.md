@@ -13,6 +13,8 @@ The current repository `CMSKL/Aevoren-Bot` is the sole source, issue tracker, Re
 
 Beta tags must use `vX.Y.Z-beta.N` and point to a commit contained in `beta`. Stable tags must use `vX.Y.Z` and point to a commit contained in `master`.
 
+The Release display title must exactly match its version tag (for example, `v0.3.0-beta.19`), never a generic `release` title. A Beta release is published after Beta validation; promoting it to `master` is reserved for a separately validated stable release.
+
 ## Before tagging
 
 ```bash

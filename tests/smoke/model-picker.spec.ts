@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
+import { openConversationMenu, openModelPicker } from "./navigation";
 
 test("switches one Bot model from the compact header picker and preserves unavailable CLI feedback", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-header-model-picker-"));
@@ -34,9 +35,10 @@ test("switches one Bot model from the compact header picker and preserves unavai
     const consoleErrors: string[] = [];
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     await expect(page.getByRole("heading", { name: "Picker Bot" })).toBeVisible();
+    await openConversationMenu(page);
     const trigger = page.locator(".header-model-trigger");
     await expect(trigger).toContainText("model-alpha");
-    await trigger.click();
+    await openModelPicker(page);
     const picker = page.getByRole("dialog", { name: "选择模型" });
     await expect(picker).toBeVisible();
     await expect(picker.locator(".header-model-rail button")).toHaveCount(3);
@@ -48,14 +50,14 @@ test("switches one Bot model from the compact header picker and preserves unavai
     await picker.locator(".header-model-list > button").filter({ hasText: "model-beta" }).click();
     await expect(trigger).toContainText("model-beta");
 
-    await trigger.click();
+    await openModelPicker(page);
     await picker.getByRole("button", { name: "Codex CLI" }).click();
     await expect(picker.locator(".header-model-unavailable strong")).toHaveText(/未安装|未登录|不可用/u);
     await expect(picker.getByText("测试环境未探测 Codex CLI。", { exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 640));
-    await trigger.click();
+    await openModelPicker(page);
     await expect.poll(() => picker.evaluate((element) => {
       const rect = element.getBoundingClientRect();
       return rect.left >= 0 && rect.right <= window.innerWidth;
@@ -73,6 +75,7 @@ test("switches one Bot model from the compact header picker and preserves unavai
 
     application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
     page = await application.firstWindow();
+    await openConversationMenu(page);
     await expect(page.locator(".header-model-trigger")).toContainText("model-beta");
   } finally {
     await application.close();

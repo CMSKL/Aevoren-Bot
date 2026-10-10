@@ -17,6 +17,7 @@ import type {
   CapabilityEffectClass,
   ConversationBatchDeleteInput,
   ConversationBatchDeleteResult,
+  ConversationSummary,
   CreateHandoffInput,
   CreateRoomRunInput,
   DecisionAnswer,
@@ -48,8 +49,10 @@ import type {
   RoomPatch,
   RoomSendCommand,
   RoomHandoff,
+  RoomHandoffView,
   RoomHandoffRejectionView,
   RoomRun,
+  RoomRunSummary,
   RoomRoutingMode,
   RoomTurn,
   RoomTurnState,
@@ -157,7 +160,7 @@ const HANDOFF_TRANSITIONS: Record<HandoffState, readonly HandoffState[]> = {
 const OUTCOMES_BY_TERMINAL_TURN_STATE: Partial<Record<RoomTurnState, readonly AgentTurnOutcome["kind"][]>> = {
   completed: ["sent", "pass", "skipped"],
   failed: ["timeout", "error"],
-  cancelled: ["cancelled"],
+  cancelled: ["cancelled", "skipped"],
   interrupted: ["timeout", "error"],
 };
 
@@ -1750,9 +1753,243 @@ export const MIGRATIONS = [
       CREATE INDEX approval_requests_pending ON approval_requests(state, expires_at, created_at, id);
     `,
   },
+  {
+    version: 29,
+    sql: `
+      CREATE TABLE conversation_metadata (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
+        pinned_at TEXT,
+        hidden_at TEXT,
+        has_unread INTEGER NOT NULL DEFAULT 0 CHECK (has_unread IN (0, 1)),
+        last_activity_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)
+      );
+      CREATE INDEX conversations_by_sidebar
+        ON conversation_metadata(project_id, hidden_at, pinned_at, last_activity_at);
+
+      INSERT INTO conversation_metadata(
+        session_id, project_id, pinned_at, hidden_at, has_unread, last_activity_at
+      )
+      SELECT sessions.id, COALESCE(bots.project_id, rooms.project_id),
+             COALESCE(bots.pinned_at, rooms.pinned_at), COALESCE(bots.hidden_at, rooms.hidden_at),
+             COALESCE(bots.has_unread, rooms.has_unread, 0),
+             COALESCE((SELECT updated_at FROM transcript_entries
+                       WHERE session_id = sessions.id AND generation = sessions.generation
+                         AND (length(trim(body)) > 0 OR attachments_json <> '[]')
+                       ORDER BY seq DESC LIMIT 1), sessions.created_at)
+      FROM sessions
+      LEFT JOIN bots ON bots.id = sessions.bot_id
+      LEFT JOIN rooms ON rooms.id = sessions.room_id;
+
+      CREATE TRIGGER initialize_conversation AFTER INSERT ON sessions
+      BEGIN
+        INSERT INTO conversation_metadata(session_id, project_id, pinned_at, hidden_at, has_unread, last_activity_at)
+        VALUES (NEW.id, COALESCE((SELECT project_id FROM bots WHERE id = NEW.bot_id),
+                                (SELECT project_id FROM rooms WHERE id = NEW.room_id)),
+                COALESCE((SELECT pinned_at FROM bots WHERE id = NEW.bot_id), (SELECT pinned_at FROM rooms WHERE id = NEW.room_id)),
+                COALESCE((SELECT hidden_at FROM bots WHERE id = NEW.bot_id), (SELECT hidden_at FROM rooms WHERE id = NEW.room_id)),
+                COALESCE((SELECT has_unread FROM bots WHERE id = NEW.bot_id), (SELECT has_unread FROM rooms WHERE id = NEW.room_id), 0),
+                NEW.created_at);
+      END;
+
+      CREATE TRIGGER conversation_message_inserted AFTER INSERT ON transcript_entries
+      WHEN NEW.generation = (SELECT generation FROM sessions WHERE id = NEW.session_id)
+        AND (NEW.role = 'user' OR length(trim(NEW.body)) > 0)
+      BEGIN
+        UPDATE conversation_metadata
+        SET hidden_at = NULL, last_activity_at = NEW.created_at, version = version + 1
+        WHERE session_id = NEW.session_id;
+      END;
+
+      CREATE TRIGGER conversation_message_updated AFTER UPDATE OF body ON transcript_entries
+      WHEN NEW.body <> OLD.body AND length(trim(NEW.body)) > 0
+        AND NEW.generation = (SELECT generation FROM sessions WHERE id = NEW.session_id)
+        AND NEW.seq = (SELECT MAX(seq) FROM transcript_entries
+                       WHERE session_id = NEW.session_id AND generation = NEW.generation)
+      BEGIN
+        UPDATE conversation_metadata
+        SET hidden_at = NULL, last_activity_at = NEW.updated_at, version = version + 1
+        WHERE session_id = NEW.session_id;
+      END;
+
+      -- Retain nonce tombstones when clearing history so old commands cannot replay.
+      CREATE TABLE retired_conversation_sends (
+        client_nonce TEXT PRIMARY KEY REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        retired_at TEXT NOT NULL
+      );
+      CREATE TABLE retired_conversation_tools (
+        idempotency_key TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
+      );
+    `,
+  },
+  {
+    version: 30,
+    sql: `
+      CREATE TABLE session_workspace_grants (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        PRIMARY KEY (session_id, workspace_id)
+      );
+      INSERT INTO session_workspace_grants(session_id, workspace_id)
+      SELECT conversation_metadata.session_id, workspaces.id FROM conversation_metadata
+      JOIN projects ON projects.id = conversation_metadata.project_id
+      JOIN workspaces ON workspaces.removed_at IS NULL
+        AND (projects.workspace_id IS NULL OR projects.workspace_id = workspaces.id);
+
+      CREATE TABLE memory_session_visibility (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        memory_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
+        PRIMARY KEY (session_id, executor_bot_id, memory_id)
+      );
+      CREATE INDEX memory_visibility_by_item ON memory_session_visibility(memory_id, session_id);
+      INSERT INTO memory_session_visibility(session_id, executor_bot_id, memory_id)
+      SELECT sessions.id, memory_items.bot_id, memory_items.id FROM memory_items JOIN sessions
+        ON sessions.bot_id = memory_items.bot_id OR EXISTS (
+          SELECT 1 FROM room_members WHERE room_members.room_id = sessions.room_id
+            AND room_members.bot_id = memory_items.bot_id
+        )
+      WHERE memory_items.scope = 'bot';
+
+      -- Legacy contacts without a MAIN session need the same finite migration
+      -- snapshot when first opened, never the set of folders/memories at that later time.
+      CREATE TABLE legacy_session_scopes (
+        owner_kind TEXT NOT NULL CHECK (owner_kind IN ('bot', 'room')),
+        owner_id TEXT NOT NULL,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+        workspace_ids_json TEXT NOT NULL CHECK (json_valid(workspace_ids_json)),
+        memory_visibility_json TEXT NOT NULL CHECK (json_valid(memory_visibility_json)),
+        PRIMARY KEY (owner_kind, owner_id)
+      );
+      INSERT INTO legacy_session_scopes
+      SELECT 'bot', bots.id, bots.project_id,
+        (SELECT json_group_array(workspaces.id) FROM workspaces JOIN projects ON projects.id = bots.project_id
+         WHERE workspaces.removed_at IS NULL AND (projects.workspace_id IS NULL OR projects.workspace_id = workspaces.id)),
+        (SELECT json_group_array(json_object('executorBotId', bots.id, 'memoryId', memory_items.id))
+         FROM memory_items WHERE memory_items.scope = 'bot' AND memory_items.bot_id = bots.id)
+      FROM bots WHERE bots.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.bot_id = bots.id);
+      INSERT INTO legacy_session_scopes
+      SELECT 'room', rooms.id, rooms.project_id,
+        (SELECT json_group_array(workspaces.id) FROM workspaces JOIN projects ON projects.id = rooms.project_id
+         WHERE workspaces.removed_at IS NULL AND (projects.workspace_id IS NULL OR projects.workspace_id = workspaces.id)),
+        (SELECT json_group_array(json_object('executorBotId', memory_items.bot_id, 'memoryId', memory_items.id))
+         FROM memory_items JOIN room_members ON room_members.bot_id = memory_items.bot_id
+         WHERE memory_items.scope = 'bot' AND room_members.room_id = rooms.id)
+      FROM rooms WHERE rooms.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.room_id = rooms.id);
+
+      CREATE TABLE conversation_scope_versions (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)
+      );
+      INSERT INTO conversation_scope_versions(session_id) SELECT id FROM sessions;
+      CREATE TABLE runtime_session_scopes (
+        runtime_run_id TEXT PRIMARY KEY REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        scope_version INTEGER NOT NULL CHECK (scope_version > 0)
+      );
+      INSERT INTO runtime_session_scopes SELECT id, 1 FROM runtime_runs;
+      CREATE TRIGGER initialize_runtime_scope AFTER INSERT ON runtime_runs
+      BEGIN
+        INSERT INTO runtime_session_scopes(runtime_run_id, scope_version)
+        SELECT NEW.id, version FROM conversation_scope_versions WHERE session_id = NEW.session_id;
+      END;
+
+      DROP TRIGGER initialize_conversation;
+      CREATE TRIGGER initialize_conversation AFTER INSERT ON sessions
+      BEGIN
+        INSERT INTO conversation_metadata(session_id, project_id, pinned_at, hidden_at, has_unread, last_activity_at)
+        VALUES (NEW.id, (SELECT project_id FROM legacy_session_scopes
+                        WHERE owner_kind = CASE WHEN NEW.bot_id IS NULL THEN 'room' ELSE 'bot' END
+                          AND owner_id = COALESCE(NEW.bot_id, NEW.room_id)),
+                COALESCE((SELECT pinned_at FROM bots WHERE id = NEW.bot_id), (SELECT pinned_at FROM rooms WHERE id = NEW.room_id)),
+                COALESCE((SELECT hidden_at FROM bots WHERE id = NEW.bot_id), (SELECT hidden_at FROM rooms WHERE id = NEW.room_id)),
+                COALESCE((SELECT has_unread FROM bots WHERE id = NEW.bot_id), (SELECT has_unread FROM rooms WHERE id = NEW.room_id), 0),
+                NEW.created_at);
+        INSERT INTO conversation_scope_versions(session_id) VALUES (NEW.id);
+        INSERT INTO session_workspace_grants(session_id, workspace_id)
+        SELECT NEW.id, workspaces.id FROM legacy_session_scopes, json_each(workspace_ids_json)
+        JOIN workspaces ON workspaces.id = json_each.value AND workspaces.removed_at IS NULL
+        WHERE owner_kind = CASE WHEN NEW.bot_id IS NULL THEN 'room' ELSE 'bot' END
+          AND owner_id = COALESCE(NEW.bot_id, NEW.room_id);
+        INSERT INTO memory_session_visibility(session_id, executor_bot_id, memory_id)
+        SELECT NEW.id, memory_items.bot_id, memory_items.id FROM legacy_session_scopes, json_each(memory_visibility_json)
+        JOIN memory_items ON memory_items.id = json_extract(json_each.value, '$.memoryId')
+          AND memory_items.bot_id = json_extract(json_each.value, '$.executorBotId')
+        WHERE owner_kind = CASE WHEN NEW.bot_id IS NULL THEN 'room' ELSE 'bot' END
+          AND owner_id = COALESCE(NEW.bot_id, NEW.room_id);
+        DELETE FROM legacy_session_scopes
+        WHERE owner_kind = CASE WHEN NEW.bot_id IS NULL THEN 'room' ELSE 'bot' END
+          AND owner_id = COALESCE(NEW.bot_id, NEW.room_id);
+      END;
+
+      DROP INDEX memory_one_active_content_per_scope;
+      CREATE UNIQUE INDEX memory_one_active_content_per_scope
+        ON memory_items(scope, scope_key, content_digest) WHERE deleted_at IS NULL AND scope <> 'bot';
+      DROP INDEX memory_pending_digest_per_scope;
+      CREATE UNIQUE INDEX memory_pending_digest_per_scope
+        ON memory_proposals(scope, scope_key, content_digest) WHERE state = 'pending' AND scope <> 'bot';
+
+      CREATE TRIGGER conversation_reply_inserted AFTER INSERT ON transcript_entries
+      WHEN NEW.role = 'assistant' AND NEW.status IN ('completed', 'failed', 'cancelled')
+        AND (length(trim(NEW.body)) > 0 OR NEW.status = 'failed')
+        AND NEW.generation = (SELECT generation FROM sessions WHERE id = NEW.session_id)
+      BEGIN
+        UPDATE conversation_metadata SET has_unread = 1, version = version + 1
+        WHERE session_id = NEW.session_id;
+      END;
+
+      CREATE TRIGGER conversation_reply_finished AFTER UPDATE OF status ON transcript_entries
+      WHEN NEW.role = 'assistant' AND OLD.status NOT IN ('completed', 'failed', 'cancelled')
+        AND NEW.status IN ('completed', 'failed', 'cancelled')
+        AND (length(trim(NEW.body)) > 0 OR NEW.status = 'failed')
+        AND NEW.generation = (SELECT generation FROM sessions WHERE id = NEW.session_id)
+      BEGIN
+        UPDATE conversation_metadata SET has_unread = 1, version = version + 1
+        WHERE session_id = NEW.session_id;
+      END;
+    `,
+  },
+  {
+    version: 31,
+    sql: `
+      ALTER TABLE rooms ADD COLUMN lead_bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL;
+      ALTER TABLE room_batches ADD COLUMN lead_bot_id TEXT;
+      ALTER TABLE room_batches ADD COLUMN summary_state TEXT NOT NULL DEFAULT 'not-required'
+        CHECK (summary_state IN ('not-required', 'pending', 'queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted', 'skipped'));
+      ALTER TABLE room_batches ADD COLUMN summary_turn_id TEXT;
+      ALTER TABLE room_batches ADD COLUMN summary_skip_reason TEXT;
+      ALTER TABLE room_batches ADD COLUMN coordination_error_code TEXT;
+      ALTER TABLE room_turns ADD COLUMN turn_purpose TEXT NOT NULL DEFAULT 'work'
+        CHECK (turn_purpose IN ('coordinate', 'work', 'summary'));
+      ALTER TABLE room_turns ADD COLUMN dependency_logical_turn_id TEXT;
+      ALTER TABLE room_turns ADD COLUMN lead_assignments_json TEXT CHECK (lead_assignments_json IS NULL OR json_valid(lead_assignments_json));
+    `,
+  },
 ] as const;
 
-type BotRow = {
+type ConversationSidebarRow = {
+  conversation_session_id?: string | null;
+  conversation_pinned_at?: string | null;
+  conversation_hidden_at?: string | null;
+  conversation_has_unread?: number | null;
+};
+
+type ConversationRow = {
+  session_id: string;
+  bot_id: string | null;
+  room_id: string | null;
+  project_id: string | null;
+  workspace_ids_json: string;
+  pinned_at: string | null;
+  hidden_at: string | null;
+  has_unread: number;
+  last_message: string | null;
+  last_activity_at: string;
+  version: number;
+};
+
+type BotRow = ConversationSidebarRow & {
   id: string;
   project_id: string;
   name: string;
@@ -1896,6 +2133,7 @@ type SendRow = {
   last_error_code: string | null;
   created_at: string;
   updated_at: string;
+  retired_at: string | null;
 };
 
 type RuntimeRow = {
@@ -2055,8 +2293,9 @@ export type McpServerConfig = {
   updatedAt: string;
 };
 
-type RoomRow = {
+type RoomRow = ConversationSidebarRow & {
   id: string;
+  lead_bot_id: string | null;
   project_id: string;
   name: string;
   description: string;
@@ -2097,6 +2336,11 @@ type RoomMemberRow = {
 
 type RoomBatchRow = {
   id: string;
+  lead_bot_id: string | null;
+  summary_state: NonNullable<RoomRun["summaryState"]>;
+  summary_turn_id: string | null;
+  summary_skip_reason: string | null;
+  coordination_error_code: string | null;
   room_id: string;
   session_id: string;
   client_nonce: string;
@@ -2121,6 +2365,8 @@ type RoomBatchRow = {
 
 type RoomTurnRow = {
   id: string;
+  turn_purpose: NonNullable<AgentTurn["turnPurpose"]>;
+  dependency_logical_turn_id: string | null;
   batch_id: string;
   member_bot_id: string;
   member_name_snapshot: string;
@@ -2186,6 +2432,28 @@ function randomBotAvatar(): { shape: typeof BOT_AVATAR_SHAPES[number]; color: ty
   };
 }
 
+function conversationSidebar(row: (BotRow | RoomRow)): Pick<Bot, "pinnedAt" | "hiddenAt" | "hasUnread"> {
+  return row.conversation_session_id
+    ? { pinnedAt: row.conversation_pinned_at ?? null, hiddenAt: row.conversation_hidden_at ?? null, hasUnread: row.conversation_has_unread === 1 }
+    : { pinnedAt: row.pinned_at, hiddenAt: row.hidden_at, hasUnread: row.has_unread === 1 };
+}
+
+function toConversation(row: ConversationRow): ConversationSummary {
+  return {
+    sessionId: row.session_id,
+    botId: row.bot_id,
+    roomId: row.room_id,
+    projectId: row.project_id,
+    workspaceIds: (JSON.parse(row.workspace_ids_json) as string[]).sort(),
+    pinnedAt: row.pinned_at,
+    hiddenAt: row.hidden_at,
+    hasUnread: row.has_unread === 1,
+    lastMessage: row.last_message,
+    lastActivityAt: row.last_activity_at,
+    version: row.version,
+  };
+}
+
 function toBot(row: BotRow): Bot {
   const mcpServerIds = row.mcp_server_ids_json === null
     ? null
@@ -2207,9 +2475,7 @@ function toBot(row: BotRow): Bot {
     avatarColor: normalizeBotAvatarColor(row.avatar_color),
     mcpServerIds,
     memoryWorkspaceIds,
-    pinnedAt: row.pinned_at,
-    hiddenAt: row.hidden_at,
-    hasUnread: row.has_unread === 1,
+    ...conversationSidebar(row),
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -2493,15 +2759,14 @@ function toRoutineRun(row: RoutineRunRow): RoutineRun {
 function toRoom(row: RoomRow): Room {
   return {
     id: row.id,
+    leadBotId: row.lead_bot_id,
     projectId: row.project_id,
     name: row.name,
     description: row.description,
     version: row.version,
     membershipVersion: row.membership_version,
     archivedAt: row.archived_at,
-    pinnedAt: row.pinned_at,
-    hiddenAt: row.hidden_at,
-    hasUnread: row.has_unread === 1,
+    ...conversationSidebar(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2510,6 +2775,11 @@ function toRoom(row: RoomRow): Room {
 function toRoomBatch(row: RoomBatchRow): RoomBatch {
   return {
     id: row.id,
+    leadBotId: row.lead_bot_id,
+    summaryState: row.summary_state,
+    summaryTurnId: row.summary_turn_id,
+    summarySkipReason: row.summary_skip_reason,
+    coordinationErrorCode: row.coordination_error_code,
     roomId: row.room_id,
     sessionId: row.session_id,
     clientNonce: row.client_nonce,
@@ -2550,6 +2820,8 @@ function toRoomTurn(row: RoomTurnRow): RoomTurn {
     memberBotId: row.member_bot_id,
     memberNameSnapshot: row.member_name_snapshot,
     logicalTurnId: row.logical_turn_id,
+    turnPurpose: row.turn_purpose,
+    dependencyLogicalTurnId: row.dependency_logical_turn_id,
     parentTurnId: row.parent_turn_id,
     nonce: row.nonce,
     hop: Number(row.hop),
@@ -2828,6 +3100,27 @@ const ROOM_RUN_SELECT = `SELECT room_batches.*,
    WHERE room_turns.batch_id = room_batches.id) AS used_turns
   FROM room_batches`;
 
+const CONVERSATION_SELECT = `SELECT conversation_metadata.*, sessions.bot_id, sessions.room_id,
+  (SELECT substr(CASE WHEN length(trim(body)) > 0 THEN body ELSE '[附件]' END, 1, 500)
+   FROM transcript_entries WHERE session_id = sessions.id AND generation = sessions.generation
+     AND (length(trim(body)) > 0 OR attachments_json <> '[]')
+   ORDER BY seq DESC LIMIT 1) AS last_message,
+  (SELECT json_group_array(session_workspace_grants.workspace_id)
+   FROM session_workspace_grants JOIN workspaces ON workspaces.id = session_workspace_grants.workspace_id
+   WHERE session_workspace_grants.session_id = sessions.id AND workspaces.removed_at IS NULL) AS workspace_ids_json
+  FROM conversation_metadata INNER JOIN sessions ON sessions.id = conversation_metadata.session_id`;
+
+const CONVERSATION_SIDEBAR_COLUMNS = `conversation_metadata.session_id AS conversation_session_id,
+  conversation_metadata.pinned_at AS conversation_pinned_at,
+  conversation_metadata.hidden_at AS conversation_hidden_at,
+  conversation_metadata.has_unread AS conversation_has_unread`;
+const BOT_SELECT = `SELECT bots.*, ${CONVERSATION_SIDEBAR_COLUMNS} FROM bots
+  LEFT JOIN sessions ON sessions.bot_id = bots.id AND sessions.kind = 'MAIN'
+  LEFT JOIN conversation_metadata ON conversation_metadata.session_id = sessions.id`;
+const ROOM_SELECT = `SELECT rooms.*, ${CONVERSATION_SIDEBAR_COLUMNS} FROM rooms
+  LEFT JOIN sessions ON sessions.room_id = rooms.id AND sessions.kind = 'MAIN'
+  LEFT JOIN conversation_metadata ON conversation_metadata.session_id = sessions.id`;
+
 export class AppRepository {
   private readonly database: DatabaseSync;
 
@@ -2975,7 +3268,7 @@ export class AppRepository {
   }
 
   listBots(): Bot[] {
-    return (this.database.prepare("SELECT * FROM bots WHERE deleted_at IS NULL ORDER BY created_at ASC").all() as BotRow[]).map(toBot);
+    return (this.database.prepare(`${BOT_SELECT} WHERE bots.deleted_at IS NULL ORDER BY bots.created_at ASC`).all() as BotRow[]).map(toBot);
   }
 
   listProviderInstanceConfigs(): ProviderInstanceConfig[] {
@@ -3078,17 +3371,17 @@ export class AppRepository {
   }
 
   getBot(id: string): Bot {
-    const row = this.database.prepare("SELECT * FROM bots WHERE id = ? AND deleted_at IS NULL").get(id) as BotRow | undefined;
+    const row = this.database.prepare(`${BOT_SELECT} WHERE bots.id = ? AND bots.deleted_at IS NULL`).get(id) as BotRow | undefined;
     if (!row) throw new AevorenBotError("BOT_NOT_FOUND");
     return toBot(row);
   }
 
-  createBot(projectId = DEFAULT_PROJECT_ID): { bot: Bot; session: Session } {
-    return this.transaction(() => this.insertBot(projectId));
+  createBot(projectId?: string): { bot: Bot; session: Session } {
+    return this.transaction(() => this.insertBot(projectId ?? null));
   }
 
-  private insertBot(projectId: string, profile: Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection" | "mcpServerIds">> = {}): { bot: Bot; session: Session } {
-    this.getProject(projectId);
+  private insertBot(projectId: string | null, profile: Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection" | "mcpServerIds">> = {}, grantWorkspace = true): { bot: Bot; session: Session } {
+    this.getProject(projectId ?? DEFAULT_PROJECT_ID);
     const timestamp = now();
     const botId = randomUUID();
     const sessionId = randomUUID();
@@ -3103,7 +3396,7 @@ export class AppRepository {
       )
       .run(
         botId,
-        projectId,
+        projectId ?? DEFAULT_PROJECT_ID,
         profile.name ?? "新建 Bot",
         profile.label ?? "",
         profile.description ?? "",
@@ -3122,6 +3415,7 @@ export class AppRepository {
          VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
       )
       .run(sessionId, botId, timestamp, timestamp);
+    this.configureSessionProject(sessionId, projectId, grantWorkspace);
     return { bot: this.getBot(botId), session: this.getMainSession(botId) };
   }
 
@@ -3187,20 +3481,26 @@ export class AppRepository {
     return rows.map(toMemory);
   }
 
-  listRuntimeMemories(botId: string): MemoryItem[] {
+  getMemoryCaptureScopes(botId: string, sessionId: string): MemoryScopeSelector[] {
     const bot = this.getBot(botId);
+    const workspaces = this.listSessionWorkspaces(sessionId, botId);
+    return [
+      { scope: "user", scopeKey: "user" },
+      ...workspaces.filter((workspace) => (bot.memoryWorkspaceIds ?? []).includes(workspace.id))
+        .map((workspace): MemoryScopeSelector => ({ scope: "workspace", scopeKey: workspace.id })),
+      { scope: "bot", scopeKey: botId },
+    ];
+  }
+
+  listRuntimeMemories(botId: string, sessionId = this.getMainSession(botId).id): MemoryItem[] {
+    const scopes = this.getMemoryCaptureScopes(botId, sessionId);
     const timestamp = now();
     const candidates = [
-      ...this.listScopedMemories({ scope: "user", scopeKey: "user" }),
-      ...(bot.memoryWorkspaceIds ?? []).flatMap((workspaceId) => {
-        try {
-          return this.listScopedMemories({ scope: "workspace", scopeKey: workspaceId });
-        } catch (error) {
-          if (error instanceof AevorenBotError && error.code === "WORKSPACE_NOT_FOUND") return [];
-          throw error;
-        }
-      }),
-      ...this.listScopedMemories({ scope: "bot", scopeKey: botId }),
+      ...scopes.filter((scope) => scope.scope !== "bot").flatMap((scope) => this.listScopedMemories(scope)),
+      ...(this.database.prepare(
+        `SELECT memory_items.* FROM memory_items JOIN memory_session_visibility ON memory_session_visibility.memory_id = memory_items.id
+         WHERE memory_session_visibility.session_id = ? AND memory_session_visibility.executor_bot_id = ?`,
+      ).all(sessionId, botId) as MemoryRow[]).map(toMemory),
     ].filter((memory) => memory.deletedAt === null && (!memory.expiresAt || memory.expiresAt > timestamp));
     const groups = new Map<string, MemoryItem[]>();
     for (const memory of candidates) {
@@ -3246,6 +3546,14 @@ export class AppRepository {
     content: string,
     options: { kind?: MemoryKind; expiresAt?: string | null; source?: MemorySource; sourceEntryId?: string | null } = {},
   ): MemoryItem {
+    return this.transaction(() => this.insertScopedMemory(selector, content, options));
+  }
+
+  private insertScopedMemory(
+    selector: MemoryScopeSelector,
+    content: string,
+    options: { kind?: MemoryKind; expiresAt?: string | null; source?: MemorySource; sourceEntryId?: string | null },
+  ): MemoryItem {
     this.assertMemoryScope(selector);
     const normalized = normalizeMemoryContent(content);
     const contentDigest = digestMemoryContent(normalized);
@@ -3254,7 +3562,8 @@ export class AppRepository {
     const expiresAt = this.normalizeMemoryExpiresAt(options.expiresAt);
     this.assertMemoryKind(kind);
     this.assertMemoryContent(normalized);
-    this.assertNoActiveMemoryDuplicate(selector, contentDigest);
+    const sessionId = selector.scope === "bot" ? this.memorySourceSession(selector.scopeKey, options.sourceEntryId).id : null;
+    this.assertNoActiveMemoryDuplicate(selector, contentDigest, undefined, sessionId ?? undefined);
     this.assertMemoryCapacity(selector, normalized.length, 1);
     const id = randomUUID();
     const timestamp = now();
@@ -3271,7 +3580,29 @@ export class AppRepository {
         id, selector.scope, selector.scopeKey, botId, workspaceId, normalized, contentDigest,
         kind, source, options.sourceEntryId ?? null, expiresAt, timestamp, timestamp,
       );
+    if (sessionId && botId) {
+      this.database.prepare("INSERT INTO memory_session_visibility(session_id, executor_bot_id, memory_id) VALUES (?, ?, ?)")
+        .run(sessionId, botId, id);
+    }
     return this.getMemory(id);
+  }
+
+  private memorySourceSession(botId: string, sourceEntryId?: string | null): Session {
+    if (!sourceEntryId) return this.getMainSession(botId);
+    const source = this.getTranscriptEntry(sourceEntryId);
+    const session = this.getSession(source.sessionId);
+    this.assertSessionExecutor(session.id, botId);
+    if (source.generation !== session.generation) throw new AevorenBotError("INVALID_REQUEST");
+    return session;
+  }
+
+  private memoryVisibleInSession(memory: MemoryItem, botId: string, sessionId: string): boolean {
+    if (memory.scope === "bot") {
+      return memory.botId === botId && Boolean(this.database.prepare(
+        "SELECT 1 FROM memory_session_visibility WHERE session_id = ? AND executor_bot_id = ? AND memory_id = ?",
+      ).get(sessionId, botId, memory.id));
+    }
+    return this.getMemoryCaptureScopes(botId, sessionId).some((scope) => scope.scope === memory.scope && scope.scopeKey === memory.scopeKey);
   }
 
   updateMemory(
@@ -3380,18 +3711,13 @@ export class AppRepository {
     supersedesMemoryId?: string | null;
     expiresAt?: string | null;
   }): MemoryProposal | null {
-    const bot = this.getBot(input.botId);
+    this.getBot(input.botId);
     const source = this.getTranscriptEntry(input.sourceEntryId);
     if (source.role !== "user") throw new AevorenBotError("INVALID_REQUEST");
-    const sourceSession = this.getSession(source.sessionId);
-    const belongsToBot = sourceSession.botId === bot.id || Boolean(
-      sourceSession.roomId && this.listRoomMembers(sourceSession.roomId).some((member) => member.botId === bot.id),
-    );
-    if (!belongsToBot) throw new AevorenBotError("INVALID_REQUEST");
+    const sourceSession = this.memorySourceSession(input.botId, source.id);
     const selector = { scope: input.scope, scopeKey: input.scopeKey } as MemoryScopeSelector;
     this.assertMemoryScope(selector);
-    if (input.scope === "bot" && input.scopeKey !== bot.id) throw new AevorenBotError("INVALID_REQUEST");
-    if (input.scope === "workspace" && !(bot.memoryWorkspaceIds ?? []).includes(input.scopeKey)) {
+    if (!this.getMemoryCaptureScopes(input.botId, sourceSession.id).some((scope) => scope.scope === input.scope && scope.scopeKey === input.scopeKey)) {
       throw new AevorenBotError("INVALID_REQUEST");
     }
     const content = normalizeMemoryContent(input.content);
@@ -3400,19 +3726,24 @@ export class AppRepository {
     this.assertMemoryContent(content);
     this.assertMemoryKind(input.kind);
     if (!reason) throw new AevorenBotError("INVALID_REQUEST");
-    const existing = this.database.prepare(
-      "SELECT 1 FROM memory_items WHERE scope = ? AND scope_key = ? AND content_digest = ? AND deleted_at IS NULL",
-    ).get(input.scope, input.scopeKey, contentDigest);
-    if (existing) return null;
-    const pending = this.database.prepare(
-      "SELECT * FROM memory_proposals WHERE scope = ? AND scope_key = ? AND content_digest = ? AND state = 'pending'",
-    ).get(input.scope, input.scopeKey, contentDigest) as MemoryProposalRow | undefined;
-    if (pending) return toMemoryProposal(pending);
     if (input.supersedesMemoryId) {
       const replaced = this.getMemory(input.supersedesMemoryId);
-      if (replaced.deletedAt || replaced.scope !== input.scope || replaced.scopeKey !== input.scopeKey) {
-        throw new AevorenBotError("INVALID_REQUEST");
-      }
+      if (replaced.deletedAt || replaced.scope !== input.scope || replaced.scopeKey !== input.scopeKey ||
+          !this.memoryVisibleInSession(replaced, input.botId, sourceSession.id)) throw new AevorenBotError("INVALID_REQUEST");
+    }
+    const existing = this.database.prepare(
+      `SELECT 1 FROM memory_items WHERE scope = ? AND scope_key = ? AND content_digest = ? AND deleted_at IS NULL
+       AND (scope <> 'bot' OR EXISTS (SELECT 1 FROM memory_session_visibility
+         WHERE memory_id = memory_items.id AND session_id = ? AND executor_bot_id = ?))`,
+    ).get(input.scope, input.scopeKey, contentDigest, sourceSession.id, input.botId);
+    if (existing) return null;
+    const pending = this.database.prepare(
+      `SELECT * FROM memory_proposals WHERE scope = ? AND scope_key = ? AND content_digest = ? AND state = 'pending'
+       AND (scope <> 'bot' OR source_entry_id IN (SELECT id FROM transcript_entries WHERE session_id = ?))`,
+    ).get(input.scope, input.scopeKey, contentDigest, sourceSession.id) as MemoryProposalRow | undefined;
+    if (pending) {
+      const pendingSource = this.getTranscriptEntry(pending.source_entry_id);
+      return pendingSource.sessionId === sourceSession.id ? toMemoryProposal(pending) : null;
     }
     const id = randomUUID();
     const timestamp = now();
@@ -3440,14 +3771,28 @@ export class AppRepository {
         throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: proposal.version });
       }
       if (proposal.state !== "pending") throw new AevorenBotError("MEMORY_PROPOSAL_RESOLVED");
+      const sourceSession = this.memorySourceSession(proposal.botId, proposal.sourceEntryId);
+      if (!this.getMemoryCaptureScopes(proposal.botId, sourceSession.id).some((scope) => scope.scope === proposal.scope && scope.scopeKey === proposal.scopeKey)) {
+        throw new AevorenBotError("INVALID_REQUEST");
+      }
       const content = edit.content ?? proposal.content;
       const kind = edit.kind ?? proposal.kind;
       const expiresAt = edit.expiresAt === undefined ? proposal.expiresAt : edit.expiresAt;
       if (proposal.supersedesMemoryId) {
         const replaced = this.getMemory(proposal.supersedesMemoryId);
-        if (!replaced.deletedAt) this.deleteMemory(replaced.id, replaced.version);
+        if (replaced.deletedAt || replaced.scope !== proposal.scope || replaced.scopeKey !== proposal.scopeKey ||
+            !this.memoryVisibleInSession(replaced, proposal.botId, sourceSession.id)) throw new AevorenBotError("INVALID_REQUEST");
+        const shared = replaced.scope === "bot" && this.database.prepare(
+          "SELECT 1 FROM memory_session_visibility WHERE memory_id = ? AND session_id <> ? LIMIT 1",
+        ).get(replaced.id, sourceSession.id);
+        if (shared) {
+          this.database.prepare("DELETE FROM memory_session_visibility WHERE memory_id = ? AND session_id = ? AND executor_bot_id = ?")
+            .run(replaced.id, sourceSession.id, proposal.botId);
+        } else {
+          this.deleteMemory(replaced.id, replaced.version);
+        }
       }
-      const memory = this.createScopedMemory(
+      const memory = this.insertScopedMemory(
         { scope: proposal.scope, scopeKey: proposal.scopeKey },
         content,
         { kind, expiresAt, source: "model-captured", sourceEntryId: proposal.sourceEntryId },
@@ -3510,16 +3855,21 @@ export class AppRepository {
     this.getWorkspace(selector.scopeKey);
   }
 
-  private assertNoActiveMemoryDuplicate(selector: MemoryScopeSelector, contentDigest: string, excludedId?: string): void {
+  private assertNoActiveMemoryDuplicate(selector: MemoryScopeSelector, contentDigest: string, excludedId?: string, sessionId?: string): void {
     const duplicate = this.database
       .prepare(
         `SELECT 1 FROM memory_items
-         WHERE scope = ? AND scope_key = ? AND content_digest = ? AND deleted_at IS NULL ${excludedId ? "AND id <> ?" : ""}
+         WHERE scope = ? AND scope_key = ? AND content_digest = ? AND deleted_at IS NULL AND id <> ?
+           AND (scope <> 'bot' OR EXISTS (
+             SELECT 1 FROM memory_session_visibility AS visible WHERE visible.memory_id = memory_items.id
+               AND visible.executor_bot_id = ? AND (visible.session_id = ? OR EXISTS (
+                 SELECT 1 FROM memory_session_visibility AS edited WHERE edited.memory_id = ?
+                   AND edited.session_id = visible.session_id AND edited.executor_bot_id = visible.executor_bot_id
+               ))
+           ))
          LIMIT 1`,
       )
-      .get(...(excludedId
-        ? [selector.scope, selector.scopeKey, contentDigest, excludedId]
-        : [selector.scope, selector.scopeKey, contentDigest]));
+      .get(selector.scope, selector.scopeKey, contentDigest, excludedId ?? "", selector.scopeKey, sessionId ?? "", excludedId ?? "");
     if (duplicate) throw new AevorenBotError("MEMORY_DUPLICATE");
   }
 
@@ -3554,8 +3904,10 @@ export class AppRepository {
       }
       if (project && linkedRow && linkedRow.id !== project.id) {
         const hasConversations = this.database.prepare(
-          "SELECT 1 FROM bots WHERE project_id = ? UNION ALL SELECT 1 FROM rooms WHERE project_id = ? LIMIT 1",
-        ).get(linkedRow.id, linkedRow.id);
+          `SELECT 1 FROM bots WHERE project_id = ? UNION ALL SELECT 1 FROM rooms WHERE project_id = ?
+           UNION ALL SELECT 1 FROM conversation_metadata WHERE project_id = ?
+           UNION ALL SELECT 1 FROM legacy_session_scopes WHERE project_id = ? LIMIT 1`,
+        ).get(linkedRow.id, linkedRow.id, linkedRow.id, linkedRow.id);
         if (linkedRow.is_default || hasConversations) throw new AevorenBotError("WORKSPACE_PROJECT_CONFLICT");
         // Merge an empty folder node when the user explicitly links their existing conversations.
         this.database.prepare("DELETE FROM projects WHERE id = ?").run(linkedRow.id);
@@ -3572,6 +3924,18 @@ export class AppRepository {
         ).run(randomUUID(), result.workspace.name.slice(0, 80), result.workspace.id, timestamp, timestamp);
       }
       const linked = this.database.prepare("SELECT * FROM projects WHERE workspace_id = ?").get(result.workspace.id) as ProjectRow;
+      if (project) {
+        const sessions = this.database.prepare("SELECT session_id FROM conversation_metadata WHERE project_id = ?")
+          .all(project.id) as Array<{ session_id: string }>;
+        for (const { session_id: sessionId } of sessions) {
+          this.assertConversationIdle(sessionId);
+          this.configureSessionProject(sessionId, project.id);
+          this.database.prepare("UPDATE conversation_metadata SET version = version + 1 WHERE session_id = ?").run(sessionId);
+          this.database.prepare("UPDATE conversation_scope_versions SET version = version + 1 WHERE session_id = ?").run(sessionId);
+        }
+        this.database.prepare("UPDATE legacy_session_scopes SET workspace_ids_json = ? WHERE project_id = ?")
+          .run(JSON.stringify([result.workspace.id]), project.id);
+      }
       return { ...result, project: toProject(linked) };
     });
   }
@@ -3626,16 +3990,84 @@ export class AppRepository {
   }
 
   listBotWorkspaces(botId: string): Workspace[] {
-    const project = this.getProject(this.getBot(botId).projectId);
-    // Unbound legacy conversations retain their existing folder grants until the user links a folder.
-    return this.listWorkspaces().filter((workspace) => !project.workspaceId || workspace.id === project.workspaceId);
+    return this.listSessionWorkspaces(this.getMainSession(botId).id, botId);
   }
 
   assertBotWorkspaceAccess(botId: string, workspaceId: string): void {
-    this.getWorkspace(workspaceId);
-    const project = this.getProject(this.getBot(botId).projectId);
-    if (project.workspaceId && project.workspaceId !== workspaceId) {
+    this.assertSessionWorkspaceAccess(this.getMainSession(botId).id, botId, workspaceId);
+  }
+
+  getSessionProjectId(sessionId: string): string | null {
+    return this.getConversation(sessionId).projectId;
+  }
+
+  assertSessionExecutor(sessionId: string, executorBotId: string): void {
+    const session = this.getSession(sessionId);
+    this.getBot(executorBotId);
+    if (session.botId === executorBotId) return;
+    if (session.roomId && this.database.prepare("SELECT 1 FROM room_members WHERE room_id = ? AND bot_id = ?")
+      .get(session.roomId, executorBotId)) return;
+    throw new AevorenBotError("INVALID_REQUEST");
+  }
+
+  listSessionWorkspaces(sessionId: string, executorBotId: string): Workspace[] {
+    this.assertSessionExecutor(sessionId, executorBotId);
+    return (this.database.prepare(
+      `SELECT workspaces.* FROM workspaces JOIN session_workspace_grants ON session_workspace_grants.workspace_id = workspaces.id
+       WHERE session_workspace_grants.session_id = ? AND workspaces.removed_at IS NULL ORDER BY workspaces.created_at, workspaces.id`,
+    ).all(sessionId) as WorkspaceRow[]).map(toWorkspace);
+  }
+
+  assertSessionWorkspaceAccess(sessionId: string, executorBotId: string, workspaceId: string, operation?: string): void {
+    this.assertSessionExecutor(sessionId, executorBotId);
+    const workspace = this.getWorkspace(workspaceId);
+    if (!this.database.prepare("SELECT 1 FROM session_workspace_grants WHERE session_id = ? AND workspace_id = ?").get(sessionId, workspaceId)) {
       throw new AevorenBotError("WORKSPACE_PATH_OUTSIDE_ROOT");
+    }
+    if ((operation === "workspace-write" || operation === "write") && !workspace.writeEnabled) {
+      throw new AevorenBotError("WORKSPACE_WRITE_NOT_ENABLED");
+    }
+    if (operation === "automation" && !workspace.automationEnabled) throw new AevorenBotError("WORKSPACE_PATH_OUTSIDE_ROOT");
+  }
+
+  setConversationProject(sessionId: string, projectId: string | null, expectedVersion: number): ConversationSummary {
+    return this.transaction(() => {
+      const current = this.getConversation(sessionId);
+      if (current.version !== expectedVersion) {
+        throw new AevorenBotError("CONVERSATION_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+      }
+      this.assertConversationIdle(sessionId);
+      this.configureSessionProject(sessionId, projectId);
+      this.database.prepare("UPDATE conversation_metadata SET version = version + 1 WHERE session_id = ?").run(sessionId);
+      this.database.prepare("UPDATE conversation_scope_versions SET version = version + 1 WHERE session_id = ?").run(sessionId);
+      return this.getConversation(sessionId);
+    });
+  }
+
+  private configureSessionProject(sessionId: string, projectId: string | null, grantWorkspace = true): void {
+    const project = projectId ? this.getProject(projectId) : null;
+    this.database.prepare("UPDATE conversation_metadata SET project_id = ? WHERE session_id = ?").run(projectId, sessionId);
+    this.database.prepare("DELETE FROM session_workspace_grants WHERE session_id = ?").run(sessionId);
+    if (grantWorkspace && project?.workspaceId) {
+      this.getWorkspace(project.workspaceId);
+      this.database.prepare("INSERT INTO session_workspace_grants(session_id, workspace_id) VALUES (?, ?)").run(sessionId, project.workspaceId);
+    }
+  }
+
+  private assertRuntimeSessionScope(runtimeRunId: string): void {
+    const scope = this.database.prepare(
+      `SELECT runtime_session_scopes.scope_version, conversation_scope_versions.version
+       FROM runtime_runs JOIN runtime_session_scopes ON runtime_session_scopes.runtime_run_id = runtime_runs.id
+       JOIN conversation_scope_versions ON conversation_scope_versions.session_id = runtime_runs.session_id WHERE runtime_runs.id = ?`,
+    ).get(runtimeRunId) as { scope_version: number; version: number } | undefined;
+    if (!scope || scope.scope_version !== scope.version) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+  }
+
+  private assertToolSessionScope(invocation: Pick<ToolInvocation, "sessionId" | "executorBotId" | "runtimeRunId" | "workspaceId" | "toolKind">): void {
+    this.assertSessionExecutor(invocation.sessionId, invocation.executorBotId);
+    this.assertRuntimeSessionScope(invocation.runtimeRunId);
+    if (invocation.workspaceId) {
+      this.assertSessionWorkspaceAccess(invocation.sessionId, invocation.executorBotId, invocation.workspaceId, invocation.toolKind);
     }
   }
 
@@ -3719,7 +4151,12 @@ export class AppRepository {
       throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
     }
     const session = this.getSession(runtime.sessionId);
+    this.assertToolSessionScope({ sessionId: session.id, executorBotId: runtime.executorBotId,
+      runtimeRunId: runtime.id, workspaceId: toolWorkspaceId(parsed.tool), toolKind: parsed.tool.kind });
     const commandDigest = digestMessage(canonicalToolCommand(parsed));
+    if (this.database.prepare("SELECT 1 FROM retired_conversation_tools WHERE idempotency_key = ?").get(parsed.idempotencyKey)) {
+      throw new AevorenBotError("TOOL_IDEMPOTENCY_CONFLICT");
+    }
     const existingByKey = this.database
       .prepare("SELECT * FROM tool_invocations WHERE idempotency_key = ?")
       .get(parsed.idempotencyKey) as ToolInvocationRow | undefined;
@@ -3896,6 +4333,8 @@ export class AppRepository {
         return;
       }
 
+      if (resolution === "allow-once") this.assertToolSessionScope(invocation);
+
       const approvalState = resolution === "allow-once" ? "allowed" : "denied";
       const invocationState = resolution === "allow-once" ? "approved" : "denied";
       const approvalUpdate = this.database
@@ -3932,6 +4371,7 @@ export class AppRepository {
       throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     if (state === "dispatching") {
+      this.assertToolSessionScope(current);
       const approval = this.getApprovalRequest(current.approvalRequestId);
       if (
         approval.state !== "allowed" ||
@@ -4001,11 +4441,12 @@ export class AppRepository {
     return this.getToolInvocation(id);
   }
 
-  projectBotCatalog(executorBotId: string): { projectId: string; bots: Array<Pick<Bot, "id" | "name" | "label" | "description">> } {
-    const projectId = this.getBot(executorBotId).projectId;
+  projectBotCatalog(executorBotId: string, sessionId = this.getMainSession(executorBotId).id): { projectId: string | null; bots: Array<Pick<Bot, "id" | "name" | "label" | "description">> } {
+    this.assertSessionExecutor(sessionId, executorBotId);
+    const projectId = this.getSessionProjectId(sessionId);
     return {
       projectId,
-      bots: this.listBots().filter((bot) => bot.projectId === projectId && bot.hiddenAt === null)
+      bots: this.listBots()
         .map(({ id, name, label, description }) => ({ id, name, label, description })),
     };
   }
@@ -4014,11 +4455,13 @@ export class AppRepository {
     const invocation = this.getToolInvocation(id);
     const resourceId = invocation.resultMetadata?.resourceId;
     if (invocation.state !== "succeeded" || typeof resourceId !== "string") throw new AevorenBotError("TOOL_STATE_INVALID");
-    const owner = this.getBot(invocation.executorBotId);
+    this.assertToolSessionScope(invocation);
+    const projectId = this.getSessionProjectId(invocation.sessionId);
     const resource = invocation.toolKind === "bot-create" ? this.getBot(resourceId) : this.getRoom(resourceId);
-    if (resource.projectId !== owner.projectId) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
-    const metadata = { kind: invocation.toolKind, resourceId, projectId: resource.projectId, name: resource.name, reused: true };
-    const content = JSON.stringify({ ok: true, disposition: "existing", kind: invocation.toolKind, resource: { id: resource.id, name: resource.name, projectId: resource.projectId } });
+    const resourceSession = invocation.toolKind === "bot-create" ? this.getMainSession(resourceId) : this.getRoomMainSession(resourceId);
+    if (this.getSessionProjectId(resourceSession.id) !== projectId) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
+    const metadata = { kind: invocation.toolKind, resourceId, projectId, name: resource.name, reused: true };
+    const content = JSON.stringify({ ok: true, disposition: "existing", kind: invocation.toolKind, resource: { id: resource.id, name: resource.name, projectId } });
     return { content, metadata };
   }
 
@@ -4029,6 +4472,8 @@ export class AppRepository {
       const approval = this.getApprovalRequest(invocation.approvalRequestId);
       if (approval.state !== "allowed" || approval.argumentsDigest !== invocation.commandDigest) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
       const owner = this.getBot(invocation.executorBotId);
+      this.assertToolSessionScope(invocation);
+      const projectId = this.getSessionProjectId(invocation.sessionId);
       const runtime = this.getRuntimeRun(invocation.runtimeRunId);
       if (!["running", "streaming"].includes(runtime.state)) throw new AevorenBotError("TOOL_STATE_INVALID");
       const previous = this.database.prepare(
@@ -4052,15 +4497,14 @@ export class AppRepository {
       let resource: Bot | Room;
       if (tool.kind === "bot-create") {
         if (containsLikelySecret(JSON.stringify(tool))) throw new AevorenBotError("PROJECT_PROFILE_SENSITIVE");
-        resource = this.insertBot(owner.projectId, { ...tool, modelSelection: owner.modelSelection, mcpServerIds: owner.mcpServerIds }).bot;
+        resource = this.insertBot(projectId, { ...tool, modelSelection: owner.modelSelection, mcpServerIds: owner.mcpServerIds }, false).bot;
       } else if (tool.kind === "room-create") {
-        if (tool.memberBotIds.some((botId) => this.getBot(botId).projectId !== owner.projectId)) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
-        resource = this.insertRoom({ ...tool, projectId: owner.projectId }).room;
+        resource = this.insertRoom({ ...tool, projectId: projectId ?? undefined }).room;
       } else {
         throw new AevorenBotError("INVALID_REQUEST");
       }
-      const metadata = { kind: tool.kind, resourceId: resource.id, projectId: resource.projectId, name: resource.name, reused: false };
-      const content = JSON.stringify({ ok: true, disposition: "created", kind: tool.kind, resource: { id: resource.id, name: resource.name, projectId: resource.projectId } });
+      const metadata = { kind: tool.kind, resourceId: resource.id, projectId, name: resource.name, reused: false };
+      const content = JSON.stringify({ ok: true, disposition: "created", kind: tool.kind, resource: { id: resource.id, name: resource.name, projectId } });
       return { invocation: this.completeToolInvocation(id, digestMessage(content), metadata), content };
     });
   }
@@ -4207,26 +4651,20 @@ export class AppRepository {
   }
 
   setBotPinned(id: string, pinned: boolean): Bot {
-    const result = this.database
-      .prepare("UPDATE bots SET pinned_at = ?, hidden_at = CASE WHEN ? = 1 THEN NULL ELSE hidden_at END WHERE id = ? AND deleted_at IS NULL")
-      .run(pinned ? now() : null, pinned ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("BOT_NOT_FOUND");
+    this.getBot(id);
+    this.setConversationPinned(this.getMainSession(id).id, pinned);
     return this.getBot(id);
   }
 
   setBotUnread(id: string, unread: boolean): Bot {
-    const result = this.database
-      .prepare("UPDATE bots SET has_unread = ? WHERE id = ? AND deleted_at IS NULL")
-      .run(unread ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("BOT_NOT_FOUND");
+    this.getBot(id);
+    this.setConversationUnread(this.getMainSession(id).id, unread);
     return this.getBot(id);
   }
 
   setBotHidden(id: string, hidden: boolean): Bot {
-    const result = this.database
-      .prepare("UPDATE bots SET hidden_at = ?, pinned_at = CASE WHEN ? = 1 THEN NULL ELSE pinned_at END WHERE id = ? AND deleted_at IS NULL")
-      .run(hidden ? now() : null, hidden ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("BOT_NOT_FOUND");
+    this.getBot(id);
+    this.setConversationHidden(this.getMainSession(id).id, hidden);
     return this.getBot(id);
   }
 
@@ -4308,6 +4746,7 @@ export class AppRepository {
     this.database.prepare("DELETE FROM memory_items WHERE bot_id = ?").run(id);
     this.database.prepare("DELETE FROM sessions WHERE bot_id = ?").run(id);
     this.database.prepare("DELETE FROM room_members WHERE bot_id = ?").run(id);
+    this.database.prepare("UPDATE rooms SET lead_bot_id = NULL WHERE lead_bot_id = ?").run(id);
 
     for (const roomId of affectedRoomIds) {
       const members = this.database
@@ -4344,13 +4783,13 @@ export class AppRepository {
 
   listRooms(includeArchived = false): Room[] {
     const rows = this.database
-      .prepare(`SELECT * FROM rooms ${includeArchived ? "" : "WHERE archived_at IS NULL"} ORDER BY created_at ASC`)
+      .prepare(`${ROOM_SELECT} ${includeArchived ? "" : "WHERE rooms.archived_at IS NULL"} ORDER BY rooms.created_at ASC`)
       .all() as RoomRow[];
     return rows.map(toRoom);
   }
 
   getRoom(id: string): Room {
-    const row = this.database.prepare("SELECT * FROM rooms WHERE id = ?").get(id) as RoomRow | undefined;
+    const row = this.database.prepare(`${ROOM_SELECT} WHERE rooms.id = ?`).get(id) as RoomRow | undefined;
     if (!row) throw new AevorenBotError("ROOM_NOT_FOUND");
     return toRoom(row);
   }
@@ -4363,19 +4802,22 @@ export class AppRepository {
     this.getRoom(roomId);
     const rows = this.database
       .prepare(
-        `SELECT room_members.room_id, room_members.bot_id, room_members.position, bots.*
+        `SELECT room_members.room_id, room_members.bot_id, room_members.position, bots.*, ${CONVERSATION_SIDEBAR_COLUMNS}
          FROM room_members INNER JOIN bots ON bots.id = room_members.bot_id
+         LEFT JOIN sessions ON sessions.bot_id = bots.id AND sessions.kind = 'MAIN'
+         LEFT JOIN conversation_metadata ON conversation_metadata.session_id = sessions.id
          WHERE room_members.room_id = ? ORDER BY room_members.position ASC`,
       )
       .all(roomId) as RoomMemberRow[];
     return rows.map((row) => ({ roomId: row.room_id, botId: row.bot_id, position: row.position, bot: toBot(row) }));
   }
 
-  createContentTeamTemplate(projectId = DEFAULT_PROJECT_ID): TeamTemplateCreateResult {
-    this.getProject(projectId);
-    const settingKey = projectId === DEFAULT_PROJECT_ID
+  createContentTeamTemplate(projectId?: string): TeamTemplateCreateResult {
+    const identityProjectId = projectId ?? DEFAULT_PROJECT_ID;
+    this.getProject(identityProjectId);
+    const settingKey = identityProjectId === DEFAULT_PROJECT_ID
       ? "template.content-team.roomId"
-      : `template.content-team.roomId.${projectId}`;
+      : `template.content-team.roomId.${identityProjectId}`;
     const existingRoomId = this.getSetting(settingKey)?.value;
     if (existingRoomId) {
       try {
@@ -4439,15 +4881,17 @@ export class AppRepository {
         const botId = botIds[index]!;
         const avatar = avatars[index]!;
         insertBot.run(
-          botId, projectId, role.name, role.label, role.description, role.instructions,
+          botId, identityProjectId, role.name, role.label, role.description, role.instructions,
           modelSelection.providerInstanceId, modelSelection.modelId, avatar.shape, avatar.color, timestamp, timestamp,
         );
-        insertSession.run(randomUUID(), botId, timestamp, timestamp);
+        const sessionId = randomUUID();
+        insertSession.run(sessionId, botId, timestamp, timestamp);
+        this.configureSessionProject(sessionId, projectId ?? null);
       });
       this.database.prepare(
         `INSERT INTO rooms(id, project_id, name, description, version, membership_version, archived_at, created_at, updated_at)
          VALUES (?, ?, '自媒体内容团队', ?, 1, 1, NULL, ?, ?)`,
-      ).run(roomId, projectId, description, timestamp, timestamp);
+      ).run(roomId, identityProjectId, description, timestamp, timestamp);
       const insertMember = this.database.prepare(
         "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
       );
@@ -4456,6 +4900,7 @@ export class AppRepository {
         `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
          VALUES (?, NULL, ?, 'MAIN', 1, 0, ?, ?)`,
       ).run(roomSessionId, roomId, timestamp, timestamp);
+      this.configureSessionProject(roomSessionId, projectId ?? null);
       this.database.prepare(
         `INSERT INTO app_settings(key, value, encrypted, updated_at) VALUES (?, ?, 0, ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, encrypted = 0, updated_at = excluded.updated_at`,
@@ -4465,11 +4910,11 @@ export class AppRepository {
     return { disposition: "created", bots: room.members.map((member) => member.bot), room };
   }
 
-  createRoom(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string }): RoomDetail {
+  createRoom(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string; leadBotId?: string | null }): RoomDetail {
     return this.transaction(() => this.insertRoom(input));
   }
 
-  private insertRoom(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string }): RoomDetail {
+  private insertRoom(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string; leadBotId?: string | null }): RoomDetail {
     if (input.memberBotIds.length < 2 || input.memberBotIds.length > 6 || new Set(input.memberBotIds).size !== input.memberBotIds.length) {
       throw new AevorenBotError("ROOM_MEMBER_INVALID");
     }
@@ -4477,9 +4922,11 @@ export class AppRepository {
     const sessionId = randomUUID();
     const timestamp = now();
     const bots = input.memberBotIds.map((id) => this.getBot(id));
-    const projectId = bots[0]!.projectId;
-    if (input.projectId && input.projectId !== projectId) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
-    if (bots.some((bot) => bot.projectId !== projectId)) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
+    if (input.leadBotId != null && !input.memberBotIds.includes(input.leadBotId)) {
+      throw new AevorenBotError("ROOM_MEMBER_INVALID");
+    }
+    const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
+    this.getProject(projectId);
     const generatedName = bots.map((bot) => bot.name).join("、").replace(/\s+/g, " ").trim().slice(0, 72);
     this.database
       .prepare(
@@ -4491,21 +4938,30 @@ export class AppRepository {
       "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
     );
     input.memberBotIds.forEach((botId, position) => insertMember.run(roomId, botId, position, timestamp));
+    this.database.prepare("UPDATE rooms SET lead_bot_id = ? WHERE id = ?").run(input.leadBotId ?? null, roomId);
     this.database
       .prepare(
         `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
          VALUES (?, NULL, ?, 'MAIN', 1, 0, ?, ?)`,
       )
       .run(sessionId, roomId, timestamp, timestamp);
+    this.configureSessionProject(sessionId, input.projectId ?? null);
     return this.getRoomDetail(roomId);
   }
 
   updateRoom(id: string, expectedVersion: number, patch: RoomPatch): Room {
+    const room = this.getRoom(id);
+    if (patch.leadBotId !== undefined && patch.leadBotId !== room.leadBotId) {
+      this.assertConversationIdle(this.getRoomMainSession(id).id, "ROOM_BUSY");
+      if (patch.leadBotId !== null && !this.listRoomMembers(id).some((member) => member.botId === patch.leadBotId)) {
+        throw new AevorenBotError("ROOM_MEMBER_INVALID");
+      }
+    }
     const fields = (Object.keys(patch) as Array<keyof RoomPatch>)
       .filter((field) => patch[field] !== undefined)
-      .map((field) => [field, patch[field] as string] as const);
+      .map((field) => [field, patch[field] as string | null] as const);
     if (fields.length === 0) return this.getRoom(id);
-    const columns: Record<keyof RoomPatch, string> = { name: "name", description: "description" };
+    const columns: Record<keyof RoomPatch, string> = { name: "name", description: "description", leadBotId: "lead_bot_id" };
     const result = this.database
       .prepare(
         `UPDATE rooms SET ${fields.map(([field]) => `${columns[field]} = ?`).join(", ")},
@@ -4533,30 +4989,19 @@ export class AppRepository {
 
   setRoomPinned(id: string, pinned: boolean): Room {
     this.getRoom(id);
-    const timestamp = now();
-    const result = this.database
-      .prepare("UPDATE rooms SET pinned_at = ?, updated_at = ? WHERE id = ?")
-      .run(pinned ? timestamp : null, timestamp, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
+    this.setConversationPinned(this.getRoomMainSession(id).id, pinned);
     return this.getRoom(id);
   }
 
   setRoomUnread(id: string, unread: boolean): Room {
     this.getRoom(id);
-    const result = this.database
-      .prepare("UPDATE rooms SET has_unread = ? WHERE id = ?")
-      .run(unread ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
+    this.setConversationUnread(this.getRoomMainSession(id).id, unread);
     return this.getRoom(id);
   }
 
   setRoomHidden(id: string, hidden: boolean): Room {
     this.getRoom(id);
-    const timestamp = now();
-    const result = this.database
-      .prepare("UPDATE rooms SET hidden_at = ?, pinned_at = CASE WHEN ? = 1 THEN NULL ELSE pinned_at END, updated_at = ? WHERE id = ?")
-      .run(hidden ? timestamp : null, hidden ? 1 : 0, timestamp, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
+    this.setConversationHidden(this.getRoomMainSession(id).id, hidden);
     return this.getRoom(id);
   }
 
@@ -4608,9 +5053,8 @@ export class AppRepository {
     this.transaction(() => {
       const room = this.getRoom(roomId);
       const sessionId = this.getRoomMainSession(roomId).id;
-      if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new AevorenBotError("ROOM_BUSY");
-      const bot = this.getBot(botId);
-      if (bot.projectId !== room.projectId) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
+      this.assertConversationIdle(sessionId, "ROOM_BUSY");
+      this.getBot(botId);
       if (room.membershipVersion !== expectedMembershipVersion) {
         throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
       }
@@ -4628,7 +5072,7 @@ export class AppRepository {
     this.transaction(() => {
       const room = this.getRoom(roomId);
       const sessionId = this.getRoomMainSession(roomId).id;
-      if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new AevorenBotError("ROOM_BUSY");
+      this.assertConversationIdle(sessionId, "ROOM_BUSY");
       if (room.membershipVersion !== expectedMembershipVersion) {
         throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
       }
@@ -4636,6 +5080,9 @@ export class AppRepository {
       if (members.length <= 2) throw new AevorenBotError("ROOM_MEMBER_INVALID");
       if (!members.some((member) => member.botId === botId)) throw new AevorenBotError("ROOM_MEMBER_NOT_FOUND");
       this.database.prepare("DELETE FROM room_members WHERE room_id = ? AND bot_id = ?").run(roomId, botId);
+      this.database.prepare(
+        "UPDATE rooms SET lead_bot_id = NULL, version = version + 1 WHERE id = ? AND lead_bot_id = ?",
+      ).run(roomId, botId);
       const remaining = this.database
         .prepare("SELECT bot_id FROM room_members WHERE room_id = ? ORDER BY position ASC")
         .all(roomId) as Array<{ bot_id: string }>;
@@ -4663,7 +5110,10 @@ export class AppRepository {
     const row = this.database
       .prepare("SELECT * FROM sessions WHERE bot_id = ? AND kind = 'MAIN'")
       .get(botId) as SessionRow | undefined;
-    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND", "没有找到该 Bot 的主会话。");
+    if (!row) {
+      this.getBot(botId);
+      return this.initializeMainSession(botId, null);
+    }
     return toSession(row);
   }
 
@@ -4671,14 +5121,150 @@ export class AppRepository {
     const row = this.database
       .prepare("SELECT * FROM sessions WHERE room_id = ? AND kind = 'MAIN'")
       .get(roomId) as SessionRow | undefined;
-    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND", "没有找到该群聊的主会话。");
+    if (!row) {
+      this.getRoom(roomId);
+      return this.initializeMainSession(null, roomId);
+    }
     return toSession(row);
+  }
+
+  private initializeMainSession(botId: string | null, roomId: string | null): Session {
+    const timestamp = now();
+    // A single SQLite statement and its trigger atomically create the session
+    // and metadata, including when the caller already owns a transaction.
+    this.database.prepare(
+      `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+       VALUES (?, ?, ?, 'MAIN', 1, 0, ?, ?) ON CONFLICT DO NOTHING`,
+    ).run(randomUUID(), botId, roomId, timestamp, timestamp);
+    return botId ? this.getMainSession(botId) : this.getRoomMainSession(roomId!);
   }
 
   getSession(sessionId: string): Session {
     const row = this.database.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as SessionRow | undefined;
     if (!row) throw new AevorenBotError("SESSION_NOT_FOUND");
     return toSession(row);
+  }
+
+  listConversations(): ConversationSummary[] {
+    return (this.database.prepare(
+      `${CONVERSATION_SELECT} ORDER BY conversation_metadata.pinned_at DESC,
+       conversation_metadata.last_activity_at DESC, conversation_metadata.session_id ASC`,
+    ).all() as ConversationRow[]).map(toConversation);
+  }
+
+  getConversation(sessionId: string): ConversationSummary {
+    const row = this.database.prepare(`${CONVERSATION_SELECT} WHERE conversation_metadata.session_id = ?`)
+      .get(sessionId) as ConversationRow | undefined;
+    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND");
+    return toConversation(row);
+  }
+
+  setConversationPinned(sessionId: string, pinned: boolean): ConversationSummary {
+    this.database.prepare(
+      `UPDATE conversation_metadata
+       SET pinned_at = ?, hidden_at = CASE WHEN ? = 1 THEN NULL ELSE hidden_at END, version = version + 1
+       WHERE session_id = ?`,
+    ).run(pinned ? now() : null, pinned ? 1 : 0, sessionId);
+    return this.getConversation(sessionId);
+  }
+
+  setConversationUnread(sessionId: string, unread: boolean): ConversationSummary {
+    this.database.prepare(
+      "UPDATE conversation_metadata SET has_unread = ?, version = version + 1 WHERE session_id = ?",
+    ).run(unread ? 1 : 0, sessionId);
+    return this.getConversation(sessionId);
+  }
+
+  setConversationHidden(sessionId: string, hidden: boolean): ConversationSummary {
+    this.database.prepare(
+      `UPDATE conversation_metadata
+       SET hidden_at = ?, pinned_at = CASE WHEN ? = 1 THEN NULL ELSE pinned_at END, version = version + 1
+       WHERE session_id = ?`,
+    ).run(hidden ? now() : null, hidden ? 1 : 0, sessionId);
+    return this.getConversation(sessionId);
+  }
+
+  private assertConversationIdle(sessionId: string, errorCode: "CONVERSATION_BUSY" | "ROOM_BUSY" = "CONVERSATION_BUSY"): void {
+    const session = this.getSession(sessionId);
+    const activeApproval = this.database.prepare(
+        "SELECT 1 FROM approval_requests WHERE session_id = ? AND state = 'pending' LIMIT 1",
+      ).get(sessionId);
+      const activeTool = this.database.prepare(
+        `SELECT 1 FROM tool_invocations WHERE session_id = ?
+         AND state IN ('prepared', 'awaiting-approval', 'approved', 'dispatching', 'running') LIMIT 1`,
+      ).get(sessionId);
+      const activeTurn = this.database.prepare(
+        `SELECT 1 FROM room_turns INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+         WHERE room_batches.session_id = ? AND room_turns.state = 'running' LIMIT 1`,
+      ).get(sessionId);
+      const activeHandoff = this.database.prepare(
+        `SELECT 1 FROM agent_handoffs INNER JOIN room_batches ON room_batches.id = agent_handoffs.run_id
+         WHERE room_batches.session_id = ? AND agent_handoffs.state = 'dispatching' LIMIT 1`,
+      ).get(sessionId);
+      const activeRoutine = session.botId && this.database.prepare(
+        "SELECT 1 FROM routine_runs WHERE bot_id = ? AND state IN ('queued', 'waiting', 'running') LIMIT 1",
+      ).get(session.botId);
+      const pendingSend = this.database.prepare(
+        `SELECT 1 FROM send_journal WHERE session_id = ?
+         AND NOT EXISTS (SELECT 1 FROM retired_conversation_sends WHERE client_nonce = send_journal.client_nonce)
+         AND state IN ('prepared', 'queued', 'dispatching', 'accepted-awaiting-echo')
+         AND NOT EXISTS (SELECT 1 FROM runtime_runs WHERE client_nonce = send_journal.client_nonce)
+         AND NOT EXISTS (SELECT 1 FROM room_batches WHERE client_nonce = send_journal.client_nonce)
+         LIMIT 1`,
+      ).get(sessionId);
+    if (this.getActiveRuntimeRun(sessionId) || this.getActiveRoomBatch(sessionId) || activeApproval || activeTool || activeTurn || activeHandoff || activeRoutine || pendingSend) {
+      throw new AevorenBotError(errorCode);
+    }
+  }
+
+  clearConversation(sessionId: string): Session {
+    return this.transaction(() => {
+      this.assertConversationIdle(sessionId);
+      const timestamp = now();
+      // These journals have no FK, so remove only exact keys owned by this session.
+      this.database.prepare(
+        `DELETE FROM decision_journal
+         WHERE idempotency_key IN (SELECT 'room-route-shadow:' || client_nonce FROM send_journal WHERE session_id = ?)
+            OR idempotency_key IN (SELECT 'room-handoff-shadow:' || id FROM runtime_runs WHERE session_id = ?)
+            OR idempotency_key IN (SELECT 'tool-risk-shadow:' || id FROM tool_invocations WHERE session_id = ?)
+            OR idempotency_key IN (SELECT 'tool-result-quality-shadow:' || id FROM tool_invocations WHERE session_id = ?)`,
+      ).run(sessionId, sessionId, sessionId, sessionId);
+      this.database.prepare(
+        `UPDATE memory_items SET source_entry_id = NULL, version = version + 1, updated_at = ?
+         WHERE source_entry_id IN (SELECT id FROM transcript_entries WHERE session_id = ?)`,
+      ).run(timestamp, sessionId);
+      this.database.prepare(
+        "DELETE FROM memory_proposals WHERE source_entry_id IN (SELECT id FROM transcript_entries WHERE session_id = ?)",
+      ).run(sessionId);
+      // Parent turns and batch trigger messages use RESTRICT; release them before
+      // deleting batches, runtimes and transcript. Cascades remove tool/approval,
+      // handoff and attachment copies, and never touch underlying workspace files.
+      this.database.prepare(
+        `UPDATE room_turns SET parent_turn_id = NULL
+         WHERE batch_id IN (SELECT id FROM room_batches WHERE session_id = ?)`,
+      ).run(sessionId);
+      this.database.prepare("DELETE FROM room_batches WHERE session_id = ?").run(sessionId);
+      this.database.prepare(
+        `INSERT OR IGNORE INTO retired_conversation_tools(idempotency_key, session_id)
+         SELECT idempotency_key, session_id FROM tool_invocations WHERE session_id = ?`,
+      ).run(sessionId);
+      this.database.prepare("DELETE FROM runtime_runs WHERE session_id = ?").run(sessionId);
+      this.database.prepare("DELETE FROM transcript_entries WHERE session_id = ?").run(sessionId);
+      this.database.prepare(
+        `INSERT OR IGNORE INTO retired_conversation_sends(client_nonce, retired_at)
+         SELECT client_nonce, ? FROM send_journal WHERE session_id = ?`,
+      ).run(timestamp, sessionId);
+      this.database.prepare(
+        "UPDATE send_journal SET state = 'cancelled', updated_at = ? WHERE session_id = ?",
+      ).run(timestamp, sessionId);
+      this.database.prepare(
+        "UPDATE sessions SET generation = generation + 1, transcript_cursor = transcript_cursor + 1, updated_at = ? WHERE id = ?",
+      ).run(timestamp, sessionId);
+      this.database.prepare(
+        "UPDATE conversation_metadata SET has_unread = 0, last_activity_at = ?, version = version + 1 WHERE session_id = ?",
+      ).run(timestamp, sessionId);
+      return this.getSession(sessionId);
+    });
   }
 
   getTranscriptCursor(sessionId: string): number {
@@ -4700,8 +5286,9 @@ export class AppRepository {
   getBotForSession(sessionId: string): Bot {
     const row = this.database
       .prepare(
-        `SELECT bots.* FROM bots
+        `SELECT bots.*, ${CONVERSATION_SIDEBAR_COLUMNS} FROM bots
          INNER JOIN sessions ON sessions.bot_id = bots.id
+         LEFT JOIN conversation_metadata ON conversation_metadata.session_id = sessions.id
          WHERE sessions.id = ?`,
       )
       .get(sessionId) as BotRow | undefined;
@@ -4922,6 +5509,14 @@ export class AppRepository {
     const attachmentMetadata = attachments.map(({ content: _content, ...attachment }) => attachment);
     const canonicalTargetIds = input.initialTurns.map((turn) => turn.agentId).toSorted();
     const routingMode = input.routingMode ?? "legacy";
+    const priorRun = this.getRoomBatchByNonce(input.clientNonce);
+    const leadBotId = routingMode === "automatic"
+      ? input.leadBotId === undefined
+        ? (priorRun ? priorRun.leadBotId : this.getRoom(input.roomId).leadBotId) ?? null
+        : input.leadBotId
+      : null;
+    const turnPurpose = (turn: CreateRoomRunInput["initialTurns"][number]): NonNullable<AgentTurn["turnPurpose"]> =>
+      turn.turnPurpose ?? (leadBotId ? "coordinate" : "work");
     const routingReason = input.routingReason?.trim() || null;
     const orchestrationEnabled = input.orchestrationEnabled ?? routingMode !== "legacy";
     const commandTargetIds = routingMode === "automatic" ? [] : canonicalTargetIds;
@@ -4934,6 +5529,9 @@ export class AppRepository {
       input.initialTurns.some((turn) => turn.nonce.trim().length === 0) ||
       !Number.isInteger(input.maxTurns) ||
       input.maxTurns < input.initialTurns.length ||
+      (leadBotId !== null && input.maxTurns < 2) ||
+      input.initialTurns.some((turn) => turnPurpose(turn) === "summary" ||
+        (turnPurpose(turn) === "coordinate" && (!leadBotId || turn.agentId !== leadBotId))) ||
       !Number.isInteger(input.maxHops) ||
       input.maxHops < 0 ||
       !Number.isInteger(input.maxTargetsPerTurn) ||
@@ -4954,9 +5552,9 @@ export class AppRepository {
       if (!existing) throw new AevorenBotError("ROOM_BATCH_NOT_FOUND");
       const turns = this.listRoomTurns(existing.id).filter((turn) => turn.origin === "initial");
       const expectedTurns = input.initialTurns
-        .map((turn) => `${turn.agentId}:${turn.nonce}`)
+        .map((turn) => `${turn.agentId}:${turn.nonce}:${turnPurpose(turn)}`)
         .toSorted();
-      const actualTurns = turns.map((turn) => `${turn.agentId}:${turn.nonce}`).toSorted();
+      const actualTurns = turns.map((turn) => `${turn.agentId}:${turn.nonce}:${turn.turnPurpose}`).toSorted();
       if (input.comparePolicyOnDuplicate && (
         existing.roomId !== input.roomId ||
         existing.sessionId !== input.sessionId ||
@@ -4965,6 +5563,7 @@ export class AppRepository {
         existing.routingMode !== routingMode ||
         existing.routingReason !== routingReason ||
         existing.orchestrationEnabled !== orchestrationEnabled ||
+        existing.leadBotId !== leadBotId ||
         existing.maxTurns !== input.maxTurns ||
         existing.maxHops !== input.maxHops ||
         existing.maxTargetsPerTurn !== input.maxTargetsPerTurn ||
@@ -4987,7 +5586,7 @@ export class AppRepository {
     }
     const members = this.listRoomMembers(room.id);
     const memberById = new Map(members.map((member) => [member.botId, member]));
-    if (input.initialTurns.some((turn) => !memberById.has(turn.agentId))) {
+    if (input.initialTurns.some((turn) => !memberById.has(turn.agentId)) || (leadBotId && !memberById.has(leadBotId))) {
       throw new AevorenBotError("ROOM_MEMBER_INVALID");
     }
     if (this.getActiveRoomBatch(session.id)) throw new AevorenBotError("ROOM_BATCH_BUSY");
@@ -5077,7 +5676,10 @@ export class AppRepository {
           timestamp,
           timestamp,
         );
+        this.database.prepare("UPDATE room_turns SET turn_purpose = ? WHERE id = ?").run(turnPurpose(turn), turnId);
       }
+      this.database.prepare("UPDATE room_batches SET lead_bot_id = ?, summary_state = ? WHERE id = ?")
+        .run(leadBotId, leadBotId ? "pending" : "not-required", runId);
       afterCreate?.({ disposition: "created", run: this.getRoomRun(runId), turns: this.listAgentTurns(runId) });
     });
     return { disposition: "created", run: this.getRoomRun(runId), turns: this.listAgentTurns(runId) };
@@ -5088,6 +5690,10 @@ export class AppRepository {
     handoff: RoomHandoff;
     targetTurn: AgentTurn;
   } {
+    return this.transaction(() => this.insertHandoff(input));
+  }
+
+  private insertHandoff(input: CreateHandoffInput, queuedPlanSource = false): ReturnType<AppRepository["createHandoff"]> {
     if (
       typeof input.task !== "string" ||
       !Array.isArray(input.contextRefs) ||
@@ -5112,6 +5718,9 @@ export class AppRepository {
     const run = this.getRoomRun(input.runId);
     const source = this.getRoomTurn(input.fromTurnId);
     if (source.runId !== run.id) throw new AevorenBotError("AGENT_TURN_CONFLICT");
+    if (source.turnPurpose === "summary" || (run.leadBotId && input.toAgentId === run.leadBotId)) {
+      throw new AevorenBotError("HANDOFF_TARGET_CONFLICT");
+    }
     const target = this.getBot(input.toAgentId);
     const digest = digestHandoff(task, contextRefs);
     const existing = this.getHandoffBySemanticKey(run.id, source.logicalTurnId, target.id, digest, input.visibility);
@@ -5143,7 +5752,7 @@ export class AppRepository {
       throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
     }
     this.assertHandoffContextRefs(run, contextRefs, input.inputGeneration, input.inputSeq);
-    if (run.state !== "running" || source.state !== "running") {
+    if (run.state !== "running" || (source.state !== "running" && !(queuedPlanSource && source.state === "queued"))) {
       throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: source.state });
     }
     if (source.agentId === target.id) throw new AevorenBotError("HANDOFF_CYCLE");
@@ -5166,7 +5775,7 @@ export class AppRepository {
     const targetTurnId = randomUUID();
     const handoffId = randomUUID();
     const timestamp = now();
-    this.transaction(() => {
+    {
       this.database
         .prepare(
           `INSERT INTO room_turns(
@@ -5211,7 +5820,7 @@ export class AppRepository {
           timestamp,
           timestamp,
         );
-    });
+    }
     return {
       disposition: "created",
       handoff: this.getHandoff(handoffId),
@@ -5219,8 +5828,254 @@ export class AppRepository {
     };
   }
 
+  createLeadAssignments(runId: string, fromTurnId: string, assignments: Array<{
+    toAgentId: string;
+    task: string;
+    dependsOnPrevious: boolean;
+  }>): RoomTurn[] {
+    return this.transaction(() => {
+      const run = this.getRoomRun(runId);
+      const source = this.getRoomTurn(fromTurnId);
+      if (!run.leadBotId || run.routingMode !== "automatic" || source.runId !== runId ||
+        source.agentId !== run.leadBotId || source.turnPurpose !== "coordinate") {
+        throw new AevorenBotError("AGENT_TURN_CONFLICT");
+      }
+      const latestTurns = this.latestRoomTurns(runId);
+      if (run.state !== "running" || source.state !== "running" ||
+        latestTurns.find((turn) => turn.logicalTurnId === source.logicalTurnId)?.id !== source.id) {
+        throw new AevorenBotError("RUNTIME_STATE_INVALID");
+      }
+      this.assertRoomRunHardStopAllowsWork(run);
+      if (!Array.isArray(assignments) || assignments.length > this.listRoomMembers(run.roomId).length - 1 ||
+        assignments.some((assignment, index) => typeof assignment.task !== "string" ||
+          typeof assignment.toAgentId !== "string" || typeof assignment.dependsOnPrevious !== "boolean" ||
+          (index === 0 && assignment.dependsOnPrevious)) ||
+        new Set(assignments.map((assignment) => assignment.toAgentId)).size !== assignments.length) {
+        throw new AevorenBotError("INVALID_REQUEST");
+      }
+      const plan = JSON.stringify(assignments.map((assignment) => ({
+        toAgentId: assignment.toAgentId, task: assignment.task.trim(), dependsOnPrevious: assignment.dependsOnPrevious,
+      })));
+      const prior = this.database.prepare(
+        "SELECT lead_assignments_json FROM room_turns WHERE batch_id = ? AND logical_turn_id = ? AND lead_assignments_json IS NOT NULL LIMIT 1",
+      ).get(runId, source.logicalTurnId) as { lead_assignments_json: string } | undefined;
+      if (prior) {
+        if (prior.lead_assignments_json !== plan) throw new AevorenBotError("AGENT_TURN_CONFLICT");
+        if (assignments.length === 0 && run.state === "running" && source.state === "running") {
+          this.markLeadSummaryNotRequired(runId);
+        }
+        return assignments.map((assignment, index) => {
+          const turn = this.getAgentTurnByNonce(runId, assignment.toAgentId, `lead-plan:${source.logicalTurnId}:${index}`);
+          if (!turn) throw new AevorenBotError("AGENT_TURN_CONFLICT");
+          const latest = latestTurns.find((candidate) => candidate.logicalTurnId === turn.logicalTurnId)!;
+          if (!latest.runtimeRunId && ["cancelled", "interrupted"].includes(latest.state)) {
+            const retryId = randomUUID();
+            const timestamp = now();
+            this.database.prepare(
+              `INSERT INTO room_turns(
+                id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+                hop, origin, input_generation, input_seq, position, attempt_no, version, state,
+                prompt_cutoff_seq, created_at, updated_at
+              ) SELECT ?, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, ?,
+                hop, 'retry', input_generation, input_seq, position, attempt_no + 1, 1, 'queued',
+                prompt_cutoff_seq, ?, ? FROM room_turns WHERE id = ?`,
+            ).run(retryId, randomUUID(), timestamp, timestamp, latest.id);
+            this.copyRoomTurnRetryContext(latest, retryId);
+            return this.getRoomTurn(retryId);
+          }
+          return latest;
+        });
+      }
+      const created: RoomTurn[] = [];
+      for (const [index, assignment] of assignments.entries()) {
+        const planSource = created.at(-1) ?? source;
+        const result = this.insertHandoff({
+          runId, fromTurnId: planSource.id, toAgentId: assignment.toAgentId, task: assignment.task,
+          contextRefs: [], visibility: "room", targetTurnNonce: `lead-plan:${source.logicalTurnId}:${index}`,
+          inputGeneration: source.inputGeneration, inputSeq: source.inputSeq,
+        }, index > 0);
+        if (result.targetTurn.nonce !== `lead-plan:${source.logicalTurnId}:${index}`) {
+          throw new AevorenBotError("AGENT_TURN_CONFLICT");
+        }
+        const dependency = assignment.dependsOnPrevious ? created[index - 1]!.logicalTurnId : null;
+        this.database.prepare("UPDATE room_turns SET dependency_logical_turn_id = ? WHERE id = ?")
+          .run(dependency, result.targetTurn.id);
+        created.push(this.getRoomTurn(result.targetTurn.id));
+      }
+      this.database.prepare("UPDATE room_turns SET lead_assignments_json = ? WHERE id = ?").run(plan, source.id);
+      if (assignments.length === 0) this.markLeadSummaryNotRequired(runId);
+      return created;
+    });
+  }
+
+  markRoomCoordinationFailed(runId: string, errorCode: string): RoomRun {
+    const run = this.getRoomRun(runId);
+    if (!run.leadBotId || !errorCode.trim()) throw new AevorenBotError("INVALID_REQUEST");
+    this.database.prepare(
+      "UPDATE room_batches SET coordination_error_code = ?, version = version + 1, updated_at = ? WHERE id = ?",
+    ).run(errorCode, now(), runId);
+    return this.getRoomRun(runId);
+  }
+
+  setRoomTaskRequirementsMet(runId: string, met: boolean): RoomRun {
+    this.getRoomRun(runId);
+    this.database.prepare(
+      `UPDATE room_batches SET coordination_error_code = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND ${met ? "coordination_error_code = 'TASK_REQUIREMENTS_UNMET'" : "coordination_error_code IS NULL"}`,
+    ).run(met ? null : "TASK_REQUIREMENTS_UNMET", now(), runId);
+    return this.getRoomRun(runId);
+  }
+
+  private latestRoomTurns(runId: string): RoomTurn[] {
+    const latest = new Map<string, RoomTurn>();
+    for (const turn of this.listRoomTurns(runId)) {
+      const previous = latest.get(turn.logicalTurnId);
+      if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.logicalTurnId, turn);
+    }
+    return [...latest.values()];
+  }
+
+  private markLeadSummaryNotRequired(runId: string): void {
+    this.database.prepare(
+      `UPDATE room_batches SET summary_state = 'not-required', summary_skip_reason = NULL,
+       version = version + 1, updated_at = ? WHERE id = ? AND summary_state = 'pending'`,
+    ).run(now(), runId);
+  }
+
+  private isLeadDirectAnswer(run: RoomRun, turns: RoomTurn[]): boolean {
+    if (!run.leadBotId || run.summaryState !== "not-required" || turns.length !== 1) return false;
+    const turn = turns[0]!;
+    if (turn.turnPurpose !== "coordinate" || turn.state !== "completed" || turn.agentId !== run.leadBotId) return false;
+    return Boolean(this.database.prepare("SELECT 1 FROM room_turns WHERE id = ? AND lead_assignments_json = '[]'").get(turn.id));
+  }
+
+  private skipLeadSummary(runId: string, reason: string): void {
+    this.database.prepare(
+      `UPDATE room_batches SET summary_state = 'skipped', summary_skip_reason = ?,
+       version = version + 1, updated_at = ? WHERE id = ? AND lead_bot_id IS NOT NULL AND summary_state = 'pending'`,
+    ).run(reason, now(), runId);
+  }
+
+  ensureLeadSummaryTurn(runId: string): RoomTurn | null {
+    return this.transaction(() => {
+      const run = this.getRoomRun(runId);
+      if (!run.leadBotId || run.routingMode !== "automatic") return null;
+      const skipReason = run.windingDown ? "winding-down"
+        : Date.parse(run.deadlineAt) <= Date.now() ? "deadline"
+          : run.state === "cancelled" ? "cancelled" : run.state === "interrupted" ? "interrupted" : null;
+      if (skipReason) {
+        this.skipLeadSummary(runId, skipReason);
+        return null;
+      }
+      if (run.state !== "running") return null;
+      if (run.summaryTurnId && run.summaryState !== "pending") return this.getRoomTurn(run.summaryTurnId);
+      if (run.summaryState !== "pending") return null;
+      const turns = this.latestRoomTurns(runId);
+      if (turns.some((turn) => turn.state === "queued" || turn.state === "running")) return null;
+      if (turns.some((turn) => turn.turnPurpose === "coordinate" && turn.state !== "completed")) {
+        this.skipLeadSummary(runId, "coordination-failed");
+        return null;
+      }
+      const pending = this.database.prepare(
+        "SELECT 1 FROM agent_handoffs WHERE run_id = ? AND state IN ('queued', 'dispatching') LIMIT 1",
+      ).get(runId);
+      if (pending) return null;
+      if (!run.summaryTurnId && run.usedTurns >= run.maxTurns) {
+        this.skipLeadSummary(runId, "max-turns");
+        return null;
+      }
+      this.assertSessionExecutor(run.sessionId, run.leadBotId);
+      const request = this.getTranscriptEntry(run.triggerMessageId);
+      const session = this.getSession(run.sessionId);
+      if (request.sessionId !== run.sessionId || request.generation !== session.generation) {
+        throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      }
+      const id = randomUUID();
+      const timestamp = now();
+      const previousSummary = run.summaryTurnId ? this.getRoomTurn(run.summaryTurnId) : null;
+      this.database.prepare(
+        `INSERT INTO room_turns(
+          id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+          hop, origin, input_generation, input_seq, position, attempt_no, version, state,
+          prompt_cutoff_seq, created_at, updated_at, turn_purpose
+        ) VALUES (?, ?, ?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, ?, 1, 'queued', ?, ?, ?, 'summary')`,
+      ).run(id, runId, run.leadBotId, this.getBot(run.leadBotId).name, previousSummary?.logicalTurnId ?? id,
+        previousSummary ? randomUUID() : `summary:${runId}`, previousSummary ? "retry" : "handoff",
+        session.generation, request.seq, previousSummary?.position ?? this.nextRoomTurnPosition(runId),
+        (previousSummary?.attemptNo ?? 0) + 1, this.getTranscriptHighWater(run.sessionId), timestamp, timestamp);
+      this.database.prepare(
+        "UPDATE room_batches SET summary_state = 'queued', summary_turn_id = ?, version = version + 1, updated_at = ? WHERE id = ?",
+      ).run(id, timestamp, runId);
+      return this.getRoomTurn(id);
+    });
+  }
+
+  getRoomRunSummary(runId: string): RoomRunSummary {
+    const run = this.getRoomRun(runId);
+    if (!run.leadBotId) throw new AevorenBotError("INVALID_REQUEST");
+    this.assertSessionExecutor(run.sessionId, run.leadBotId);
+    const request = this.getTranscriptEntry(run.triggerMessageId);
+    const session = this.getSession(run.sessionId);
+    if (request.sessionId !== run.sessionId || request.generation !== session.generation ||
+      request.role !== "user" || request.status !== "completed") throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const invocations = this.listToolInvocations(run.sessionId);
+    return {
+      runId, leadBotId: run.leadBotId, request: { entryId: request.id, text: request.body },
+      coordinationErrorCode: run.coordinationErrorCode ?? null,
+      results: this.latestRoomTurns(runId).filter((turn) => turn.turnPurpose !== "summary").map((turn) => {
+        let body = "";
+        let assistantEntryId: string | null = null;
+        const artifacts: RoomRunSummary["results"][number]["artifacts"] = [];
+        const tools: NonNullable<RoomRunSummary["results"][number]["tools"]> = [];
+        if (turn.runtimeRunId) {
+          try {
+            const runtime = this.getRuntimeRun(turn.runtimeRunId);
+            this.assertSessionExecutor(run.sessionId, turn.agentId);
+            this.assertRuntimeSessionScope(runtime.id);
+            if (runtime.sessionId !== run.sessionId || runtime.inputGeneration !== session.generation ||
+              runtime.executorBotId !== turn.agentId || runtime.executionKey !== `${runId}:${turn.logicalTurnId}`) {
+              throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+            }
+            const succeeded = invocations.filter((invocation) => invocation.runtimeRunId === turn.runtimeRunId &&
+              invocation.state === "succeeded" && invocation.resultDigest && invocation.finishedAt);
+            for (const invocation of succeeded) {
+              if (invocation.workspaceId) this.assertSessionWorkspaceAccess(run.sessionId, run.leadBotId!, invocation.workspaceId);
+            }
+            if (turn.state === "completed" && runtime.state === "completed") {
+              const source = this.completedReceiptSource(runtime.id, run.sessionId, session.generation);
+              if (source.sourceTurn.id !== turn.id) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+              body = source.assistant.body;
+              assistantEntryId = source.assistant.id;
+            }
+            tools.push(...succeeded.map((invocation) => ({ kind: invocation.toolKind, resultDigest: invocation.resultDigest! })));
+            for (const invocation of invocations) {
+              if (invocation.runtimeRunId !== turn.runtimeRunId || invocation.toolKind !== "workspace-write" || invocation.state !== "succeeded") continue;
+              try {
+                const artifact = this.receiptArtifact(invocation);
+                this.assertSessionWorkspaceAccess(run.sessionId, run.leadBotId!, artifact.workspaceId);
+                artifacts.push({
+                  invocationId: artifact.invocationId, sourceRuntimeRunId: artifact.sourceRuntimeRunId,
+                  workspaceId: artifact.workspaceId, path: artifact.path, sha256: artifact.sha256!, bytes: artifact.bytes!,
+                });
+              } catch { /* Revoked or unverifiable artifacts cannot enter summary context. */ }
+            }
+          } catch { /* A foreign or stale runtime cannot supply summary evidence. */ }
+        }
+        return {
+          turnId: turn.id, logicalTurnId: turn.logicalTurnId, agentId: turn.agentId, agentName: turn.memberNameSnapshot,
+          turnPurpose: turn.turnPurpose === "coordinate" ? "coordinate" : "work", state: turn.state,
+          errorCode: turn.lastErrorCode, outcome: turn.outcome, body, assistantEntryId, artifacts, tools,
+        };
+      }),
+    };
+  }
+
   getSend(clientNonce: string): SendJournalEntry | null {
-    const row = this.database.prepare("SELECT * FROM send_journal WHERE client_nonce = ?").get(clientNonce) as SendRow | undefined;
+    const row = this.database.prepare(
+      `SELECT send_journal.*, retired_conversation_sends.retired_at FROM send_journal
+       LEFT JOIN retired_conversation_sends USING (client_nonce) WHERE send_journal.client_nonce = ?`,
+    ).get(clientNonce) as SendRow | undefined;
+    if (row?.retired_at) throw new AevorenBotError("MESSAGE_RETRY_UNSAFE");
     return row ? toSend(row) : null;
   }
 
@@ -5323,6 +6178,8 @@ export class AppRepository {
     assistant: TranscriptEntry;
   } {
     const source = this.getRuntimeRun(sourceRuntimeRunId);
+    this.assertSessionExecutor(sessionId, source.executorBotId);
+    this.assertRuntimeSessionScope(source.id);
     const sourceTurnRow = this.database.prepare("SELECT id FROM room_turns WHERE runtime_run_id = ? LIMIT 1")
       .get(source.id) as { id: string } | undefined;
     if (
@@ -5352,7 +6209,7 @@ export class AppRepository {
       bytes !== Buffer.byteLength(invocation.arguments.content, "utf8") ||
       sha256 !== createHash("sha256").update(invocation.arguments.content, "utf8").digest("hex")
     ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
-    this.getWorkspace(invocation.workspaceId);
+    this.assertSessionWorkspaceAccess(invocation.sessionId, invocation.executorBotId, invocation.workspaceId);
     return {
       invocationId: invocation.id,
       sourceRuntimeRunId: invocation.runtimeRunId,
@@ -5413,6 +6270,7 @@ export class AppRepository {
   ): Omit<ExecutionEvidenceReceipt, "schemaVersion" | "id" | "targetTurnId" | "createdAt" | "digest"> {
     const batch = this.getRoomRun(target.runId);
     const session = this.getSession(batch.sessionId);
+    this.assertSessionExecutor(session.id, target.agentId);
     if (session.roomId !== batch.roomId || target.inputGeneration !== session.generation) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
     const { source, sourceTurn, assistant } = this.completedReceiptSource(sourceRuntimeRunId, session.id, session.generation);
     const sourceBatch = this.getRoomRun(sourceTurn.runId);
@@ -5441,6 +6299,9 @@ export class AppRepository {
       invocation.resultDigest !== null &&
       invocation.finishedAt !== null
     ));
+    for (const invocation of succeeded) {
+      if (invocation.workspaceId) this.assertSessionWorkspaceAccess(session.id, target.agentId, invocation.workspaceId);
+    }
     const tools = succeeded.map((invocation) => ({
       invocationId: invocation.id,
       sourceRuntimeRunId: invocation.runtimeRunId,
@@ -5610,6 +6471,28 @@ export class AppRepository {
     return row ? toRoomHandoff(row) : null;
   }
 
+  getHandoffDeliveryAttempt(id: string): RoomHandoffView["deliveryAttempt"] {
+    const handoff = this.getHandoff(id);
+    const original = this.getRoomTurn(handoff.targetTurnId);
+    const row = this.database.prepare(
+      "SELECT * FROM room_turns WHERE batch_id = ? AND logical_turn_id = ? ORDER BY attempt_no DESC LIMIT 1",
+    ).get(original.batchId, original.logicalTurnId) as RoomTurnRow;
+    const latest = toRoomTurn(row);
+    if (latest.attemptNo <= original.attemptNo) return undefined;
+    const batch = this.getRoomRun(handoff.runId);
+    const runtime = latest.runtimeRunId ? this.getRuntimeRun(latest.runtimeRunId) : null;
+    const matchingRuntime = runtime && runtime.sessionId === batch.sessionId && runtime.clientNonce === batch.clientNonce &&
+      runtime.executorBotId === latest.agentId && runtime.executionKey === `${batch.id}:${latest.logicalTurnId}` &&
+      runtime.inputGeneration === latest.inputGeneration && runtime.promptManifest.sourceTurnId === latest.id;
+    const acceptedAt = matchingRuntime ? runtime.acceptedAt : null;
+    const state: HandoffState = acceptedAt ? "accepted"
+      : latest.state === "queued" ? "queued"
+        : latest.state === "cancelled" ? "cancelled"
+          : ["failed", "interrupted", "completed"].includes(latest.state) ? "failed" : "dispatching";
+    return { attemptNo: latest.attemptNo, turnId: latest.id, state, acceptedAt,
+      version: latest.version + (runtime?.version ?? 0) };
+  }
+
   isCoordinatedRoomRun(runId: string): boolean {
     return this.getRoomRun(runId).orchestrationEnabled;
   }
@@ -5739,6 +6622,12 @@ export class AppRepository {
     }
     if (this.getRoom(run.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     this.assertRoomTurnMembershipAllowsRetry(run, turn);
+    if (turn.dependencyLogicalTurnId) {
+      const dependency = this.latestRoomTurns(run.id).find((candidate) => candidate.logicalTurnId === turn.dependencyLogicalTurnId);
+      if (!dependency || dependency.state !== "completed" || dependency.outcome?.kind === "skipped") {
+        throw new AevorenBotError("ROOM_DEPENDENCY_FAILED");
+      }
+    }
     return turn;
   }
 
@@ -5753,7 +6642,7 @@ export class AppRepository {
     const count = this.database
       .prepare("SELECT COUNT(DISTINCT logical_turn_id) AS value FROM room_turns WHERE batch_id = ?")
       .get(run.id) as { value: number };
-    if (Number(count.value) >= run.maxTurns) {
+    if (Number(count.value) >= run.maxTurns - (run.leadBotId && !run.summaryTurnId ? 1 : 0)) {
       throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-turns" });
     }
     if (parent) {
@@ -5790,6 +6679,7 @@ export class AppRepository {
       const latest = this.getRoomBatch(id);
       throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
     }
+    if (state === "cancelled" || state === "interrupted") this.skipLeadSummary(id, state);
     return this.getRoomBatch(id);
   }
 
@@ -5867,6 +6757,11 @@ export class AppRepository {
     if (Number(result.changes) === 0) {
       const latest = this.getRoomTurn(id);
       throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
+    if (current.turnPurpose === "summary") {
+      this.database.prepare(
+        "UPDATE room_batches SET summary_state = ?, summary_turn_id = ?, version = version + 1, updated_at = ? WHERE id = ?",
+      ).run(state, id, timestamp, current.runId);
     }
     return this.getRoomTurn(id);
   }
@@ -6016,9 +6911,60 @@ export class AppRepository {
           timestamp,
           timestamp,
         );
+      this.copyRoomTurnRetryContext(previous, id);
+      if (batch.leadBotId && batch.routingMode === "automatic" && batch.state === "partial" && previous.turnPurpose === "work") {
+        this.retryUnstartedLeadDependents(batch, previous);
+      }
       this.transitionRoomBatch(previous.batchId, "running");
     });
     return this.getRoomTurn(id);
+  }
+
+  private retryUnstartedLeadDependents(batch: RoomBatch, source: RoomTurn): void {
+    const allTurns = this.listRoomTurns(batch.id);
+    const executed = new Set(allTurns.filter((turn) => turn.runtimeRunId !== null || turn.promptCutoffSeq !== null)
+      .map((turn) => turn.logicalTurnId));
+    const resumed = new Set([source.logicalTurnId]);
+    // A failed prerequisite never dispatched these nodes. Preserve their old
+    // attempts and recover only the original dependency chain, not user stops.
+    for (const previous of this.latestRoomTurns(batch.id)) {
+      if (!previous.dependencyLogicalTurnId || !resumed.has(previous.dependencyLogicalTurnId) ||
+          previous.turnPurpose !== "work" || previous.state !== "cancelled" ||
+          previous.lastErrorCode !== "ROOM_DEPENDENCY_FAILED" || previous.outcome?.kind !== "skipped" ||
+          executed.has(previous.logicalTurnId)) continue;
+      this.assertRoomTurnMembershipAllowsRetry(batch, previous);
+      const id = randomUUID();
+      const timestamp = now();
+      this.database.prepare(
+        `INSERT INTO room_turns(
+          id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+          hop, origin, input_generation, input_seq, position, attempt_no, version, state,
+          prompt_cutoff_seq, created_at, updated_at
+        ) SELECT ?, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, ?,
+          hop, 'retry', input_generation, input_seq, position, attempt_no + 1, 1, 'queued',
+          NULL, ?, ? FROM room_turns WHERE id = ?`,
+      ).run(id, randomUUID(), timestamp, timestamp, previous.id);
+      this.copyRoomTurnRetryContext(previous, id);
+      resumed.add(previous.logicalTurnId);
+    }
+  }
+
+  private copyRoomTurnRetryContext(previous: RoomTurn, id: string): void {
+    this.database.prepare(
+      `UPDATE room_turns SET turn_purpose = ?, dependency_logical_turn_id = ?,
+       lead_assignments_json = (SELECT lead_assignments_json FROM room_turns WHERE id = ?) WHERE id = ?`,
+    ).run(previous.turnPurpose ?? "work", previous.dependencyLogicalTurnId ?? null, previous.id, id);
+    if (previous.turnPurpose === "summary") {
+      this.database.prepare(
+        "UPDATE room_batches SET summary_state = 'queued', summary_turn_id = ?, summary_skip_reason = NULL WHERE id = ?",
+      ).run(id, previous.runId);
+    } else {
+      this.database.prepare(
+        `UPDATE room_batches SET summary_state = 'pending', summary_skip_reason = NULL,
+         coordination_error_code = CASE WHEN ? = 'coordinate' THEN NULL ELSE coordination_error_code END
+         WHERE id = ? AND lead_bot_id IS NOT NULL`,
+      ).run(previous.turnPurpose ?? "work", previous.runId);
+    }
   }
 
   continueInterruptedRoomBatch(batchId: string): RoomTurn[] {
@@ -6079,6 +7025,7 @@ export class AppRepository {
           timestamp,
           timestamp,
         );
+        this.copyRoomTurnRetryContext(turn, id);
       }
       this.transitionRoomBatch(batchId, "running");
     });
@@ -6086,20 +7033,27 @@ export class AppRepository {
   }
 
   finishRoomBatchFromTurns(batchId: string): RoomBatch {
-    const turns = this.listRoomTurns(batchId);
-    const latest = new Map<string, RoomTurn>();
-    for (const turn of turns) {
-      const previous = latest.get(turn.logicalTurnId);
-      if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.logicalTurnId, turn);
-    }
-    const states = [...latest.values()].map((turn) => turn.state);
+    const latest = this.latestRoomTurns(batchId);
+    const states = latest.map((turn) => turn.state);
     if (states.some((state) => state === "queued" || state === "running")) return this.getRoomBatch(batchId);
-    const next: RoomBatchState = states.every((state) => state === "completed")
+    let current = this.getRoomBatch(batchId);
+    if (current.state === "cancelled") return current;
+    if (current.leadBotId && current.summaryState === "pending") {
+      const reason = current.windingDown ? "winding-down"
+        : Date.parse(current.deadlineAt) <= Date.now() ? "deadline"
+          : latest.some((turn) => turn.turnPurpose === "coordinate" && turn.state !== "completed") ? "coordination-failed" : null;
+      if (!reason) return current;
+      this.skipLeadSummary(batchId, reason);
+      current = this.getRoomBatch(batchId);
+    }
+    if (current.leadBotId && ["queued", "running"].includes(current.summaryState ?? "")) return current;
+    const leadIncomplete = current.leadBotId && ((current.summaryState !== "completed" && !this.isLeadDirectAnswer(current, latest)) ||
+      current.coordinationErrorCode || latest.some((turn) => turn.outcome?.kind === "skipped"));
+    const next: RoomBatchState = states.every((state) => state === "completed") && !leadIncomplete
       ? "completed"
       : states.every((state) => state === "cancelled")
         ? "cancelled"
         : "partial";
-    const current = this.getRoomBatch(batchId);
     if (current.state === next) return current;
     return this.transitionRoomBatch(batchId, next);
   }
@@ -6243,6 +7197,7 @@ export class AppRepository {
     const input = this.getUserMessage(clientNonce);
     if (this.getActiveRuntimeRun(journal.sessionId)) throw new AevorenBotError("SESSION_BUSY");
     const executorBotId = options.executorBotId ?? this.getBotForSession(journal.sessionId).id;
+    this.assertSessionExecutor(journal.sessionId, executorBotId);
     const executorBot = this.getBot(executorBotId);
     const providerInstanceId = options.providerInstanceId ?? (route === "fake" ? "fake" : executorBot.modelSelection.providerInstanceId);
     const providerModelId = options.providerModelId ?? (route === "fake" ? "" : executorBot.modelSelection.modelId);
@@ -6519,8 +7474,13 @@ export class AppRepository {
           errorCode = "APP_INTERRUPTED";
         }
         updateTurn.run(nextState, errorCode, timestamp, timestamp, turn.id);
+        if (this.getRoomTurn(turn.id).turnPurpose === "summary") {
+          this.database.prepare("UPDATE room_batches SET summary_state = ?, summary_turn_id = ? WHERE id = ?")
+            .run(nextState, turn.id, turn.batch_id);
+        }
       }
       for (const batchId of batchIds) {
+        this.skipLeadSummary(batchId, "interrupted");
         const batch = this.getRoomBatch(batchId);
         if (!["queued", "running"].includes(batch.state)) continue;
         const latest = new Map<string, RoomTurn>();
@@ -6529,7 +7489,9 @@ export class AppRepository {
           if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.logicalTurnId, turn);
         }
         const states = [...latest.values()].map((turn) => turn.state);
-        const batchState: RoomBatchState = states.every((state) => state === "completed")
+        const leadIncomplete = batch.leadBotId && ((batch.summaryState !== "completed" && !this.isLeadDirectAnswer(batch, [...latest.values()])) ||
+          batch.coordinationErrorCode || [...latest.values()].some((turn) => turn.outcome?.kind === "skipped"));
+        const batchState: RoomBatchState = states.every((state) => state === "completed") && !leadIncomplete
           ? "completed"
           : states.every((state) => state === "cancelled")
             ? "cancelled"

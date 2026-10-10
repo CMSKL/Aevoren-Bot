@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AppError, Workspace } from "@shared/contracts";
-import { FolderIcon } from "./Icons";
+import { CloseIcon, FolderIcon } from "./Icons";
 
 type WorkspaceDialogProps = {
   open: boolean;
@@ -75,12 +75,12 @@ export function WorkspaceDialog({ open, workspaceId, onClose }: WorkspaceDialogP
             <h2 id="workspace-dialog-title">工作区权限</h2>
             <p>管理此工作区的文件访问；取消授权不会删除文件、群聊或 Bot。</p>
           </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭工作区权限" disabled={busy !== null}>×</button>
+          <button type="button" className="icon-button dialog-close-button" onClick={onClose} aria-label="关闭工作区权限" title="关闭工作区权限" disabled={busy !== null}><CloseIcon /></button>
         </header>
-        <div className="workspace-list" aria-label="已授权文件夹">
+        <div className="workspace-list settings-list" aria-label="已授权文件夹">
           {visibleWorkspaces.length === 0 ? <div className="workspace-empty">此工作区尚未授权文件夹，可在左侧重新授权。</div> : null}
           {visibleWorkspaces.map((workspace) => (
-            <div className="workspace-row" key={workspace.id}>
+            <div className="workspace-row settings-list-row" key={workspace.id}>
               <span className="workspace-icon" aria-hidden="true"><FolderIcon /></span>
               <div className="workspace-copy">
                 <strong>{workspace.name}</strong>

@@ -1,5 +1,9 @@
 # Configuration
 
+## Local interface preferences
+
+**Settings → General** offers Dark and Daylight themes. Click the personal avatar in the left navigation to change the displayed nickname and image. Selected PNG/JPEG/WebP images are cropped locally to a centered 256×256 PNG and stored with the local UI preferences. They are not sent to a model or uploaded to an account service. Bot portraits remain stable across the list, message, group and detail views without modifying the saved Bot or conversation identity.
+
 ## Model sources
 
 Aevoren Bot's first-phase model scope contains exactly three sources:
@@ -57,6 +61,8 @@ The **Add Web Search** preset creates a disabled Exa Search MCP configuration. A
 
 ## Workspace access
 
+File scope belongs to the conversation, not to an Agent's original project. Bind a folder through **chat details → Current chat workspace**. The same Agent can participate in multiple project groups without gaining their combined permissions. New ordinary chats and copies start without folder grants; project-specific creation grants that selected project's folder. Existing chats retain their previous folder snapshot. Changing scope invalidates old approval and handoff authority, even if the chat later switches back to the original folder.
+
 Workspace access is opt-in. By default Aevoren Bot can only list, search, and read bounded UTF-8 files under roots selected by the user. Per Workspace, the user may additionally enable create-only UTF-8 Markdown/CSV artifacts and may persist automatic approval for those bounded Workspace tools. Writes reject traversal, symlink parents, secrets, oversized content, unsupported extensions, existing targets, overwrite, delete, rename, shell, and unrestricted filesystem access. Every attempt remains in the Tool Journal.
 
 **Settings → General → Automatically approve public read-only tools** separately covers only bounded public web search/fetch, weather, and time. It does not authorize Workspace, clipboard, MCP, external writes, or computer control.
@@ -68,6 +74,8 @@ The public-query approval dialog can enable that same setting only after the use
 The composer can attach up to six bounded text, code, CSV, JSON, YAML, or Markdown files. Main reads the selected files and stores only validated content and metadata linked to the message; arbitrary local paths are never exposed to the Renderer or the model. Binary and unsupported files are rejected in the current release line.
 
 ## Memory
+
+Bot-scoped entries also have an explicit conversation audience. Automatic entries are visible only in their source chat; manual Bot entries default to its private chat. Migration preserves existing visibility without sharing entries with new groups or newly added members. Clearing chat history retains accepted Memory and its audience. A correction proposed in one chat does not replace a legacy entry in other chats. User Memory remains explicitly global, while Workspace Memory requires both the Bot's subscription and the current chat's file authorization.
 
 Long-term Memory can be scoped to the user, one Bot, or an authorized Workspace. After a completed turn, Aevoren may use the selected model to extract up to three durable candidates from the current human message only. Candidates remain pending until the user accepts or edits them in **Settings → Long-term Memory**; rejected, pending, deleted, or expired items never enter a prompt. Manual entries remain immediately active. **Background Memory candidates** can be disabled in the same panel; disabling it prevents the secondary extraction request without changing existing Memory.
 

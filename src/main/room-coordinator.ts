@@ -64,19 +64,23 @@ const EXPECTED_HANDOFF_REJECTIONS = new Set([
 function publicHandoffs(repository: AppRepository, runId: string): RoomHandoffView[] {
   return repository.listHandoffs(runId)
     .filter((handoff) => handoff.visibility === "room")
-    .map(({ id, runId: handoffRunId, fromTurnId, toAgentId, targetTurnId, task, state, version, createdAt, updatedAt, finishedAt }) => ({
-      id,
-      runId: handoffRunId,
-      fromTurnId,
-      toAgentId,
-      targetTurnId,
-      task,
-      state,
-      version,
-      createdAt,
-      updatedAt,
-      finishedAt,
-    }));
+    .map(({ id, runId: handoffRunId, fromTurnId, toAgentId, targetTurnId, task, state, version, createdAt, updatedAt, finishedAt }) => {
+      const deliveryAttempt = repository.getHandoffDeliveryAttempt(id);
+      return {
+        id,
+        runId: handoffRunId,
+        fromTurnId,
+        toAgentId,
+        targetTurnId,
+        task,
+        state,
+        version,
+        createdAt,
+        updatedAt,
+        finishedAt,
+        ...(deliveryAttempt ? { deliveryAttempt } : {}),
+      };
+    });
 }
 
 function publicHandoffRejections(repository: AppRepository, runId: string): RoomHandoffRejectionView[] {
@@ -218,6 +222,11 @@ export class RoomCoordinator {
     return promise;
   }
 
+  assertLeadAvailable(memberBotIds: readonly string[], leadBotId: string): void {
+    if (!memberBotIds.includes(leadBotId)) throw new AevorenBotError("ROOM_LEAD_UNAVAILABLE");
+    this.executor.assertLeadAvailable(leadBotId);
+  }
+
   cancel(batchId: string): RoomBatch {
     const batch = this.repository.getRoomBatch(batchId);
     if (!["queued", "running"].includes(batch.state)) return batch;
@@ -293,6 +302,7 @@ export class RoomCoordinator {
   private async process(batchId: string, onlyTurnIds?: Set<string>, coordinated = false): Promise<void> {
     const batch = this.repository.getRoomBatch(batchId);
     const room = this.repository.getRoom(batch.roomId);
+    const fixedLead = batch.routingMode === "automatic" && Boolean(batch.leadBotId);
     const roomRoster = coordinated
       ? this.repository.listRoomMembers(room.id).map((member) => ({
           id: member.botId,
@@ -303,10 +313,35 @@ export class RoomCoordinator {
       : undefined;
     while (true) {
       if (this.shuttingDown || this.repository.getRoomBatch(batchId).state !== "running") break;
-      const pending = this.repository
+      let pending = this.repository
         .listRoomTurns(batchId)
-        .find((turn) => turn.state === "queued" && this.isInFrontier(turn, onlyTurnIds));
+        .find((turn) => turn.state === "queued" && this.isInFrontier(turn, onlyTurnIds, fixedLead));
+      if (!pending && fixedLead) {
+        try {
+          const summary = this.repository.ensureLeadSummaryTurn(batchId);
+          if (summary?.state === "queued") pending = summary;
+        } catch (error) {
+          this.stopCoordinatedRun(batchId, asAppError(error));
+          break;
+        }
+      }
       if (!pending) break;
+      if (pending.dependencyLogicalTurnId) {
+        const dependency = this.repository.listRoomTurns(batchId)
+          .filter((candidate) => candidate.logicalTurnId === pending.dependencyLogicalTurnId)
+          .sort((left, right) => right.attemptNo - left.attemptNo)[0];
+        if (!dependency || dependency.state !== "completed") {
+          this.repository.transitionRoomTurn(pending.id, "cancelled", {
+            errorCode: "ROOM_DEPENDENCY_FAILED", outcome: { kind: "skipped", errorCode: "ROOM_DEPENDENCY_FAILED" },
+          });
+          const incoming = this.repository.getIncomingHandoff(pending.id);
+          if (incoming && ["queued", "dispatching"].includes(incoming.state)) {
+            this.repository.transitionHandoff(incoming.id, "cancelled", incoming.version);
+          }
+          this.emit(this.repository.getRoomBatch(batchId));
+          continue;
+        }
+      }
       if (coordinated) {
         try {
           if (this.repository.getIncomingHandoff(pending.id)?.visibility === "direct") {
@@ -322,18 +357,33 @@ export class RoomCoordinator {
         (batch.routingMode === "explicit" || batch.routingMode === "everyone") &&
         pending.origin !== "handoff";
       const promptCutoffSeq = pending.promptCutoffSeq ?? (
-        pending.origin === "handoff" || fixedFanout
+        (!fixedLead && pending.origin === "handoff") || fixedFanout
           ? pending.inputSeq
           : this.repository.getTranscriptHighWater(batch.sessionId)
       );
       const incomingBeforeDispatch = this.repository.getIncomingHandoff(pending.id);
-      const sourceBeforeDispatch = incomingBeforeDispatch ? this.repository.getRoomTurn(incomingBeforeDispatch.fromTurnId) : null;
+      let sourceBeforeDispatch = incomingBeforeDispatch ? this.repository.getRoomTurn(incomingBeforeDispatch.fromTurnId) : null;
+      if (fixedLead && sourceBeforeDispatch) {
+        const sourceLogicalId = sourceBeforeDispatch.logicalTurnId;
+        sourceBeforeDispatch = this.repository.listRoomTurns(batchId)
+          .filter((candidate) => candidate.logicalTurnId === sourceLogicalId)
+          .sort((left, right) => right.attemptNo - left.attemptNo)[0]!;
+      }
       let executionReceipt: ReturnType<AppRepository["getExecutionEvidenceReceipt"]>;
       const retryModelSelection = this.getRetryModelSelection(pending);
       let turn: RoomTurn;
       try {
-        executionReceipt = this.repository.getExecutionEvidenceReceipt(pending.id);
-        if (!executionReceipt && sourceBeforeDispatch?.runtimeRunId) {
+        if (fixedLead && sourceBeforeDispatch && incomingBeforeDispatch) {
+          this.assertHandoffApproval(sourceBeforeDispatch, pending.agentId, incomingBeforeDispatch.task);
+        }
+        if (fixedLead && sourceBeforeDispatch && (sourceBeforeDispatch.turnPurpose === "coordinate"
+          ? sourceBeforeDispatch.state !== "completed" || !sourceBeforeDispatch.runtimeRunId ||
+            this.repository.getRuntimeRun(sourceBeforeDispatch.runtimeRunId).state !== "completed"
+          : ["queued", "running"].includes(sourceBeforeDispatch.state))) {
+          throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+        }
+        executionReceipt = fixedLead ? null : this.repository.getExecutionEvidenceReceipt(pending.id);
+        if (!fixedLead && !executionReceipt && sourceBeforeDispatch?.runtimeRunId) {
           executionReceipt = this.repository.createExecutionEvidenceReceipt(pending.id, sourceBeforeDispatch.runtimeRunId);
         }
         if (executionReceipt) {
@@ -374,6 +424,12 @@ export class RoomCoordinator {
             sourceTurnId: turn.id,
             ...(roomRoster ? { roster: roomRoster } : {}),
             orchestrationEnabled: coordinated,
+            ...(fixedLead ? {
+              leadBotId: batch.leadBotId,
+              turnPurpose: turn.turnPurpose ?? "work",
+              maxAssignments: Math.min((roomRoster?.length ?? 1) - 1, batch.maxTurns - 2, batch.maxHops),
+              ...(turn.turnPurpose !== "coordinate" ? { runSummary: this.repository.getRoomRunSummary(batchId) } : {}),
+            } : {}),
           },
           ...(incoming && source
             ? {
@@ -388,9 +444,15 @@ export class RoomCoordinator {
               }
             : {}),
           ...(executionReceipt ? { executionReceipt } : {}),
-          ...(coordinated
+          ...(coordinated && !fixedLead
             ? { onHandoff: (event: Extract<ModelEvent, { type: "handoff" }>) => this.acceptHandoff(batchId, turn.id, event) }
             : {}),
+          ...(fixedLead && turn.turnPurpose === "coordinate" ? {
+            onLeadPlan: (plan: import("./model").RoomLeadPlan) => {
+              this.repository.createLeadAssignments(batchId, turn.id, plan.assignments);
+              this.emit(this.repository.getRoomBatch(batchId));
+            },
+          } : {}),
           onRunCreated: (run) => {
             turn = this.repository.attachRoomTurnRuntime(turn.id, run.id);
           },
@@ -412,6 +474,7 @@ export class RoomCoordinator {
         this.settleHandoff(turn.id, result);
       } catch (error) {
         const appError = asAppError(error);
+        if (fixedLead && turn.turnPurpose === "coordinate") this.failLeadCoordination(turn, appError.code);
         const current = this.repository.getRoomTurn(turn.id);
         if (current.state === "running") {
           this.repository.transitionRoomTurn(turn.id, "failed", {
@@ -461,6 +524,9 @@ export class RoomCoordinator {
         : result.run.state === "interrupted"
           ? "interrupted"
           : "failed";
+    if (turn.turnPurpose === "coordinate" && state !== "completed") {
+      this.failLeadCoordination(turn, result.error?.code ?? "ROOM_LEAD_PLAN_INVALID");
+    }
     this.repository.transitionRoomTurn(turnId, state, {
       errorCode: result.error?.code ?? null,
       outcome: state === "completed"
@@ -472,6 +538,16 @@ export class RoomCoordinator {
             : { kind: "error", ...(result.error ? { errorCode: result.error.code } : {}) },
     });
     this.emit(this.repository.getRoomBatch(turn.batchId), result.error);
+  }
+
+  private failLeadCoordination(turn: RoomTurn, errorCode: string): void {
+    this.repository.markRoomCoordinationFailed(turn.batchId, errorCode);
+    this.repository.cancelOpenHandoffs(turn.batchId);
+    for (const queued of this.repository.listRoomTurns(turn.batchId)) {
+      if (queued.state === "queued") this.repository.transitionRoomTurn(queued.id, "cancelled", {
+        errorCode: "ROOM_DEPENDENCY_FAILED", outcome: { kind: "skipped", errorCode: "ROOM_DEPENDENCY_FAILED" },
+      });
+    }
   }
 
   private emit(batch: RoomBatch, error?: AppError): void {
@@ -515,6 +591,7 @@ export class RoomCoordinator {
       routingMode: existing.routingMode,
       routingReason: existing.routingReason,
       orchestrationEnabled: existing.orchestrationEnabled,
+      leadBotId: existing.leadBotId ?? null,
     });
   }
 
@@ -569,6 +646,8 @@ export class RoomCoordinator {
       label: member.bot.label,
       description: member.bot.description,
     }));
+    const leadBotId = detail.room.leadBotId ?? null;
+    if (leadBotId) this.assertLeadAvailable(roster.map((peer) => peer.id), leadBotId);
     const controller = new AbortController();
     this.routingControllers.add(controller);
     let timedOut = false;
@@ -582,7 +661,9 @@ export class RoomCoordinator {
           reject(new AevorenBotError(timedOut ? "MODEL_ROUTER_TIMEOUT" : "APP_INTERRUPTED"));
         }, { once: true });
       });
-      const selectionPromise = this.executor.selectRoomOwner(command.text, roster, controller.signal);
+      const selectionPromise = leadBotId
+        ? Promise.resolve({ ownerAgentId: leadBotId, reason: "交给固定协调者安排本轮成员任务。" })
+        : this.executor.selectRoomOwner(command.text, roster, controller.signal);
       // Promise.race installs rejection handlers on both inputs. A provider that
       // ignores Abort can settle late, but it can no longer reach persistence.
       const selection: unknown = await Promise.race([selectionPromise, abortGate]);
@@ -599,7 +680,7 @@ export class RoomCoordinator {
       if (!roster.some((peer) => peer.id === values.ownerAgentId)) throw new AevorenBotError("MODEL_ROUTER_INVALID");
       const reason = values.reason.trim();
       if (!reason || reason.length > 240) throw new AevorenBotError("MODEL_ROUTER_INVALID");
-      void this.recordRouteShadow(command, detail, roster, {
+      if (!leadBotId) void this.recordRouteShadow(command, detail, roster, {
         ownerAgentId: values.ownerAgentId,
         reason,
       });
@@ -613,10 +694,11 @@ export class RoomCoordinator {
         maxHops: policy.maxHops ?? DEFAULT_MAX_HOPS,
         maxTargetsPerTurn: policy.maxTargetsPerTurn ?? DEFAULT_MAX_TARGETS_PER_TURN,
         deadlineAt: new Date(Date.now() + deadlineMs).toISOString(),
-        initialTurns: [{ agentId: values.ownerAgentId, nonce: `initial:${command.clientNonce}:${values.ownerAgentId}` }],
+        initialTurns: [{ agentId: values.ownerAgentId, nonce: `initial:${command.clientNonce}:${values.ownerAgentId}`, turnPurpose: leadBotId ? "coordinate" : "work" }],
         routingMode: "automatic",
         routingReason: reason,
         orchestrationEnabled: true,
+        leadBotId,
       });
       if (prepared.disposition === "duplicate") return this.duplicateResult(command, prepared.run);
       this.events.transcript({ sessionId: command.sessionId, entry: this.repository.getUserMessage(command.clientNonce) });
@@ -700,13 +782,7 @@ export class RoomCoordinator {
       }
       if (event.visibility !== "room") throw new AevorenBotError("INVALID_REQUEST");
       const source = this.repository.getRoomTurn(fromTurnId);
-      const sourceBot = this.repository.getBot(source.memberBotId);
-      const targetBot = this.repository.getBot(event.toAgentId);
-      if (sourceBot.name === "选题策划师") {
-        const approved = Boolean(this.repository.getExecutionEvidenceReceipt(source.id)?.approvedBrief);
-        const explicitEvidenceReturn = targetBot.name === "情报侦察员" && /\bRETURN\b|退回|补充(?:证据|线索|来源)|上游.{0,12}(?:修正|补充)/iu.test(event.task);
-        if (!approved && !explicitEvidenceReturn) throw new AevorenBotError("HUMAN_APPROVAL_REQUIRED");
-      }
+      this.assertHandoffApproval(source, event.toAgentId, event.task);
       const created = this.repository.createHandoff({
         runId,
         fromTurnId,
@@ -735,6 +811,14 @@ export class RoomCoordinator {
       }
       throw error;
     }
+  }
+
+  private assertHandoffApproval(source: RoomTurn, targetBotId: string, task: string): void {
+    if (this.repository.getBot(source.memberBotId).name !== "选题策划师") return;
+    const approved = Boolean(this.repository.getExecutionEvidenceReceipt(source.id)?.approvedBrief);
+    const target = this.repository.getBot(targetBotId);
+    const explicitEvidenceReturn = target.name === "情报侦察员" && /\bRETURN\b|退回|补充(?:证据|线索|来源)|上游.{0,12}(?:修正|补充)/iu.test(task);
+    if (!approved && !explicitEvidenceReturn) throw new AevorenBotError("HUMAN_APPROVAL_REQUIRED");
   }
 
   private armDeadline(runId: string, deadlineAt: string): void {
@@ -795,12 +879,13 @@ export class RoomCoordinator {
     this.repository.transitionHandoff(handoff.id, cancelled ? "cancelled" : "failed", handoff.version);
   }
 
-  private isInFrontier(turn: RoomTurn, onlyTurnIds?: Set<string>): boolean {
+  private isInFrontier(turn: RoomTurn, onlyTurnIds?: Set<string>, fixedLead = false): boolean {
     if (!onlyTurnIds) return true;
+    const logicalIds = fixedLead ? new Set([...onlyTurnIds].map((id) => this.repository.getRoomTurn(id).logicalTurnId)) : undefined;
     let current: RoomTurn | null = turn;
     const visited = new Set<string>();
     while (current && !visited.has(current.id)) {
-      if (onlyTurnIds.has(current.id)) return true;
+      if (onlyTurnIds.has(current.id) || logicalIds?.has(current.logicalTurnId)) return true;
       visited.add(current.id);
       current = current.parentTurnId ? this.repository.getRoomTurn(current.parentTurnId) : null;
     }
@@ -865,6 +950,7 @@ export class RoomCoordinator {
       routingMode: "automatic",
       routingReason: `候选 ${command.candidate} 已批准，将已验证的 Brief 交给内容主笔。`,
       orchestrationEnabled: true,
+      leadBotId: null,
     }, command);
     if (prepared.disposition === "duplicate") return {
       clientNonce: command.clientNonce, batchId: prepared.run.id, disposition: "duplicate", state: prepared.run.state,

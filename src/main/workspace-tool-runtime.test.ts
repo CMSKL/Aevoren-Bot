@@ -37,7 +37,7 @@ async function harness(
   const workspaceService = new WorkspaceService(repository);
   const registered = await workspaceService.registerRoot(root);
   const decisions = decisionFactory?.(repository);
-  const created = repository.createBot();
+  const created = repository.createBot(registered.project.id);
   const calls: ChatMessage[][] = [];
   const provider: ModelProvider = {
     async *run(messages, _signal, context) {
@@ -294,8 +294,8 @@ describe("Workspace tool Runtime wiring", () => {
     writeFileSync(join(root, "one.md"), "FIRST_REAL_FILE", "utf8");
     writeFileSync(join(root, "two.md"), "SECOND_REAL_FILE", "utf8");
     const service = new WorkspaceService(repository);
-    await service.registerRoot(root);
-    const created = repository.createBot();
+    const registered = await service.registerRoot(root);
+    const created = repository.createBot(registered.project.id);
     const calls: ChatMessage[][] = [];
     const provider: ModelProvider = {
       async *run(messages, _signal, context) {
@@ -350,7 +350,7 @@ describe("Workspace tool Runtime wiring", () => {
       writeEnabled: true,
       automationEnabled: true,
     });
-    const created = repository.createBot();
+    const created = repository.createBot(registered.project.id);
     repository.updateBot(created.bot.id, created.bot.version, {
       instructions: "每次任务只创建用户指定的一个正式线索文件，成功后停止额外写入。",
     });
@@ -429,7 +429,7 @@ describe("Workspace tool Runtime wiring", () => {
     const service = new WorkspaceService(repository);
     const registered = await service.registerRoot(root);
     repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: true });
-    const created = repository.createBot();
+    const created = repository.createBot(registered.project.id);
     repository.updateBot(created.bot.id, created.bot.version, {
       name: "选题策划师",
       instructions: "只创建唯一 Brief，写入成功后等待人工批准。",
@@ -466,7 +466,7 @@ describe("Workspace tool Runtime wiring", () => {
     const service = new WorkspaceService(repository);
     const registered = await service.registerRoot(root);
     repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: true });
-    const created = repository.createBot();
+    const created = repository.createBot(registered.project.id);
     repository.updateBot(created.bot.id, created.bot.version, { name: "事实编辑" });
     let calls = 0;
     let gateResult = "";
@@ -673,7 +673,7 @@ describe("Workspace tool Runtime wiring", () => {
     const service = new WorkspaceService(repository);
     const registered = await service.registerRoot(root);
     repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: false, automationEnabled: true });
-    const created = repository.createBot();
+    const created = repository.createBot(registered.project.id);
     let round = 0;
     const provider: ModelProvider = {
       async *run(messages, _signal, context) {
@@ -715,8 +715,8 @@ describe("Workspace tool Runtime wiring", () => {
     const root = directory();
     writeFileSync(join(root, "brief.txt"), "NEVER_READ", "utf8");
     const service = new WorkspaceService(repository);
-    const workspace = (await service.registerRoot(root)).workspace;
-    const created = repository.createBot();
+    const { workspace, project } = await service.registerRoot(root);
+    const created = repository.createBot(project.id);
     const pending = vi.fn();
     const provider: ModelProvider = {
       async *run(_messages, _signal, context) {
@@ -741,8 +741,8 @@ describe("Workspace tool Runtime wiring", () => {
     repositories.push(repository);
     const root = directory();
     const service = new WorkspaceService(repository);
-    await service.registerRoot(root);
-    const created = repository.createBot();
+    const registered = await service.registerRoot(root);
+    const created = repository.createBot(registered.project.id);
     let calls = 0;
     const provider: ModelProvider = {
       async *run(_messages, _signal, context) {

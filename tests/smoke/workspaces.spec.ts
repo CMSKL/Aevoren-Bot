@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openBotList, openWorkspaceTab } from "./navigation";
 import { expect, test, _electron as electron, type ElectronApplication } from "@playwright/test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,6 +42,7 @@ test("shows only public Workspace identity and revokes access without touching d
     await page.getByLabel("外观主题").selectOption("dark");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "关闭设置" }).click();
+    await openWorkspaceTab(page);
     const sidebarWorkspaces = page.locator(".sidebar-workspace");
     const workspaceRow = page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` });
     await expect(workspaceRow).toBeVisible();
@@ -77,7 +79,8 @@ test("shows only public Workspace identity and revokes access without touching d
     ), { workspaceId: registered.workspace.id });
     expect(unsafeReveal).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
 
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 640));
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(390, 640));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
     const compactLayout = await dialog.evaluate((element) => {
       const rect = element.getBoundingClientRect();
       return {
@@ -88,7 +91,8 @@ test("shows only public Workspace identity and revokes access without touching d
     expect(compactLayout).toEqual({ withinViewport: true, contentContained: true });
 
     await dialog.getByRole("button", { name: "完成" }).click();
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1440, 900));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440);
     await page.getByRole("button", { name: "新建工作区", exact: true }).click();
     const addedWorkspaceName = workspaceRootToAdd.split(/[\\/]/u).at(-1)!;
     const addedWorkspaceRow = page.getByRole("button", { name: `管理工作区 ${addedWorkspaceName}` });
@@ -101,13 +105,16 @@ test("shows only public Workspace identity and revokes access without touching d
     await expect(page.locator(".bot-action-notice")).toHaveCount(0);
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-added-sidebar.png" });
 
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(390, 844));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
+    await openBotList(page);
     await expect(addedWorkspaceRow).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.locator(".sidebar").screenshot({ path: "/tmp/aevoren-workspace-added-sidebar-compact.png" });
+    await page.getByRole("button", { name: "关闭 Bot 列表", exact: true }).click();
 
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1440, 900));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440);
     await page.getByRole("button", { name: `管理工作区 ${registered.workspace.name}` }).click();
     const reopenedDialog = page.getByRole("dialog", { name: "工作区权限" });
     await reopenedDialog.locator(".workspace-row").filter({ hasText: registered.workspace.name }).getByRole("button", { name: "取消授权" }).click();
@@ -131,17 +138,17 @@ test("shows only public Workspace identity and revokes access without touching d
   }
 });
 
-test("links legacy conversations to a real folder and restores the unified tree after restart", async () => {
+test("links existing project conversations to a real folder and restores the unified tree after restart", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-folder-link-smoke-"));
   const root = join(userDataDir, "团队工作区");
   mkdirSync(root);
   writeFileSync(join(root, "现有文档.md"), "# 保留原文件\n", "utf8");
   const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
-  const first = repository.createBot();
+  const first = repository.createBot(DEFAULT_PROJECT_ID);
   repository.updateBot(first.bot.id, first.bot.version, { name: "研究员" });
-  const second = repository.createBot();
+  const second = repository.createBot(DEFAULT_PROJECT_ID);
   repository.updateBot(second.bot.id, second.bot.version, { name: "编辑" });
-  const room = repository.createRoom({ name: "现有群聊", memberBotIds: [first.bot.id, second.bot.id] });
+  const room = repository.createRoom({ name: "现有群聊", memberBotIds: [first.bot.id, second.bot.id], projectId: DEFAULT_PROJECT_ID });
   const registered = await new WorkspaceService(repository).registerRoot(root);
   repository.setSetting("appearance.theme", "dark", false);
   repository.close();
@@ -152,6 +159,7 @@ test("links legacy conversations to a real folder and restores the unified tree 
     application = await electron.launch({ args: ["."], cwd: process.cwd(), env });
     let page = await application.firstWindow();
     page.on("pageerror", (error) => consoleErrors.push(error.message));
+    await openWorkspaceTab(page);
     await page.getByRole("button", { name: "关联文件夹", exact: true }).click();
     const project = page.locator('.sidebar-project').filter({ has: page.getByRole("button", { name: "团队工作区", exact: true }) });
     await expect(project).toHaveCount(1);
@@ -167,17 +175,15 @@ test("links legacy conversations to a real folder and restores the unified tree 
     application = await electron.launch({ args: ["."], cwd: process.cwd(), env });
     page = await application.firstWindow();
     page.on("pageerror", (error) => consoleErrors.push(error.message));
+    await openWorkspaceTab(page);
     await expect(page.getByRole("listitem", { name: "现有群聊" })).toBeVisible();
     await expect(page.getByRole("listitem", { name: "研究员" })).toBeVisible();
     const roomResult = await page.evaluate((id) => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.rooms.get(id), room.room.id);
     expect(roomResult).toMatchObject({ ok: true, data: { room: { id: room.room.id, projectId: DEFAULT_PROJECT_ID } } });
     for (const width of [1180, 1020, 620, 390]) {
-      await application.evaluate(({ BrowserWindow }, nextWidth) => BrowserWindow.getAllWindows()[0]?.setSize(nextWidth, 844), width);
+      await application.evaluate(({ BrowserWindow }, nextWidth) => BrowserWindow.getAllWindows()[0]?.setContentSize(nextWidth, 844), width);
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
-      if (width <= 1020) {
-        const openSidebar = page.getByRole("button", { name: "打开 Bot 列表" });
-        if (await openSidebar.isVisible() && !(await page.locator(".sidebar").getAttribute("class"))?.includes("mobile-open")) await openSidebar.click();
-      }
+      await openBotList(page);
       await expect(page.getByRole("button", { name: "团队工作区", exact: true })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.locator(".sidebar").screenshot({ path: `/tmp/aevoren-folder-workspace-${width}.png` });

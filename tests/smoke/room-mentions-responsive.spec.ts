@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { closeInspector, openBotList, openInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,9 +61,11 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     });
     await page.locator(".bot-row").filter({ hasText: seeded.roomName }).click();
     await expect(page.getByRole("heading", { name: seeded.roomName })).toBeVisible();
+    await openInspector(page);
     await page.getByRole("button", { name: /管理群聊成员/u }).click();
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
     await expect(page.locator(".room-routing-hint")).toHaveCount(0);
+    await closeInspector(page);
 
     const input = page.getByLabel("消息");
     await input.fill("@");
@@ -161,8 +164,10 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
 
     await mention(page, "研");
     await input.fill("成员变化后不能静默改发给全部成员。");
+    await openInspector(page);
     await page.locator(".room-member-row").filter({ hasText: seeded.botNames[0]! }).getByRole("button", { name: "移除" }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(2);
+    await closeInspector(page);
     await expect(page.getByRole("alert")).toContainText(`@${seeded.botNames[0]} 已不在群聊，请移除后重新选择`);
     const invalidMention = page.getByRole("button", { name: `移除 @${seeded.botNames[0]}` });
     await expect(invalidMention).toHaveAttribute("aria-invalid", "true");
@@ -174,9 +179,11 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
     await input.fill("");
+    await openInspector(page);
     await page.getByLabel("选择要添加的 Bot").selectOption({ label: seeded.botNames[0] });
     await page.getByRole("button", { name: "添加", exact: true }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(3);
+    await closeInspector(page);
 
     for (const [width, height] of [[1440, 900], [1180, 800], [1040, 708], [981, 780], [980, 780], [768, 800], [390, 844]] as const) {
       await application.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]?.setSize(size.width, size.height), { width, height });
@@ -193,7 +200,10 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
       const rect = element.getBoundingClientRect();
       return rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight;
     })).toBe(true);
-    expect(await page.locator(".mention-option").first().evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(40);
+    await page.screenshot({ path: "/tmp/aevoren-bot-room-mentions-narrow.png", fullPage: true });
+    const optionHeight = await page.locator(".mention-option").first().evaluate((element) => element.getBoundingClientRect().height);
+    expect(optionHeight).toBeGreaterThanOrEqual(50);
+    expect(optionHeight).toBeLessThanOrEqual(60);
     const longCandidate = page.locator(".mention-option").filter({ hasText: seeded.botNames[2]! }).locator("strong");
     expect(await longCandidate.evaluate((element) => {
       const rect = element.getBoundingClientRect();
@@ -201,14 +211,13 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
         && rect.right <= window.innerWidth
         && getComputedStyle(element).textOverflow === "ellipsis";
     })).toBe(true);
-    await page.screenshot({ path: "/tmp/aevoren-bot-room-mentions-narrow.png", fullPage: true });
     await input.press("Escape");
 
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await openBotList(page);
     await expect(page.locator(".sidebar")).toBeVisible();
     await assertViewportContained(page);
     await page.getByRole("button", { name: "关闭 Bot 列表" }).click();
-    await page.getByRole("button", { name: "打开 Bot 设置" }).click();
+    await openInspector(page);
     await expect(page.locator(".inspector")).toBeVisible();
     await assertViewportContained(page);
     await page.getByRole("button", { name: "关闭群聊设置" }).click();

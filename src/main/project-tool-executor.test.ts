@@ -77,17 +77,20 @@ describe("project provisioning tools", () => {
     expect(f.repository.getActiveRoomBatch(f.repository.getRoomMainSession(roomId).id)).toBeNull();
   });
 
-  it("does not create before approval or after denial, rejects cross-project members and duplicate members", async () => {
+  it("requires approval, accepts global contacts without inheriting their grants and rejects duplicate members", async () => {
     const f = fixture();
     const pending = f.prepare(profile);
     await expect(f.executor.execute(pending.invocation.id)).rejects.toMatchObject({ code: "TOOL_STATE_INVALID" });
     f.repository.resolveToolApproval(pending.approval.id, pending.approval.version, "deny");
     await expect(f.executor.execute(pending.invocation.id)).rejects.toMatchObject({ code: "TOOL_STATE_INVALID" });
     const other = f.repository.createBot(f.repository.createProject("其他项目").id).bot;
-    await expect(f.execute({ kind: "room-create", name: "越界群", description: "", memberBotIds: [f.created.bot.id, other.id] })).rejects.toMatchObject({ code: "ROOM_PROJECT_MISMATCH" });
+    const globalRoom = await f.execute({ kind: "room-create", name: "全局联系群", description: "", memberBotIds: [f.created.bot.id, other.id] });
+    expect(globalRoom.invocation.state).toBe("succeeded");
     expect(() => f.prepare({ kind: "room-create", name: "重复成员群", description: "", memberBotIds: [f.created.bot.id, f.created.bot.id] })).toThrow();
-    expect(f.repository.listRooms()).toEqual([]);
-    expect(f.repository.projectBotCatalog(f.created.bot.id).bots.map((bot) => bot.id)).not.toContain(other.id);
+    expect(f.repository.listRooms()).toHaveLength(1);
+    const room = f.repository.getRoomDetail(f.repository.listRooms()[0]!.id);
+    expect(f.repository.listSessionWorkspaces(room.session.id, other.id)).toEqual([]);
+    expect(f.repository.projectBotCatalog(f.created.bot.id).bots.map((bot) => bot.id)).toContain(other.id);
   });
 
   it("rolls resource creation back when the success journal cannot commit", async () => {

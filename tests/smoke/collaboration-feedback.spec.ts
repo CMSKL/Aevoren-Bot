@@ -7,19 +7,20 @@ import type { AevorenBotApi, PromptManifest } from "@shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { removeTestDirectory } from "./test-cleanup";
+import { openConversationMenu } from "./navigation";
 
 test("shows contextual approval, failure recovery, and artifact evidence without a persistent stage tracker", async () => {
   test.setTimeout(45_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-workflow-ux-data-"));
   const workspaceRoot = mkdtempSync(join(tmpdir(), "aevoren-workflow-ux-root-"));
   const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite"));
-  const team = repository.createContentTeamTemplate();
+  const registered = await new WorkspaceService(repository).registerRoot(workspaceRoot);
+  const team = repository.createContentTeamTemplate(registered.project.id);
   const planner = team.bots.find((bot) => bot.name === "选题策划师")!;
   mkdirSync(join(workspaceRoot, "02-briefs"));
   const content = `# 候选 A\n标题：证据链设计\n核心角度：真实执行证据\n证据来源：research.md\n风险：样本范围有限\n推荐理由：上下游依据最完整\n\n# 候选 B\n标题：自动接力\n核心角度：跨 Runtime 交接\n\n# 候选 C\n标题：人工门禁\n核心角度：高风险操作控制\n`;
   const longBriefBody = `# 结论\n三个候选 Brief 已写入，等待你批准。\n\n## 候选 A\n标题：证据链设计\n核心角度：真实执行证据\n证据来源：research.md\n风险：样本范围有限\n推荐理由：上下游依据最完整\n\n## 候选 B\n标题：自动接力\n核心角度：跨 Runtime 交接\n\n## 候选 C\n标题：人工门禁\n核心角度：高风险操作控制\n\n# 交付物\n02-briefs/options.md\n\n# 下一步\n请选择候选 A、B 或 C。\n\n# 详细证据\n${"这是用于验证长消息折叠且保持原始内容可访问的真实界面文本。".repeat(45)}\nUNIQUE_LONG_DETAIL_END`;
   writeFileSync(join(workspaceRoot, "02-briefs", "options.md"), content, "utf8");
-  const registered = await new WorkspaceService(repository).registerRoot(workspaceRoot);
   repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: true });
   const clientNonce = randomUUID();
   const roomRun = repository.createRoomRunWithInitialTurns({
@@ -131,9 +132,14 @@ test("shows contextual approval, failure recovery, and artifact evidence without
     await expect(approvalCard.getByRole("radio", { name: /证据链设计/u })).toBeVisible();
     await expect(approvalCard).not.toContainText("这不是文件中的真实候选标题");
     await expect(approvalCard.getByRole("button", { name: "批准并交给主笔", exact: true })).toBeDisabled();
-    await expect(page.getByRole("region", { name: "交付物状态" }).getByText("02-briefs/options.md", { exact: true })).toBeVisible();
-    await expect(page.getByRole("region", { name: "交付物状态" })).toContainText("1 个成果");
-    const artifactsButton = page.getByRole("button", { name: "打开会话成果，共 1 个" });
+    const artifactStatus = page.getByRole("region", { name: "交付物状态" });
+    await expect(artifactStatus.locator(".artifact-card")).toHaveCount(1);
+    await expect(artifactStatus.locator(".artifact-card")).toBeVisible();
+    await expect(artifactStatus).toContainText("options.md");
+    await expect(artifactStatus).toContainText("已保存");
+    await expect(artifactStatus.locator(".artifact-card-path")).toHaveAttribute("title", "02-briefs/options.md");
+    const menu = await openConversationMenu(page);
+    const artifactsButton = menu.getByRole("menuitem", { name: "打开会话成果，共 1 个" });
     await expect(artifactsButton).toBeVisible();
     await artifactsButton.click();
     await expect(page.getByRole("complementary", { name: "会话成果" })).toContainText("options.md");

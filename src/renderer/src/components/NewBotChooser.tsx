@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AppError, Bot } from "@shared/contracts";
+import type { AppError, Bot, ProviderInstanceInfo } from "@shared/contracts";
+import { eligibleRoomLeads } from "../room-leads";
 import { buildBotIdentityMap } from "../bot-identity";
 import { BotAvatarIcon } from "./BotAvatarIcon";
-import { PlusIcon, RoomIcon } from "./Icons";
+import { CloseIcon, PlusIcon, RoomIcon } from "./Icons";
 
 type NewBotChooserProps = {
   bots: Bot[];
@@ -11,7 +12,7 @@ type NewBotChooserProps = {
   error: AppError | null;
   onClose(): void;
   onCreate(): void;
-  onCreateRoom(botIds: string[]): void;
+  onCreateRoom(botIds: string[], leadBotId?: string | null): void;
   onCreateContentTeam(): void;
   onSelect(bot: Bot): void;
 };
@@ -30,14 +31,25 @@ export function NewBotChooser({
   const [query, setQuery] = useState("");
   const [groupMode, setGroupMode] = useState(initialGroupMode);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [providers, setProviders] = useState<ProviderInstanceInfo[]>([]);
+  const [leadChoice, setLeadChoice] = useState("default");
   const createRef = useRef<HTMLButtonElement>(null);
-  const visibleBots = useMemo(() => bots.filter((bot) => bot.hiddenAt === null), [bots]);
+  const visibleBots = bots;
   const filteredBots = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     if (!normalized) return visibleBots;
     return visibleBots.filter((bot) => `${bot.name}\n${bot.label}`.toLocaleLowerCase().includes(normalized));
   }, [query, visibleBots]);
   const botIdentities = useMemo(() => buildBotIdentityMap(visibleBots), [visibleBots]);
+  const eligibleLeads = eligibleRoomLeads(visibleBots.filter(bot => selectedIds.has(bot.id)), providers);
+  const selectedLead = leadChoice === "none" || eligibleLeads.some(bot => bot.id === leadChoice) ? leadChoice : "default";
+
+  useEffect(() => {
+    if (!groupMode) return;
+    let cancelled = false;
+    void window.aevorenBot.providers.list().then(result => { if (!cancelled && result.ok) setProviders(result.data); });
+    return () => { cancelled = true; };
+  }, [groupMode]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
@@ -79,15 +91,15 @@ export function NewBotChooser({
           />
           <button
             type="button"
-            className="icon-button"
+            className="icon-button dialog-close-button"
             aria-label="关闭新聊天"
             disabled={creating}
             onClick={onClose}
           >
-            ×
+            <CloseIcon />
           </button>
         </header>
-        <div className="recipient-options">
+        <div className="recipient-options settings-list">
           {!initialGroupMode ? <button
             ref={createRef}
             className="recipient-option create-option"
@@ -119,7 +131,7 @@ export function NewBotChooser({
             <span className="recipient-option-icon"><RoomIcon /></span>
             <span className="recipient-option-copy"><strong>一键创建内容团队</strong><small>创建研究、策划、写作、审校、复盘 5 个 Bot 与群聊</small></span>
           </button> : null}
-          {initialGroupMode && visibleBots.length < 2 ? <div className="recipient-empty">此项目至少需要 2 个 Bot。请先使用 Bot 标题右侧的 + 创建成员。</div> : null}
+          {initialGroupMode && visibleBots.length < 2 ? <div className="recipient-empty">至少需要 2 个联系人才能创建群聊。请先创建 Bot。</div> : null}
           {filteredBots.map((bot) => {
             const identity = botIdentities.get(bot.id)!;
             return (
@@ -154,6 +166,15 @@ export function NewBotChooser({
             <div className="recipient-empty">没有匹配的现有 Bot。</div>
           ) : null}
         </div>
+        {groupMode ? <label className="field recipient-lead">
+          <span>群协调者</span>
+          <select aria-label="新群协调者" value={selectedLead} disabled={creating} onChange={(event) => setLeadChoice(event.target.value)}>
+            <option value="default">自动设置协调者</option>
+            <option value="none">每轮自动选择负责人</option>
+            {eligibleLeads.map(bot => <option key={bot.id} value={bot.id}>{botIdentities.get(bot.id)?.inline ?? bot.name}</option>)}
+          </select>
+          <small>协调者负责分工与汇总，可在群详情中更换。</small>
+        </label> : null}
         {groupMode ? (
           <footer className="recipient-footer">
             <span>已选择 {selectedIds.size}/6 个 Bot</span>
@@ -161,7 +182,7 @@ export function NewBotChooser({
               className="primary-button"
               type="button"
               disabled={creating || selectedIds.size < 2}
-              onClick={() => onCreateRoom(visibleBots.filter((bot) => selectedIds.has(bot.id)).map((bot) => bot.id))}
+              onClick={() => onCreateRoom(visibleBots.filter((bot) => selectedIds.has(bot.id)).map((bot) => bot.id), selectedLead === "default" ? undefined : selectedLead === "none" ? null : selectedLead)}
             >{creating ? "创建中…" : "创建群聊"}</button>
           </footer>
         ) : null}

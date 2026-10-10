@@ -10,15 +10,18 @@
 
 Start with the [project portal](docs/PORTAL.md), [installation guide](docs/INSTALLATION.md), or [user guide](docs/USER_GUIDE.md).
 
-Aevoren Bot is a local-first desktop workspace for persistent AI Bots and deterministic multi-Bot collaboration. It keeps conversations, explicit Memory, tool approvals, and runtime recovery on the user's computer while allowing the user to choose API, Claude Code, or Codex CLI.
+Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bounded multi-Agent collaboration. Chats, Contacts and Workspaces organize conversations, reusable Bots and local project files. Conversations, reviewed Memory, tool approvals and runtime recovery stay on the user's computer, with API, Claude Code or Codex CLI as the model source.
 
 > **Pre-release status:** signed macOS Beta binaries are distributed through [GitHub Releases](https://github.com/CMSKL/Aevoren-Bot/releases). macOS 13+ on Apple silicon is the signed release target; Windows 10/11 x64 remains in the Windows MVP validation track. Do not treat local unsigned builds as official releases.
 
 ## Highlights
 
 - Reliable streamed conversations backed by SQLite Transcript, Send Journal, stable nonces, idempotent retry, cancellation, and crash recovery.
-- Bounded text/code attachments with validated metadata, prompt-safe ingestion, and user-controlled Markdown result export.
+- Bounded text/code attachments, validated ingestion, and real Markdown/CSV deliverables collected in task details.
+- Independent chat state and Agent identities: recent conversations, global contacts, unread replies, and separate remove-chat, clear-history and delete-contact actions.
 - Direct Bot chats and 2–6 member Rooms with explicit `@Bot`, automatic owner selection, bounded handoff, speaker identity, and loop suppression.
+- Optional fixed group coordinators assign ordered member work and summarize verified results once. Explicit mentions and Everyone remain independent replies; failed work can be retried without repeating completed outputs.
+- Matching Dark and Daylight messenger layouts, editable local personal avatars, stable cartoon-human Bot portraits and on-demand collaboration details attached to each message.
 - First-phase model support for a manually configured OpenAI-compatible API, automatically discovered Claude Code, and automatically discovered Codex CLI.
 - Codex App Server Dynamic Tools routed through Aevoren's explicit Approval and Tool Journal boundary.
 - User-, Bot-, and Workspace-scoped long-term Memory with non-blocking reviewed capture; model suggestions stay pending until the user accepts them.
@@ -36,7 +39,7 @@ Aevoren Bot is a local-first desktop workspace for persistent AI Bots and determ
 | macOS 13+ on Apple silicon | Supported development and release target |
 | Intel macOS | Not tested or released |
 | Windows 10/11 x64 | Windows MVP source/smoke/package target; signed public installer pending certificate setup |
-| Intel macOS / Linux | Not tested or released |
+| Linux | Not tested or released |
 | Mobile | Not implemented |
 
 ## Run from source
@@ -62,14 +65,14 @@ The Fake Provider is deterministic and requires no account or API key. See [Inst
 Open **Settings → Models & CLI**. Aevoren Bot scans common installation locations and `PATH` for supported CLIs and reads only the installation, login, and model information required by the corresponding adapter.
 
 - **API:** OpenAI-compatible Base URL, API Key, model discovery, and real request validation.
-- **Claude Code:** model/login discovery and text conversations; host tools remain unavailable until an equivalent verified protocol is supported.
+- **Claude Code:** model/login discovery and conversations; compatible API-authenticated installations can use six scoped Workspace and public-web tools. Subscription-only OAuth tool mode is not supported yet.
 - **Codex CLI:** model discovery, text conversations, and host Dynamic Tool support.
 
 Other Provider and CLI adapters are outside the first-phase product scope and are not exposed in the model UI.
 
 Saved API keys and OAuth credentials are encrypted by Electron `safeStorage` and are not returned to the Renderer. See [Configuration](docs/CONFIGURATION.md) for MCP, Workspace, Routine, and environment-variable details, and [Memory architecture](docs/MEMORY.md) for reviewed capture and scope rules.
 
-Click **+** beside **Workspace** in the sidebar to select a local folder, which becomes the parent of its Rooms and Bots. Selecting the same folder reuses the workspace; the settings icon beside its name manages that folder's access. Legacy projects can use **Link folder** while preserving their conversations and configuration. Revoking access does not delete local files or conversations.
+Open **Chats** to resume direct or group conversations, **Contacts** to message or manage an Agent, and **Workspaces** to organize project files and related chats. The **+** beside Workspace selects a local folder; choosing the same folder reuses it. Agents can join groups across projects, while each chat has its own file-access scope. New ordinary chats start without a folder; select **Current chat workspace** in chat details to bind one. Existing chats retain their previous authorized-folder snapshot. Removing a chat keeps its history and contact; clearing history preserves the contact, approved Memory and local files.
 
 ## Security model
 

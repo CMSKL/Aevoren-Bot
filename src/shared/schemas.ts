@@ -33,7 +33,8 @@ export const botUpdateSchema = z.object({
 export const botIdSchema = z.string().uuid();
 export const capabilitySnapshotInputSchema = z.object({
   botId: botIdSchema.optional(),
-}).strict().optional();
+  sessionId: z.string().uuid().optional(),
+}).strict().refine((input) => !input.sessionId || Boolean(input.botId), "A conversation capability snapshot requires its executing Bot").optional();
 export const conversationBatchDeleteSchema = z.object({
   botIds: z.array(botIdSchema).max(200),
   roomIds: z.array(z.string().uuid()).max(200),
@@ -103,6 +104,10 @@ export const memoryProposalAcceptSchema = z.object({
   expiresAt: memoryExpiresAtSchema.optional(),
 }).strict();
 export const sessionIdSchema = z.string().uuid();
+export const conversationPinnedSchema = z.object({ sessionId: sessionIdSchema, pinned: z.boolean() }).strict();
+export const conversationUnreadSchema = z.object({ sessionId: sessionIdSchema, unread: z.boolean() }).strict();
+export const conversationHiddenSchema = z.object({ sessionId: sessionIdSchema, hidden: z.boolean() }).strict();
+export const conversationProjectSchema = z.object({ sessionId: sessionIdSchema, projectId: projectIdSchema.nullable(), expectedVersion: z.number().int().positive() }).strict();
 export const nonceSchema = z.string().uuid();
 export const runIdSchema = z.string().uuid();
 export const toolInvocationIdSchema = z.string().uuid();
@@ -125,7 +130,8 @@ export const workspaceRelativePathSchema = z
   .string()
   .max(1_024)
   .superRefine((value, context) => {
-    if (value.startsWith("/") || value.startsWith("./") || value.includes("\\") || value.includes("\0")) {
+    if (value.startsWith("/") || value.startsWith("./") || value.includes("\\") ||
+      [...value].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
       context.addIssue({ code: "custom", message: "Path must be relative and use POSIX separators" });
       return;
     }
@@ -279,6 +285,7 @@ const roomMemberIdsSchema = z.array(botIdSchema).min(2).max(6).refine(
 
 export const roomCreateSchema = z.object({
   projectId: projectIdSchema.optional(),
+  leadBotId: botIdSchema.nullable().optional(),
   memberBotIds: roomMemberIdsSchema,
   name: z.string().trim().min(1).max(72).optional(),
   description: z.string().trim().max(2_000).optional(),
@@ -290,6 +297,7 @@ export const roomUpdateSchema = z.object({
   patch: z.object({
     name: z.string().trim().min(1).max(72).optional(),
     description: z.string().trim().max(2_000).optional(),
+    leadBotId: botIdSchema.nullable().optional(),
   }).refine((patch) => Object.keys(patch).length > 0, "At least one field is required"),
 });
 

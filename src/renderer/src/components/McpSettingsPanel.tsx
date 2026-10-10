@@ -185,9 +185,9 @@ export function McpSettingsPanel({ active }: McpSettingsPanelProps): React.JSX.E
       <p className="settings-security-note">第三方 Server 的只读声明不是安全证明；工具还需逐项信任且每次调用仍需确认。Secret、OAuth Token 和 Client Secret 只写入 Main 的系统安全存储，Renderer 不会读取其值。</p>
 
       {servers.length === 0 ? <div className="workspace-empty">尚未配置 MCP Server。</div> : (
-        <div className="mcp-server-list">
+        <div className="mcp-server-list settings-list">
           {servers.map((server) => (
-            <article className="settings-card mcp-server-card" key={server.id} data-mcp-server={server.name}>
+            <article className="settings-card mcp-server-card settings-list-row" key={server.id} data-mcp-server={server.name}>
               <header>
                 <span><strong>{server.name}</strong><small>{server.transport === "stdio" ? server.command : server.url}</small></span>
                 <span className={`provider-status-pill provider-status-${server.status === "available" ? "ready" : server.status === "needs-auth" ? "unconfigured" : "unavailable"}`}>
@@ -221,7 +221,7 @@ export function McpSettingsPanel({ active }: McpSettingsPanelProps): React.JSX.E
       )}
 
       {editing ? (
-        <div className="settings-card mcp-editor">
+        <div className="settings-card settings-form-group mcp-editor">
           <h3>{editing === "new" ? "添加 MCP Server" : "编辑 MCP Server"}</h3>
           <label className="settings-field-row"><span><strong>名称</strong><small>1～32 位小写字母、数字、下划线或连字符</small></span><input aria-label="MCP 名称" value={draft.name} disabled={editing !== "new"} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} /></label>
           <label className="settings-field-row"><span><strong>连接方式</strong><small>本机进程或远程 HTTPS</small></span><select aria-label="MCP 连接方式" value={draft.transport} onChange={(event) => setDraft((current) => ({ ...current, transport: event.target.value as McpDraft["transport"] }))}><option value="streamable-http">Streamable HTTP</option><option value="stdio">stdio</option></select></label>

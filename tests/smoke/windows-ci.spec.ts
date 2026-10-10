@@ -27,8 +27,9 @@ test("boots Main, Preload and Renderer and completes Windows core IPC flows", as
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   try {
     await page.waitForFunction(() => Boolean(
-      (window as unknown as { aevorenBot?: AevorenBotApi }).aevorenBot && document.body.textContent?.includes("Aevoren Bot"),
+      (window as unknown as { aevorenBot?: AevorenBotApi }).aevorenBot && document.querySelector(".app-shell"),
     ));
+    await expect(page).toHaveTitle("Aevoren Bot");
     const fixture = await page.evaluate(async () => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       const first = await api.bots.create();

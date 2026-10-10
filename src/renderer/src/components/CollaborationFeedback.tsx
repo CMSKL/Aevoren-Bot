@@ -3,6 +3,7 @@ import type { BriefApprovalView, ToolInvocation } from "@shared/contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { briefCandidateOptions, type BriefCandidate } from "../brief-approval-state";
 import { conversationArtifacts, type ConversationArtifact } from "../conversation-view-model";
+import { ArrowRightIcon, ChatIcon, CheckCircleIcon, CheckIcon, DocumentIcon, EyeIcon, WarningIcon } from "./Icons";
 
 export type WorkflowAction =
   | { kind: "approve"; candidate: "A" | "B" | "C"; sourceRuntimeRunId: string; briefInvocationId: string; sha256: string }
@@ -138,10 +139,10 @@ export const ExecutionEvidenceBar = memo(function ExecutionEvidenceBar({
   const externalReads = succeeded.filter((invocation) => ["web-search", "web-fetch", "weather-current", "mcp-call"].includes(invocation.toolKind));
   return (
     <div className="execution-evidence" aria-label="可验证执行状态">
-      <span className={body.trim() ? "verified" : "neutral"}><i aria-hidden="true">◇</i>{body.trim() ? "文字已生成" : "没有文字结果"}<small>非执行证据</small></span>
-      <span className={succeeded.length > 0 ? "verified" : "neutral"}><i aria-hidden="true">✓</i>{succeeded.length > 0 ? `工具成功 ${succeeded.length} 次` : "未执行工具"}</span>
-      <span className={files.length > 0 ? "verified" : "neutral"}><i aria-hidden="true">▣</i>{files.length > 0 ? `文件已保存 ${files.length} 个` : "没有文件写入"}</span>
-      <span className={externalReads.length > 0 ? "verified" : "neutral"}><i aria-hidden="true">↗</i>{externalReads.length > 0 ? `外部读取 ${externalReads.length} 次` : "未执行外部动作"}</span>
+      <span className={body.trim() ? "verified" : "neutral"}><ChatIcon aria-hidden="true" />{body.trim() ? "文字已生成" : "没有文字结果"}<small>非执行证据</small></span>
+      <span className={succeeded.length > 0 ? "verified" : "neutral"}><CheckIcon aria-hidden="true" />{succeeded.length > 0 ? `工具成功 ${succeeded.length} 次` : "未执行工具"}</span>
+      <span className={files.length > 0 ? "verified" : "neutral"}><DocumentIcon aria-hidden="true" />{files.length > 0 ? `文件已保存 ${files.length} 个` : "没有文件写入"}</span>
+      <span className={externalReads.length > 0 ? "verified" : "neutral"}><EyeIcon aria-hidden="true" />{externalReads.length > 0 ? `外部读取 ${externalReads.length} 次` : "未执行外部动作"}</span>
     </div>
   );
 });
@@ -166,7 +167,7 @@ export const HandoffEventCard = memo(function HandoffEventCard({
   const compactTask = task.replace(/\s+/gu, " ").trim();
   return (
     <article className={`handoff-event-card tone-${tone}`} aria-label={`Bot 交接：${fromName} 到 ${toName}`}>
-      <span className="handoff-event-icon" aria-hidden="true">→</span>
+      <span className="handoff-event-icon" aria-hidden="true"><ArrowRightIcon /></span>
       <div className="handoff-event-copy">
         <header><strong>{fromName}</strong><span>交给</span><strong>{toName}</strong><time>{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(new Date(createdAt))}</time></header>
         <p title={compactTask}>{compactTask.length > 180 ? `${compactTask.slice(0, 179)}…` : compactTask}</p>
@@ -204,7 +205,7 @@ export const RunFailureCard = memo(function RunFailureCard({
   const saved = succeeded.filter((item) => item.toolKind === "workspace-write");
   return (
     <section className="run-status-card status-error" role="alert">
-      <span className="run-status-icon" aria-hidden="true">!</span>
+      <span className="run-status-icon" aria-hidden="true"><WarningIcon /></span>
       <div>
         <header><strong>{step}失败</strong><span>需要处理</span></header>
         <p>{errorSummary(errorCode)}</p>
@@ -235,7 +236,6 @@ export const ArtifactStatusBar = memo(function ArtifactStatusBar({
   if (artifacts.length === 0) return null;
   return (
     <section className="artifact-status-bar" aria-label="交付物状态">
-      <header><span aria-hidden="true">▣</span><strong>{artifacts.length} 个成果</strong><small>已由工具真实保存</small></header>
       <div className="artifact-card-list">
         {artifacts.map((artifact) => (
           <ArtifactCard
@@ -265,18 +265,16 @@ export const ArtifactCard = memo(function ArtifactCard({
   onOpen(): void;
 }): React.JSX.Element {
   const size = formatArtifactBytes(artifact.bytes);
+  const typeLabel = artifact.extension === "MD" ? "Markdown" : artifact.extension ?? "文件";
   return (
     <article className="artifact-card">
-      <span className="artifact-card-mark" aria-hidden="true">{artifact.extension ?? "FILE"}</span>
+      <span className="artifact-card-mark" aria-hidden="true"><DocumentIcon weight="duotone" /></span>
       <span className="artifact-card-copy">
         <strong>{artifact.name}</strong>
-        <code>{artifact.invocation.targetPath}</code>
-        <small><span className="artifact-state-dot" aria-hidden="true" />已保存{size ? ` · ${size}` : ""}</small>
+        <small className="artifact-card-metadata"><span>{typeLabel}{size ? ` · ${size}` : ""}</span><span className="artifact-card-saved"><CheckCircleIcon weight="fill" />已保存</span></small>
+        <code className="artifact-card-path" title={artifact.invocation.targetPath}>{artifact.invocation.targetPath}</code>
       </span>
-      <button type="button" className="secondary-button" aria-label="打开文件位置" onClick={onOpen}>
-        <span className="artifact-open-label">打开文件位置</span>
-        <span className="artifact-open-label-short" aria-hidden="true">打开</span>
-      </button>
+      <button type="button" className="secondary-button" aria-label="打开文件位置" title={artifact.invocation.targetPath} onClick={onOpen}>打开</button>
     </article>
   );
 });

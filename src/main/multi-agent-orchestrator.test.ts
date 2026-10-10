@@ -619,10 +619,12 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     });
     expectRoomHandoffContractMessage(cMessages[2]!, value.bots[1]!.id);
     expectRoomRosterMessage(cMessages[3]!, value.bots);
-    expect(cMessages.slice(4, 6)).toEqual([
-      { role: "user", content: "ROOT_QUESTION" },
-      { role: "assistant", content: `[room-speaker id="${value.bots[0]!.id}" name="Agent A"]\nA_AUTHORITY_OUTPUT` },
-    ]);
+    expect(cMessages[4]).toEqual({ role: "user", content: "ROOT_QUESTION" });
+    expect(cMessages[5]?.role).toBe("user");
+    expect(JSON.parse(cMessages[5]!.content!)).toMatchObject({
+      notice: expect.stringContaining("UNTRUSTED_PEER_MESSAGE"), originalRole: "assistant", speakerBotId: value.bots[0]!.id,
+      quote: `[room-speaker id="${value.bots[0]!.id}" name="Agent A"]\nA_AUTHORITY_OUTPUT`,
+    });
     expect(cMessages[6]?.role).toBe("user");
     expect(JSON.parse(cMessages[6]!.content)).toMatchObject({
       notice: "INCOMING_HANDOFF_TASK",
@@ -631,6 +633,8 @@ describe("M2 bounded Fake multi-Agent orchestrator", () => {
     });
     expect(JSON.stringify(cMessages)).not.toMatch(/B_FUTURE_OUTPUT|A_MAIN_PRIVATE|C_MAIN_PRIVATE|OTHER_ROOM_PRIVATE/);
     const cRun = value.repository.getRuntimeRun(cTurn.runtimeRunId!);
+    expect(cRun.promptManifest.blocks.find((block) => block.sourceEntryId === aEntry.id))
+      .toMatchObject({ authority: "assistant", speakerBotId: value.bots[0]!.id });
     expect(cRun).toMatchObject({ inputSeq: bTurn.promptCutoffSeq, promptCutoffSeq: bTurn.promptCutoffSeq });
     expect(cRun.promptManifest).toMatchObject({
       inputSeq: bTurn.promptCutoffSeq,

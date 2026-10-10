@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openBotList, openInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,8 +58,9 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
       "编辑资料",
       "创建副本",
       "复制对话 ID",
-      "从侧边栏隐藏",
-      "删除",
+      "移除聊天",
+      "清空聊天记录",
+      "删除联系人",
     ]);
     await page.screenshot({ path: "/tmp/aevorenbot-bot-context-menu.png", fullPage: true });
     await expect(menu.getByRole("menuitem").first()).toBeFocused();
@@ -103,7 +105,9 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     menu = await menuFor(page, "Beta");
     await menu.getByRole("menuitem", { name: "创建副本" }).click();
     await expect(page.getByRole("heading", { name: "Beta 副本" })).toBeVisible();
+    await openInspector(page);
     await expect(page.getByLabel("描述")).toHaveValue("需要复制的资料");
+    await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
     const duplicateId = (() => {
       const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
       try {
@@ -118,18 +122,19 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     await expect.poll(() => application!.evaluate(({ clipboard }) => clipboard.readText())).toBe(duplicateId);
 
     menu = await menuFor(page, "Beta 副本");
-    await menu.getByRole("menuitem", { name: "从侧边栏隐藏" }).click();
+    await menu.getByRole("menuitem", { name: "移除聊天" }).click();
     await expect(row(page, "Beta 副本")).toHaveCount(0);
-    await page.getByRole("button", { name: "已隐藏 (1)" }).click();
+    await expect(page.getByRole("status")).toHaveText("聊天已移除，记录保留。");
+    await page.getByRole("button", { name: "已移除的聊天 (1)" }).click();
     await expect(row(page, "Beta 副本")).toBeVisible();
     menu = await menuFor(page, "Beta 副本");
-    await expect(menu.getByRole("menuitem", { name: "恢复到侧边栏" })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "恢复聊天" })).toBeVisible();
     await expect(menu.getByRole("menuitem", { name: "置顶", exact: true })).toHaveCount(0);
-    await menu.getByRole("menuitem", { name: "恢复到侧边栏" }).click();
-    await expect(page.getByRole("button", { name: "已隐藏 (1)" })).toHaveCount(0);
+    await menu.getByRole("menuitem", { name: "恢复聊天" }).click();
+    await expect(page.getByRole("button", { name: "已移除的聊天 (1)" })).toHaveCount(0);
 
     menu = await menuFor(page, "Gamma");
-    await menu.getByRole("menuitem", { name: "删除" }).click();
+    await menu.getByRole("menuitem", { name: "删除联系人" }).click();
     const deleteDialog = page.getByRole("alertdialog");
     await expect(deleteDialog).toContainText("删除“Gamma”？");
     await expect(deleteDialog.getByRole("button", { name: "取消" })).toBeFocused();
@@ -142,7 +147,7 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     await expect(row(page, "Gamma")).toBeVisible();
 
     menu = await menuFor(page, "Gamma");
-    await menu.getByRole("menuitem", { name: "删除" }).click();
+    await menu.getByRole("menuitem", { name: "删除联系人" }).click();
     await deleteDialog.getByRole("button", { name: "删除", exact: true }).click();
     await expect(row(page, "Gamma")).toHaveCount(0);
     const deleted = (() => {
@@ -158,8 +163,12 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     })();
     expect(deleted).toMatchObject({ name: "已删除 Bot", deleted_at: expect.any(String) });
 
+    menu = await menuFor(page, "Beta");
+    await menu.getByRole("menuitem", { name: "标为未读" }).click();
+    await expect(row(page, "Beta").locator(".bot-row-state i")).toHaveCount(1);
+
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await openBotList(page);
     menu = await menuFor(page, "研究 助手");
     const bounds = await menu.boundingBox();
     expect(bounds).not.toBeNull();
@@ -174,8 +183,10 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     launched = await launch(userDataDir);
     application = launched.application;
     page = launched.page;
+    await expect(page.getByRole("heading", { name: "研究 助手" })).toBeVisible();
     await expect(row(page, "研究 助手").locator(".bot-row-state svg")).toHaveCount(1);
-    await expect(row(page, "研究 助手").locator(".bot-row-state i")).toHaveCount(1);
+    await expect(row(page, "研究 助手").locator(".bot-row-state i")).toHaveCount(0);
+    await expect(row(page, "Beta").locator(".bot-row-state i")).toHaveCount(1);
     await expect(row(page, "Beta 副本")).toBeVisible();
     await expect(row(page, "Gamma")).toHaveCount(0);
     await application.close();
@@ -203,7 +214,7 @@ test("keeps the delete confirmation open when the Bot is running", async () => {
     await expect(page.getByRole("button", { name: "停止回复" })).toBeVisible();
 
     const menu = await menuFor(page, "运行中的 Bot");
-    await menu.getByRole("menuitem", { name: "删除" }).click();
+    await menu.getByRole("menuitem", { name: "删除联系人" }).click();
     const dialog = page.getByRole("alertdialog");
     await dialog.getByRole("button", { name: "删除", exact: true }).click();
     await expect(dialog).toBeVisible();

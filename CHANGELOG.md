@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.19] - 2026-10-10
+
+### Added
+
+- Local personal nickname and avatar editing with centered image cropping, bounded PNG validation and restart persistence.
+- Chats, Contacts and Workspaces navigation with recent mixed conversations, global Agent profiles, search and unread filtering.
+- Independent persisted chat state, separate remove/clear/delete actions and unread notifications for completed background replies.
+- Conversation-specific folder grants and explicit Memory audiences, preserving existing scopes through backed-up migrations without granting new chats access to other projects.
+- Optional fixed Room coordinators with Host-owned ordered assignments, verified artifact handover and one tool-free final summary. Explicit mentions and Everyone keep their fixed dispatch semantics; existing content-team approval gates remain in place.
+
+### Changed
+
+- Rebuilt the interface around the approved Dark and Daylight messenger layouts: vertical navigation, dense mixed conversations, stable cartoon-human Bot portraits, message-level collaboration details, separate file cards and a full-width composer.
+- Conversation actions now live in the ellipsis menu; response modes sit beside mentions. Settings use grouped pages with an independently scrolling content area and a persistent close toolbar.
+- Agents can join groups across projects; file tools, approvals and inherited evidence are checked against the receiving conversation's current authorization.
+- Necessary details stay collapsible; ordinary new chats start without folder access and can bind a workspace from chat details.
+- Source-based file tasks require successful source reads before report creation. Failed downstream work does not erase successful upstream artifacts or turn a partial group task into a completed task.
+
+### Fixed
+
+- macOS-specific language trimming no longer removes Windows locale packs, preventing installed Windows renderers from crashing when native form controls initialize.
+- Details drawers open and close at every window size, and short or zoomed navigation remains scrollable so Settings stays reachable.
+- Retrying a failed assigned member resumes its unexecuted dependency chain. Handoff cards distinguish the original delivery from its latest retry using persisted acceptance records.
+- Other Agents' messages are model-facing quoted context, not the current Agent's own assistant history; original authorship and transcript records are preserved.
+- Named root-level output files, invalid control characters and future-tense coordination plans are validated without treating intentions as completed tool execution.
+
 ## [0.3.0-beta.18] - 2026-10-08
 
 ### Changed

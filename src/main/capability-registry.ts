@@ -259,18 +259,18 @@ export class CapabilityRegistry {
     private readonly routineList: () => Routine[] = () => [],
   ) {}
 
-  async getSnapshot(input: { botId?: string } = {}): Promise<CapabilitySnapshot> {
+  async getSnapshot(input: { botId?: string; sessionId?: string } = {}): Promise<CapabilitySnapshot> {
     const providerList = await this.providers.list();
     const selection = input.botId
       ? this.repository.getBot(input.botId).modelSelection
       : this.repository.getDefaultModelSelection();
     const provider = providerList.find((candidate) => candidate.id === selection.providerInstanceId) ?? null;
-    return this.build(selection, provider, providerList, this.mcp?.list() ?? [], false, input.botId);
+    return this.build(selection, provider, providerList, this.mcp?.list() ?? [], Boolean(input.sessionId && this.repository.getSession(input.sessionId).roomId), input.botId, input.sessionId);
   }
 
-  forPrompt(botId: string, selection: ModelSelection, room: boolean): CapabilityPromptSnapshot {
+  forPrompt(botId: string, selection: ModelSelection, room: boolean, sessionId?: string): CapabilityPromptSnapshot {
     this.repository.getBot(botId);
-    const snapshot = this.build(selection, this.providers.getCached(selection.providerInstanceId), [], this.mcp?.list() ?? [], room, botId);
+    const snapshot = this.build(selection, this.providers.getCached(selection.providerInstanceId), [], this.mcp?.list() ?? [], room, botId, sessionId);
     return {
       schemaVersion: snapshot.schemaVersion,
       generatedAt: snapshot.generatedAt,
@@ -290,8 +290,11 @@ export class CapabilityRegistry {
     mcpServers: McpServerInfo[],
     room: boolean,
     botId?: string,
+    sessionId?: string,
   ): CapabilitySnapshot {
-    const workspaces = botId ? this.repository.listBotWorkspaces(botId) : this.repository.listWorkspaces();
+    const workspaces = botId
+      ? this.repository.listSessionWorkspaces(sessionId ?? this.repository.getMainSession(botId).id, botId)
+      : this.repository.listWorkspaces();
     const providerCapabilities: ProviderCapabilities | null = (() => {
       try {
         return this.providers.getCapabilities(selection);

@@ -154,9 +154,9 @@ describe("Workspace Registry", () => {
     const otherRoot = join(parent, "其他团队");
     mkdirSync(firstRoot);
     mkdirSync(otherRoot);
-    const first = value.createBot();
-    const second = value.createBot();
-    const room = value.createRoom({ memberBotIds: [first.bot.id, second.bot.id] });
+    const first = value.createBot(DEFAULT_PROJECT_ID);
+    const second = value.createBot(DEFAULT_PROJECT_ID);
+    const room = value.createRoom({ projectId: DEFAULT_PROJECT_ID, memberBotIds: [first.bot.id, second.bot.id] });
     const registered = await service.registerRoot(firstRoot, DEFAULT_PROJECT_ID);
     const other = await service.registerRoot(otherRoot);
     expect(registered.project).toMatchObject({ id: DEFAULT_PROJECT_ID, name: "现有团队", workspaceId: registered.workspace.id });

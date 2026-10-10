@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { closeInspector, openConversationMenu, openInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,16 +28,20 @@ async function createNamedBot(page: Page, name: string): Promise<void> {
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();
   await expect(page.locator(".bot-row")).toHaveCount(before + 1);
+  await expect(page.locator(".inspector")).toBeVisible();
+  await openInspector(page);
   const nameInput = page.getByLabel("名称");
   await nameInput.fill(name);
   await nameInput.blur();
   await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+  await closeInspector(page);
 }
 
 async function createRoom(page: Page, names: string[]): Promise<void> {
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.locator(".recipient-option").filter({ hasText: "创建群聊" }).click();
   for (const name of names) await page.getByRole("button", { name, exact: true }).click();
+  await page.getByLabel("新群协调者").selectOption("none");
   await page.locator(".recipient-footer").getByRole("button", { name: "创建群聊", exact: true }).click();
   await expect(page.getByRole("heading", { name: names.join("、") })).toBeVisible();
 }
@@ -151,16 +156,19 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1280, 800));
     for (const name of ["研究员", "评审员", "执行员", "观察员"]) await createNamedBot(page, name);
     await createRoom(page, ["研究员", "评审员", "执行员"]);
+    await openInspector(page);
 
     await expect(page.getByRole("heading", { name: "研究员、评审员、执行员" })).toBeVisible();
-    await expect(page.locator(".inspector-header h2")).toHaveText("设置");
+    await expect(page.locator(".inspector-header h2")).toHaveText("群聊详情");
     await expect(page.locator(".room-avatar-stack .bot-avatar-icon")).toHaveCount(3);
     await expect(page.getByLabel("名称")).toHaveValue("研究员、评审员、执行员");
     const membersToggle = page.getByRole("button", { name: "管理群聊成员 3/6" });
     await expect(membersToggle).toBeVisible();
     await expect(page.locator(".room-members-manager")).toBeHidden();
     await page.screenshot({ path: "/tmp/aevoren-room-settings-aligned.png" });
+    await expect(page.getByLabel("群协调者", { exact: true })).toHaveValue("");
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
+    await closeInspector(page);
     await page.getByLabel("消息").fill("请依次给出分析。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.getByRole("button", { name: "停止群聊回复" })).toBeVisible();
@@ -173,12 +181,14 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
     await page.locator(".composer-wrap").screenshot({ path: "/tmp/aevoren-room-composer-completed.png" });
 
+    await openInspector(page);
     await membersToggle.click();
     const secondSpeaker = page.getByRole("button", { name: "评审员", exact: true }).last();
     await secondSpeaker.click();
     await expect(page.getByRole("heading", { name: "评审员" })).toBeVisible();
     await page.locator(".bot-row").filter({ hasText: "研究员、评审员、执行员" }).click();
     await expect(page.getByRole("heading", { name: "研究员、评审员、执行员" })).toBeVisible();
+    await openInspector(page);
 
     await page.getByLabel("名称").fill("产品协作室");
     await page.getByLabel("名称").blur();
@@ -191,31 +201,35 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await page.getByRole("button", { name: "添加", exact: true }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(3);
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
+    await closeInspector(page);
     await page.locator(".bot-row").filter({ hasText: "观察员" }).click();
     await expect(page.getByRole("heading", { name: "观察员" })).toBeVisible();
     await page.locator(".bot-row").filter({ hasText: "产品协作室" }).click();
     await expect(page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
+    await openInspector(page);
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
     await page.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
+    await closeInspector(page);
 
     await page.screenshot({ path: "/tmp/aevoren-bot-room-desktop-light.png", fullPage: true });
     await page.emulateMedia({ colorScheme: "dark" });
     await expect(page.locator(".conversation")).toBeVisible();
     await page.screenshot({ path: "/tmp/aevoren-bot-room-desktop-dark.png", fullPage: true });
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await expect(page.getByRole("button", { name: "打开 Bot 列表" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "聊天选项", exact: true })).toBeVisible();
     await page.waitForTimeout(250);
     await expect(page.locator(".sidebar")).not.toBeVisible();
     await expect(page.locator(".inspector")).not.toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: "/tmp/aevoren-bot-room-narrow.png", fullPage: true });
-    await page.getByRole("button", { name: "打开 Bot 设置" }).click();
+    await openInspector(page);
     await expect(page.locator(".inspector")).toBeVisible();
     await page.waitForTimeout(250);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: "/tmp/aevoren-bot-room-narrow-profile.png", fullPage: true });
     expect(consoleErrors).toEqual([]);
 
+    await page.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
     await application.close();
     application = undefined;
     const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
@@ -250,7 +264,7 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
 
     const restarted = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = restarted.application;
-    await restarted.page.locator(".bot-list .bot-row").first().click();
+    await restarted.page.getByRole("listitem", { name: "产品协作室", exact: true }).click();
     await expect(restarted.page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
     await expect(restarted.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
     const restoredUserMessage = restarted.page.locator("article.message-user").last();
@@ -266,13 +280,17 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
         && getComputedStyle(element).overflowWrap === "anywhere";
     })).toBe(true);
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1280, 800));
+    await openInspector(restarted.page);
     await restarted.page.getByRole("button", { name: "管理群聊成员 3/6" }).click();
     await expect(restarted.page.locator(".room-member-row")).toHaveCount(3);
+    await closeInspector(restarted.page);
     await restarted.page.locator(".bot-list .bot-row").filter({ hasText: "产品协作室" }).click({ button: "right" });
     await restarted.page.getByRole("menu", { name: "群聊操作" }).getByRole("menuitem", { name: "归档群聊" }).click();
     await expect(restarted.page.getByRole("button", { name: "产品协作室" })).toHaveCount(0);
     await restarted.page.locator(".bot-row").filter({ hasText: "研究员" }).click();
+    await openInspector(restarted.page);
     await restarted.page.getByLabel("描述").fill("恢复归档 Room 前必须先保存的 Bot 描述");
+    await closeInspector(restarted.page);
     await restarted.page.getByRole("button", { name: "已归档 (1)" }).click();
     await expect(restarted.page.getByText("产品协作室", { exact: true })).toBeVisible();
     await restarted.page.getByRole("button", { name: "恢复", exact: true }).click();
@@ -288,6 +306,7 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     const restored = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "10" });
     application = restored.application;
     await restored.page.locator(".bot-row").filter({ hasText: "研究员" }).click();
+    await openInspector(restored.page);
     await expect(restored.page.getByLabel("描述")).toHaveValue("恢复归档 Room 前必须先保存的 Bot 描述");
   } finally {
     if (application) await forceKill(application);
@@ -377,10 +396,12 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     expect(new Set(sidebarDetails).size).toBe(2);
     expect(sidebarDetails.every((value) => value.includes("#"))).toBe(true);
 
+    await openInspector(launched.page);
     const memberLabels = await launched.page.locator(".member-main-link").allTextContents();
     expect(memberLabels).toHaveLength(2);
     expect(new Set(memberLabels).size).toBe(2);
     expect(memberLabels.every((value) => value.includes("#"))).toBe(true);
+    await closeInspector(launched.page);
     await launched.page.getByLabel("消息").fill("@重复");
     const targetLabels = await launched.page.locator(".mention-option-copy strong").allTextContents();
     expect(targetLabels).toEqual(memberLabels);
@@ -414,10 +435,14 @@ test("disambiguates duplicate Bot identities across Room controls and speaker li
     }
 
     await launched.page.locator(".speaker-link").nth(0).click();
+    await openInspector(launched.page);
     await expect(launched.page.getByLabel("描述")).toHaveValue("第一位重复身份 Bot");
+    await closeInspector(launched.page);
     await launched.page.locator(".bot-row").filter({ hasText: room.room.name }).click();
     await launched.page.locator(".speaker-link").nth(1).click();
+    await openInspector(launched.page);
     await expect(launched.page.getByLabel("描述")).toHaveValue("第二位重复身份 Bot");
+    await closeInspector(launched.page);
     await launched.page.locator(".bot-row").filter({ hasText: room.room.name }).click();
     await expect(launched.page.getByRole("heading", { name: room.room.name })).toBeVisible();
     await launched.page.screenshot({ path: "/tmp/aevorenbot-room-duplicate-identities.png", fullPage: true });
@@ -490,7 +515,7 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     expect(database.prepare("SELECT state FROM room_batches ORDER BY created_at DESC LIMIT 1").get()).toEqual({ state: "interrupted" });
     expect(database.prepare("SELECT DISTINCT state FROM room_turns WHERE batch_id=(SELECT id FROM room_batches ORDER BY created_at DESC LIMIT 1)").all()).toEqual([{ state: "interrupted" }]);
     database.close();
-    await launched.page.locator(".bot-list .bot-row").first().click();
+    await launched.page.getByRole("listitem", { name: "甲、乙、丙", exact: true }).click();
     await expect(launched.page.getByRole("heading", { name: "甲、乙、丙" })).toBeVisible();
     const recovered = await getRoomRuntimeSnapshot(launched.page, "甲、乙、丙");
     expect(recovered.ok).toBe(true);
@@ -499,7 +524,8 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
       expect(interruptedBatch?.state).toBe("interrupted");
       expect(recovered.data.turns.filter((turn) => turn.batchId === interruptedBatch?.id).map((turn) => turn.state)).toEqual(["interrupted", "interrupted", "interrupted"]);
     }
-    await expect(launched.page.getByRole("button", { name: "继续未开始成员" })).toBeVisible();
+    const menu = await openConversationMenu(launched.page);
+    await expect(menu.getByRole("menuitem", { name: "继续未开始成员", exact: true })).toBeVisible();
   } finally {
     if (application) await forceKill(application);
     removeTestDirectory(userDataDir);
@@ -525,7 +551,8 @@ test("reconciles a completed Room Runtime and exposes Continue for only the unst
       ]);
     }
     await expect(launched.page.getByRole("button", { name: "重试", exact: true })).toHaveCount(0);
-    await launched.page.getByRole("button", { name: "继续未开始成员" }).click();
+    const menu = await openConversationMenu(launched.page);
+    await menu.getByRole("menuitem", { name: "继续未开始成员", exact: true }).click();
     await expect(launched.page.getByTestId("room-batch-state")).toHaveCount(0);
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
     await application.close();
@@ -705,6 +732,7 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
     const rename = page.getByLabel("重命名 Bot");
     await rename.fill("首席研究员");
     await rename.press("Enter");
+    await openInspector(page);
     await page.getByRole("button", { name: /管理群聊成员/ }).click();
     await expect(page.locator(".room-member-row").filter({ hasText: "首席研究员" })).toBeVisible();
     await expect(page.locator(".speaker-link")).toHaveText(["首席研究员"]);
@@ -712,9 +740,10 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
 
     await page.locator(".room-member-row").filter({ hasText: "首席研究员" }).getByRole("button", { name: "首席研究员" }).click();
     await expect(page.getByRole("heading", { name: "首席研究员" })).toBeVisible();
+    await openInspector(page);
     await expect(page.getByRole("radiogroup", { name: "Bot 头像造型" })).toHaveCount(0);
     await expect(page.getByRole("radiogroup", { name: "Bot 头像配色" })).toHaveCount(0);
-    await expect(page.locator(".inspector-header h2")).toHaveText("设置");
+    await expect(page.locator(".inspector-header h2")).toHaveText("Bot 资料");
     await expect(page.locator(".inspector-avatar-hero .bot-avatar-icon")).toBeVisible();
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
     await expect(page.locator('.bot-row[aria-label="首席研究员"] .bot-avatar-icon'))
@@ -724,8 +753,9 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
     expect(await page.locator('.bot-row[aria-label="首席研究员"] .bot-avatar-icon').evaluate((element) => {
       const bounds = element.getBoundingClientRect();
       return { width: bounds.width, height: bounds.height };
-    })).toEqual({ width: 28, height: 28 });
+    })).toEqual({ width: 56, height: 56 });
 
+    await closeInspector(page);
     await input.fill("直接对话中使用当前 Bot 名称和头像。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
@@ -736,15 +766,17 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
     expect(await directAvatar.evaluate((element) => {
       const bounds = element.getBoundingClientRect();
       return { width: bounds.width, height: bounds.height };
-    })).toEqual({ width: 24, height: 24 });
+    })).toEqual({ width: 56, height: 56 });
 
     await page.getByRole("listitem", { name: "调查员、审校员" }).click();
     await expect(page.getByRole("heading", { name: "调查员、审校员" })).toBeVisible();
+    await openInspector(page);
     await page.getByRole("button", { name: /管理群聊成员/ }).click();
     const memberRow = page.locator(".room-member-row").filter({ hasText: "首席研究员" });
     await expect(memberRow).toBeVisible();
     await expect(memberRow.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-shape", avatarShape!);
     await expect(memberRow.locator(".bot-avatar-icon")).toHaveAttribute("data-avatar-color", avatarColor!);
+    await closeInspector(page);
     await expect(page.locator(".speaker-link")).toHaveText(["首席研究员"]);
     const historicalAvatar = page.locator("article.message-assistant .message-avatar .bot-avatar-icon");
     await expect(historicalAvatar).toHaveAttribute("data-avatar-shape", avatarShape!);

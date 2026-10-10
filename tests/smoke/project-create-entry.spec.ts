@@ -5,6 +5,7 @@ import { _electron as electron, expect, test } from "@playwright/test";
 import type { AevorenBotApi } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { removeTestDirectory } from "./test-cleanup";
+import { closeInspector, openBotList } from "./navigation";
 
 test("creates Bots and Rooms from each project heading without leaking the active project", async () => {
   const data = mkdtempSync(join(tmpdir(), "aevoren-project-create-"));
@@ -20,17 +21,22 @@ test("creates Bots and Rooms from each project heading without leaking the activ
     const page = await application.firstWindow();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    await page.getByRole("tab", { name: "工作区", exact: true }).click();
     const group = page.locator('.sidebar-project').filter({ has: page.getByRole("button", { name: "项目乙", exact: true }) });
     await group.getByRole("button", { name: "在 项目乙 新建 Bot" }).click();
     await expect(group.locator(".bot-row")).toHaveCount(1);
+    await expect(page.locator(".inspector")).toBeVisible();
+    await closeInspector(page);
     await group.getByRole("button", { name: "在 项目乙 新建 Bot" }).click();
     await expect(group.locator(".bot-row")).toHaveCount(2);
+    await expect(page.locator(".inspector")).toBeVisible();
+    await closeInspector(page);
     await group.getByRole("button", { name: "在 项目乙 新建群聊" }).click();
     const chooser = page.getByRole("dialog", { name: "新建群聊" });
     await expect(chooser).toBeVisible();
-    await expect(chooser).not.toContainText("甲项目 Bot");
+    await expect(chooser).toContainText("甲项目 Bot");
     const options = chooser.locator(".recipient-options > button");
-    await expect(options).toHaveCount(2);
+    await expect(options).toHaveCount(3);
     await options.nth(0).click();
     await options.nth(1).click();
     await chooser.getByRole("button", { name: "创建群聊", exact: true }).click();
@@ -48,7 +54,7 @@ test("creates Bots and Rooms from each project heading without leaking the activ
     for (const width of [1180, 1020, 620, 390]) {
       await application.evaluate(({ BrowserWindow }, next) => BrowserWindow.getAllWindows()[0]?.setSize(next, 844), width);
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
-      if (width <= 1020 && !(await page.locator(".sidebar").getAttribute("class"))?.includes("mobile-open")) await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+      await openBotList(page);
       await expect(group.getByRole("button", { name: "在 项目乙 新建 Bot" })).toBeVisible();
       await expect(group.getByRole("button", { name: "在 项目乙 新建群聊" })).toBeVisible();
       expect(await group.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);

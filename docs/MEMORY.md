@@ -10,7 +10,9 @@ Memory types are `fact`, `preference`, `decision`, and `procedure`.
 
 - `user` scope applies across Bots and is intended for global preferences.
 - `bot` scope belongs to one Bot and its relationship with the user.
+- Bot items also carry an explicit conversation visibility binding. New automatic items belong to their source chat; manually added items default to the Bot's direct chat. Existing items retain their pre-migration visibility, but new groups or members do not inherit it.
 - `workspace` scope applies only to Bots explicitly bound to that registered Workspace.
+- Workspace injection additionally requires that the current conversation is authorized for the folder. A reusable contact does not carry folder or group Memory into another chat.
 
 Existing manually-created Memory remains active and is not rewritten by background
 capture.

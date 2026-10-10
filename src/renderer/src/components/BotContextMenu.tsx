@@ -24,6 +24,7 @@ type Props = {
   onDuplicate(): void;
   onCopyId(): void;
   onHide(): void;
+  onClear(): void;
   onDelete(): void;
 };
 
@@ -55,6 +56,7 @@ export function BotContextMenu({
   onDuplicate,
   onCopyId,
   onHide,
+  onClear,
   onDelete,
 }: Props): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -109,7 +111,7 @@ export function BotContextMenu({
     >
       <div className="bot-context-section">
         {bot.hiddenAt ? (
-          <MenuItem icon={<EyeIcon />} onSelect={() => select(onHide)}>恢复到侧边栏</MenuItem>
+          <MenuItem icon={<EyeIcon />} onSelect={() => select(onHide)}>恢复聊天</MenuItem>
         ) : (
           <MenuItem icon={<PinIcon />} onSelect={() => select(onPin)}>{bot.pinnedAt ? "取消置顶" : "置顶"}</MenuItem>
         )}
@@ -124,8 +126,9 @@ export function BotContextMenu({
         <MenuItem icon={<CopyIcon />} onSelect={() => select(onCopyId)}>复制对话 ID</MenuItem>
       </div>
       <div className="bot-context-section">
-        {!bot.hiddenAt ? <MenuItem icon={<EyeOffIcon />} onSelect={() => select(onHide)}>从侧边栏隐藏</MenuItem> : null}
-        <MenuItem danger icon={<TrashIcon />} onSelect={() => select(onDelete)}>删除</MenuItem>
+        {!bot.hiddenAt ? <MenuItem icon={<EyeOffIcon />} onSelect={() => select(onHide)}>移除聊天</MenuItem> : null}
+        <MenuItem icon={<TrashIcon />} onSelect={() => select(onClear)}>清空聊天记录</MenuItem>
+        <MenuItem danger icon={<TrashIcon />} onSelect={() => select(onDelete)}>删除联系人</MenuItem>
       </div>
     </div>
   );

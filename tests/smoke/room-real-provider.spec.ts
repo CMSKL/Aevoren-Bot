@@ -78,6 +78,7 @@ test("routes explicit, multiple, and automatic Room targets through the configur
     await page.locator(".recipient-option").filter({ hasText: "创建群聊" }).click();
     await page.getByRole("button", { name: first, exact: true }).click();
     await page.getByRole("button", { name: second, exact: true }).click();
+    await page.getByLabel("新群协调者", { exact: true }).selectOption("none");
     await page.locator(".recipient-footer").getByRole("button", { name: "创建群聊", exact: true }).click();
     await expect(page.getByRole("heading", { name: roomName })).toBeVisible();
 

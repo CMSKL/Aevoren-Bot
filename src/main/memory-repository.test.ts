@@ -71,7 +71,9 @@ describe("explicit Memory repository", () => {
     const value = repository();
     const firstCreated = value.createBot();
     const second = value.createBot().bot;
-    const workspace = value.registerWorkspaceRoot("/private/tmp/memory-project-a", "Project A").workspace;
+    const registered = value.registerWorkspaceRoot("/private/tmp/memory-project-a", "Project A");
+    const workspace = registered.workspace;
+    value.setConversationProject(firstCreated.session.id, registered.project.id, value.getConversation(firstCreated.session.id).version);
     const otherWorkspace = value.registerWorkspaceRoot("/private/tmp/memory-project-b", "Project B").workspace;
     const first = value.updateBot(firstCreated.bot.id, firstCreated.bot.version, { memoryWorkspaceIds: [workspace.id] });
 

@@ -86,7 +86,7 @@ export function CapabilitiesSettingsPanel({ active, botId }: CapabilitiesSetting
 
       {snapshot ? <>
         <h3>当前运行状态</h3>
-        <div className="settings-card capability-runtime-card">
+        <div className="settings-card settings-form-group capability-runtime-card">
           <div className="settings-row">
             <span><strong>应用环境</strong><small>本地桌面应用 · {snapshot.backgroundMode === "foreground-only" ? "仅前台运行" : "支持后台运行"}</small></span>
             <span className="settings-value">v{snapshot.app.version}</span>
@@ -106,7 +106,7 @@ export function CapabilitiesSettingsPanel({ active, botId }: CapabilitiesSetting
         </div>
 
         <h3 className="capability-section-title">权限</h3>
-        <div className="settings-card">
+        <div className="settings-card settings-form-group">
           {snapshot.permissions.map((permission) => (
             <div className="settings-row" key={permission.id}>
               <span><strong>{permission.name}</strong><small>{permission.scopeSummary} · {permission.revocable ? "可撤销" : "不可撤销"}</small></span>
@@ -121,9 +121,9 @@ export function CapabilitiesSettingsPanel({ active, botId }: CapabilitiesSetting
               <h3 id={`capability-${group.category}`}>{group.label}</h3>
               <span>{group.items.filter((item) => item.availability === "available").length}/{group.items.length} 可用</span>
             </div>
-            <div className="capability-grid">
+            <div className="capability-grid settings-list">
               {group.items.map((capability) => (
-                <article className="settings-card capability-card" key={capability.id} data-capability={capability.id} data-availability={capability.availability}>
+                <article className="settings-card capability-card settings-list-row" key={capability.id} data-capability={capability.id} data-availability={capability.availability}>
                   <header>
                     <strong>{capability.name}</strong>
                     <span className={`capability-state capability-state-${capability.availability}`}>{capability.availability === "available" ? <CheckIcon /> : null}{availabilityLabels[capability.availability]}</span>

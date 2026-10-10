@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -43,12 +43,25 @@ function prepareRunInput(
   };
 }
 
-function createRunFixture(value: AppRepository, initialCount = 1) {
+function createRunFixture(value: AppRepository, initialCount = 1, projectId?: string) {
   const bots = createBots(value, 3);
   const detail = value.createRoom({ memberBotIds: bots.slice(0, 2).map((bot) => bot.id) });
+  if (projectId) {
+    value.setConversationProject(detail.session.id, projectId, value.getConversation(detail.session.id).version);
+  }
   const input = prepareRunInput(value, detail, bots.slice(0, initialCount).map((bot) => bot.id));
   const created = value.createRoomRunWithInitialTurns(input);
   return { bots, detail, input, ...created };
+}
+
+function receiptWorkspace(value: AppRepository, name: string) {
+  const directory = mkdtempSync(join(tmpdir(), "aevoren-receipt-workspace-"));
+  temporaryDirectories.push(directory);
+  const registered = value.registerWorkspaceRoot(realpathSync(directory), name);
+  value.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, {
+    writeEnabled: true, automationEnabled: false,
+  });
+  return registered;
 }
 
 function startSourceTurn(value: AppRepository, runId: string, turnId: string): void {
@@ -545,7 +558,8 @@ describe("multi-agent RoomRun journal", () => {
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
-    const fixture = createRunFixture(value);
+    const { workspace, project } = receiptWorkspace(value, "receipt-workspace");
+    const fixture = createRunFixture(value, 1, project.id);
     const sourceTurn = fixture.turns[0]!;
     startSourceTurn(value, fixture.run.id, sourceTurn.id);
     const manifest: PromptManifest = {
@@ -587,7 +601,6 @@ describe("multi-agent RoomRun journal", () => {
       inputGeneration: sourceTurn.inputGeneration,
       inputSeq: sourceTurn.inputSeq,
     });
-    const workspace = value.registerWorkspaceRoot(join(directory, "workspace"), "receipt-workspace").workspace;
     const content = "# verified brief";
     const prepared = value.prepareToolInvocation({
       runtimeRunId: runtime.id,
@@ -628,9 +641,9 @@ describe("multi-agent RoomRun journal", () => {
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
-    const fixture = createRunFixture(value);
+    const { workspace, project } = receiptWorkspace(value, "approval");
+    const fixture = createRunFixture(value, 1, project.id);
     const source = receiptRuntime(value, fixture.turns[0]!.id);
-    const workspace = value.registerWorkspaceRoot(join(directory, "workspace"), "approval").workspace;
     const brief = source.write(workspace.id, "02-briefs/options.md", "# 候选 A\n真实输入字段");
     source.complete();
     value.finishRoomBatchFromTurns(fixture.run.id);
@@ -673,8 +686,8 @@ describe("multi-agent RoomRun journal", () => {
 
   it("preserves original task and independently verifiable tool provenance through multiple Runtime handoffs", () => {
     const value = repository();
-    const fixture = createRunFixture(value);
-    const workspace = value.registerWorkspaceRoot(join(tmpdir(), randomUUID()), "chain").workspace;
+    const { workspace, project } = receiptWorkspace(value, "chain");
+    const fixture = createRunFixture(value, 1, project.id);
     const first = receiptRuntime(value, fixture.turns[0]!.id);
     const firstArtifact = first.write(workspace.id, "01-inbox/research.md", "# Source evidence");
     const next = value.createHandoff({
@@ -704,9 +717,9 @@ describe("multi-agent RoomRun journal", () => {
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
     const value = repository(filename);
-    const fixture = createRunFixture(value);
+    const { workspace, project } = receiptWorkspace(value, "scope");
+    const fixture = createRunFixture(value, 1, project.id);
     const source = receiptRuntime(value, fixture.turns[0]!.id);
-    const workspace = value.registerWorkspaceRoot(join(directory, "workspace"), "scope").workspace;
     source.write(workspace.id, "01-inbox/source.md", "# Evidence");
     const next = value.createHandoff({
       ...handoffInput(fixture.run.id, fixture.turns[0]!.id, fixture.bots[1]!.id, fixture.run.triggerMessageId),
@@ -744,9 +757,9 @@ describe("multi-agent RoomRun journal", () => {
 
   it("does not approve an older Brief when a newer write failed or its Runtime has not completed", () => {
     const value = repository();
-    const fixture = createRunFixture(value);
+    const { workspace, project } = receiptWorkspace(value, "latest");
+    const fixture = createRunFixture(value, 1, project.id);
     const source = receiptRuntime(value, fixture.turns[0]!.id);
-    const workspace = value.registerWorkspaceRoot(join(tmpdir(), randomUUID()), "latest").workspace;
     const oldBrief = source.write(workspace.id, "02-briefs/first.md", "# first");
     source.complete();
     value.finishRoomBatchFromTurns(fixture.run.id);

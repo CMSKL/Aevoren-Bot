@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 function toolResults(messages: ChatMessage[]): number {
-  return messages.filter((message) => message.role === "tool").length;
+  return messages.filter((message) => message.role === "tool" && !message.tool_call_id.endsWith("-voice")).length;
 }
 
 function receiptArtifact(messages: ChatMessage[]): { workspaceId: string; path: string } {
@@ -42,6 +42,12 @@ function eventsFor(
   const workspaceId = context.workspaces![0]!.id;
   const started: ModelEvent = { type: "started", requestId: `${name}:${count}` };
   const completed: ModelEvent = { type: "completed", finishReason: "tool_calls" };
+  if (["选题策划师", "事实编辑"].includes(name) && !messages.some((message) => message.role === "tool" && message.tool_call_id === `${name}-voice`)) {
+    return [started, {
+      type: "workspace-tool", toolCallId: `${name}-voice`, providerToolName: "workspace_read",
+      tool: { kind: "workspace-read", workspaceId, path: "voice.md", maxBytes: 4096 },
+    }, completed];
+  }
   if (name === "情报侦察员") {
     if (count === 0) return [started, {
       type: "workspace-tool",
@@ -165,11 +171,12 @@ describe("content-team Host orchestration", () => {
     const root = mkdtempSync(join(tmpdir(), "aevoren-content-team-chain-"));
     directories.push(root);
     for (const folder of ["01-inbox", "02-briefs", "03-drafts", "04-review", "05-data", "06-reports"]) mkdirSync(join(root, folder));
+    writeFileSync(join(root, "voice.md"), "使用简明表达，区分事实与推断。", "utf8");
     writeFileSync(join(root, "05-data", "analytics.csv"), "id,views,engagement\nA,100,5\nB,200,8\n", "utf8");
     const workspaceService = new WorkspaceService(repository);
     const registered = await workspaceService.registerRoot(root);
     repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: true });
-    const team = repository.createContentTeamTemplate();
+    const team = repository.createContentTeamTemplate(registered.project.id);
     const names = new Map(team.bots.map((bot) => [bot.id, bot.name]));
     const contexts: ModelRunContext[] = [];
     const provider: ModelProvider = {

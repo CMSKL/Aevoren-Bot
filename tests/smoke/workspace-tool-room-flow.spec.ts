@@ -24,12 +24,12 @@ test("routes approved workspace tools through one Room speaker and recovers a pe
   const marker = "ROOM_WORKSPACE_CONTENT_7A19";
   writeFileSync(join(workspaceRoot, "room-brief.txt"), marker, "utf8");
   const repository = new AppRepository(databasePath);
+  const registered = await new WorkspaceService(repository).registerRoot(workspaceRoot);
   const analystCreated = repository.createBot();
   const analyst = repository.updateBot(analystCreated.bot.id, analystCreated.bot.version, { name: "群聊分析师" });
   const reviewerCreated = repository.createBot();
   const reviewer = repository.updateBot(reviewerCreated.bot.id, reviewerCreated.bot.version, { name: "群聊评审员" });
-  const room = repository.createRoom({ name: "Workspace Room 验收", memberBotIds: [analyst.id, reviewer.id] });
-  await new WorkspaceService(repository).registerRoot(workspaceRoot);
+  const room = repository.createRoom({ name: "Workspace Room 验收", memberBotIds: [analyst.id, reviewer.id], projectId: registered.project.id });
   repository.close();
 
   const environment = {

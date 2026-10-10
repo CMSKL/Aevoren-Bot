@@ -57,7 +57,11 @@ function createV6Fixture(): string {
       'entry', '${SESSION_ID}', 1, 1, 'nonce', 'user', 'SECRET_TRANSCRIPT_BODY', 'completed', 1,
       NULL, NULL, NULL, '${timestamp}', '${timestamp}'
     );
-    INSERT INTO room_batches VALUES(
+    INSERT INTO room_batches(
+      id, room_id, session_id, client_nonce, trigger_message_id, target_digest, routing_mode,
+      routing_reason, state, membership_version, max_turns, max_hops, max_targets_per_turn,
+      deadline_at, is_winding_down, version, created_at, updated_at, finished_at, orchestration_enabled
+    ) VALUES(
       '${RUN_ID}', '${ROOM_ID}', '${SESSION_ID}', 'nonce', 'entry', 'targets', 'automatic',
       'SECRET_ROUTING_REASON', 'completed', 1, 8, 3, 2, '2026-01-02T00:00:00.000Z', 0, 1,
       '${timestamp}', '${timestamp}', '2026-01-01T00:00:06.000Z', 1
@@ -72,12 +76,20 @@ function createV6Fixture(): string {
       'openai-compatible.default', 'diagnostic-model', 1, 1, 1, NULL, 'SECRET_PROVIDER_REQUEST_ID', '{"private":"SECRET_PROVIDER_RESPONSE"}', 1, 'PROVIDER_ERROR',
       '${timestamp}', '2026-01-01T00:00:01.000Z', '2026-01-01T00:00:05.000Z', '2026-01-01T00:00:05.000Z'
     );
-    INSERT INTO room_turns VALUES(
+    INSERT INTO room_turns(
+      id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+      hop, origin, input_generation, input_seq, position, attempt_no, version, state, outcome_json,
+      runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at, execution_receipt_json
+    ) VALUES(
       'turn-a', '${RUN_ID}', '${BOT_A}', 'SECRET_BOT_PROFILE', 'turn-a', NULL, 'turn-a-nonce',
       0, 'initial', 1, 1, 0, 1, 1, 'completed', '{"kind":"sent"}', 'runtime-a', 1, NULL,
       '${timestamp}', '2026-01-01T00:00:03.000Z', '2026-01-01T00:00:03.000Z', NULL
     );
-    INSERT INTO room_turns VALUES(
+    INSERT INTO room_turns(
+      id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+      hop, origin, input_generation, input_seq, position, attempt_no, version, state, outcome_json,
+      runtime_run_id, prompt_cutoff_seq, last_error_code, created_at, updated_at, finished_at, execution_receipt_json
+    ) VALUES(
       'turn-b', '${RUN_ID}', '${BOT_B}', 'Agent B', 'turn-b', 'turn-a', 'turn-b-nonce',
       1, 'handoff', 1, 1, 1, 1, 1, 'failed', '{"kind":"error"}', 'runtime-b', 1, 'PROVIDER_ERROR',
       '${timestamp}', '2026-01-01T00:00:05.000Z', '2026-01-01T00:00:05.000Z', NULL

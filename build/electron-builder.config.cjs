@@ -11,7 +11,6 @@ module.exports = {
   productName: "Aevoren Bot",
   asar: true,
   compression: "maximum",
-  electronLanguages: ["en", "zh_CN"],
   afterPack: "build/after-pack.cjs",
   directories: {
     output: process.env.AEVOREN_DIST_DIR || "dist",
@@ -28,6 +27,9 @@ module.exports = {
   // for unsigned local packages. Only signed release builds embed the feed.
   publish: publishConfiguration ? [publishConfiguration] : null,
   mac: {
+    // macOS locale names differ from Windows/Linux .pak names. Keep those
+    // platforms' complete locale sets so native inputs cannot crash Electron.
+    electronLanguages: ["en", "zh_CN"],
     target: ["dmg", "zip"],
     category: "public.app-category.productivity",
     icon: "resources/icon.icns",

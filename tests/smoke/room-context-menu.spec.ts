@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openBotList } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,7 +48,7 @@ test("supports the first Grok-style Room context actions without touching the in
     await expect(page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
 
     let menu = await roomMenu(page, "产品协作室");
-    await expect(menu.getByRole("menuitem")).toHaveText(["置顶", "标为未读", "重命名聊天", "复制对话 ID", "从侧边栏隐藏", "归档群聊", "删除"]);
+    await expect(menu.getByRole("menuitem")).toHaveText(["置顶", "标为未读", "重命名聊天", "复制对话 ID", "移除聊天", "归档群聊", "清空聊天记录", "删除群聊"]);
     await expect(menu.getByRole("menuitem").first()).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(roomRow(page, "产品协作室")).toBeFocused();
@@ -99,34 +100,36 @@ test("supports the first Grok-style Room context actions without touching the in
     page = launched.page;
     await expect(roomRow(page, "新 协作室")).toBeVisible();
     await expect(roomRow(page, "新 协作室").locator(".bot-row-state svg")).toHaveCount(1);
-    await expect(roomRow(page, "新 协作室").locator(".bot-row-state i")).toHaveCount(1);
+    await expect(roomRow(page, "新 协作室").locator(".bot-row-state i")).toHaveCount(0);
+    menu = await roomMenu(page, "新 协作室");
+    await menu.getByRole("menuitem", { name: "标为未读" }).click();
     menu = await roomMenu(page, "新 协作室");
     await menu.getByRole("menuitem", { name: "标为已读" }).click();
     await expect(roomRow(page, "新 协作室").locator(".bot-row-state i")).toHaveCount(0);
     menu = await roomMenu(page, "新 协作室");
     await menu.getByRole("menuitem", { name: "取消置顶" }).click();
-    await expect(page.locator('.bot-list .bot-row[aria-haspopup="menu"]').first()).toHaveAttribute("aria-label", "先建群聊");
+    await expect(roomRow(page, "新 协作室").locator(".bot-row-state svg")).toHaveCount(0);
 
     menu = await roomMenu(page, "新 协作室");
-    await menu.getByRole("menuitem", { name: "从侧边栏隐藏" }).click();
+    await menu.getByRole("menuitem", { name: "移除聊天" }).click();
     await expect(roomRow(page, "新 协作室")).toHaveCount(0);
     await application.close();
     application = undefined;
     launched = await launch(userDataDir);
     application = launched.application;
     page = launched.page;
-    await expect(page.getByRole("button", { name: "已隐藏 (1)" })).toBeVisible();
-    await page.getByRole("button", { name: "已隐藏 (1)" }).click();
+    await expect(page.getByRole("button", { name: "已移除的聊天 (1)" })).toBeVisible();
+    await page.getByRole("button", { name: "已移除的聊天 (1)" }).click();
     await expect(roomRow(page, "新 协作室")).toBeVisible();
     menu = await roomMenu(page, "新 协作室");
-    await expect(menu.getByRole("menuitem", { name: "恢复到侧边栏" })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "恢复聊天" })).toBeVisible();
     await expect(menu.getByRole("menuitem", { name: "置顶", exact: true })).toHaveCount(0);
-    await menu.getByRole("menuitem", { name: "恢复到侧边栏" }).click();
-    await expect(page.getByRole("button", { name: "已隐藏 (1)" })).toHaveCount(0);
+    await menu.getByRole("menuitem", { name: "恢复聊天" }).click();
+    await expect(page.getByRole("button", { name: "已移除的聊天 (1)" })).toHaveCount(0);
     await expect(roomRow(page, "新 协作室")).toBeVisible();
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 844));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await openBotList(page);
     menu = await roomMenu(page, "新 协作室");
     const bounds = await menu.boundingBox();
     expect(bounds).not.toBeNull();
@@ -137,7 +140,7 @@ test("supports the first Grok-style Room context actions without touching the in
     await page.keyboard.press("Escape");
 
     const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
-    expect(database.prepare("SELECT name, archived_at, pinned_at, hidden_at, has_unread FROM rooms WHERE id = ?").get(detail.room.id)).toEqual({
+    expect(database.prepare("SELECT r.name, r.archived_at, c.pinned_at, c.hidden_at, c.has_unread FROM rooms r JOIN sessions s ON s.room_id = r.id JOIN conversation_metadata c ON c.session_id = s.id WHERE r.id = ?").get(detail.room.id)).toEqual({
       name: "新 协作室",
       archived_at: null,
       pinned_at: null,

@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { openMessageEvidence } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,6 +73,7 @@ test("runs and restores a visible A-to-B fake handoff without responsive overflo
     await expect(launched.page.locator("article.message-assistant .message-bubble")).toHaveCount(1);
     await expect(launched.page.locator("article.message-user").last()).toContainText("自动选择");
     await expect(launched.page.locator("article.message-user").last().locator(".message-route-chip")).toHaveText(["@协作员 · 策划"]);
+    await openMessageEvidence(launched.page);
     const handoff = launched.page.getByTestId("room-handoff-list");
     await expect(handoff).toContainText(seeded.fromName);
     await expect(handoff).toContainText(seeded.toName);
@@ -120,6 +122,7 @@ test("runs and restores a visible A-to-B fake handoff without responsive overflo
     application = launched.application;
     launched.page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     await openRoom(launched.page, seeded.roomName);
+    await openMessageEvidence(launched.page);
     await expect(launched.page.getByTestId("room-handoff-list")).toHaveCount(1);
     await expect(launched.page.getByTestId("room-handoff-list")).toContainText("投递：失败");
     await expect(launched.page.getByTestId("room-handoff-list")).toContainText("执行失败");
@@ -138,7 +141,7 @@ test("runs and restores a visible A-to-B fake handoff without responsive overflo
       }
     ).aevorenBot.roomRuntime.retryTurn(turnId), failedTargetTurnId);
     expect(retryResult.ok).toBe(true);
-    await expect(launched.page.getByTestId("room-handoff-list")).toContainText("投递：失败");
+    await expect(launched.page.getByTestId("room-handoff-list")).toContainText("投递：重试 1 · 已接收");
     await expect(launched.page.getByTestId("room-handoff-list")).toContainText("执行：已完成");
     await expect(launched.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(3);
 

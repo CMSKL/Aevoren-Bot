@@ -98,7 +98,8 @@ test("uses one Bot-owned explicit Memory in one real Provider call", async () =>
       .get(sessionId) as { prompt_manifest_json: string };
     const manifest = JSON.parse(row.prompt_manifest_json) as PromptManifest;
     expect(manifest.schemaVersion).toBe(4);
-    expect(manifest.blocks.map((block) => block.authority)).toEqual(["agent-profile", "runtime-state", "memory", "user"]);
+    expect(manifest.blocks.map((block) => block.authority)).toEqual(["agent-profile", "runtime-state", "runtime-state", "memory", "user"]);
+    expect(manifest.blocks[2]?.provenance).toBe("app:tool-evidence-contract:v1");
     expect(manifest.blocks.find((block) => block.authority === "memory")?.scope).toBe(`bot:${botId}:runtime-memory`);
     expect(row.prompt_manifest_json).not.toContain(storedToken);
     expect(row.prompt_manifest_json).not.toContain(currentToken);

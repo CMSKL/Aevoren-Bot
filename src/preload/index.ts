@@ -3,6 +3,10 @@ import { IPC } from "@shared/channels";
 import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
 
 const api: AevorenBotApi = {
+  userProfile: {
+    get: () => ipcRenderer.invoke(IPC.userProfileGet),
+    update: (input) => ipcRenderer.invoke(IPC.userProfileUpdate, input),
+  },
   attachments: {
     pick: () => ipcRenderer.invoke(IPC.attachmentsPick),
   },
@@ -33,6 +37,12 @@ const api: AevorenBotApi = {
     delete: (input) => ipcRenderer.invoke(IPC.routinesDelete, input),
   },
   conversations: {
+    list: () => ipcRenderer.invoke(IPC.conversationsList),
+    setPinned: (input) => ipcRenderer.invoke(IPC.conversationsSetPinned, input),
+    setUnread: (input) => ipcRenderer.invoke(IPC.conversationsSetUnread, input),
+    setHidden: (input) => ipcRenderer.invoke(IPC.conversationsSetHidden, input),
+    clear: (sessionId) => ipcRenderer.invoke(IPC.conversationsClear, sessionId),
+    setProject: (input) => ipcRenderer.invoke(IPC.conversationsSetProject, input),
     deleteBatch: (input) => ipcRenderer.invoke(IPC.conversationsDeleteBatch, input),
   },
   teams: {

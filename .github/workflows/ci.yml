@@ -60,6 +60,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:smoke
       - run: pnpm package:mac
+      - name: Preserve failed macOS UI diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-ui-diagnostics-${{ github.sha }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 5
 
   windows:
     name: Windows smoke and package
@@ -81,8 +89,15 @@ jobs:
           # GitHub-hosted Windows runners have no interactive desktop. The
           # Playwright Electron connection still exercises the full Renderer.
           AEVOREN_BOT_TEST_HIDDEN: "1"
-        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts
+        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts tests/smoke/p0-navigation.spec.ts tests/smoke/ui-redesign-acceptance.spec.ts
       - run: pnpm package:win
+      - name: Verify packaged Windows locale resources
+        shell: pwsh
+        run: |
+          foreach ($locale in @("en-US.pak", "zh-CN.pak")) {
+            $path = Join-Path "dist/win-unpacked/locales" $locale
+            if (!(Test-Path $path) -or (Get-Item $path).Length -le 0) { throw "Missing or empty Windows locale: $locale" }
+          }
       - name: Verify unsigned Windows installer artifact
         shell: pwsh
         run: |
@@ -97,6 +112,10 @@ jobs:
           Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -Wait -NoNewWindow
           $app = Join-Path $installDir "Aevoren Bot.exe"
           if (!(Test-Path $app)) { throw "NSIS installer did not produce the application executable" }
+          foreach ($locale in @("en-US.pak", "zh-CN.pak")) {
+            $path = Join-Path (Join-Path $installDir "locales") $locale
+            if (!(Test-Path $path) -or (Get-Item $path).Length -le 0) { throw "Installed Windows locale is missing or empty: $locale" }
+          }
           $dataDir = Join-Path $env:RUNNER_TEMP "aevoren-windows-smoke-data"
           $env:AEVOREN_BOT_FAKE_PROVIDER = "1"
           $env:AEVOREN_BOT_TEST_HIDDEN = "1"
@@ -105,3 +124,19 @@ jobs:
           Start-Sleep -Seconds 8
           if ($child.HasExited) { throw "Installed Windows application exited during startup" }
           Stop-Process -Id $child.Id -Force
+      - name: Validate both themes and avatar persistence in the installed Windows package
+        shell: pwsh
+        env:
+          AEVOREN_BOT_TEST_HIDDEN: "1"
+        run: |
+          $env:AEVOREN_PACKAGED_APP_PATH = Join-Path $env:RUNNER_TEMP "Aevoren Bot/Aevoren Bot.exe"
+          pnpm exec playwright test tests/smoke/ui-redesign-acceptance.spec.ts
+          if ($LASTEXITCODE -ne 0) { throw "Installed Windows UI acceptance failed" }
+      - name: Preserve failed Windows UI diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-ui-diagnostics-${{ github.sha }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 5
