@@ -9,6 +9,14 @@ import { BotIcon, ChatIcon, CheckIcon, CloseIcon, ContactsIcon, FolderIcon, Penc
 import { RoomContextMenu } from "./RoomContextMenu";
 import { UserAvatar } from "./UserAvatar";
 
+export type RoomRestoreState = {
+  room: Room;
+  stage: "archive" | "show" | "sync" | "done";
+  pending: boolean;
+  opening: boolean;
+  error: string | null;
+};
+
 type SidebarProps = {
   bots: Bot[];
   rooms: Room[];
@@ -44,7 +52,10 @@ type SidebarProps = {
   onMobileClose(): void;
   onSelectBot(bot: Bot): void;
   onSelectRoom(room: Room): void;
-  onRestoreRoom(room: Room): void;
+  restoreStates: Readonly<Record<string, RoomRestoreState>>;
+  onRestoreRoom(room: Room): Promise<void>;
+  onOpenRestoredRoom(room: Room): Promise<void>;
+  onDismissRestore(roomId: string): void;
   onRenameRoom(room: Room, name: string): Promise<boolean>;
   onCopyRoomId(room: Room): Promise<boolean>;
   onArchiveRoom(room: Room): Promise<boolean>;
@@ -171,6 +182,9 @@ export function Sidebar({
   onSelectBot,
   onSelectRoom,
   onRestoreRoom,
+  restoreStates,
+  onOpenRestoredRoom,
+  onDismissRestore,
   onRenameRoom,
   onCopyRoomId,
   onArchiveRoom,
@@ -266,10 +280,9 @@ export function Sidebar({
     project,
     activeRooms: activeRooms.filter((room) => summaryByKey.get(roomKey(room.id))?.projectId === project.id),
     hiddenRooms: hiddenRooms.filter((room) => summaryByKey.get(roomKey(room.id))?.projectId === project.id),
-    archivedRooms: archivedRooms.filter((room) => summaryByKey.get(roomKey(room.id))?.projectId === project.id),
     visibleBots: visibleBots.filter((bot) => summaryByKey.get(botKey(bot.id))?.projectId === project.id),
     hiddenBots: hiddenBots.filter((bot) => summaryByKey.get(botKey(bot.id))?.projectId === project.id),
-  })), [activeRooms, archivedRooms, hiddenBots, hiddenRooms, projects, summaryByKey, visibleBots]);
+  })), [activeRooms, hiddenBots, hiddenRooms, projects, summaryByKey, visibleBots]);
   const contextBot = contextMenu ? bots.find((bot) => bot.id === contextMenu.botId) ?? null : null;
   const contextRoom = roomContextMenu ? rooms.find((room) => room.id === roomContextMenu.roomId) ?? null : null;
   const conversationOrder = useMemo<ConversationKey[]>(() => tab === "chats"
@@ -504,7 +517,7 @@ export function Sidebar({
   }
 
   async function performRoom(room: Room, operation: () => Promise<boolean>, successMessage: string | null): Promise<boolean> {
-    if (pendingRoomId) return false;
+    if (pendingRoomId || restoreStates[room.id]?.pending || restoreStates[room.id]?.opening) return false;
     setPendingRoomId(room.id);
     setNotice(null);
     const succeeded = await operation();
@@ -630,6 +643,7 @@ export function Sidebar({
         type="button"
         className={`bot-row conversation-row${room.id === selectedRoomId ? " selected" : ""}${multiSelected ? " multi-selected" : ""}`}
         key={room.id}
+        disabled={restoreStates[room.id]?.pending || restoreStates[room.id]?.opening}
         onClick={(event) => {
           if (batchSelectable) handleSelection(event, key, () => onSelectRoom(room));
           else {
@@ -843,10 +857,6 @@ export function Sidebar({
             <button className="archived-toggle" type="button" aria-expanded={hiddenOpen} onClick={() => setHiddenOpen((open) => !open)}>已移除的聊天 ({hiddenBots.length + hiddenRooms.length})</button>
             {hiddenOpen ? <div role="list">{hiddenRooms.map(renderRoomRow)}{hiddenBots.map(renderBotRow)}</div> : null}
           </> : null}
-          {archivedRooms.length > 0 ? <>
-            <button className="archived-toggle" type="button" aria-expanded={archivedOpen} onClick={() => setArchivedOpen((open) => !open)}>已归档 ({archivedRooms.length})</button>
-            {archivedOpen ? archivedRooms.map((room) => <div className="archived-room-row" key={room.id}><span>{room.name}</span><button className="text-button" type="button" onClick={() => onRestoreRoom(room)}>恢复</button></div>) : null}
-          </> : null}
         </> : tab === "contacts" ? <div role="list" aria-label="全部联系人">
           {contacts.map(renderBotRow)}
           {contacts.length === 0 ? <div className="bot-list-empty">{query ? "没有匹配的联系人" : "还没有联系人。新建一个 Bot 开始。"}</div> : null}
@@ -866,7 +876,7 @@ export function Sidebar({
           {workspaceError ? <div className="dialog-error" role="alert">{workspaceError}</div> : null}
           {creationError ? <div className="dialog-error" role="alert">{creationError}</div> : null}
           <div className="sidebar-workspace-content" id="sidebar-workspace-content" hidden={!workspaceExpanded}>
-            {projectGroups.map(({ project, activeRooms: projectRooms, hiddenRooms: projectHiddenRooms, archivedRooms: projectArchivedRooms, visibleBots: projectBots, hiddenBots: projectHiddenBots }) => {
+            {projectGroups.map(({ project, activeRooms: projectRooms, hiddenRooms: projectHiddenRooms, visibleBots: projectBots, hiddenBots: projectHiddenBots }) => {
               const projectCollapsed = collapsedProjectIds.has(project.id);
               const roomsCollapsed = collapsedRoomGroupIds.has(project.id);
               const botsCollapsed = collapsedBotGroupIds.has(project.id);
@@ -973,25 +983,28 @@ export function Sidebar({
                         {hiddenOpen ? <div className="sidebar-workspace-items" role="list">{projectHiddenRooms.map(renderRoomRow)}{projectHiddenBots.map(renderBotRow)}</div> : null}
                       </>
                     ) : null}
-                    {projectArchivedRooms.length > 0 ? (
-                      <>
-                        <button className="archived-toggle" type="button" aria-expanded={archivedOpen} onClick={() => setArchivedOpen((open) => !open)}>
-                          已归档 ({projectArchivedRooms.length})
-                        </button>
-                        {archivedOpen ? <div className="sidebar-workspace-items">{projectArchivedRooms.map((room) => (
-                          <div className="archived-room-row" key={room.id}>
-                            <span>{room.name}</span>
-                            <button className="text-button" type="button" onClick={() => onRestoreRoom(room)}>恢复</button>
-                          </div>
-                        ))}</div> : null}
-                      </>
-                    ) : null}
                   </div>
                 </section>
               );
             })}
             {projects.length === 0 ? <div className="bot-list-empty">正在加载项目…</div> : null}
           </div>
+          {archivedRooms.length > 0 || Object.keys(restoreStates).length > 0 ? <section aria-label="归档群聊">
+            <button className="archived-toggle" type="button" aria-expanded={archivedOpen} aria-controls="sidebar-archived-rooms" onClick={() => setArchivedOpen((open) => !open)}>已归档 ({archivedRooms.length})</button>
+            <div id="sidebar-archived-rooms" hidden={!archivedOpen}>
+              {archivedRooms.map((room) => <div className="archived-room-row" data-testid={`archive-room-${room.id}`} key={room.id}><span title={room.name}>{room.name}</span><button className="text-button" type="button" disabled={restoreStates[room.id]?.pending || restoreStates[room.id]?.opening} onClick={() => void onRestoreRoom(room)}>{restoreStates[room.id]?.pending ? "恢复中…" : "恢复"}</button></div>)}
+              {Object.values(restoreStates).map((state) => <div className="archive-feedback" data-testid={`archive-feedback-${state.room.id}`} key={state.room.id}>
+                <span className="archive-feedback-name" title={state.room.name}>{state.room.name}</span>
+                <p role={state.error ? "alert" : "status"}>
+                  {state.pending ? "正在恢复…" : state.opening ? "正在打开…" : state.stage === "done" ? state.error ? `已恢复，但暂时无法打开。${state.error}` : "已恢复到聊天列表" : state.stage === "archive" ? `恢复未完成。${state.error ?? "请重试。"}` : `已取消归档，${state.stage === "show" ? "返回聊天列表未完成" : "列表同步未完成"}。${state.error ?? "请重试。"}`}
+                </p>
+                <div className="archive-feedback-actions">
+                  {state.stage === "done" ? <button className="text-button" type="button" disabled={state.opening} onClick={() => void onOpenRestoredRoom(state.room)}>{state.error ? "重新打开" : "打开"}</button> : state.error ? <button className="text-button" type="button" disabled={state.pending} onClick={() => void onRestoreRoom(state.room)}>重试</button> : null}
+                  <button className="text-button" type="button" aria-label={`关闭 ${state.room.name} 的恢复提示`} disabled={state.pending || state.opening || state.stage !== "done"} onClick={() => onDismissRestore(state.room.id)}>关闭</button>
+                </div>
+              </div>)}
+            </div>
+          </section> : null}
         </section>}
       </div>
 

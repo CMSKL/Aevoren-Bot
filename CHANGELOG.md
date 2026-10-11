@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.21] - 2026-10-11
+
+### Changed
+
+- Archived group chats now live in one collapsed Workspaces section, not the Chats list or individual project sections. Restore returns a group to Chats without opening it, marking it read, or interrupting the current draft; opening is a separate action.
+- Group creation and details distinguish single-Agent automatic replies from coordinator-led collaboration using the selected members' actual model capabilities. Unavailable coordination options no longer promise automatic handoff.
+
+### Fixed
+
+- Conversation file management targets the current chat's granted folder instead of a previously managed project's folder. Unbound chats link to the existing workspace settings; legacy multiple-folder grants require an explicit target.
+- Successful task retries no longer retain the earlier attempt's active failure card or global error. Historical attempts remain inspectable, and recovery does not clear unrelated settings or task errors.
+- Partial archive recovery retains stage-specific retry and open feedback, including when no archived items remain, without repeating already successful steps or creating duplicate conversations.
+- Negated tool requests and replies such as "do not read files" are no longer mistaken for required or completed file operations. Positive requirements and affirmative execution claims still require genuine tool evidence, including in mixed instructions.
+- Automatic response-mode labels remain fully readable at the minimum window width in both Dark and Daylight themes.
+
+### Verified
+
+- Hidden real Electron and isolated SQLite checks cover folder targeting, archive recovery, historical results and connection recovery without touching the installed application or user data.
+- Real Codex requests cover read-only failure, granting the correct folder, retrying the same task, file creation and hash-matching readback, plus one automatic reply and two independent Everyone replies.
+- Live CLI acceptance is explicitly opt-in; environments without authenticated CLIs or an explicitly supplied genuine history snapshot report those cases as unverified skips rather than substituting simulated model results.
+
 ## [0.3.0-beta.20] - 2026-10-10
 
 Version 0.3.0-beta.19 was not published: the release gate rejected personal paths in the QA documentation. This version removes those paths and checks the same gate in CI before promotion.

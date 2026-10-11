@@ -5,11 +5,14 @@ import { CloseIcon, FolderIcon } from "./Icons";
 type WorkspaceDialogProps = {
   open: boolean;
   workspaceId: string | null;
+  workspaceIds?: readonly string[];
+  onOpenChatSettings?(): void;
   onClose(): void;
 };
 
-export function WorkspaceDialog({ open, workspaceId, onClose }: WorkspaceDialogProps): React.JSX.Element | null {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+export function WorkspaceDialog({ open, workspaceId, workspaceIds, onOpenChatSettings, onClose }: WorkspaceDialogProps): React.JSX.Element | null {
+  const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [error, setError] = useState<AppError | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -19,16 +22,24 @@ export function WorkspaceDialog({ open, workspaceId, onClose }: WorkspaceDialogP
     void window.aevorenBot.workspaces.list().then((result) => {
       if (!active) return;
       if (result.ok) {
-        setWorkspaces(result.data.filter((workspace) => workspace.id === workspaceId));
+        setWorkspaces(result.data);
         setError(null);
       }
-      else setError(result.error);
+      else { setWorkspaces([]); setError(result.error); }
+    }).catch((failure) => {
+      if (!active) return;
+      console.error("Workspace permissions could not be loaded", failure);
+      setWorkspaces([]);
+      setError({ domain: "workspace", code: "INTERNAL_ERROR", retryable: true, safeMessage: "暂时无法读取文件夹权限，请关闭后重试。" });
     });
     return () => { active = false; };
-  }, [open, workspaceId]);
+  }, [open]);
 
   if (!open) return null;
-  const visibleWorkspaces = workspaces.filter((workspace) => workspace.id === workspaceId);
+  const allowedWorkspaces = (workspaces ?? []).filter((workspace) => workspaceIds !== undefined
+    ? workspaceIds.includes(workspace.id) : workspace.id === workspaceId);
+  const targetId = allowedWorkspaces.length === 1 ? allowedWorkspaces[0]!.id : selectedWorkspaceId;
+  const visibleWorkspaces = allowedWorkspaces.filter((workspace) => workspace.id === targetId);
 
   async function removeWorkspace(workspace: Workspace): Promise<void> {
     setBusy(workspace.id);
@@ -39,7 +50,7 @@ export function WorkspaceDialog({ open, workspaceId, onClose }: WorkspaceDialogP
       setError(result.error);
       return;
     }
-    setWorkspaces((current) => current.filter((item) => item.id !== workspace.id));
+    setWorkspaces((current) => (current ?? []).filter((item) => item.id !== workspace.id));
     window.dispatchEvent(new Event("aevoren:workspaces-changed"));
   }
 
@@ -48,7 +59,7 @@ export function WorkspaceDialog({ open, workspaceId, onClose }: WorkspaceDialogP
     patch: Partial<Pick<Workspace, "writeEnabled" | "automationEnabled">>,
   ): Promise<void> {
     const optimistic = { ...workspace, ...patch };
-    setWorkspaces((current) => current.map((item) => item.id === workspace.id ? optimistic : item));
+    setWorkspaces((current) => (current ?? []).map((item) => item.id === workspace.id ? optimistic : item));
     setBusy(workspace.id);
     setError(null);
     const result = await window.aevorenBot.workspaces.updatePermissions({
@@ -59,11 +70,11 @@ export function WorkspaceDialog({ open, workspaceId, onClose }: WorkspaceDialogP
     });
     setBusy(null);
     if (!result.ok) {
-      setWorkspaces((current) => current.map((item) => item.id === workspace.id ? workspace : item));
+      setWorkspaces((current) => (current ?? []).map((item) => item.id === workspace.id ? workspace : item));
       setError(result.error);
       return;
     }
-    setWorkspaces((current) => current.map((item) => item.id === result.data.id ? result.data : item));
+    setWorkspaces((current) => (current ?? []).map((item) => item.id === result.data.id ? result.data : item));
     window.dispatchEvent(new Event("aevoren:workspaces-changed"));
   }
 
@@ -78,7 +89,20 @@ export function WorkspaceDialog({ open, workspaceId, onClose }: WorkspaceDialogP
           <button type="button" className="icon-button dialog-close-button" onClick={onClose} aria-label="关闭工作区权限" title="关闭工作区权限" disabled={busy !== null}><CloseIcon /></button>
         </header>
         <div className="workspace-list settings-list" aria-label="已授权文件夹">
-          {visibleWorkspaces.length === 0 ? <div className="workspace-empty">此工作区尚未授权文件夹，可在左侧重新授权。</div> : null}
+          {workspaces === null ? <p role="status">正在读取文件夹权限…</p> : !error && allowedWorkspaces.length === 0 ? <div className="workspace-empty">
+            {workspaceIds !== undefined ? <>
+              <p>{workspaceIds.length === 0 ? "当前聊天未关联工作区" : "当前聊天的文件夹授权已不可用"}</p>
+              <p>请在聊天设置中选择工作区；打开此窗口不会增加文件访问权限。</p>
+              {onOpenChatSettings ? <button className="secondary-button" type="button" onClick={onOpenChatSettings}>打开聊天设置</button> : null}
+            </> : "此工作区尚未授权文件夹，可在左侧重新授权。"}
+          </div> : null}
+          {allowedWorkspaces.length > 1 ? <label className="field">
+            <span>当前聊天已授权多个文件夹，请选择要管理的目标</span>
+            <select aria-label="选择要管理的工作区" value={allowedWorkspaces.some(workspace => workspace.id === selectedWorkspaceId) ? selectedWorkspaceId : ""} disabled={busy !== null} onChange={event => setSelectedWorkspaceId(event.target.value)}>
+              <option value="">请选择文件夹</option>
+              {allowedWorkspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+            </select>
+          </label> : null}
           {visibleWorkspaces.map((workspace) => (
             <div className="workspace-row settings-list-row" key={workspace.id}>
               <span className="workspace-icon" aria-hidden="true"><FolderIcon /></span>

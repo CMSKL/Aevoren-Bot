@@ -41,7 +41,8 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const [selectedBotId, setSelectedBotId] = useState("");
   const [memberPending, setMemberPending] = useState(false);
   const [membersExpanded, setMembersExpanded] = useState(false);
-  const [providers, setProviders] = useState<ProviderInstanceInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderInstanceInfo[] | null>(null);
+  const [providerLoadFailed, setProviderLoadFailed] = useState(false);
   const draftRef = useRef(draft);
   const savedRef = useRef<Draft | null>(detail ? toDraft(detail) : null);
   const detailRef = useRef(detail);
@@ -54,14 +55,26 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const botIdentities = useMemo(() => buildBotIdentityMap([
     ...new Map([...bots, ...(detail?.members.map((member) => member.bot) ?? [])].map((bot) => [bot.id, bot])).values(),
   ]), [bots, detail]);
-  const eligibleLeads = eligibleRoomLeads(detail?.members.map(member => member.bot) ?? [], providers);
+  const eligibleLeads = eligibleRoomLeads(detail?.members.map(member => member.bot) ?? [], providers ?? []);
   useEffect(() => {
     let cancelled = false;
-    const load = (): void => { void window.aevorenBot.providers.list().then(result => {
-      if (cancelled) return;
-      if (result.ok) setProviders(result.data);
-      else onError(result.error);
-    }); };
+    let request = 0;
+    const load = (): void => {
+      const currentRequest = ++request;
+      setProviders(null);
+      setProviderLoadFailed(false);
+      void window.aevorenBot.providers.list().then(result => {
+        if (cancelled || currentRequest !== request) return;
+        if (result.ok) setProviders(result.data);
+        else { setProviders([]); setProviderLoadFailed(true); onError(result.error); }
+      }).catch(failure => {
+        if (cancelled || currentRequest !== request) return;
+        console.error("Room coordinator capabilities could not be loaded", failure);
+        setProviders([]);
+        setProviderLoadFailed(true);
+        onError({ domain: "runtime", code: "INTERNAL_ERROR", retryable: true, safeMessage: "暂时无法读取协调能力，请重新打开群聊设置后重试。" });
+      });
+    };
     load();
     window.addEventListener("aevoren:providers-changed", load);
     return () => { cancelled = true; window.removeEventListener("aevoren:providers-changed", load); };
@@ -170,14 +183,18 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
       <section className="inspector-group inspector-profile-fields" aria-label="群聊资料">
       <label className="field inspector-primary-field">
         <span>群协调者</span>
-        <select aria-label="群协调者" value={draft.leadBotId ?? ""} disabled={active || memberPending || status === "saving"} onChange={(event) => update("leadBotId", event.target.value || null)} onBlur={() => void flush()}>
-          <option value="">每轮自动选择负责人</option>
+        <select aria-label="群协调者" value={draft.leadBotId ?? ""} disabled={active || memberPending || status === "saving" || providers === null} onChange={(event) => update("leadBotId", event.target.value || null)} onBlur={() => void flush()}>
+          <option value="">单人自动回复（不设协调者）</option>
           {draft.leadBotId && !eligibleLeads.some(bot => bot.id === draft.leadBotId)
-            ? <option value={draft.leadBotId} disabled>{detail.members.find(member => member.botId === draft.leadBotId)?.bot.name ?? "原协调者"} · 当前不可用</option> : null}
+            ? <option value={draft.leadBotId} disabled>{detail.members.find(member => member.botId === draft.leadBotId)?.bot.name ?? "原协调者"} · {providers === null ? "正在确认" : providerLoadFailed ? "能力未确认" : "当前不可用"}</option> : null}
           {eligibleLeads.map(bot => <option key={bot.id} value={bot.id}>{botIdentities.get(bot.id)?.inline ?? bot.name}</option>)}
         </select>
-        <small>协调者负责分工并汇总结果；明确 @成员时直接交给该成员。</small>
-        {eligibleLeads.length === 0 ? <small>配置支持协作的 API 联系人后，可设为固定协调者。</small> : null}
+        <small>{draft.leadBotId
+          ? providers !== null && !providerLoadFailed && !eligibleLeads.some(bot => bot.id === draft.leadBotId)
+            ? "当前协调者不可用。请检查其模型配置，或选择单人自动回复；系统不会自行更换协调者。"
+            : "协调者负责分工并汇总结果；明确 @成员时直接交给该成员。"
+          : "每轮自动选一位 Bot 回复，不自动接力；也可 @ 指定或让全员分别回复。"}</small>
+        {providers === null ? <small role="status">正在确认成员的协调能力…</small> : providerLoadFailed ? <small role="alert">协调能力未确认，请重新打开群聊设置后重试。</small> : eligibleLeads.length === 0 ? <small>配置支持协作的 API 联系人后，可设为固定协调者。</small> : null}
       </label>
       <button
         className="room-avatar-stack"

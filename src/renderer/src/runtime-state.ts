@@ -1,4 +1,27 @@
-import type { RuntimeEvent, RuntimeRun, TranscriptEntry, TranscriptEvent } from "@shared/contracts";
+import type { AppError, RuntimeEvent, RuntimeRun, TranscriptEntry, TranscriptEvent } from "@shared/contracts";
+
+type RuntimeTask = Pick<RuntimeRun, "sessionId" | "executionKey" | "clientNonce" | "attemptNo">;
+export type RuntimeErrorSource = { error: AppError; run: RuntimeTask };
+
+export function runtimeTaskKey(run: RuntimeTask): string {
+  return JSON.stringify([run.sessionId, run.executionKey || run.clientNonce]);
+}
+
+export function latestRuntimeAttempts(runs: readonly RuntimeRun[]): Map<string, RuntimeRun> {
+  const latest = new Map<string, RuntimeRun>();
+  for (const run of runs) {
+    const key = runtimeTaskKey(run);
+    const current = latest.get(key);
+    if (!current || run.attemptNo > current.attemptNo || (run.attemptNo === current.attemptNo && run.version > current.version)) latest.set(key, run);
+  }
+  return latest;
+}
+
+export function recoveredRuntimeError(current: AppError | null, source: RuntimeErrorSource | null, incoming: RuntimeRun): AppError | null {
+  return source && current === source.error && incoming.state === "completed" &&
+    runtimeTaskKey(incoming) === runtimeTaskKey(source.run) && incoming.attemptNo >= source.run.attemptNo
+    ? null : current;
+}
 
 export function sortEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
   return entries.toSorted((left, right) => left.generation - right.generation || left.seq - right.seq);

@@ -83,7 +83,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test
+      # Bound worker contention so filesystem-backed Runtime checks can settle
+      # on hosted Windows runners without weakening their completion assertions.
+      - run: pnpm exec vitest run --maxWorkers=2
       - run: pnpm build
       - name: Run Windows Electron smoke tests
         env:

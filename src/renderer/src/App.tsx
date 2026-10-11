@@ -39,11 +39,11 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { NewBotChooser } from "./components/NewBotChooser";
 import { ProfileInspector, type ProfileInspectorHandle } from "./components/ProfileInspector";
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, type RoomRestoreState } from "./components/Sidebar";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { UpdateStatusNotice } from "./components/UpdateStatusNotice";
 import { UserProfileDialog } from "./components/UserProfileDialog";
-import { mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry } from "./runtime-state";
+import { latestRuntimeAttempts, mergeBufferedEvents, mergeRuntimeRun, mergeTranscriptEntry, recoveredRuntimeError, runtimeTaskKey, type RuntimeErrorSource } from "./runtime-state";
 import { mergeRoomRuntimeEvents } from "./room-runtime-state";
 import { updateActionErrorMessage, type UpdateAction } from "./update-actions";
 
@@ -70,9 +70,14 @@ function mergeToolEvents(
   }), { invocations, approvals });
 }
 
+type RoomOpenResult = { status: "opened" | "blocked" | "superseded" } | { status: "failed"; message: string };
+
 export function App(): React.JSX.Element {
   const [bots, setBots] = useState<Bot[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [roomRestoreStates, setRoomRestoreStates] = useState<Record<string, RoomRestoreState>>({});
+  const roomRestoreStatesRef = useRef<Record<string, RoomRestoreState>>({});
+  const roomRestoreInFlightRef = useRef(new Set<string>());
   const [projects, setProjects] = useState<Project[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [sidebarTab, setSidebarTab] = useState<"chats" | "contacts" | "workspace">("chats");
@@ -106,6 +111,7 @@ export function App(): React.JSX.Element {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [managedWorkspaceId, setManagedWorkspaceId] = useState<string | null>(null);
+  const [managingConversationWorkspaces, setManagingConversationWorkspaces] = useState(false);
   const [workspaceAddPending, setWorkspaceAddPending] = useState(false);
   const [workspaceAddError, setWorkspaceAddError] = useState<string | null>(null);
   const workspaceAddInFlightRef = useRef(false);
@@ -137,11 +143,22 @@ export function App(): React.JSX.Element {
   const bufferedRoomRef = useRef<RoomRuntimeEvent[]>([]);
   const bufferedToolRef = useRef<ToolEvent[]>([]);
   const runtimeVersionsRef = useRef(new Map<string, number>());
+  const runtimeRunsRef = useRef<RuntimeRun[]>([]);
+  const runtimeErrorRef = useRef<RuntimeErrorSource | null>(null);
+  const roomErrorRef = useRef<{ error: AppError; batchId: string } | null>(null);
+  const roomBatchVersionsRef = useRef(new Map<string, number>());
   const openRequestRef = useRef(0);
   const chooserActionRef = useRef<"create" | "select" | null>(null);
   const conversationRefreshRef = useRef(0);
   const sidebarTabRef = useRef(sidebarTab);
   useEffect(() => { sidebarTabRef.current = sidebarTab; }, [sidebarTab]);
+
+  const reportDirectError = useCallback((failure: AppError, sessionId: string, clientNonce: string): void => {
+    if (sessionId !== sessionIdRef.current || selectedRoomIdRef.current) return;
+    const run = [...latestRuntimeAttempts(runtimeRunsRef.current).values()].find((candidate) => candidate.sessionId === sessionId && candidate.clientNonce === clientNonce);
+    runtimeErrorRef.current = { error: failure, run: run ?? { sessionId, clientNonce, executionKey: clientNonce, attemptNo: 0 } };
+    setError(failure);
+  }, []);
 
   const mergeConversation = useCallback((next: ConversationSummary): void => {
     setConversations((current) => {
@@ -151,16 +168,27 @@ export function App(): React.JSX.Element {
     });
   }, []);
 
-  const refreshConversations = useCallback(async (): Promise<void> => {
+  const refreshConversations = useCallback(async (reportError = true, restoredRoomId?: string): Promise<boolean> => {
     const request = ++conversationRefreshRef.current;
     const result = await window.aevorenBot.conversations.list();
-    if (request !== conversationRefreshRef.current) return;
-    if (!result.ok) { setError(result.error); return; }
+    if (!result.ok) {
+      if (reportError && request === conversationRefreshRef.current) setError(result.error);
+      else console.error("Conversation list synchronization failed", result.error);
+      return false;
+    }
+    const restored = restoredRoomId ? result.data.find((item) => item.roomId === restoredRoomId) : undefined;
+    if (restoredRoomId && (!restored || restored.hiddenAt !== null)) return false;
+    if (request !== conversationRefreshRef.current) {
+      if (!restored) return false;
+      mergeConversation(restored);
+      return true;
+    }
     setConversations((current) => result.data.map((next) => {
       const existing = current.find((item) => item.sessionId === next.sessionId);
       return existing && existing.version > next.version ? existing : next;
     }));
-  }, []);
+    return true;
+  }, [mergeConversation]);
 
   const activateConversation = useCallback(async (sessionId: string): Promise<ConversationSummary | null> => {
     const shown = await window.aevorenBot.conversations.setHidden({ sessionId, hidden: false });
@@ -226,7 +254,10 @@ export function App(): React.JSX.Element {
       if (event.sessionId === sessionIdRef.current) setEntries((current) => mergeTranscriptEntry(current, event.entry));
     });
     const unsubscribeSend = window.aevorenBot.events.subscribeSendState((event) => {
-      if (event.sessionId === sessionIdRef.current && event.error) setError(event.error);
+      if (event.error) {
+        const latest = [...latestRuntimeAttempts(runtimeRunsRef.current).values()].find((run) => run.sessionId === event.sessionId && run.clientNonce === event.clientNonce);
+        if (latest?.state !== "completed") reportDirectError(event.error, event.sessionId, event.clientNonce);
+      }
     });
     const unsubscribeRuntime = window.aevorenBot.events.subscribeRuntime((event) => {
       scheduleRefresh();
@@ -238,9 +269,19 @@ export function App(): React.JSX.Element {
       const knownVersion = runtimeVersionsRef.current.get(event.run.id) ?? 0;
       if (knownVersion >= event.run.version) return;
       runtimeVersionsRef.current.set(event.run.id, event.run.version);
-      setRuns((current) => mergeRuntimeRun(current, event.run));
+      const merged = mergeRuntimeRun(runtimeRunsRef.current, event.run);
+      runtimeRunsRef.current = merged;
+      setRuns(merged);
       setLiveState(event.liveState);
-      if (event.error) setError(event.error);
+      if (selectedRoomIdRef.current) return;
+      const latest = latestRuntimeAttempts(merged).get(runtimeTaskKey(event.run));
+      if (event.error && latest?.id === event.run.id) {
+        runtimeErrorRef.current = { error: event.error, run: event.run };
+        setError(event.error);
+      } else if (event.run.state === "completed") {
+        const source = runtimeErrorRef.current;
+        setError((current) => recoveredRuntimeError(current, source, event.run));
+      }
     });
     const unsubscribeRoom = window.aevorenBot.events.subscribeRoomRuntime((event) => {
       scheduleRefresh();
@@ -253,7 +294,17 @@ export function App(): React.JSX.Element {
       setRoomTurns((current) => mergeRoomRuntimeEvents([], current, [], [], [event]).turns);
       setRoomHandoffs((current) => mergeRoomRuntimeEvents([], [], current, [], [event]).handoffs);
       setRoomHandoffRejections((current) => mergeRoomRuntimeEvents([], [], [], current, [event]).rejections);
-      if (event.error) setError(event.error);
+      const knownBatchVersion = roomBatchVersionsRef.current.get(event.batch.id) ?? 0;
+      if (event.batch.version >= knownBatchVersion) {
+        roomBatchVersionsRef.current.set(event.batch.id, event.batch.version);
+        if (event.error) {
+          roomErrorRef.current = { error: event.error, batchId: event.batch.id };
+          setError(event.error);
+        } else if (event.batch.state === "completed") {
+          const source = roomErrorRef.current;
+          if (source?.batchId === event.batch.id) setError((current) => current === source.error ? null : current);
+        }
+      }
     });
     const unsubscribeTool = window.aevorenBot.events.subscribeTool((event) => {
       scheduleRefresh();
@@ -318,7 +369,7 @@ export function App(): React.JSX.Element {
       unsubscribeClose();
       unsubscribeCloseBlocked();
     };
-  }, [flushActive, mergeConversation, refreshConversations]);
+  }, [flushActive, mergeConversation, refreshConversations, reportDirectError]);
 
   useEffect(() => {
     let active = true;
@@ -418,6 +469,8 @@ export function App(): React.JSX.Element {
     setSelectedRoom(null);
     setSession(nextSession);
     setEntries(buffered.entries);
+    runtimeRunsRef.current = buffered.runs;
+    roomBatchVersionsRef.current.clear();
     setRuns(buffered.runs);
     setToolInvocations(toolState.invocations);
     setApprovalRequests(toolState.approvals);
@@ -433,28 +486,45 @@ export function App(): React.JSX.Element {
     setLoading(false);
   }, [activateConversation, flushActive]);
 
-  const openRoom = useCallback(async (room: Room, flushCurrent = true): Promise<void> => {
+  const openRoom = useCallback(async (room: Room, flushCurrent = true, localError = false): Promise<RoomOpenResult> => {
     const requestId = ++openRequestRef.current;
-    if (flushCurrent && !(await flushActive())) return;
-    setLoading(true);
-    setError(null);
-    setCloseNotice(null);
-    const detailResult = await window.aevorenBot.rooms.get(room.id);
-    if (requestId !== openRequestRef.current) return;
-    if (!detailResult.ok) {
-      setError(detailResult.error);
+    const openingTab = sidebarTabRef.current;
+    const isCurrent = () => requestId === openRequestRef.current && (!localError || openingTab === sidebarTabRef.current);
+    const superseded = (): RoomOpenResult => {
+      if (requestId === openRequestRef.current) {
+        loadingSessionIdRef.current = null;
+        setLoading(false);
+      }
+      return { status: "superseded" };
+    };
+    const failed = (failure: AppError): RoomOpenResult => {
+      loadingSessionIdRef.current = null;
+      if (localError) console.error("Restored Room could not be opened", { roomId: room.id, error: failure });
+      else setError(failure);
       setLoading(false);
-      return;
+      return { status: "failed", message: failure.safeMessage };
+    };
+    if (flushCurrent && !(await flushActive())) return { status: "blocked" };
+    if (!isCurrent()) return superseded();
+    setLoading(true);
+    if (!localError) {
+      setError(null);
+      setCloseNotice(null);
     }
+    const detailResult = await window.aevorenBot.rooms.get(room.id);
+    if (!isCurrent()) return superseded();
+    if (!detailResult.ok) return failed(detailResult.error);
     const nextSession = detailResult.data.session;
-    const conversation = await activateConversation(nextSession.id);
-    if (requestId !== openRequestRef.current) return;
-    if (!conversation) { setLoading(false); return; }
-    if (conversation.projectId) {
-      setActiveProjectId(conversation.projectId);
-      sessionStorage.setItem("aevoren-bot:project", conversation.projectId);
+    if (!localError) {
+      const conversation = await activateConversation(nextSession.id);
+      if (!isCurrent()) return superseded();
+      if (!conversation) { setLoading(false); return { status: "failed", message: "暂时无法打开群聊，请重试。" }; }
+      if (conversation.projectId) {
+        setActiveProjectId(conversation.projectId);
+        sessionStorage.setItem("aevoren-bot:project", conversation.projectId);
+      }
+      setProjectChangeError(null);
     }
-    setProjectChangeError(null);
     loadingSessionIdRef.current = nextSession.id;
     bufferedTranscriptRef.current = [];
     bufferedRuntimeRef.current = [];
@@ -465,24 +535,27 @@ export function App(): React.JSX.Element {
       window.aevorenBot.tools.list({ sessionId: nextSession.id }),
       window.aevorenBot.approvals.listPending({ sessionId: nextSession.id }),
     ]);
-    if (requestId !== openRequestRef.current) return;
-    if (!snapshotResult.ok) {
+    if (!isCurrent()) return superseded();
+    if (!snapshotResult.ok) return failed(snapshotResult.error);
+    if (!toolsResult.ok) return failed(toolsResult.error);
+    if (!approvalsResult.ok) return failed(approvalsResult.error);
+    if (localError && snapshotResult.data.detail.room.archivedAt !== null) {
       loadingSessionIdRef.current = null;
-      setError(snapshotResult.error);
       setLoading(false);
-      return;
+      return { status: "failed", message: "群聊状态已变化，请从工作区重新确认。" };
     }
-    if (!toolsResult.ok) {
-      loadingSessionIdRef.current = null;
-      setError(toolsResult.error);
-      setLoading(false);
-      return;
-    }
-    if (!approvalsResult.ok) {
-      loadingSessionIdRef.current = null;
-      setError(approvalsResult.error);
-      setLoading(false);
-      return;
+    if (localError) {
+      const read = await window.aevorenBot.conversations.setUnread({ sessionId: nextSession.id, unread: false });
+      if (!isCurrent()) return superseded();
+      if (!read.ok) return failed(read.error);
+      mergeConversation(read.data);
+      if (read.data.projectId) {
+        setActiveProjectId(read.data.projectId);
+        sessionStorage.setItem("aevoren-bot:project", read.data.projectId);
+      }
+      setProjectChangeError(null);
+      setError(null);
+      setCloseNotice(null);
     }
     const buffered = mergeBufferedEvents(
       snapshotResult.data.entries,
@@ -506,6 +579,8 @@ export function App(): React.JSX.Element {
     setSelectedRoom(snapshotResult.data.detail);
     setSession(nextSession);
     setEntries(buffered.entries);
+    runtimeRunsRef.current = buffered.runs;
+    roomBatchVersionsRef.current = new Map(roomState.batches.map(batch => [batch.id, batch.version]));
     setRuns(buffered.runs);
     setToolInvocations(toolState.invocations);
     setApprovalRequests(toolState.approvals);
@@ -519,7 +594,8 @@ export function App(): React.JSX.Element {
     setCreateError(null);
     setMobilePanel(null);
     setLoading(false);
-  }, [activateConversation, flushActive]);
+    return { status: "opened" };
+  }, [activateConversation, flushActive, mergeConversation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -799,6 +875,8 @@ export function App(): React.JSX.Element {
     setSelectedRoom(null);
     setSession(null);
     setEntries([]);
+    runtimeRunsRef.current = [];
+    roomBatchVersionsRef.current.clear();
     setRuns([]);
     setToolInvocations([]);
     setApprovalRequests([]);
@@ -831,6 +909,7 @@ export function App(): React.JSX.Element {
       setError(result.error);
       return false;
     }
+    clearRestoreStates(result.data.archivedRoomIds);
     const [botResult, roomResult] = await Promise.all([
       window.aevorenBot.bots.list(),
       window.aevorenBot.rooms.list({ includeArchived: true }),
@@ -864,6 +943,91 @@ export function App(): React.JSX.Element {
   function updateRoomRecord(room: Room): void {
     setRooms((current) => current.map((item) => item.id === room.id ? room : item));
     setSelectedRoom((current) => current?.room.id === room.id ? { ...current, room } : current);
+  }
+
+  function updateRestoreState(state: RoomRestoreState): void {
+    roomRestoreStatesRef.current = { ...roomRestoreStatesRef.current, [state.room.id]: state };
+    setRoomRestoreStates((current) => ({ ...current, [state.room.id]: state }));
+  }
+
+  async function restoreRoom(room: Room): Promise<void> {
+    if (roomRestoreInFlightRef.current.has(room.id) || roomRestoreStatesRef.current[room.id]?.opening) return;
+    const previous = roomRestoreStatesRef.current[room.id];
+    let state = previous && !(previous.stage === "done" && room.archivedAt !== null)
+      ? previous : { room, stage: "archive" as const, pending: false, opening: false, error: null };
+    if (state.stage === "done") return;
+    roomRestoreInFlightRef.current.add(room.id);
+    state = { ...state, pending: true, error: null };
+    updateRestoreState(state);
+    const isCurrent = () => roomRestoreStatesRef.current[room.id] !== undefined;
+    const fail = (failure: AppError): void => {
+      console.error("Room restoration failed", { roomId: room.id, stage: state.stage, error: failure });
+      updateRestoreState({ ...state, pending: false, error: failure.safeMessage });
+    };
+    try {
+      if (state.stage === "archive") {
+        const result = await window.aevorenBot.rooms.archive({ id: room.id, archived: false });
+        if (!isCurrent()) return;
+        if (!result.ok) { fail(result.error); return; }
+        updateRoomRecord(result.data);
+        state = { ...state, room: result.data, stage: "show" };
+        updateRestoreState(state);
+      }
+      if (state.stage === "show") {
+        const result = await window.aevorenBot.rooms.setHidden({ id: room.id, hidden: false });
+        if (!isCurrent()) return;
+        if (!result.ok) { fail(result.error); return; }
+        updateRoomRecord(result.data);
+        if (result.data.archivedAt !== null) { clearRestoreStates([room.id]); return; }
+        state = { ...state, room: result.data, stage: "sync" };
+        updateRestoreState(state);
+      }
+      const synchronized = await refreshConversations(false, room.id);
+      if (!isCurrent()) return;
+      if (!synchronized) {
+        updateRestoreState({ ...state, pending: false, error: "列表同步暂未完成，请重试。" });
+        return;
+      }
+      updateRestoreState({ ...state, stage: "done", pending: false, error: null });
+    } catch (failure) {
+      console.error("Room restoration request failed", { roomId: room.id, stage: state.stage, error: failure });
+      if (isCurrent()) updateRestoreState({ ...state, pending: false, error: "恢复暂未完成，请重试。" });
+    } finally {
+      roomRestoreInFlightRef.current.delete(room.id);
+    }
+  }
+
+  async function openRestoredRoom(room: Room): Promise<void> {
+    const state = roomRestoreStatesRef.current[room.id];
+    if (!state || state.stage !== "done" || state.opening || state.pending) return;
+    updateRestoreState({ ...state, opening: true, error: null });
+    const requestId = openRequestRef.current + 1;
+    try {
+      const result = await openRoom(state.room, true, true);
+      if (!roomRestoreStatesRef.current[room.id]) return;
+      updateRestoreState({ ...state, opening: false, error: result.status === "failed" ? result.message : result.status === "blocked" ? "请先保存当前更改后再打开。" : null });
+    } catch (failure) {
+      console.error("Restored Room open request failed", { roomId: room.id, error: failure });
+      if (requestId === openRequestRef.current) {
+        loadingSessionIdRef.current = null;
+        setLoading(false);
+      }
+      if (roomRestoreStatesRef.current[room.id]) updateRestoreState({ ...state, opening: false, error: "暂时无法打开群聊，请重试。" });
+    }
+  }
+
+  function dismissRestore(roomId: string): void {
+    const state = roomRestoreStatesRef.current[roomId];
+    if (!state || state.pending || state.opening || state.stage !== "done") return;
+    clearRestoreStates([roomId]);
+  }
+
+  function clearRestoreStates(roomIds: readonly string[]): void {
+    if (!roomIds.some((id) => roomRestoreStatesRef.current[id])) return;
+    const next = { ...roomRestoreStatesRef.current };
+    for (const id of roomIds) delete next[id];
+    roomRestoreStatesRef.current = next;
+    setRoomRestoreStates(next);
   }
 
   async function renameRoom(room: Room, name: string): Promise<boolean> {
@@ -920,6 +1084,7 @@ export function App(): React.JSX.Element {
   }
 
   async function setRoomHidden(room: Room, hidden: boolean): Promise<boolean> {
+    if (roomRestoreInFlightRef.current.has(room.id) || roomRestoreStatesRef.current[room.id]?.opening) return false;
     if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
     const conversation = conversations.find((item) => item.roomId === room.id);
     if (!conversation) return false;
@@ -929,11 +1094,13 @@ export function App(): React.JSX.Element {
       return false;
     }
     mergeConversation(result.data);
+    if (hidden) clearRestoreStates([room.id]);
     if (hidden && selectedRoom?.room.id === room.id) clearSelection();
     return true;
   }
 
   async function archiveRoom(room: Room): Promise<boolean> {
+    if (roomRestoreInFlightRef.current.has(room.id) || roomRestoreStatesRef.current[room.id]?.opening) return false;
     if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
     const result = await window.aevorenBot.rooms.archive({ id: room.id, archived: true });
     if (!result.ok) {
@@ -941,18 +1108,21 @@ export function App(): React.JSX.Element {
       return false;
     }
     updateRoomRecord(result.data);
+    clearRestoreStates([room.id]);
     if (selectedRoom?.room.id === room.id) handleArchived(result.data);
     await refreshConversations();
     return true;
   }
 
   async function deleteRoom(room: Room): Promise<boolean> {
+    if (roomRestoreInFlightRef.current.has(room.id) || roomRestoreStatesRef.current[room.id]?.opening) return false;
     if (selectedRoom?.room.id === room.id && !(await flushActive())) return false;
     const result = await window.aevorenBot.rooms.delete(room.id);
     if (!result.ok) {
       setError(result.error);
       return false;
     }
+    clearRestoreStates([room.id]);
     const nextRooms = rooms.filter((item) => item.id !== room.id);
     setRooms(nextRooms);
     if (selectedRoom?.room.id === room.id) await openFallback(bots, nextRooms);
@@ -961,12 +1131,14 @@ export function App(): React.JSX.Element {
   }
 
   async function deleteConversations(input: ConversationBatchDeleteInput): Promise<boolean> {
+    if (input.roomIds.some((id) => roomRestoreInFlightRef.current.has(id) || roomRestoreStatesRef.current[id]?.opening)) return false;
     if (!(await flushActive())) return false;
     const result = await window.aevorenBot.conversations.deleteBatch(input);
     if (!result.ok) {
       setError(result.error);
       return false;
     }
+    clearRestoreStates([...result.data.rooms.map((room) => room.id), ...result.data.bots.flatMap((bot) => bot.archivedRoomIds)]);
     const [botResult, roomResult] = await Promise.all([
       window.aevorenBot.bots.list(),
       window.aevorenBot.rooms.list({ includeArchived: true }),
@@ -1016,7 +1188,8 @@ export function App(): React.JSX.Element {
       : await window.aevorenBot.messages.send({ sessionId: session.id, clientNonce, text, attachments });
     setSubmitting(false);
     if (!result.ok) {
-      setError(result.error);
+      if (selectedRoom) setError(result.error);
+      else reportDirectError(result.error, session.id, clientNonce);
       return false;
     }
     return true;
@@ -1029,6 +1202,7 @@ export function App(): React.JSX.Element {
     for (const result of results) {
       if (result.ok) {
         mergeConversation(result.data);
+        if (result.data.roomId) clearRestoreStates([result.data.roomId]);
         if (result.data.sessionId === sessionIdRef.current) clearSelection();
       } else setError(result.error);
     }
@@ -1234,6 +1408,7 @@ export function App(): React.JSX.Element {
           sessionStorage.setItem("aevoren-bot:project", projectId);
         }}
         onOpenWorkspaces={(workspaceId) => {
+          setManagingConversationWorkspaces(false);
           setManagedWorkspaceId(workspaceId);
           setWorkspacesOpen(true);
         }}
@@ -1277,18 +1452,10 @@ export function App(): React.JSX.Element {
         onCopyBotId={copyBotId}
         onHideBot={setBotHidden}
         onDeleteBot={deleteBot}
-        onRestoreRoom={(room) => {
-          void flushActive().then(async (saved) => {
-            if (!saved) return;
-            const result = await window.aevorenBot.rooms.archive({ id: room.id, archived: false });
-            if (!result.ok) {
-              setError(result.error);
-              return;
-            }
-            setRooms((current) => current.map((item) => item.id === room.id ? result.data : item));
-            void openRoom(result.data, false);
-          });
-        }}
+        restoreStates={roomRestoreStates}
+        onRestoreRoom={restoreRoom}
+        onOpenRestoredRoom={openRestoredRoom}
+        onDismissRestore={dismissRestore}
       />
       {sidebarTab === "contacts" ? <ContactDetail
         bot={selectedContact}
@@ -1321,7 +1488,11 @@ export function App(): React.JSX.Element {
         onOpenProfile={() => { setInspectorCollapsed(false); setMobilePanel("profile"); }}
         inspectorCollapsed={inspectorCollapsed}
         onToggleInspector={() => void toggleInspector()}
-        onOpenWorkspaces={() => setWorkspacesOpen(true)}
+        onOpenWorkspaces={() => {
+          setManagingConversationWorkspaces(true);
+          setManagedWorkspaceId(null);
+          setWorkspacesOpen(true);
+        }}
         onPickAttachments={async () => {
           const result = await window.aevorenBot.attachments.pick();
           if (!result.ok) {
@@ -1353,17 +1524,19 @@ export function App(): React.JSX.Element {
         onSend={sendMessage}
         onApproveBrief={approveBrief}
         onRetryMessage={(clientNonce) => {
+          const currentSessionId = sessionIdRef.current;
           setSubmitting(true);
           void window.aevorenBot.messages.retry(clientNonce).then((result) => {
             setSubmitting(false);
-            if (!result.ok) setError(result.error);
+            if (!result.ok && currentSessionId) reportDirectError(result.error, currentSessionId, clientNonce);
           });
         }}
         onRetryRun={(runId) => {
+          const run = runtimeRunsRef.current.find((candidate) => candidate.id === runId);
           setSubmitting(true);
           void window.aevorenBot.runtime.retry(runId).then((result) => {
             setSubmitting(false);
-            if (!result.ok) setError(result.error);
+            if (!result.ok && run) reportDirectError(result.error, run.sessionId, run.clientNonce);
           });
         }}
         onCancelRun={(runId) => void window.aevorenBot.runtime.cancel(runId).then((result) => { if (!result.ok) setError(result.error); })}
@@ -1388,6 +1561,9 @@ export function App(): React.JSX.Element {
                   return;
                 }
                 if (!snapshot.ok) return;
+                for (const batch of snapshot.data.batches) {
+                  roomBatchVersionsRef.current.set(batch.id, Math.max(batch.version, roomBatchVersionsRef.current.get(batch.id) ?? 0));
+                }
                 setRoomBatches(snapshot.data.batches);
                 setRoomTurns(snapshot.data.turns);
                 setRoomHandoffs(snapshot.data.handoffs);
@@ -1486,8 +1662,15 @@ export function App(): React.JSX.Element {
         onInstallUpdate={() => void runUpdateAction("install")}
       />
       <WorkspaceDialog
+        key={workspacesOpen ? managingConversationWorkspaces ? `chat:${session?.id ?? "none"}` : `workspace:${managedWorkspaceId}` : "closed"}
         open={workspacesOpen}
         workspaceId={managedWorkspaceId}
+        workspaceIds={managingConversationWorkspaces ? activeConversation?.workspaceIds ?? [] : undefined}
+        onOpenChatSettings={managingConversationWorkspaces ? () => {
+          setWorkspacesOpen(false);
+          setInspectorCollapsed(false);
+          setMobilePanel("profile");
+        } : undefined}
         onClose={() => setWorkspacesOpen(false)}
       />
       {newBotOpen ? (

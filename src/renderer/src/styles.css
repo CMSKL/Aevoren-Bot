@@ -216,6 +216,11 @@ img { max-width: 100%; }
 .archived-toggle { display: flex; align-items: center; padding: 8px 18px; min-height: 36px; color: var(--text-muted); font-size: 12px; }
 .archived-room-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 18px; font-size: 13px; }
 .archived-room-row > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.archive-feedback { margin: 4px 12px 10px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; min-width: 0; }
+.archive-feedback-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-feedback p { margin: 6px 0; color: var(--text-muted); overflow-wrap: anywhere; line-height: 1.5; }
+.archive-feedback p[role="alert"] { color: var(--danger); }
+.archive-feedback-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .sidebar-workspace { padding: 0 8px 12px; }
 .sidebar-workspace-toggle, .sidebar-workspace-section-heading { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 6px 7px; font-size: 13px; color: var(--text-muted); text-align: left; }
 .sidebar-workspace-toggle svg, .sidebar-workspace-section-heading svg { width: 16px; height: 16px; }

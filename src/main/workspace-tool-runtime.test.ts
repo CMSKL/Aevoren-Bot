@@ -570,6 +570,62 @@ describe("Workspace tool Runtime wiring", () => {
     }
   });
 
+  it("does not require negated tools, while positive requirements in mixed instructions still need real evidence", async () => {
+    for (const [request, required] of [
+      ["请本轮负责人只用一行确认已收到，不调用任何工具、不读取文件、不委派任务、不执行外部动作。", false],
+      ["请所有成员各用一行确认收到这条消息；不调用工具、不读取文件、不委派、不执行任何外部动作。", false],
+      ["请确认收到，不要读取文件，也不要写入。", false],
+      ["Please acknowledge; do not read files or use tools.", false],
+      ["请真实调研个人网站，不联网。", false],
+      ["请实际读取文件，但不要写入。", true],
+      ["Do not write files; read the file.", true],
+      ["不要读取文件，请实际写入文件。", true],
+      ["不要写入文件但是请实际读取文件。", true],
+      ["Don't write files but read the file.", true],
+      ["不要写入任何文件但先读取文件。", true],
+      ["不使用搜索结果并请实际读取文件。", true],
+      ["Do not write files and please read the file.", true],
+    ] as const) {
+      const repository = new AppRepository(":memory:");
+      repositories.push(repository);
+      const created = repository.createBot();
+      const provider: ModelProvider = {
+        async *run() {
+          yield { type: "started", requestId: "negated-requirements-regression" };
+          yield { type: "delta", text: "已收到，本轮不调用工具、不读取文件、不抓取网页、不写入文件、不创建 Bot、不组建群聊。" };
+          yield { type: "completed", finishReason: "stop" };
+        },
+        testConnection: async () => {},
+      };
+      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: request });
+      await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe(required ? "failed" : "completed"));
+      if (required) expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TASK_REQUIREMENTS_UNMET");
+      expect(repository.listToolInvocations(created.session.id)).toEqual([]);
+    }
+  });
+
+  it("does not let a negated neighboring action waive a positive unverified read, fetch or write claim", async () => {
+    for (const body of ["本轮不写入文件但已读取文件。", "本轮不读取文件但已抓取网页。", "本轮不读取文件但已写入文件。", "本轮不读取文件但已创建 Bot。", "本轮不读取文件但已组建群聊。"]) {
+      const repository = new AppRepository(":memory:");
+      repositories.push(repository);
+      const created = repository.createBot();
+      const provider: ModelProvider = {
+        async *run() {
+          yield { type: "started", requestId: "mixed-claim-regression" };
+          yield { type: "delta", text: body };
+          yield { type: "completed", finishReason: "stop" };
+        },
+        testConnection: async () => {},
+      };
+      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "确认收到；不要调用工具。" });
+      await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
+      expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_EVIDENCE_REQUIRED");
+      expect(repository.listToolInvocations(created.session.id)).toEqual([]);
+    }
+  });
+
   it("answers a duplicate native write without hanging and requires complete hash-matching readback", async () => {
     for (const mode of ["complete", "missing", "truncated"] as const) {
       const repository = new AppRepository(":memory:");
