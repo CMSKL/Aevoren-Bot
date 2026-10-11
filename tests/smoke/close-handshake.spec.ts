@@ -22,7 +22,7 @@ async function launch(userDataDir: string): Promise<{ application: ElectronAppli
 async function createBot(page: Page): Promise<void> {
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();
-  await expect(page.locator(".inspector")).toBeVisible();
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
   await openInspector(page);
 }
 

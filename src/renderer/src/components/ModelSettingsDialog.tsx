@@ -3,8 +3,11 @@ import type { AppError, ProviderInstanceInfo } from "@shared/contracts";
 import { ProviderMark, ProviderStatusPill } from "./ProviderPresentation";
 import { providerDisplayState, providerStateLabel, providerSubtitle } from "./provider-presentation";
 
+export type ModelSettingsPanelState = { dirty: boolean; pending: boolean };
+
 type ModelSettingsPanelProps = {
   open: boolean;
+  onStateChange?(state: ModelSettingsPanelState): void;
 };
 
 type Operation = "loading" | "idle" | "saving" | "testing" | "refreshing" | "scanning";
@@ -25,7 +28,7 @@ function notifyProviderChange(): void {
   window.dispatchEvent(new Event(PROVIDERS_CHANGED_EVENT));
 }
 
-export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX.Element {
+export function ModelSettingsPanel({ open, onStateChange }: ModelSettingsPanelProps): React.JSX.Element {
   const [providers, setProviders] = useState<ProviderInstanceInfo[]>([]);
   const [manualPaths, setManualPaths] = useState<Record<string, string>>({});
   const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
@@ -40,6 +43,11 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
     () => providers.find((provider) => provider.driverKind === "openai-compatible") ?? null,
     [providers],
   );
+  const dirty = apiKey.length > 0 || baseUrl !== (compatible?.baseUrl || "https://api.openai.com/v1")
+    || providers.some((provider) => provider.cliDefault && (manualPaths[provider.id] ?? provider.cliDefault) !== (provider.manualCliPath || provider.cliDefault));
+  const pending = operation !== "idle";
+  useEffect(() => { onStateChange?.({ dirty, pending }); }, [dirty, pending, onStateChange]);
+  useEffect(() => () => { onStateChange?.({ dirty: false, pending: false }); }, [onStateChange]);
   const groupedProviders = useMemo(() => {
     const ready = providers.filter((provider) => providerDisplayState(provider) === "ready");
     const needsSetup = providers.filter((provider) => providerDisplayState(provider) !== "ready");
@@ -51,7 +59,9 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
 
   useEffect(() => {
     if (!open) return;
+    let active = true;
     void window.aevorenBot.providers.list().then((result) => {
+      if (!active) return;
       if (!result.ok) {
         setError(result.error);
         setOperation("idle");
@@ -63,107 +73,110 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
       setBaseUrl(nextCompatible?.baseUrl || "https://api.openai.com/v1");
       setApiKey("");
       setOperation("idle");
+    }).catch((failure: unknown) => {
+      if (!active) return;
+      console.warn("Model connections load failed", failure);
+      setError({ code: "CONNECTIONS_LOAD_FAILED", domain: "provider", retryable: true, safeMessage: "本机连接暂时无法读取，请重试。" });
+      setOperation("idle");
     });
+    return () => { active = false; };
   }, [open]);
 
-  async function scanAll(): Promise<void> {
-    if (operation !== "idle") return;
-    setOperation("scanning");
-    setActiveProviderId("all");
+  async function runOperation(nextOperation: Operation, providerId: string, action: () => Promise<void>): Promise<void> {
+    setOperation(nextOperation);
+    setActiveProviderId(providerId);
     setError(null);
     setNotice(null);
-    const result = await window.aevorenBot.providers.scan();
-    if (result.ok) {
-      setProviders(result.data);
-      setManualPaths(cliDrafts(result.data));
-      setNotice(`扫描完成：发现 ${result.data.filter((provider) => provider.status === "available").length} 个可用模型来源。`);
-      notifyProviderChange();
-    } else setError(result.error);
-    setActiveProviderId(null);
-    setOperation("idle");
+    try { await action(); } catch (failure: unknown) {
+      console.warn("Model connection operation failed", failure);
+      setError({ code: "CONNECTIONS_OPERATION_FAILED", domain: "provider", retryable: true, safeMessage: "连接操作未完成，配置草稿已保留，请重试。" });
+    } finally {
+      setActiveProviderId(null);
+      setOperation("idle");
+    }
+  }
+
+  function discardChanges(): void {
+    setBaseUrl(compatible?.baseUrl || "https://api.openai.com/v1");
+    setApiKey("");
+    setManualPaths(cliDrafts(providers));
+    setError(null);
+    setNotice("已放弃未保存的连接修改。");
+  }
+
+  async function scanAll(): Promise<void> {
+    if (operation !== "idle" || dirty) return;
+    await runOperation("scanning", "all", async () => {
+      const result = await window.aevorenBot.providers.scan();
+      if (result.ok) {
+        setProviders(result.data);
+        setManualPaths(cliDrafts(result.data));
+        setNotice(`扫描完成：发现 ${result.data.filter((provider) => provider.status === "available").length} 个可用模型来源。`);
+        notifyProviderChange();
+      } else setError(result.error);
+    });
   }
 
   async function saveCli(provider: ProviderInstanceInfo, cliPath: string): Promise<void> {
     if (!provider.cliDefault || operation !== "idle" || !cliPath.trim()) return;
-    setOperation("saving");
-    setActiveProviderId(provider.id);
-    setError(null);
-    setNotice(null);
-    const result = await window.aevorenBot.providers.saveCli({
-      instanceId: provider.id,
-      expectedVersion: provider.version,
-      cliPath: cliPath.trim(),
+    await runOperation("saving", provider.id, async () => {
+      const result = await window.aevorenBot.providers.saveCli({
+        instanceId: provider.id, expectedVersion: provider.version, cliPath: cliPath.trim(),
+      });
+      if (result.ok) {
+        setProviders((current) => replaceProvider(current, result.data));
+        setManualPaths((current) => ({
+          ...current, [provider.id]: result.data.manualCliPath || result.data.cliDefault || "",
+        }));
+        setNotice(result.data.discoveryMode === "automatic"
+          ? `${provider.displayName} 已恢复自动发现。` : `${provider.displayName} 手动路径已保存。`);
+        notifyProviderChange();
+      } else setError(result.error);
     });
-    if (result.ok) {
-      setProviders((current) => replaceProvider(current, result.data));
-      setManualPaths((current) => ({
-        ...current,
-        [provider.id]: result.data.manualCliPath || result.data.cliDefault || "",
-      }));
-      setNotice(result.data.discoveryMode === "automatic"
-        ? `${provider.displayName} 已恢复自动发现。`
-        : `${provider.displayName} 手动路径已保存。`);
-      notifyProviderChange();
-    } else setError(result.error);
-    setActiveProviderId(null);
-    setOperation("idle");
   }
 
   async function saveCompatible(): Promise<void> {
     if (!compatible || operation !== "idle") return;
-    setOperation("saving");
-    setActiveProviderId(compatible.id);
-    setError(null);
-    setNotice(null);
-    const result = await window.aevorenBot.providers.saveOpenAiCompatible({
-      instanceId: compatible.id,
-      expectedVersion: compatible.version,
-      baseUrl,
-      ...(apiKey.trim() ? { apiKey } : {}),
+    await runOperation("saving", compatible.id, async () => {
+      const result = await window.aevorenBot.providers.saveOpenAiCompatible({
+        instanceId: compatible.id, expectedVersion: compatible.version, baseUrl,
+        ...(apiKey.trim() ? { apiKey } : {}),
+      });
+      if (result.ok) {
+        setProviders((current) => replaceProvider(current, result.data));
+        setBaseUrl(result.data.baseUrl || "https://api.openai.com/v1");
+        setApiKey("");
+        setNotice("API 配置已保存。");
+        notifyProviderChange();
+      } else setError(result.error);
     });
-    if (result.ok) {
-      setProviders((current) => replaceProvider(current, result.data));
-      setBaseUrl(result.data.baseUrl || "https://api.openai.com/v1");
-      setApiKey("");
-      setNotice("API 配置已保存。");
-      notifyProviderChange();
-    } else setError(result.error);
-    setActiveProviderId(null);
-    setOperation("idle");
   }
 
   async function verify(provider: ProviderInstanceInfo): Promise<void> {
     if (operation !== "idle") return;
-    setOperation("testing");
-    setActiveProviderId(provider.id);
-    setError(null);
-    setNotice(null);
-    const result = await window.aevorenBot.providers.test(provider.id);
-    const refreshed = await window.aevorenBot.providers.list();
-    if (refreshed.ok) setProviders(refreshed.data);
-    if (result.ok) setNotice(`${provider.displayName} 已完成真实最小请求。`);
-    else setError(result.error);
-    setActiveProviderId(null);
-    setOperation("idle");
+    await runOperation("testing", provider.id, async () => {
+      const result = await window.aevorenBot.providers.test(provider.id);
+      const refreshed = await window.aevorenBot.providers.list();
+      if (refreshed.ok) {
+        setProviders(refreshed.data);
+        notifyProviderChange();
+      }
+      if (result.ok) setNotice(`${provider.displayName} 已完成真实最小请求。`);
+      else setError(result.error);
+    });
   }
 
   async function refresh(provider: ProviderInstanceInfo): Promise<void> {
     if (operation !== "idle") return;
-    setOperation("refreshing");
-    setActiveProviderId(provider.id);
-    setError(null);
-    setNotice(null);
-    const result = await window.aevorenBot.providers.refresh(provider.id);
-    if (result.ok) {
-      setProviders((current) => replaceProvider(current, result.data));
-      setNotice(`${provider.displayName} 状态和模型目录已刷新。`);
-      notifyProviderChange();
-    } else setError(result.error);
-    setActiveProviderId(null);
-    setOperation("idle");
+    await runOperation("refreshing", provider.id, async () => {
+      const result = await window.aevorenBot.providers.refresh(provider.id);
+      if (result.ok) {
+        setProviders((current) => replaceProvider(current, result.data));
+        setNotice(`${provider.displayName} 状态和模型目录已刷新。`);
+        notifyProviderChange();
+      } else setError(result.error);
+    });
   }
-
-  const pending = operation !== "idle";
   const actionLabel = (providerId: string, idle: string): string => {
     if (activeProviderId !== providerId) return idle;
     if (operation === "saving") return "保存中…";
@@ -179,7 +192,7 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
           <h2>模型与 CLI</h2>
           <p>第一阶段支持 API、Claude Code 和 Codex CLI；切换后请求会直接走对应调用链路。</p>
         </span>
-        <button className="secondary-button" type="button" disabled={pending} onClick={() => void scanAll()}>
+        <button className="secondary-button" type="button" disabled={pending || dirty} onClick={() => void scanAll()}>
           {operation === "scanning" ? "扫描中…" : "重新扫描"}
         </button>
       </div>
@@ -289,6 +302,7 @@ export function ModelSettingsPanel({ open }: ModelSettingsPanelProps): React.JSX
         {providers.length === 0 && operation === "idle" ? <p className="provider-engine-empty">尚未发现模型来源，请重新扫描。</p> : null}
       </div>
 
+      {dirty ? <div className="settings-panel-actions"><span className="settings-security-note">本机连接配置尚未保存。</span><button className="secondary-button" type="button" disabled={pending} onClick={discardChanges}>放弃修改</button></div> : null}
       {error ? <div className="dialog-error" role="alert">{error.safeMessage}</div> : null}
       {notice ? <div className="dialog-success" role="status">{notice}</div> : null}
     </div>

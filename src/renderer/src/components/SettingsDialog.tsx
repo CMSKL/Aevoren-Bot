@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import darkThemePreview from "../assets/themes/dark.png";
+import lightThemePreview from "../assets/themes/light.png";
 import { UPDATE_CHECK_INTERVAL_MINUTES, type AppearanceTheme, type AppError, type LoginItemStatus, type UpdateCheckIntervalMinutes, type UpdateState } from "@shared/contracts";
-import { BellIcon, BotIcon, CloseIcon, EyeIcon, PanelIcon, RefreshIcon, SettingsIcon } from "./Icons";
-import { ModelSettingsPanel } from "./ModelSettingsDialog";
+import { BellIcon, BotIcon, CheckIcon, CloseIcon, EyeIcon, PanelIcon, RefreshIcon, SettingsIcon } from "./Icons";
 import { CapabilitiesSettingsPanel } from "./CapabilitiesSettingsPanel";
 import { McpSettingsPanel } from "./McpSettingsPanel";
 import { ScopedMemorySettingsPanel } from "./ScopedMemorySettingsPanel";
 import { RoutinesSettingsPanel } from "./RoutinesSettingsPanel";
 import type { UpdateAction } from "../update-actions";
 
-type SettingsSection = "general" | "capabilities" | "memory" | "model" | "mcp" | "routines" | "updates";
+type SettingsSection = "general" | "capabilities" | "memory" | "mcp" | "routines" | "updates";
 
 type SettingsDialogProps = {
   open: boolean;
@@ -32,6 +33,7 @@ type SettingsDialogProps = {
   onCheckUpdate(): void;
   onRetryUpdate(): void;
   onInstallUpdate(): void;
+  onOpenWorkspaceManager?(): void;
 };
 
 const themeLabels: Record<Exclude<AppearanceTheme, "system">, string> = {
@@ -74,7 +76,6 @@ export function SettingsDialog({
   updateActionPending,
   updateActionError,
   restartBlocked,
-  activeBotId,
   onClose,
   onThemeChange,
   onLaunchAtLoginChange,
@@ -83,6 +84,7 @@ export function SettingsDialog({
   onCheckUpdate,
   onRetryUpdate,
   onInstallUpdate,
+  onOpenWorkspaceManager,
 }: SettingsDialogProps): React.JSX.Element | null {
   const [section, setSection] = useState<SettingsSection>("general");
   const [themePending, setThemePending] = useState(false);
@@ -160,15 +162,13 @@ export function SettingsDialog({
   const updateBusy = Boolean(updateActionPending) || (updateState ? ["checking", "available", "downloading", "installing"].includes(updateState.status) : true);
 
   return (
-    <div className="modal-backdrop settings-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <section className="settings-dialog settings-hub settings-grouped-layout" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <section className="settings-dialog settings-hub settings-grouped-layout settings-page" role="region" aria-labelledby="settings-title">
         <aside className="settings-nav" aria-label="设置分类">
           <div className="settings-nav-title" id="settings-title">设置</div>
           <nav>
             <button type="button" aria-label="通用" className={section === "general" ? "selected" : ""} aria-current={section === "general" ? "page" : undefined} onClick={() => setSection("general")}><SettingsIcon /><span>通用</span></button>
             <button type="button" aria-label="能力与权限" className={section === "capabilities" ? "selected" : ""} aria-current={section === "capabilities" ? "page" : undefined} onClick={() => setSection("capabilities")}><EyeIcon /><span>能力与权限</span></button>
             <button type="button" aria-label="长期记忆" className={section === "memory" ? "selected" : ""} aria-current={section === "memory" ? "page" : undefined} onClick={() => setSection("memory")}><BotIcon /><span>长期记忆</span></button>
-            <button type="button" aria-label="模型与 CLI" className={section === "model" ? "selected" : ""} aria-current={section === "model" ? "page" : undefined} onClick={() => setSection("model")}><BotIcon /><span>模型与 CLI</span></button>
             <button type="button" aria-label="MCP" className={section === "mcp" ? "selected" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => setSection("mcp")}><PanelIcon /><span>MCP</span></button>
             <button type="button" aria-label="主动服务" className={section === "routines" ? "selected" : ""} aria-current={section === "routines" ? "page" : undefined} onClick={() => setSection("routines")}><BellIcon /><span>主动服务</span></button>
             <button type="button" aria-label="版本更新" className={section === "updates" ? "selected" : ""} aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}><RefreshIcon /><span>版本更新</span></button>
@@ -184,16 +184,21 @@ export function SettingsDialog({
           {section === "general" ? <section className="settings-panel" aria-labelledby="settings-general-title">
             <div className="settings-section-heading">
               <h2 id="settings-general-title">通用</h2>
-              <p>调整 Aevoren Bot 在这台电脑上的基础偏好。</p>
+              <p>仅调整这台电脑上的应用偏好。</p>
             </div>
             <h3>外观</h3>
-            <div className="settings-card settings-form-group">
-              <label className="settings-row">
-                <span><strong>主题</strong><small>选择界面的明暗外观</small></span>
-                <select aria-label="外观主题" value={displayedTheme} disabled={themePending} onChange={(event) => void changeTheme(event.target.value as Exclude<AppearanceTheme, "system">)}>
-                  {(Object.keys(themeLabels) as Array<Exclude<AppearanceTheme, "system">>).map((value) => <option key={value} value={value}>{themeLabels[value]}</option>)}
-                </select>
-              </label>
+            <div className="settings-appearance-row">
+              <strong>界面主题</strong>
+              <div className="settings-theme-options" role="group" aria-label="外观主题">
+                {(Object.keys(themeLabels) as Array<Exclude<AppearanceTheme, "system">>).map((value) => (
+                  <button key={value} className={`settings-theme-option settings-theme-${value}`} type="button" aria-label={themeLabels[value]} aria-pressed={displayedTheme === value} disabled={themePending} onClick={() => void changeTheme(value)}>
+                    <img className="settings-theme-preview" src={value === "dark" ? darkThemePreview : lightThemePreview} alt="" loading="lazy" />
+                    {displayedTheme === value ? <CheckIcon className="settings-theme-check" aria-hidden="true" /> : null}
+                    <strong>{themeLabels[value]}</strong>
+                    <span>{displayedTheme === value ? <><CheckIcon />已选择</> : "选择此主题"}</span>
+                  </button>
+                ))}
+              </div>
             </div>
             {themeError ? <div className="dialog-error" role="alert">{themeError.safeMessage}</div> : null}
             <h3>工具自动化</h3>
@@ -201,7 +206,7 @@ export function SettingsDialog({
               <label className="settings-row">
                 <span>
                   <strong>自动批准公开只读工具</strong>
-                  <small>仅限网页搜索、公开 HTTPS 抓取、天气和时间；文件、剪贴板、MCP 与外部写操作不包含在内</small>
+                  <small>仅限公开网页搜索、网页读取、天气和时间。文件、剪贴板、MCP 与外部写操作仍按权限规则处理。</small>
                 </span>
                 <input
                   aria-label="自动批准公开只读工具"
@@ -218,7 +223,7 @@ export function SettingsDialog({
               <label className="settings-row">
                 <span>
                   <strong>登录时启动</strong>
-                  <small>{launchAtLoginSupported ? `让 Routine 在重新登录后恢复 · ${loginItemStatusLabels[launchAtLoginStatus]}` : "当前仅 macOS 打包版支持；Windows 启动任务适配尚未启用"}</small>
+                  <small>{launchAtLoginSupported ? `登录这台电脑后自动启动 · ${loginItemStatusLabels[launchAtLoginStatus]}` : "当前运行环境不支持登录时启动"}</small>
                 </span>
                 <input
                   aria-label="登录时启动"
@@ -230,18 +235,21 @@ export function SettingsDialog({
               </label>
             </div>
             {launchError ? <div className="dialog-error" role="alert">{launchError.safeMessage}</div> : null}
+            <p className="settings-autosave-note"><CheckIcon />修改会自动保存</p>
+            <p className="settings-profile-note">Bot 的资料、模型、工具与记忆范围，请在联系人中配置。</p>
           </section> : null}
 
           {section === "capabilities" ? <section className="settings-panel" aria-label="能力与权限">
-            <CapabilitiesSettingsPanel active={open && section === "capabilities"} botId={activeBotId} />
+            <CapabilitiesSettingsPanel active={open && section === "capabilities"} botId={null} />
+            {onOpenWorkspaceManager ? <section className="settings-legacy-management" aria-labelledby="settings-local-management-title">
+              <h3 id="settings-local-management-title">本地文件与聊天管理</h3>
+              <p>目录授权、项目和归档恢复使用现有管理方式。</p>
+              <button type="button" className="secondary-button" onClick={onOpenWorkspaceManager}>打开管理</button>
+            </section> : null}
           </section> : null}
 
           {section === "memory" ? <section className="settings-panel" aria-label="长期记忆">
             <ScopedMemorySettingsPanel active={open && section === "memory"} />
-          </section> : null}
-
-          {section === "model" ? <section className="settings-panel" aria-label="模型与 CLI">
-            <ModelSettingsPanel open={open && section === "model"} />
           </section> : null}
 
           {section === "mcp" ? <section className="settings-panel" aria-label="MCP">
@@ -312,6 +320,5 @@ export function SettingsDialog({
           </div>
         </div>
       </section>
-    </div>
   );
 }

@@ -5,7 +5,7 @@ import { buildBotIdentityMap } from "../bot-identity";
 import { BatchContextMenu } from "./BatchContextMenu";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { BotContextMenu } from "./BotContextMenu";
-import { BotIcon, ChatIcon, CheckIcon, CloseIcon, ContactsIcon, FolderIcon, PencilIcon, PinIcon, PlusIcon, RoomIcon, SearchIcon, SettingsIcon, TrashIcon, ChevronDownIcon, WorkspaceIcon } from "./Icons";
+import { BotIcon, ChatIcon, CheckIcon, CloseIcon, ContactsIcon, FolderIcon, PencilIcon, PinIcon, PlusIcon, RoomIcon, SearchIcon, SettingsIcon, TrashIcon, ChevronDownIcon } from "./Icons";
 import { RoomContextMenu } from "./RoomContextMenu";
 import { UserAvatar } from "./UserAvatar";
 
@@ -22,6 +22,7 @@ type SidebarProps = {
   rooms: Room[];
   conversations: ConversationSummary[];
   tab: "chats" | "contacts" | "workspace";
+  settingsActive?: boolean;
   selectedContactId: string | null;
   onTabChange(tab: "chats" | "contacts" | "workspace"): void;
   onSelectContact(bot: Bot): void;
@@ -151,6 +152,7 @@ export function Sidebar({
   rooms: sourceRooms,
   conversations,
   tab,
+  settingsActive = false,
   selectedContactId,
   onTabChange,
   onSelectContact,
@@ -762,7 +764,7 @@ export function Sidebar({
   }
 
   return (
-    <aside className={`sidebar${mobileOpen ? " mobile-open" : ""}`} aria-label="聊天列表">
+    <aside className={`sidebar${mobileOpen ? " mobile-open" : ""}${settingsActive ? " settings-sidebar" : ""}`} aria-label="聊天列表">
       <nav className="nav-rail" aria-label="主导航">
         <button
           className="nav-rail-profile"
@@ -776,24 +778,24 @@ export function Sidebar({
           <span className="nav-profile-edit" aria-hidden="true"><PencilIcon /></span>
         </button>
         <div className="nav-rail-tabs" role="tablist" aria-label="导航" aria-orientation="vertical">
-          {([ ["chats", "聊天", ChatIcon], ["contacts", "联系人", ContactsIcon], ["workspace", "工作区", WorkspaceIcon] ] as const).map(([value, label, Icon]) => (
+          {([ ["chats", "聊天", ChatIcon], ["contacts", "联系人", ContactsIcon] ] as const).map(([value, label, Icon]) => (
             <button
-              className={`nav-rail-button${tab === value ? " active" : ""}`}
+              className={`nav-rail-button${!settingsActive && tab === value ? " active" : ""}`}
               key={value}
               id={`navigation-${value}`}
               type="button"
               role="tab"
               aria-label={label}
-              aria-selected={tab === value}
+              aria-selected={!settingsActive && tab === value}
               aria-controls="sidebar-tab-content"
               tabIndex={tab === value ? 0 : -1}
               onClick={() => { clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(value); }}
               onKeyDown={(event) => {
                 if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
                 event.preventDefault();
-                const values = ["chats", "contacts", "workspace"] as const;
+                const values = ["chats", "contacts"] as const;
                 const forward = event.key === "ArrowDown" || event.key === "ArrowRight";
-                const index = event.key === "Home" ? 0 : event.key === "End" ? 2 : (values.indexOf(tab) + (forward ? 1 : 2)) % 3;
+                const index = event.key === "Home" ? 0 : event.key === "End" ? 1 : (values.findIndex((value) => value === tab) + (forward ? 1 : -1) + values.length) % values.length;
                 clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(values[index]!);
                 document.getElementById(`navigation-${values[index]}`)?.focus();
               }}
@@ -803,14 +805,15 @@ export function Sidebar({
             </button>
           ))}
         </div>
-        <button className="nav-rail-button nav-rail-settings sidebar-settings-button" type="button" onClick={onOpenSettings}>
+        <button className={`nav-rail-button nav-rail-settings sidebar-settings-button${settingsActive ? " active" : ""}`} type="button" aria-pressed={settingsActive} onClick={onOpenSettings}>
           <SettingsIcon />
           <span>设置</span>
         </button>
       </nav>
 
-      <section className="sidebar-list" aria-label={tab === "chats" ? "聊天" : tab === "contacts" ? "联系人" : "工作区"}>
-        <div className="sidebar-header sidebar-list-header">
+      <section className="sidebar-list" hidden={settingsActive} aria-label={tab === "chats" ? "聊天" : tab === "contacts" ? "联系人" : "工作区"}>
+        <div className={`sidebar-header sidebar-list-header${tab === "contacts" ? " is-contacts" : ""}`}>
+          {tab === "contacts" ? <h2 className="sidebar-list-title">联系人</h2> : null}
           {visibleSelectedKeys.size > 0 ? (
             <>
               <div className="sidebar-selection-count">已选择 {visibleSelectedKeys.size} 项</div>
@@ -838,7 +841,7 @@ export function Sidebar({
                   {tab === "chats" ? <button type="button" className="sidebar-unread-filter" aria-pressed={unreadOnly} title="只看未读聊天" onClick={() => { clearMultiSelection(); setUnreadOnly((current) => !current); }}>未读</button> : null}
                 </div>
               ) : <h2 className="sidebar-list-title">工作区</h2>}
-              <button ref={createButtonRef} className="new-bot-button" type="button" aria-label={tab === "workspace" ? "新建工作区" : "新建聊天"} title={tab === "workspace" ? "添加文件夹工作区" : "新建聊天"} onClick={tab === "workspace" ? onCreateProject : onCreate} disabled={busy || (tab === "workspace" && addingWorkspace)}>
+              <button ref={createButtonRef} className="new-bot-button" type="button" aria-label={tab === "workspace" ? "新建工作区" : tab === "contacts" ? "添加联系人" : "新建聊天"} title={tab === "workspace" ? "添加文件夹工作区" : tab === "contacts" ? "添加联系人" : "新建聊天"} onClick={tab === "workspace" ? onCreateProject : onCreate} disabled={busy || (tab === "workspace" && addingWorkspace)}>
                 <PlusIcon />
               </button>
             </>
@@ -1029,7 +1032,7 @@ export function Sidebar({
           onPin={() => void perform(contextBot, () => onPinBot(contextBot, !contextBot.pinnedAt), contextBot.pinnedAt ? "已取消置顶。" : "Bot 已置顶。")}
           onUnread={() => void perform(contextBot, () => onMarkBotUnread(contextBot, !contextBot.hasUnread), contextBot.hasUnread ? "已标为已读。" : "已标为未读。")}
           onRename={() => beginRename(contextBot)}
-          onEdit={() => onEditBot(contextBot)}
+          onEdit={tab === "chats" ? undefined : () => onEditBot(contextBot)}
           onDuplicate={() => void perform(contextBot, () => onDuplicateBot(contextBot), "副本已创建。")}
           onCopyId={() => void perform(contextBot, () => onCopyBotId(contextBot), "对话 ID 已复制。")}
           onHide={() => void perform(contextBot, () => onHideBot(contextBot, !contextBot.hiddenAt), contextBot.hiddenAt ? null : "聊天已移除，记录保留。")}

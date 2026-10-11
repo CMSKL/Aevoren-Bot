@@ -165,6 +165,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await mention(page, "研");
     await input.fill("成员变化后不能静默改发给全部成员。");
     await openInspector(page);
+    await page.getByRole("button", { name: /管理群聊成员/u }).click();
     await page.locator(".room-member-row").filter({ hasText: seeded.botNames[0]! }).getByRole("button", { name: "移除" }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(2);
     await closeInspector(page);
@@ -180,6 +181,7 @@ test("supports Grok-style Room mentions, deterministic routing, and responsive l
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
     await input.fill("");
     await openInspector(page);
+    await page.getByRole("button", { name: /管理群聊成员/u }).click();
     await page.getByLabel("选择要添加的 Bot").selectOption({ label: seeded.botNames[0] });
     await page.getByRole("button", { name: "添加", exact: true }).click();
     await expect(page.locator(".room-member-row")).toHaveCount(3);

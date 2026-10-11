@@ -6,6 +6,7 @@ import { valid } from "semver";
 import { IPC } from "@shared/channels";
 import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateState } from "@shared/contracts";
 import { AppRepository } from "./database";
+import { AevorenBotError } from "./errors";
 import { registerIpc } from "./ipc";
 import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
@@ -352,6 +353,7 @@ app.whenReady().then(async () => {
     },
     emit: emitUpdate,
   });
+  const updateRepository = repository;
   registerIpc({
     window: mainWindow,
     repository,
@@ -442,6 +444,7 @@ app.whenReady().then(async () => {
       void finishClose();
     },
     prepareUpdateInstall() {
+      if (updateRepository.hasActiveTasks()) throw new AevorenBotError("UPDATE_TASKS_RUNNING");
       allowClose = true;
     },
     cancelUpdateInstall() {

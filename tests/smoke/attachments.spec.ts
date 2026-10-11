@@ -25,7 +25,7 @@ test("attaches a bounded text file to a direct message and restores its metadata
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
     await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
-    await expect(page.locator(".inspector")).toBeVisible();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await closeInspector(page);
     await page.getByLabel("添加文本附件").click();
     await expect(page.getByRole("button", { name: /移除附件 requirements\.md/ })).toBeVisible();

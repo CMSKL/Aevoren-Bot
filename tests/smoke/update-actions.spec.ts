@@ -1,12 +1,12 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { _electron as electron, expect, test, type ElectronApplication } from "@playwright/test";
+import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
 import { IPC } from "../../src/shared/channels";
 import type { AevorenBotApi, UpdateState } from "../../src/shared/contracts";
 import { removeTestDirectory } from "./test-cleanup";
-import { closeInspector, openInspector } from "./navigation";
+import { closeInspector, openBotList, openInspector } from "./navigation";
 
 type DiagnosticMain = typeof globalThis & {
   updateRetryHandler?: (...args: unknown[]) => unknown;
@@ -25,14 +25,27 @@ async function presentState(application: ElectronApplication, state: UpdateState
   }, state);
 }
 
+async function openUpdateSettings(page: Page): Promise<void> {
+  const settings = page.getByRole("region", { name: "设置", exact: true });
+  if (!await settings.isVisible()) {
+    await openBotList(page);
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+  }
+  await settings.getByRole("button", { name: "版本更新", exact: true }).click();
+}
+
 test("excludes update actions from drag regions and handles real IPC/save failures without restarting", async () => {
   const data = mkdtempSync(join(tmpdir(), "aevoren-update-actions-"));
   const repository = new AppRepository(join(data, "aevoren-bot.sqlite"));
   const bot = repository.createBot().bot;
   repository.updateBot(bot.id, bot.version, { name: "更新按钮验收" });
+  for (const id of ["claude.default", "codex.default"]) {
+    const configuration = repository.getProviderInstanceConfig(id);
+    repository.updateProviderInstanceConfig(id, configuration.version, { ...configuration.config, cliPath: join(data, `not-installed-${id}`) });
+  }
   repository.setSetting("appearance.theme", "dark", false);
   repository.close();
-  const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: data, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1" } });
+  const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: data, AEVOREN_BOT_DB_PATH: join(data, "aevoren-bot.sqlite"), AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1" } });
   try {
     const page = await application.firstWindow();
     const errors: string[] = [];
@@ -45,17 +58,22 @@ test("excludes update actions from drag regions and handles real IPC/save failur
     expect(current.data.status).toBe("disabled");
     const failure: UpdateState = { ...current.data, status: "error", error: { code: "UPDATE_CHECK_FAILED", domain: "update", retryable: true, safeMessage: "检查更新失败，当前版本可继续使用。" } };
     const ready: UpdateState = { ...current.data, status: "downloaded", availableVersion: "0.4.0" };
+    await openUpdateSettings(page);
+    const updates = page.locator('[aria-labelledby="settings-update-title"]');
 
     for (const width of [1440, 1180, 1020, 620, 390]) {
       await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]?.setSize(width, 844), width);
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
-      for (const state of [failure, ready]) {
-        await presentState(application, state);
-        await expect(page.locator(".update-action")).toBeVisible();
-        expect(await page.locator(".update-status-notice").evaluate(el => getComputedStyle(el).getPropertyValue("-webkit-app-region"))).toBe("no-drag");
-        expect(await page.locator(".update-action").evaluate(el => getComputedStyle(el).getPropertyValue("-webkit-app-region"))).toBe("no-drag");
-        expect(await page.locator(".update-status-notice").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-      }
+      await presentState(application, failure);
+      await expect(page.locator(".update-status-notice")).toHaveCount(0);
+      await expect(updates.getByRole("alert")).toContainText("检查更新失败");
+      await expect(updates.getByRole("button", { name: "重试", exact: true })).toBeVisible();
+      expect(await updates.getByRole("button", { name: "重试", exact: true }).evaluate(el => getComputedStyle(el).getPropertyValue("-webkit-app-region"))).toBe("no-drag");
+      await presentState(application, ready);
+      await expect(page.locator(".update-action")).toBeVisible();
+      expect(await page.locator(".update-status-notice").evaluate(el => getComputedStyle(el).getPropertyValue("-webkit-app-region"))).toBe("no-drag");
+      expect(await page.locator(".update-action").evaluate(el => getComputedStyle(el).getPropertyValue("-webkit-app-region"))).toBe("no-drag");
+      expect(await page.locator(".update-status-notice").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
       await page.screenshot({ path: join(tmpdir(), `aevoren-update-actions-${width}.png`) });
     }
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
@@ -75,22 +93,25 @@ test("excludes update actions from drag regions and handles real IPC/save failur
         return original(...args);
       });
     }, IPC.updatesRetry);
-    await page.locator(".update-action").evaluate(button => {
+    await updates.getByRole("button", { name: "重试", exact: true }).evaluate(button => {
       (button as HTMLButtonElement).click();
       (button as HTMLButtonElement).click();
     });
-    await expect(page.getByRole("button", { name: "检查中…", exact: true })).toBeDisabled();
-    await expect(page.getByText("正在检查更新…", { exact: true })).toBeVisible();
+    await expect(updates.getByRole("button", { name: "检查中…", exact: true })).toBeDisabled();
+    await expect(updates.getByRole("button", { name: "检查中…", exact: true })).toHaveAttribute("aria-busy", "true");
     expect(await application.evaluate(() => (globalThis as DiagnosticMain).retryCount)).toBe(1);
     await application.evaluate(() => (globalThis as DiagnosticMain).releaseUpdateRetry?.());
     await expect(page.locator(".update-status-notice")).toHaveCount(0);
 
     // A genuinely missing IPC handler rejects; raw Electron errors stay out of UI.
     await application.evaluate(({ ipcMain }, channel) => ipcMain.removeHandler(channel), IPC.updatesRetry);
-    await presentState(application, failure);
-    await page.getByRole("button", { name: "重试", exact: true }).click();
-    await expect(page.getByText("更新操作未完成", { exact: true })).toBeVisible();
-    await expect(page.locator(".update-status-notice")).not.toContainText("No handler registered");
+    await presentState(application, { ...failure, error: { ...failure.error!, safeMessage: "上一次检查失败。" } });
+    await expect(updates.getByRole("alert")).toContainText("上一次检查失败。");
+    await updates.getByRole("button", { name: "重试", exact: true }).click();
+    await expect(updates.getByRole("alert")).toContainText("检查更新失败，当前版本可继续使用。");
+    await expect(updates.getByRole("button", { name: "重试", exact: true })).toBeEnabled();
+    await expect(updates.getByRole("alert")).not.toContainText("No handler registered");
+    await expect(page.locator(".update-status-notice")).toHaveCount(0);
     await page.screenshot({ path: join(tmpdir(), "aevoren-update-ipc-failure.png") });
     await application.evaluate(({ ipcMain }, channel) => {
       ipcMain.handle(channel, (globalThis as DiagnosticMain).updateRetryHandler!);
@@ -99,14 +120,11 @@ test("excludes update actions from drag regions and handles real IPC/save failur
     // A stale downloaded view must reach the real backend and be rejected safely.
     await presentState(application, ready);
     await page.getByRole("button", { name: "重启更新", exact: true }).click();
-    await expect(page.getByText("更新尚未下载完成，请稍后重试。", { exact: true })).toBeVisible();
+    await expect(updates.getByRole("alert")).toContainText("更新尚未下载完成");
     await expect(page.getByText("v0.4.0 已准备好", { exact: true })).toHaveCount(0);
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
 
-    // Settings and the top notice share the same safe action handling.
-    await page.getByRole("button", { name: "设置", exact: true }).click();
-    await page.getByRole("button", { name: "版本更新", exact: true }).click();
-    const updates = page.locator('[aria-labelledby="settings-update-title"]');
+    // Settings and the ready-only notice share the same safe action handling.
     await presentState(application, ready);
     await updates.getByRole("button", { name: "重启并更新", exact: true }).click();
     await expect(updates.getByRole("alert")).toContainText("更新尚未下载完成");
@@ -130,7 +148,8 @@ test("excludes update actions from drag regions and handles real IPC/save failur
     await page.getByLabel("名称", { exact: true }).fill("");
     await presentState(application, ready);
     await page.getByRole("button", { name: "重启更新", exact: true }).evaluate((button) => (button as HTMLButtonElement).click());
-    await expect(page.getByText("资料未能保存，请先保存后再重启更新。", { exact: true })).toBeVisible();
+    await expect(page.locator(".update-ready-error")).toHaveText("更新未能启动，请重试。");
+    await expect(page.getByTestId("profile-save-status")).toContainText("保存失败");
     expect(await application.evaluate(() => (globalThis as DiagnosticMain).installCount)).toBe(0);
     expect(errors).toEqual([]);
     await page.screenshot({ path: join(tmpdir(), "aevoren-update-save-failure.png") });

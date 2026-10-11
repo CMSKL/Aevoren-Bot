@@ -34,7 +34,7 @@ async function launch(
 async function createAndSend(page: Page, text: string): Promise<void> {
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();
-  await expect(page.locator(".inspector")).toBeVisible();
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
   await closeInspector(page);
   await page.locator('textarea[aria-label="消息"]').fill(text);
   await page.getByRole("button", { name: "发送", exact: true }).click();

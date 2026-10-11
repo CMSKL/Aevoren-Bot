@@ -204,7 +204,7 @@ export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderMo
               </> : (
                 <div className="header-model-unavailable">
                   <strong>{providerStateLabel(selectedProvider)}</strong>
-                  <p>{selectedProvider.reason || "请在设置 → 模型与 CLI 中检查此来源。"}</p>
+                  <p>{selectedProvider.reason || "请在联系人 → 模型与能力 → 本机连接设置中检查此来源。"}</p>
                 </div>
               )}
             </> : <div className="header-model-unavailable"><p>尚未发现模型来源。</p></div>}

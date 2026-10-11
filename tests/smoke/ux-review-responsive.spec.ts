@@ -152,11 +152,10 @@ test("UX-01 current folder, missing grant and keyboard controls remain reachable
       await expect(missing).toContainText("当前聊天未关联工作区");
       await checkSurface(page, missing);
       await capture(application, page, join(evidence, `${theme}-${width}-unbound.png`));
-      await missing.getByRole("button", { name: "打开聊天设置", exact: true }).click();
-      await expect(page.locator(".inspector")).toBeVisible();
-      await expect(page.getByLabel("当前聊天工作区", { exact: true })).toHaveValue("");
-      await checkSurface(page, page.locator(".inspector"));
-      await page.keyboard.press("Escape"); await expect(page.locator(".inspector")).toBeHidden();
+      await expect(missing.getByLabel("当前聊天工作区", { exact: true })).toHaveValue("");
+      await checkSurface(page, missing);
+      await missing.getByRole("button", { name: "完成", exact: true }).focus();
+      await page.keyboard.press("Enter"); await expect(missing).toBeHidden();
       await openBotList(page);
       await page.getByRole("button", { name: "新建聊天", exact: true }).click();
       const chooser = page.getByRole("dialog", { name: "新建聊天", exact: true });

@@ -23,7 +23,7 @@ async function createBot(page: Page, name: string): Promise<void> {
   await closeInspector(page);
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();
-  await expect(page.locator(".inspector")).toBeVisible();
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
   await openInspector(page);
   await expect(page.getByLabel("名称")).toHaveValue("新建 Bot");
   await page.getByLabel("名称").fill(name);
@@ -37,11 +37,7 @@ function selectBot(page: Page, name: string) {
 }
 
 async function openAdvancedSettings(page: Page): Promise<void> {
-  await openInspector(page);
-  const details = page.locator("details.inspector-advanced");
-  if (!await details.evaluate((element) => (element as HTMLDetailsElement).open)) {
-    await details.locator("summary").click();
-  }
+  await openInspector(page, "memory");
 }
 
 test("creates, flushes, restores and lays out explicit Memory without touching daily data", async () => {
@@ -95,11 +91,11 @@ test("creates, flushes, restores and lays out explicit Memory without touching d
     await expect(page.getByLabel("Memory 1")).toBeEnabled();
 
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 640));
-    await openInspector(page);
-    await expect(page.locator(".inspector")).toBeVisible();
+    await openInspector(page, "memory");
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await openAdvancedSettings(page);
     await page.waitForTimeout(220);
-    const compactLayout = await page.locator(".inspector").evaluate((inspector) => {
+    const compactLayout = await page.locator(".contact-detail").evaluate((inspector) => {
       const panel = inspector.querySelector<HTMLElement>(".memory-panel");
       if (!(inspector instanceof HTMLElement) || !panel) throw new Error("missing Memory panel");
       const inspectorRect = inspector.getBoundingClientRect();
@@ -123,8 +119,8 @@ test("creates, flushes, restores and lays out explicit Memory without touching d
 
     await page.getByLabel("Memory 1").fill("关闭详情前保存的已有 Memory");
     await page.getByLabel("新增 Memory").fill("关闭详情前创建的新 Memory");
-    await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
-    await expect(page.locator(".inspector")).not.toBeVisible();
+    await closeInspector(page);
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeHidden();
     await openInspector(page);
     await openAdvancedSettings(page);
     await expect(page.getByLabel("Memory 1")).toHaveValue("关闭详情前保存的已有 Memory");

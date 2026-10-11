@@ -2,7 +2,7 @@
 
 ## No model is available
 
-Open **Settings → Models & CLI**. For API, confirm Base URL, encrypted API Key, and model selection. For Claude Code or Codex CLI, run a rescan and confirm the CLI is installed, logged in, and reports at least one model. Use **Test real request** to distinguish installation/login success from an expired login, unavailable model, or exhausted quota.
+Open **Contacts → select the Bot → Models & capabilities → Local connection settings**. For API, confirm Base URL, encrypted API Key, and model selection. For Claude Code or Codex CLI, run a rescan and confirm the CLI is installed, logged in, and reports at least one model. Use **Test real request** to distinguish installation/login success from an expired login, unavailable model, or exhausted quota.
 
 ## The app starts but does not answer
 
@@ -18,9 +18,9 @@ Confirm the server is enabled, the exact read-only tool was reviewed, and the cu
 
 For Claude Code, rescan after upgrading and check [host-tool prerequisites](CONFIGURATION.md#claude-code-host-tools). Older CLIs and subscription-only authentication do not advertise these tools. If the per-Runtime MCP connection fails, the task reports a recoverable error instead of claiming that text-only output is verified research.
 
-## The update notice shows an error
+## Updating fails or waits for a task
 
-The current version remains usable. Retry after checking the network and the official GitHub Release channel. Development and unsigned local packages intentionally have updates disabled. Never install an update from a mirror or an unverified third-party link.
+The current version remains usable. Open **Settings → Updates** to see errors and retry after checking the network and the official GitHub Release channel. If another chat or background task is running, finish or stop it before restarting to update. Closing the compact notification does not remove this settings entry. Development and unsigned local packages intentionally have updates disabled. Never install an update from a mirror or an unverified third-party link.
 
 ## Reporting a bug
 

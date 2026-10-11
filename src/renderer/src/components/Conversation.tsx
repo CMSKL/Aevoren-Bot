@@ -36,7 +36,6 @@ import { BotAvatarIcon } from "./BotAvatarIcon";
 import { UserAvatar } from "./UserAvatar";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { AtIcon, AttachmentIcon, CheckIcon, CloseIcon, DocumentIcon, FolderIcon, MoreIcon, PanelIcon, StopIcon } from "./Icons";
-import { HeaderModelPicker } from "./HeaderModelPicker";
 import { ExpandableTrace, type ExpandableTraceKind, type ExpandableTraceTone } from "./ExpandableTrace";
 import { ToolPermissionDialog } from "./ToolPermissionDialog";
 import {
@@ -518,13 +517,9 @@ type ConversationProps = {
   error: AppError | null;
   closeNotice: string | null;
   onOpenBots(): void;
-  onOpenProfile(): void;
-  inspectorCollapsed: boolean;
-  onToggleInspector(): void;
+  onOpenRoomSettings(): void;
   onOpenWorkspaces(): void;
   onPickAttachments(): Promise<AttachmentDraft[]>;
-  onBotUpdated(bot: Bot): void;
-  onError(error: AppError | null): void;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
   onRememberPublicRead?(approval: ApprovalRequest): Promise<boolean>;
   onRevealWorkspaceArtifact(workspaceId: string, path: string): Promise<boolean>;
@@ -557,13 +552,9 @@ export function Conversation({
   error,
   closeNotice,
   onOpenBots,
-  onOpenProfile,
-  inspectorCollapsed,
-  onToggleInspector,
+  onOpenRoomSettings,
   onOpenWorkspaces,
   onPickAttachments,
-  onBotUpdated,
-  onError,
   onResolveApproval,
   onRememberPublicRead,
   onRevealWorkspaceArtifact,
@@ -966,13 +957,9 @@ export function Conversation({
               items[next]?.focus();
             }}>
               {bot || room ? <>
-              {bot ? <div className="conversation-menu-section" role="group" aria-label="模型设置"><span className="conversation-menu-label">模型设置</span><HeaderModelPicker bot={bot} busy={busy} onBotUpdated={onBotUpdated} onError={onError} /></div> : (
-                <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => { setMenuScopeId(null); onOpenProfile(); }}><PanelIcon /><span>模型设置</span></button>
-              )}
               <button className="conversation-menu-item" type="button" role="menuitem" aria-label={artifacts.length > 0 ? `打开会话成果，共 ${artifacts.length} 个` : "打开任务详情"} aria-expanded={artifactShelfOpen} onClick={() => openTaskDetails("artifacts")}><FolderIcon /><span>{room ? "群文件" : "会话文件"}</span><small>{artifacts.length}</small></button>
               <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => openTaskDetails("records")}><span>执行记录</span><small>{toolInvocations.length}</small></button>
-              <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => { setMenuScopeId(null); onOpenProfile(); }}><PanelIcon /><span>{room ? "成员详情" : "Bot 设置"}</span></button>
-              <button className="conversation-menu-item" type="button" role="menuitem" aria-controls="conversation-inspector" aria-expanded={!inspectorCollapsed} onClick={() => { setMenuScopeId(null); onToggleInspector(); }}><PanelIcon /><span>{inspectorCollapsed ? "展开详情面板" : "收起详情面板"}</span></button>
+              {room ? <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => { setMenuScopeId(null); onOpenRoomSettings(); }}><PanelIcon /><span>群聊管理</span></button> : null}
               {latestFailedTurn ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); void retryRoomTurn(latestFailedTurn.id); }}>重试{latestFailedTurn.turnPurpose === "summary" ? "汇总" : "此成员"}</button> : null}
               {latestRetryRun ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); onRetryRun(latestRetryRun.id); }}>重新生成回复</button> : null}
               {retryableUserEntry?.clientNonce ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); onRetryMessage(retryableUserEntry.clientNonce!); }}>安全重试发送</button> : null}

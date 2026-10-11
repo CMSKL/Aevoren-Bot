@@ -28,7 +28,7 @@ async function createNamedBot(page: Page, name: string): Promise<void> {
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();
   await expect(page.locator(".bot-row")).toHaveCount(before + 1);
-  await expect(page.locator(".inspector")).toBeVisible();
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
   await openInspector(page);
   const nameInput = page.getByLabel("名称");
   await nameInput.fill(name);
@@ -157,11 +157,12 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     for (const name of ["研究员", "评审员", "执行员", "观察员"]) await createNamedBot(page, name);
     await createRoom(page, ["研究员", "评审员", "执行员"]);
     await openInspector(page);
+    const roomSettings = page.getByRole("dialog", { name: "群聊设置", exact: true });
 
     await expect(page.getByRole("heading", { name: "研究员、评审员、执行员" })).toBeVisible();
     await expect(page.locator(".inspector-header h2")).toHaveText("群聊详情");
     await expect(page.locator(".room-avatar-stack .bot-avatar-icon")).toHaveCount(3);
-    await expect(page.getByLabel("名称")).toHaveValue("研究员、评审员、执行员");
+    await expect(roomSettings.getByLabel("名称", { exact: true })).toHaveValue("研究员、评审员、执行员");
     const membersToggle = page.getByRole("button", { name: "管理群聊成员 3/6" });
     await expect(membersToggle).toBeVisible();
     await expect(page.locator(".room-members-manager")).toBeHidden();
@@ -186,12 +187,13 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     const secondSpeaker = page.getByRole("button", { name: "评审员", exact: true }).last();
     await secondSpeaker.click();
     await expect(page.getByRole("heading", { name: "评审员" })).toBeVisible();
+    await closeInspector(page);
     await page.locator(".bot-row").filter({ hasText: "研究员、评审员、执行员" }).click();
     await expect(page.getByRole("heading", { name: "研究员、评审员、执行员" })).toBeVisible();
     await openInspector(page);
 
-    await page.getByLabel("名称").fill("产品协作室");
-    await page.getByLabel("名称").blur();
+    await roomSettings.getByLabel("名称", { exact: true }).fill("产品协作室");
+    await roomSettings.getByLabel("名称", { exact: true }).blur();
     await expect(page.getByTestId("room-save-status")).toContainText("已保存");
     await page.getByRole("button", { name: "管理群聊成员 3/6" }).click();
     const evaluatorRow = page.locator(".room-member-row").filter({ hasText: "评审员" });
@@ -208,7 +210,7 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await expect(page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
     await openInspector(page);
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
-    await page.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
+    await roomSettings.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
     await closeInspector(page);
 
     await page.screenshot({ path: "/tmp/aevoren-bot-room-desktop-light.png", fullPage: true });
@@ -229,7 +231,7 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await page.screenshot({ path: "/tmp/aevoren-bot-room-narrow-profile.png", fullPage: true });
     expect(consoleErrors).toEqual([]);
 
-    await page.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
+    await roomSettings.getByLabel("描述").fill("关闭应用时也必须 flush 的 Room 描述");
     await application.close();
     application = undefined;
     const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
@@ -746,8 +748,8 @@ test("keeps a renamed Bot and its full-bleed avatar synchronized across an open 
     await openInspector(page);
     await expect(page.getByRole("radiogroup", { name: "Bot 头像造型" })).toHaveCount(0);
     await expect(page.getByRole("radiogroup", { name: "Bot 头像配色" })).toHaveCount(0);
-    await expect(page.locator(".inspector-header h2")).toHaveText("Bot 资料");
-    await expect(page.locator(".inspector-avatar-hero .bot-avatar-icon")).toBeVisible();
+    await expect(page.locator(".contact-detail-title h1")).toHaveText("联系人资料");
+    await expect(page.locator(".contact-profile-hero .bot-avatar-icon")).toBeVisible();
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
     await expect(page.locator('.bot-row[aria-label="首席研究员"] .bot-avatar-icon'))
       .toHaveAttribute("data-avatar-shape", avatarShape!);

@@ -21,11 +21,14 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1440, 900));
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
-    await expect(page.locator(".inspector")).toBeVisible();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await closeInspector(page);
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await expect(page.getByLabel("外观主题").locator("option")).toHaveText(["暗黑", "白昼"]);
-    await page.getByLabel("外观主题").selectOption("light");
+    const themes = page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button");
+    await expect(themes).toHaveCount(2);
+    await expect(themes.nth(0)).toContainText("暗黑");
+    await expect(themes.nth(1)).toContainText("白昼");
+    await themes.nth(1).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     await page.getByRole("button", { name: "关闭设置", exact: true }).click();
     await page.getByLabel("消息").fill("请用 Markdown 给出简短分析。");
@@ -128,7 +131,7 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     await expect(assistants.nth(1).locator(".message-meta")).toHaveCount(0);
 
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await page.getByLabel("外观主题").selectOption("dark");
+    await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: /^暗黑/u }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "关闭设置", exact: true }).click();
     const darkColors = await page.evaluate(() => {
@@ -153,14 +156,14 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     await expect.poll(() => transcript.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 
     const menu = await openConversationMenu(page);
-    await expect(menu.getByRole("menuitem", { name: "Bot 设置", exact: true })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Bot 设置", exact: true })).toHaveCount(0);
     await menu.getByRole("menuitem", { name: "打开 Bot 列表", exact: true }).click();
     await expect(page.locator(".sidebar")).toBeVisible();
     await page.getByRole("button", { name: "关闭 Bot 列表" }).click();
     await expect(page.locator(".sidebar")).not.toBeVisible();
     await openInspector(page);
-    await expect(page.locator(".inspector")).toBeVisible();
-    await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+    await closeInspector(page);
     await expect(page.locator(".inspector")).not.toBeVisible();
 
     const narrowBubbleRatio = await assistantBubble.first().evaluate((element) => {

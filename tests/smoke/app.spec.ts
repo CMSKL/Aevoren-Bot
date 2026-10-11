@@ -27,12 +27,12 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await openInspector(page);
   await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
   await expect(page.getByText("产品需求分析助手")).toHaveCount(0);
-  await expect(page.locator(".inspector-header h2")).toHaveText("Bot 资料");
-  await expect(page.locator(".inspector-avatar-hero .bot-avatar-icon")).toBeVisible();
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+  await expect(page.locator(".contact-profile-hero .bot-avatar-icon")).toBeVisible();
   await expect(page.getByLabel("模型供应商")).toBeHidden();
   await page.screenshot({ path: "/tmp/aevoren-bot-settings-aligned.png" });
 
-  await page.locator(".inspector-advanced > summary").click();
+  await openInspector(page, "models");
   await page.getByLabel("模型供应商").selectOption("openai-compatible.default");
   await expect(page.getByLabel("模型供应商")).toHaveValue("openai-compatible.default");
   await page.getByLabel("Bot 模型").fill("smoke-model");
@@ -55,7 +55,8 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
     },
   });
 
-  const description = page.getByLabel("描述");
+  await openInspector(page);
+  const description = page.getByRole("textbox", { name: "描述", exact: true });
   await description.fill("把模糊想法整理成可评审的产品需求。");
   await description.blur();
   await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
@@ -73,14 +74,15 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
 
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
   await openInspector(page);
-  await expect(page.locator("#conversation-inspector")).toBeVisible();
-  await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
-  await expect(page.locator(".app-shell")).toHaveClass(/inspector-collapsed/u);
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+  await closeInspector(page);
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeHidden();
   const menu = await openConversationMenu(page);
-  await expect(menu.getByRole("menuitem", { name: "展开详情面板", exact: true })).toHaveAttribute("aria-expanded", "false");
-  await menu.getByRole("menuitem", { name: "展开详情面板", exact: true }).click();
-  await expect(page.locator(".app-shell")).not.toHaveClass(/inspector-collapsed/u);
-  await expect(page.locator("#conversation-inspector")).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "展开详情面板", exact: true })).toHaveCount(0);
+  await expect(menu.getByRole("menuitem", { name: "Bot 设置", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await openInspector(page);
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
   await closeInspector(page);
 
   for (const [index, supplement] of ["补充目标用户和使用场景。", "补充验收标准和风险。"].entries()) {
@@ -118,11 +120,11 @@ test("creates, persists and restores a reliable fake-provider conversation", asy
   await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
   await expect(page.getByText("做一个帮助团队整理产品需求的桌面应用。")).toBeVisible();
   await expect(page.getByText("待确认事项", { exact: true }).last()).toBeVisible();
-  await expect(page.locator(".app-shell")).toHaveClass(/inspector-collapsed/u);
+  await expect(page.locator("#conversation-inspector")).toHaveCount(0);
   await openInspector(page);
-  await expect(page.getByLabel("描述")).toHaveValue("关闭应用前未移焦，也必须可靠保存。");
+  await expect(page.getByRole("textbox", { name: "描述", exact: true })).toHaveValue("关闭应用前未移焦，也必须可靠保存。");
   await expect(page.getByLabel("模型供应商")).toBeHidden();
-  await page.locator(".inspector-advanced > summary").click();
+  await openInspector(page, "models");
   await expect(page.getByLabel("模型供应商")).toHaveValue("openai-compatible.default");
   await expect(page.getByLabel("Bot 模型")).toHaveValue("smoke-model");
 

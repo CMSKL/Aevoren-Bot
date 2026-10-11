@@ -23,4 +23,15 @@ describe("update action messages", () => {
       code: "toString", domain: "update", retryable: false, safeMessage: "debug details",
     })).toBe("检查更新失败，当前版本可继续使用。");
   });
+
+  it("explains the global running-task restart guard without exposing technical details", () => {
+    const message = updateActionErrorMessage("install", {
+      code: "UPDATE_TASKS_RUNNING", domain: "update", retryable: true,
+      safeMessage: "Error: stack at /private/task-log?token=secret",
+    });
+    expect(message).toBe("仍有任务正在执行，请完成或停止任务后再重启更新。");
+    expect(message).not.toContain("Error");
+    expect(message).not.toContain("token");
+    expect(message).not.toContain("/private");
+  });
 });

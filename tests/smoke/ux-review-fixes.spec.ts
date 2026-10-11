@@ -8,7 +8,7 @@ import type { AevorenBotApi } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { removeTestDirectory } from "./test-cleanup";
-import { closeInspector, openConversationFiles, openWorkspaceTab } from "./navigation";
+import { openConversationFiles, openWorkspaceTab } from "./navigation";
 
 // Browser plugin not available. These tests use hidden real Electron, isolated
 // SQLite, actual files and unchanged IPC handlers. UI-only permission cases do
@@ -160,15 +160,13 @@ test("UX-01 unbound chat names the missing scope and opens the existing binding 
     await page.locator(".task-details-shelf").getByRole("button", { name: "管理文件夹", exact: true }).click();
     const manager = page.getByRole("dialog", { name: "工作区权限", exact: true });
     await expect(manager).toContainText("当前聊天未关联工作区");
-    await manager.getByRole("button", { name: "打开聊天设置", exact: true }).click();
-    await expect(page.locator(".inspector")).toBeVisible();
-    await expect(page.getByLabel("当前聊天工作区", { exact: true })).toHaveValue("");
-    await page.getByLabel("当前聊天工作区", { exact: true }).click({ trial: true });
+    await expect(manager.getByLabel("当前聊天工作区", { exact: true })).toHaveValue("");
+    await manager.getByLabel("当前聊天工作区", { exact: true }).click({ trial: true });
     expect(scope(f, f.unbound.session.id)).toEqual({ project: { project_id: null }, grants: [] });
     await page.screenshot({ path: join(evidenceRoot, "aevoren-ux01-unbound-chat-settings.png") });
-    await page.getByLabel("当前聊天工作区", { exact: true }).selectOption(f.b.project.id);
+    await manager.getByLabel("当前聊天工作区", { exact: true }).selectOption(f.b.project.id);
     await expect.poll(() => scope(f, f.unbound.session.id).grants.map(row => row.workspace_id)).toEqual([f.b.workspace.id]);
-    await closeInspector(page);
+    await manager.getByRole("button", { name: "完成", exact: true }).click();
     await openConversationFiles(page);
     await page.locator(".task-details-shelf").getByRole("button", { name: "管理文件夹", exact: true }).click();
     await checkTarget(page, f.b.workspace.name);

@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { closeInspector, openBotList } from "./navigation";
+import { closeInspector, openBotList, openWorkspaceTab } from "./navigation";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,7 +54,7 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
     application = launched.application;
     const page = launched.page;
     const consoleErrors: string[] = [];
-    await page.getByRole("tab", { name: "工作区", exact: true }).click();
+    await openWorkspaceTab(page);
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     const invalidBatch = await page.evaluate((id) =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations.deleteBatch({ botIds: [id], roomIds: [] }), memberA.bot.id);
@@ -185,7 +185,7 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     application = launched.application;
     const page = launched.page;
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
-    await page.getByRole("tab", { name: "工作区", exact: true }).click();
+    await openWorkspaceTab(page);
     const consoleErrors: string[] = [];
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
 
@@ -209,10 +209,11 @@ test("groups chat and Bot navigation under an independently collapsible Workspac
     await expect(createdProject).toBeVisible();
     await expect(createdProject).toHaveClass(/active/u);
     await page.getByRole("button", { name: "在 产品规划 新建 Bot", exact: true }).click();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+    await closeInspector(page);
+    await openWorkspaceTab(page);
     const createdBotRow = page.locator('section[aria-label="项目 产品规划"] .bot-row').filter({ hasText: "新建 Bot" });
     await expect(createdBotRow).toBeVisible();
-    await expect(page.locator(".inspector")).toBeVisible();
-    await closeInspector(page);
     const scopedBots = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.bots.list());
     const listedProjects = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.projects.list());
     expect(scopedBots.ok).toBe(true);
@@ -280,7 +281,7 @@ test("keeps the entire batch and selection when one selected Bot is running", as
     const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_START_DELAY_MS: "5000" });
     application = launched.application;
     const page = launched.page;
-    await page.getByRole("tab", { name: "工作区", exact: true }).click();
+    await openWorkspaceTab(page);
     await row(page, "运行中 Bot").click({ modifiers: ["Meta"] });
     await row(page, "同行 Bot").click({ modifiers: ["Meta"] });
     await expect(multiSelected(page)).toHaveCount(2);
