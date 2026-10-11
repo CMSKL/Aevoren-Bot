@@ -119,7 +119,10 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
     await expect(row(page, "群聊二")).toHaveAttribute("data-multi-selected", "true");
     await expect(row(page, "群聊三")).toHaveAttribute("data-multi-selected", "true");
     await expect(row(page, "Bot B")).toHaveAttribute("data-multi-selected", "true");
+    await row(page, "群聊一").scrollIntoViewIfNeeded();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await row(page, "群聊一").click({ button: "right" });
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await expect(page.getByRole("menu", { name: "群聊操作" })).toBeVisible();
     await expect(page.getByRole("menu", { name: "批量操作" })).toHaveCount(0);
     await expect(multiSelected(page)).toHaveCount(6);
