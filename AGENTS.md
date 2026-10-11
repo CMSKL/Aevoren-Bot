@@ -78,6 +78,10 @@ Branch rules:
 - Do not skip branches or validation stages. For example, `dev` must never be merged directly into `master`.
 - Any emergency fix applied to `master` or `beta` must also be merged back into `dev` to prevent branch divergence.
 
+Release naming:
+
+- Release tags and titles must both be exactly `v<package.json version>` (for example, `v0.3.0-beta.22`). Never use a generic title such as `release`.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.

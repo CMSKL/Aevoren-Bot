@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { openBotList, openInspector } from "./navigation";
+import { closeInspector, openBotList, openInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,13 +55,13 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
       "置顶",
       "标为未读",
       "重命名 Bot",
-      "编辑资料",
       "创建副本",
       "复制对话 ID",
       "移除聊天",
       "清空聊天记录",
       "删除联系人",
     ]);
+    await expect(menu.getByRole("menuitem", { name: "编辑资料", exact: true })).toHaveCount(0);
     await page.screenshot({ path: "/tmp/aevorenbot-bot-context-menu.png", fullPage: true });
     await expect(menu.getByRole("menuitem").first()).toBeFocused();
     await page.keyboard.press("ArrowDown");
@@ -96,18 +96,19 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     await expect(row(page, "研究 助手")).toBeVisible();
     await expect(page.getByRole("heading", { name: "研究 助手" })).toBeVisible();
 
+    await page.getByRole("tab", { name: "联系人", exact: true }).click();
     menu = await menuFor(page, "Beta");
     await menu.getByRole("menuitem", { name: "编辑资料" }).click();
     await expect(page.getByRole("heading", { name: "Beta" })).toBeVisible();
     await expect(page.getByLabel("名称")).toBeFocused();
-    await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
+    await closeInspector(page);
 
     menu = await menuFor(page, "Beta");
     await menu.getByRole("menuitem", { name: "创建副本" }).click();
     await expect(page.getByRole("heading", { name: "Beta 副本" })).toBeVisible();
     await openInspector(page);
-    await expect(page.getByLabel("描述")).toHaveValue("需要复制的资料");
-    await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
+    await expect(page.getByRole("textbox", { name: "描述", exact: true })).toHaveValue("需要复制的资料");
+    await closeInspector(page);
     const duplicateId = (() => {
       const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
       try {

@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.22] - 2026-10-11
+
+### Changed
+
+- Bot profiles, model/CLI selection, tool scopes and Memory configuration now live directly in Contacts, with separate Profile, Models and capabilities, and Memory tabs. Chats no longer open a profile inspector or duplicate model settings.
+- Global Settings is a full page with six grouped categories and consistent Dark and Daylight theme previews. Existing local folder permissions, projects and archive recovery remain available through Settings rather than a permanent Workspaces navigation item.
+- Global update notices appear only for a genuinely downloaded version and show the version, restart action and close control. Routine checks, download progress and errors remain in Settings.
+
+### Fixed
+
+- Contact creation and duplication preserve the current chat's draft, attachments and selection. Unsaved shared connection configuration blocks navigation and duplication until explicitly saved or discarded, and cannot be mislabeled as fully saved when only a Bot's model choice was persisted.
+- Opening a Contact's chat validates its runtime snapshot before marking it read; failures stay in Contacts and do not replace an unrelated chat's error or draft.
+- Restarting for an update is rejected while any conversation, group batch or active routine is still running, including when the current chat is idle.
+- Close-timeout feedback remains visible while Contacts or Settings is open. Contact header controls stay within the narrowest window at 200% zoom.
+
+### Verified
+
+- Nineteen isolated real Electron/IPC/SQLite scenarios cover contact configuration, restart persistence, local permissions, archive recovery and genuine write/open failures without changing the installed application or its data.
+- All six Settings categories, three Contact tabs and pure Chat views were checked in both themes at 1180, 1020, 620 and the 390-pixel minimum width.
+- An authenticated Codex CLI request completed through the selected model. A real background request continued after the install IPC correctly refused to restart; no fake update event or model result was used as acceptance evidence.
+- Actual download/restart installation remains subject to signed release artifact validation. This change does not claim new Windows signing support or retest API/Claude model inference.
+
 ## [0.3.0-beta.21] - 2026-10-11
 
 ### Changed

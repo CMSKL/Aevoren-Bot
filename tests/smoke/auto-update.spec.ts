@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
 import type { AevorenBotApi } from "../../src/shared/contracts";
+import { openBotList } from "./navigation";
 
 const appVersion = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
@@ -67,8 +68,13 @@ test("restores an interrupted install receipt without retrying or claiming succe
   });
   try {
     const page = await application.firstWindow();
-    await expect(page.getByText("上次更新未完成", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "重新下载" })).toBeVisible();
+    await expect(page.locator(".update-status-notice")).toHaveCount(0);
+    await openBotList(page);
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    const settings = page.getByRole("region", { name: "设置", exact: true });
+    await settings.getByRole("button", { name: "版本更新", exact: true }).click();
+    await expect(settings.getByText("上次更新未完成", { exact: true })).toBeVisible();
+    await expect(settings.getByRole("button", { name: "重试", exact: true })).toBeVisible();
     await expect(page.getByText("已更新至", { exact: false })).toHaveCount(0);
     const state = await page.evaluate(async () =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.updates.getState(),

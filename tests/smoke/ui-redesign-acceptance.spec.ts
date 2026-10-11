@@ -7,6 +7,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { BOT_AVATAR_COLORS, type BotAvatarColor } from "../../src/shared/bot-avatar";
 import type { AevorenBotApi } from "../../src/shared/contracts";
 import { removeTestDirectory } from "./test-cleanup";
+import { openInspector, openWorkspaceTab } from "./navigation";
 
 // Browser plugin not available. Use the repository's Playwright/Electron workflow.
 // The fake provider isolates UI fixtures; these tests make no model-response claims.
@@ -191,7 +192,7 @@ async function openSidebar(page: Page): Promise<void> {
 async function openSettings(page: Page): Promise<void> {
   await openSidebar(page);
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "设置", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "设置", exact: true })).toBeVisible();
 }
 
 async function checkHorizontalLayout(page: Page): Promise<void> {
@@ -200,7 +201,7 @@ async function checkHorizontalLayout(page: Page): Promise<void> {
     documentWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
   }));
   expect(viewport.documentWidth).toBeLessThanOrEqual(viewport.width + 1);
-  const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+  const dialog = page.getByRole("region", { name: "设置", exact: true });
   if (!await dialog.isVisible()) return;
   const layout = await dialog.evaluate((element) => {
     const dialog = element as HTMLElement;
@@ -332,7 +333,7 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
 
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1180, 1020, 620, 390]) {
-    test(`keeps seven settings pages, navigation, and drawers usable: ${theme}, ${width}px`, async () => {
+    test(`keeps six settings pages, contacts, and navigation usable: ${theme}, ${width}px`, async () => {
       const testInfo = test.info();
       test.setTimeout(60_000);
       const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-ui-responsive-"));
@@ -361,11 +362,11 @@ for (const theme of ["light", "dark"] as const) {
           const viewport = await resize(launched.application, page, width);
           testInfo.annotations.push({ type: "viewport", description: `${theme}: ${viewport.width} × ${viewport.height}` });
           await openSettings(page);
-          const dialog = page.getByRole("dialog", { name: "设置", exact: true });
-          await dialog.getByLabel("外观主题").selectOption(theme);
+          const dialog = page.getByRole("region", { name: "设置", exact: true });
+          await dialog.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: theme === "dark" ? "暗黑" : "白昼", exact: true }).click();
           await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
         });
-        const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+        const dialog = page.getByRole("region", { name: "设置", exact: true });
         const navigation = dialog.locator(".settings-nav nav");
         if (width <= 620) {
           await test.step("verify horizontal settings navigation scroll", async () => {
@@ -374,7 +375,7 @@ for (const theme of ["light", "dark"] as const) {
             await expect.poll(() => navigation.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
           });
         }
-        for (const section of ["通用", "能力与权限", "长期记忆", "模型与 CLI", "MCP", "主动服务", "版本更新"]) {
+        for (const section of ["通用", "能力与权限", "长期记忆", "MCP", "主动服务", "版本更新"]) {
           await test.step(`open and verify settings page: ${section}`, async () => {
             const tab = navigation.getByRole("button", { name: section, exact: true });
             await tab.click();
@@ -384,10 +385,12 @@ for (const theme of ["light", "dark"] as const) {
             if (section === "长期记忆") {
               await expect(dialog.locator(".scoped-memory-item")).toHaveCount(18);
               const content = dialog.locator(".settings-content");
+              const closeBeforeScroll = await dialog.locator(".settings-close-button").boundingBox();
               expect(await content.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
               await content.evaluate((element) => { element.scrollTop = element.scrollHeight; });
               await expect.poll(() => content.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
               await expect(dialog.locator(".scoped-memory-item textarea").last()).toBeInViewport();
+              expect(await dialog.locator(".settings-close-button").boundingBox()).toEqual(closeBeforeScroll);
               const geometry = await dialog.evaluate((element) => {
                 const content = element.querySelector<HTMLElement>(".settings-content");
                 const toolbar = element.querySelector<HTMLElement>(".settings-toolbar");
@@ -398,6 +401,7 @@ for (const theme of ["light", "dark"] as const) {
                 const toolbarRect = toolbar.getBoundingClientRect();
                 const closeRect = close.getBoundingClientRect();
                 const editorRect = editor.getBoundingClientRect();
+                const regionRect = element.getBoundingClientRect();
                 return {
                   scrollRemaining: content.scrollHeight - content.scrollTop - content.clientHeight,
                   closeInsideContent: content.contains(close),
@@ -405,6 +409,9 @@ for (const theme of ["light", "dark"] as const) {
                   closeWidth: closeRect.width,
                   closeHeight: closeRect.height,
                   toolbarBottom: toolbarRect.bottom,
+                  toolbarTop: toolbarRect.top,
+                  regionTop: regionRect.top,
+                  regionBottom: regionRect.bottom,
                   contentTop: contentRect.top,
                   closeBottom: closeRect.bottom,
                   editorTop: editorRect.top,
@@ -419,8 +426,8 @@ for (const theme of ["light", "dark"] as const) {
               expect(geometry.closeInsideToolbar).toBe(true);
               expect(geometry.closeWidth).toBeGreaterThanOrEqual(40);
               expect(geometry.closeHeight).toBeGreaterThanOrEqual(40);
-              expect(geometry.contentTop).toBeGreaterThanOrEqual(geometry.toolbarBottom - 1);
-              expect(geometry.closeBottom).toBeLessThanOrEqual(geometry.contentTop + 1);
+              expect(geometry.toolbarTop).toBeGreaterThanOrEqual(geometry.regionTop - 1);
+              expect(geometry.toolbarBottom).toBeLessThanOrEqual(geometry.regionBottom + 1);
               expect(geometry.editorTop).toBeGreaterThanOrEqual(geometry.contentTop - 1);
               expect(geometry.editorBottom).toBeLessThanOrEqual(geometry.contentBottom + 1);
               expect(geometry.editorOverlapsClose).toBe(false);
@@ -441,8 +448,8 @@ for (const theme of ["light", "dark"] as const) {
           await page.getByLabel("搜索联系人", { exact: true }).fill("界面验收");
           await expect(page.locator(".sidebar .bot-row")).toHaveCount(1);
           await openSidebar(page);
-          await page.getByRole("tab", { name: "工作区", exact: true }).click();
-          await expect(page.getByRole("tab", { name: "工作区", exact: true })).toHaveAttribute("aria-selected", "true");
+          await openWorkspaceTab(page);
+          await expect(page.locator(".sidebar-project").first()).toBeVisible();
           await openSidebar(page);
           await page.getByRole("tab", { name: "聊天", exact: true }).click();
           await openSidebar(page);
@@ -450,16 +457,18 @@ for (const theme of ["light", "dark"] as const) {
           await checkHorizontalLayout(page);
         });
         if (width <= 620) {
-          await test.step("verify sidebar dismissal and Bot inspector drawer", async () => {
+          await test.step("verify sidebar dismissal and in-place contact editing", async () => {
             await page.getByRole("button", { name: "关闭 Bot 列表", exact: true }).click();
             await expect(page.locator(".sidebar")).toBeHidden();
-            await page.getByRole("button", { name: "聊天选项", exact: true }).click();
-            await page.getByRole("menuitem", { name: "Bot 设置", exact: true }).click();
-            await expect(page.locator(".inspector.mobile-open")).toBeVisible();
-            await expect(page.locator(".inspector").getByLabel("名称", { exact: true })).toHaveValue("界面验收 Bot 1");
+            await openInspector(page);
+            const contact = page.getByRole("main", { name: "联系人资料", exact: true });
+            await expect(contact).toBeVisible();
+            await expect(contact.getByLabel("名称", { exact: true })).toHaveValue("界面验收 Bot 1");
+            await expect(page.locator(".inspector")).toBeHidden();
             await checkHorizontalLayout(page);
-            await captureScreenshot(launched.application, page, testInfo.outputPath(`inspector-${theme}-${width}.png`));
-            await page.getByRole("button", { name: "关闭 Bot 设置", exact: true }).click();
+            await captureScreenshot(launched.application, page, testInfo.outputPath(`contact-editor-${theme}-${width}.png`));
+            await contact.getByRole("button", { name: "发消息", exact: true }).click();
+            await expect(page.locator(".conversation:not(.contact-detail)")).toBeVisible();
             await expect(page.locator(".inspector")).toBeHidden();
           });
         }

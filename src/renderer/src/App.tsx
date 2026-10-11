@@ -34,10 +34,9 @@ import type {
   Workspace,
 } from "@shared/contracts";
 import { Conversation } from "./components/Conversation";
-import { ContactDetail } from "./components/ContactDetail";
+import { ContactDetail, type ContactDetailHandle } from "./components/ContactDetail";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NewBotChooser } from "./components/NewBotChooser";
-import { ProfileInspector, type ProfileInspectorHandle } from "./components/ProfileInspector";
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
 import { Sidebar, type RoomRestoreState } from "./components/Sidebar";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
@@ -82,6 +81,7 @@ export function App(): React.JSX.Element {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [sidebarTab, setSidebarTab] = useState<"chats" | "contacts" | "workspace">("chats");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  const [contactEditingRequested, setContactEditingRequested] = useState(0);
   const [clearTarget, setClearTarget] = useState<ConversationSummary | null>(null);
   const [clearingConversation, setClearingConversation] = useState(false);
   const [projectChanging, setProjectChanging] = useState(false);
@@ -104,11 +104,11 @@ export function App(): React.JSX.Element {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
   const [closeNotice, setCloseNotice] = useState<string | null>(null);
+  const [roomSettingsError, setRoomSettingsError] = useState<AppError | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [userProfileOpen, setUserProfileOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile>({ name: "我", avatarUrl: null });
   const [roomMemberIds, setRoomMemberIds] = useState<Record<string, string[]>>({});
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [managedWorkspaceId, setManagedWorkspaceId] = useState<string | null>(null);
   const [managingConversationWorkspaces, setManagingConversationWorkspaces] = useState(false);
@@ -133,7 +133,7 @@ export function App(): React.JSX.Element {
   const [autoApprovePublicReadTools, setAutoApprovePublicReadTools] = useState(false);
   const [updateCheckIntervalMinutes, setUpdateCheckIntervalMinutes] = useState<UpdateCheckIntervalMinutes>(360);
   const newBotButtonRef = useRef<HTMLButtonElement>(null);
-  const profileRef = useRef<ProfileInspectorHandle>(null);
+  const contactRef = useRef<ContactDetailHandle>(null);
   const roomRef = useRef<RoomInspectorHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
   const selectedRoomIdRef = useRef<string | null>(null);
@@ -152,6 +152,8 @@ export function App(): React.JSX.Element {
   const conversationRefreshRef = useRef(0);
   const sidebarTabRef = useRef(sidebarTab);
   useEffect(() => { sidebarTabRef.current = sidebarTab; }, [sidebarTab]);
+  const settingsOpenRef = useRef(settingsOpen);
+  useEffect(() => { settingsOpenRef.current = settingsOpen; }, [settingsOpen]);
 
   const reportDirectError = useCallback((failure: AppError, sessionId: string, clientNonce: string): void => {
     if (sessionId !== sessionIdRef.current || selectedRoomIdRef.current) return;
@@ -190,19 +192,20 @@ export function App(): React.JSX.Element {
     return true;
   }, [mergeConversation]);
 
-  const activateConversation = useCallback(async (sessionId: string): Promise<ConversationSummary | null> => {
+  const activateConversation = useCallback(async (sessionId: string, reportError: (failure: AppError) => void = setError): Promise<ConversationSummary | null> => {
     const shown = await window.aevorenBot.conversations.setHidden({ sessionId, hidden: false });
-    if (!shown.ok) { setError(shown.error); return null; }
+    if (!shown.ok) { reportError(shown.error); return null; }
     mergeConversation(shown.data);
     const read = await window.aevorenBot.conversations.setUnread({ sessionId, unread: false });
-    if (!read.ok) { setError(read.error); return null; }
+    if (!read.ok) { reportError(read.error); return null; }
     mergeConversation(read.data);
     return read.data;
   }, [mergeConversation]);
 
   const flushActive = useCallback(async (): Promise<boolean> => {
+    if (!(await contactRef.current?.flush() ?? true)) return false;
     if (selectedRoomIdRef.current) return await roomRef.current?.flush() ?? true;
-    return await profileRef.current?.flush() ?? true;
+    return true;
   }, []);
   const closeSettings = useCallback((): void => setSettingsOpen(false), []);
   const roomBotsById = useMemo(() => {
@@ -240,7 +243,7 @@ export function App(): React.JSX.Element {
     window.addEventListener("focus", scheduleRefresh);
     const unsubscribeTranscript = window.aevorenBot.events.subscribeTranscript((event) => {
       scheduleRefresh();
-      if (event.sessionId === sessionIdRef.current && sidebarTabRef.current !== "contacts"
+      if (event.sessionId === sessionIdRef.current && sidebarTabRef.current !== "contacts" && !settingsOpenRef.current
         && document.visibilityState === "visible" && event.entry.role === "assistant"
         && ["completed", "failed", "cancelled"].includes(event.entry.status)) {
         void window.aevorenBot.conversations.setUnread({ sessionId: event.sessionId, unread: false }).then((result) => {
@@ -403,28 +406,26 @@ export function App(): React.JSX.Element {
     return () => systemTheme.removeEventListener("change", applyTheme);
   }, [appearanceTheme]);
 
-  const openBot = useCallback(async (bot: Bot, flushCurrent = true): Promise<void> => {
+  const openBot = useCallback(async (bot: Bot, flushCurrent = true, localError = false): Promise<boolean> => {
     const requestId = ++openRequestRef.current;
-    if (flushCurrent && !(await flushActive())) return;
+    if (flushCurrent && !(await flushActive())) return false;
     setLoading(true);
-    setError(null);
-    setCloseNotice(null);
+    const reportError = (failure: AppError): void => {
+      if (localError) console.warn("Contact chat could not be opened", { botId: bot.id, code: failure.code });
+      else setError(failure);
+    };
+    if (!localError) {
+      setError(null);
+      setCloseNotice(null);
+    }
     const sessionResult = await window.aevorenBot.sessions.getMain(bot.id);
-    if (requestId !== openRequestRef.current) return;
+    if (requestId !== openRequestRef.current) return false;
     if (!sessionResult.ok) {
-      setError(sessionResult.error);
+      reportError(sessionResult.error);
       setLoading(false);
-      return;
+      return false;
     }
     const nextSession = sessionResult.data;
-    const conversation = await activateConversation(nextSession.id);
-    if (requestId !== openRequestRef.current) return;
-    if (!conversation) { setLoading(false); return; }
-    if (conversation.projectId) {
-      setActiveProjectId(conversation.projectId);
-      sessionStorage.setItem("aevoren-bot:project", conversation.projectId);
-    }
-    setProjectChangeError(null);
     loadingSessionIdRef.current = nextSession.id;
     bufferedTranscriptRef.current = [];
     bufferedRuntimeRef.current = [];
@@ -435,24 +436,36 @@ export function App(): React.JSX.Element {
       window.aevorenBot.tools.list({ sessionId: nextSession.id }),
       window.aevorenBot.approvals.listPending({ sessionId: nextSession.id }),
     ]);
-    if (requestId !== openRequestRef.current) return;
+    if (requestId !== openRequestRef.current) return false;
     if (!snapshotResult.ok) {
       loadingSessionIdRef.current = null;
-      setError(snapshotResult.error);
+      reportError(snapshotResult.error);
       setLoading(false);
-      return;
+      return false;
     }
     if (!toolsResult.ok) {
       loadingSessionIdRef.current = null;
-      setError(toolsResult.error);
+      reportError(toolsResult.error);
       setLoading(false);
-      return;
+      return false;
     }
     if (!approvalsResult.ok) {
       loadingSessionIdRef.current = null;
-      setError(approvalsResult.error);
+      reportError(approvalsResult.error);
       setLoading(false);
-      return;
+      return false;
+    }
+    const conversation = await activateConversation(nextSession.id, reportError);
+    if (requestId !== openRequestRef.current) return false;
+    if (!conversation) { loadingSessionIdRef.current = null; setLoading(false); return false; }
+    if (conversation.projectId) {
+      setActiveProjectId(conversation.projectId);
+      sessionStorage.setItem("aevoren-bot:project", conversation.projectId);
+    }
+    setProjectChangeError(null);
+    if (localError) {
+      setError(null);
+      setCloseNotice(null);
     }
     const buffered = mergeBufferedEvents(
       snapshotResult.data.entries,
@@ -484,6 +497,7 @@ export function App(): React.JSX.Element {
     setCreateError(null);
     setMobilePanel(null);
     setLoading(false);
+    return true;
   }, [activateConversation, flushActive]);
 
   const openRoom = useCallback(async (room: Room, flushCurrent = true, localError = false): Promise<RoomOpenResult> => {
@@ -654,20 +668,12 @@ export function App(): React.JSX.Element {
 
   const closeMobilePanel = useCallback(async (): Promise<void> => {
     if (mobilePanel === "profile" && !(await flushActive())) return;
-    if (mobilePanel === "profile") setInspectorCollapsed(true);
     setMobilePanel(null);
   }, [flushActive, mobilePanel]);
 
   const closeInspector = useCallback(async (): Promise<void> => {
-    if (await flushActive()) { setInspectorCollapsed(true); setMobilePanel(null); }
+    if (await flushActive()) setMobilePanel(null);
   }, [flushActive]);
-
-  const toggleInspector = useCallback(async (): Promise<void> => {
-    if (!(await flushActive())) return;
-    const opening = mobilePanel !== "profile";
-    setInspectorCollapsed(!opening);
-    setMobilePanel(opening ? "profile" : null);
-  }, [flushActive, mobilePanel]);
 
   useEffect(() => {
     if (!mobilePanel) return;
@@ -695,10 +701,11 @@ export function App(): React.JSX.Element {
         sessionStorage.setItem("aevoren-bot:project", projectId);
       }
       setBots((current) => [...current, result.data.bot]);
-      await openBot(result.data.bot, false);
-      if (sidebarTab === "contacts") setSidebarTab("chats");
-      setInspectorCollapsed(false);
-      setMobilePanel("profile");
+      setSelectedContactId(result.data.bot.id);
+      setContactEditingRequested((current) => current + 1);
+      setSidebarTab("contacts");
+      setMobilePanel(null);
+      setNewBotOpen(false);
       await refreshConversations();
     } catch {
       setCreateError({ code: "INTERNAL_ERROR", domain: "internal", retryable: true, safeMessage: "Bot 创建未完成，请稍后重试。" });
@@ -820,26 +827,27 @@ export function App(): React.JSX.Element {
   }
 
   async function editBot(bot: Bot): Promise<void> {
-    await openBot(bot);
-    if (sessionStorage.getItem("aevoren-bot:selected") !== `bot:${bot.id}`) return;
-    setSidebarTab("chats");
-    setInspectorCollapsed(false);
-    setMobilePanel("profile");
-    window.setTimeout(() => {
-      if (sessionStorage.getItem("aevoren-bot:selected") !== `bot:${bot.id}` || document.activeElement !== document.body) return;
-      profileRef.current?.focusName();
-    }, 200);
+    if (!(await flushActive())) return;
+    setSelectedContactId(bot.id);
+    setContactEditingRequested((current) => current + 1);
+    setSettingsOpen(false);
+    setSidebarTab("contacts");
+    setMobilePanel(null);
   }
 
   async function duplicateBot(bot: Bot): Promise<boolean> {
-    if (selectedBot?.id === bot.id && !(await flushActive())) return false;
+    if (!(await flushActive())) return false;
     const result = await window.aevorenBot.bots.duplicate(bot.id);
     if (!result.ok) {
       setError(result.error);
       return false;
     }
     setBots((current) => [...current, result.data.bot]);
-    await openBot(result.data.bot, false);
+    if (sidebarTabRef.current === "contacts") {
+      setSelectedContactId(result.data.bot.id);
+      setContactEditingRequested((current) => current + 1);
+      setMobilePanel(null);
+    } else await openBot(result.data.bot, false);
     await refreshConversations();
     return true;
   }
@@ -1247,10 +1255,10 @@ export function App(): React.JSX.Element {
   async function addContactToRoom(bot: Bot, roomId: string): Promise<boolean> {
     if (!(await flushActive())) return false;
     const detail = await window.aevorenBot.rooms.get(roomId);
-    if (!detail.ok) { setError(detail.error); return false; }
+    if (!detail.ok) { console.warn("Contact room could not be loaded", detail.error); return false; }
     if (detail.data.members.some((member) => member.botId === bot.id)) return true;
     const result = await window.aevorenBot.rooms.addMember({ roomId, botId: bot.id, expectedMembershipVersion: detail.data.room.membershipVersion });
-    if (!result.ok) { setError(result.error); return false; }
+    if (!result.ok) { console.warn("Contact could not be added to room", result.error); return false; }
     updateRoomRecord(result.data.room);
     if (selectedRoomIdRef.current === roomId) setSelectedRoom(result.data);
     return true;
@@ -1372,7 +1380,7 @@ export function App(): React.JSX.Element {
   }
 
   return (
-    <div className={`app-shell${inspectorCollapsed || sidebarTab === "contacts" ? " inspector-collapsed" : ""}`}>
+    <div className={`app-shell${settingsOpen ? " settings-active" : ""}`}>
       <Sidebar
         userProfile={userProfile}
         roomBotsById={roomBotsById}
@@ -1381,13 +1389,19 @@ export function App(): React.JSX.Element {
         rooms={rooms}
         conversations={conversations}
         tab={sidebarTab}
+        settingsActive={settingsOpen}
         onTabChange={(tab) => { void flushActive().then((saved) => {
           if (!saved) return;
+          setSettingsOpen(false);
           setSidebarTab(tab);
           if (tab === "contacts") setMobilePanel((current) => current === "profile" ? null : current);
         }); }}
         selectedContactId={selectedContactId}
-        onSelectContact={(bot) => { setSelectedContactId(bot.id); setMobilePanel(null); }}
+        onSelectContact={(bot) => { void flushActive().then((saved) => {
+          if (!saved) return;
+          setSelectedContactId(bot.id);
+          setMobilePanel(null);
+        }); }}
         onHideBatch={hideConversations}
         onClearConversation={(conversation) => { setError(null); setClearTarget(conversation); }}
         projects={projects}
@@ -1430,8 +1444,11 @@ export function App(): React.JSX.Element {
           setNewBotOpen(true);
         }}
         onOpenSettings={() => {
-          setMobilePanel(null);
-          setSettingsOpen(true);
+          void flushActive().then((saved) => {
+            if (!saved) return;
+            setMobilePanel(null);
+            setSettingsOpen(true);
+          });
         }}
         onMobileClose={() => setMobilePanel(null)}
         onSelectBot={(bot) => void openBot(bot)}
@@ -1457,16 +1474,29 @@ export function App(): React.JSX.Element {
         onOpenRestoredRoom={openRestoredRoom}
         onDismissRestore={dismissRestore}
       />
-      {sidebarTab === "contacts" ? <ContactDetail
+      <div className="app-main">
+      {closeNotice && (settingsOpen || sidebarTab === "contacts") ? <div className="dialog-error app-close-notice" role="alert">{closeNotice}</div> : null}
+      <div className="app-surface" hidden={settingsOpen || sidebarTab !== "contacts"}>
+      <ContactDetail
+        ref={contactRef}
         bot={selectedContact}
         rooms={rooms}
         busy={loading || creatingBot}
-        error={error?.safeMessage ?? null}
+        workspaceIds={conversations.find((conversation) => conversation.botId === selectedContact?.id)?.workspaceIds ?? []}
+        editingRequested={contactEditingRequested}
+        onBotUpdated={updateBot}
         onOpenBots={() => setMobilePanel("bots")}
-        onSend={(bot) => { setSidebarTab("chats"); void openBot(bot); }}
-        onEdit={(bot) => void editBot(bot)}
+        onSend={async (bot) => {
+          if (!(await flushActive())) return false;
+          const opened = await openBot(bot, false, true);
+          if (opened) setSidebarTab("chats");
+          return opened;
+        }}
         onAddToRoom={addContactToRoom}
-      /> : <Conversation
+      />
+      </div>
+      <div className="app-surface" hidden={settingsOpen || sidebarTab === "contacts"}>
+      <Conversation
         userProfile={userProfile}
         key={selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
         bot={selectedBot}
@@ -1483,11 +1513,9 @@ export function App(): React.JSX.Element {
         loading={loading}
         submitting={submitting}
         error={error}
-        closeNotice={closeNotice}
+        closeNotice={settingsOpen || sidebarTab === "contacts" ? null : closeNotice}
         onOpenBots={() => setMobilePanel("bots")}
-        onOpenProfile={() => { setInspectorCollapsed(false); setMobilePanel("profile"); }}
-        inspectorCollapsed={inspectorCollapsed}
-        onToggleInspector={() => void toggleInspector()}
+        onOpenRoomSettings={() => { void flushActive().then((saved) => { if (saved) { setRoomSettingsError(null); setMobilePanel("profile"); } }); }}
         onOpenWorkspaces={() => {
           setManagingConversationWorkspaces(true);
           setManagedWorkspaceId(null);
@@ -1509,8 +1537,6 @@ export function App(): React.JSX.Element {
           }
           return result.data;
         }}
-        onBotUpdated={updateBot}
-        onError={setError}
         onResolveApproval={resolveToolApproval}
         onRememberPublicRead={async (approval) => {
           // This is a user-clicked entry to the existing opt-in setting, not a
@@ -1581,8 +1607,12 @@ export function App(): React.JSX.Element {
           const bot = bots.find((item) => item.id === botId);
           if (bot) void openBot(bot);
         }}
-      />}
-      {selectedRoom ? (
+      />
+      </div>
+      {selectedRoom && mobilePanel === "profile" ? (
+        <div className="modal-backdrop room-settings-modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) void closeInspector();
+        }}>
         <RoomInspector
           key={`room-inspector:${selectedRoom.room.id}`}
           ref={roomRef}
@@ -1591,26 +1621,16 @@ export function App(): React.JSX.Element {
           bots={bots}
           conversationWorkspace={conversationWorkspace}
           active={activeRoomBatch}
-          mobileOpen={mobilePanel === "profile"}
+          mobileOpen={true}
+          error={roomSettingsError}
           onDetailUpdated={updateRoom}
-          onError={setError}
-          onOpenBot={(bot) => void openBot(bot)}
+          onError={setRoomSettingsError}
+          onOpenBot={(bot) => void editBot(bot)}
           onMobileClose={() => void closeInspector()}
         />
-      ) : (
-        <ProfileInspector
-          ref={profileRef}
-          id="conversation-inspector"
-          bot={selectedBot}
-          workspaceIds={activeConversation?.workspaceIds ?? []}
-          conversationWorkspace={conversationWorkspace}
-          mobileOpen={mobilePanel === "profile"}
-          onBotUpdated={updateBot}
-          onError={setError}
-          onMobileClose={() => void closeInspector()}
-        />
-      )}
-      {mobilePanel ? <button className="drawer-backdrop" type="button" aria-label="关闭侧边面板" onClick={() => mobilePanel === "profile" ? void closeInspector() : void closeMobilePanel()} /> : null}
+        </div>
+      ) : null}
+      {mobilePanel === "bots" ? <button className="drawer-backdrop" type="button" aria-label="关闭侧边面板" onClick={() => void closeMobilePanel()} /> : null}
       {userProfileOpen ? <UserProfileDialog
         profile={userProfile}
         onClose={() => setUserProfileOpen(false)}
@@ -1636,6 +1656,10 @@ export function App(): React.JSX.Element {
         restartBlocked={updateRestartBlocked}
         activeBotId={selectedBot?.id ?? null}
         onClose={closeSettings}
+        onOpenWorkspaceManager={() => {
+          setSettingsOpen(false);
+          setSidebarTab("workspace");
+        }}
         onThemeChange={async (theme) => {
           const result = await window.aevorenBot.settings.saveGeneral({ theme });
           if (!result.ok) return result.error;
@@ -1661,16 +1685,13 @@ export function App(): React.JSX.Element {
         onRetryUpdate={() => void runUpdateAction("retry")}
         onInstallUpdate={() => void runUpdateAction("install")}
       />
+      </div>
       <WorkspaceDialog
         key={workspacesOpen ? managingConversationWorkspaces ? `chat:${session?.id ?? "none"}` : `workspace:${managedWorkspaceId}` : "closed"}
         open={workspacesOpen}
         workspaceId={managedWorkspaceId}
         workspaceIds={managingConversationWorkspaces ? activeConversation?.workspaceIds ?? [] : undefined}
-        onOpenChatSettings={managingConversationWorkspaces ? () => {
-          setWorkspacesOpen(false);
-          setInspectorCollapsed(false);
-          setMobilePanel("profile");
-        } : undefined}
+        conversationWorkspace={managingConversationWorkspaces ? conversationWorkspace : undefined}
         onClose={() => setWorkspacesOpen(false)}
       />
       {newBotOpen ? (
@@ -1693,6 +1714,14 @@ export function App(): React.JSX.Element {
             if (chooserActionRef.current) return;
             chooserActionRef.current = "select";
             setNewBotOpen(false);
+            if (sidebarTab === "contacts") {
+              void flushActive().then((saved) => {
+                if (!saved) return;
+                setSelectedContactId(bot.id);
+                setContactEditingRequested((current) => current + 1);
+              }).finally(() => { chooserActionRef.current = null; });
+              return;
+            }
             void openBot(bot).finally(() => { chooserActionRef.current = null; });
           }}
         />

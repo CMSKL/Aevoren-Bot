@@ -51,7 +51,7 @@ test("renders Markdown during streaming and keeps the same semantic structure wh
     const page = await application.firstWindow();
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
-    await expect(page.locator(".inspector")).toBeVisible();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await closeInspector(page);
     await page.getByLabel("消息").fill("请使用 Markdown 回复。");
     await page.getByRole("button", { name: "发送" }).click();

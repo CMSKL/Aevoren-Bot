@@ -20,7 +20,7 @@ type Props = {
   onPin(): void;
   onUnread(): void;
   onRename(): void;
-  onEdit(): void;
+  onEdit?(): void;
   onDuplicate(): void;
   onCopyId(): void;
   onHide(): void;
@@ -119,7 +119,7 @@ export function BotContextMenu({
       </div>
       <div className="bot-context-section">
         <MenuItem icon={<PencilIcon />} onSelect={() => select(onRename)}>重命名 Bot</MenuItem>
-        <MenuItem icon={<BotIcon />} onSelect={() => select(onEdit)}>编辑资料</MenuItem>
+        {onEdit ? <MenuItem icon={<BotIcon />} onSelect={() => select(onEdit)}>编辑资料</MenuItem> : null}
         <MenuItem icon={<DuplicateIcon />} onSelect={() => select(onDuplicate)}>创建副本</MenuItem>
       </div>
       <div className="bot-context-section">

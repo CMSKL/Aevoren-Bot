@@ -5,9 +5,9 @@ This guide describes the supported pre-release workflow. It applies to macOS 13 
 ## First run
 
 1. Follow [Installation](INSTALLATION.md). The ordinary app uses your configured API or an installed, authenticated CLI; the Fake Provider is only a development test fixture.
-2. Open **Settings → Models & CLI** and choose API, Claude Code, or Codex CLI.
-3. Configure the API or let Aevoren Bot scan the two supported CLIs, then run **Test real request** before selecting a model.
-4. Use **Contacts** or **New chat** to create a Bot and edit its name, label, description and Instructions. **Chats** contains recent direct and group conversations; **Workspaces** retains the folder/project tree.
+2. Use **Contacts** or **New chat** to create a Bot. Its name, label, description and Instructions are edited within **Contacts → Profile**, without opening a chat details panel.
+3. Open that contact's **Models & capabilities** tab and choose API, Claude Code, or Codex CLI. Expand **Local connection settings** to configure API or scan the two supported CLIs, then use **Test real request** to check the connection. Connection settings are shared; the source and model selection belong to this Bot.
+4. Click **Send message** to enter the Bot's conversation. **Chats** contains recent direct and group conversations. Existing folder/project and archived-chat management is available through **Settings → Capabilities & permissions → Local files and chat management → Open management**.
 5. Send a message from the center composer. You can attach up to six bounded text, code, CSV, JSON, YAML, or Markdown files. Replies render directly in the conversation; saved Workspace outputs appear in task details. Stopping, retrying and interrupted states remain available.
 
 ## Interface and appearance
@@ -16,7 +16,7 @@ The narrow left navigation switches between Chats, Contacts and Workspaces. Sett
 
 Choose **Dark** or **Daylight** in **Settings → General**. Both themes use the same layout and controls. Click the personal avatar at the top of the navigation to change your nickname or upload a PNG, JPEG or WebP image up to 5 MB. Cropping and storage happen on this computer; the app saves a centered 256-pixel PNG. The personal avatar updates in your messages and group collages. Bots receive stable cartoon-human portraits derived from their existing saved avatar identity.
 
-The conversation's **…** menu opens model selection, group/contact details, files and execution records. Details appear in a closable drawer. The next-message response mode sits beside **@** in the composer; explicit mentions still override it. **View collaboration details** or **View tool activity** above a related message expands that message's records without adding a permanent process panel. Enter sends; Shift, Ctrl or Cmd + Enter inserts a newline.
+The conversation's **…** menu opens group management, files and execution records. Edit Bot profiles and model selection within **Contacts**; group management opens in a closable dialog. The next-message response mode sits beside **@** in the composer; explicit mentions still override it. **View collaboration details** or **View tool activity** above a related message expands that message's records without adding a permanent process panel. Enter sends; Shift, Ctrl or Cmd + Enter inserts a newline.
 
 ## Content-team workflow UI
 
@@ -47,7 +47,7 @@ The conversation's **…** menu opens model selection, group/contact details, fi
 
 - Memory is scoped to the user, a Bot, or an authorized Workspace. Background capture creates reviewable candidates from the current user message; accept, edit, or reject them in **Settings → Long-term Memory**. Only accepted, active, non-expired items enter later prompts. Turn off **Background Memory candidates** there when no secondary extraction request should be made.
 - Workspace access is limited to roots selected by the user. Read/list/search are available by default; create-only Markdown/CSV and automatic Workspace approval require separate per-Workspace switches. Existing files are never overwritten or deleted.
-- In the **Workspaces** tab, click **+** beside Workspace to select a local folder. Use its settings icon to manage folder permissions. Chat details provide **Current chat workspace** to bind or detach that conversation's file scope; changes wait until its current tasks finish. New ordinary chats and duplicated contacts start with no folder access. Legacy chats retain the exact folders authorized at migration time; adding future folders does not silently expand that snapshot. File operations recheck the current chat's grant before execution and before returning data or publishing a new file.
+- Open the existing Workspace manager through **Settings → Capabilities & permissions → Local files and chat management → Open management**. Click **+** beside Workspace to select a local folder and use its settings icon to manage permissions. From a chat's files, open **Manage folders** to bind or detach **Current chat workspace** directly in the permissions window; changes wait until its current tasks finish. New ordinary chats and duplicated contacts start with no folder access. Legacy chats retain the exact folders authorized at migration time; adding future folders does not silently expand that snapshot. File operations recheck the current chat's grant before execution and before returning data or publishing a new file.
 - File access permission and Workspace Memory injection are separate controls. Granting file access does not inject a Workspace into long-term model context.
 - **New chat → Create content team** atomically creates the research, planning, writing, fact-editing, and analytics Bots plus their Room. The planning-to-writing Handoff is blocked until the current user message explicitly approves a candidate.
 - Chat shows the reply and saved artifacts. Open **Files** or **Execution records** from the **…** menu, or expand the evidence entry above a relevant message; records stay backed by the Tool Journal rather than model completion claims.
@@ -61,7 +61,7 @@ The conversation's **…** menu opens model selection, group/contact details, fi
 
 ## Updating
 
-Development builds do not check for updates. Signed Beta and Stable builds use the GitHub Release channel declared by their SemVer. A downloaded update is shown with progress and requires an explicit restart or the next normal quit; a failed update keeps the current version usable.
+Development builds do not check for updates. Signed Beta and Stable builds use the GitHub Release channel declared by their SemVer. Checking and downloading stay in the background; progress, errors and manual checks are available in **Settings → Updates**. Only a downloaded update displays a compact notification with its version, **Restart to update** and a close control. Closing the notification does not cancel the download or install an update. Installation waits for an explicit restart or the next normal quit; a manual restart is blocked while any task is executing. A failed update keeps the current version usable.
 
 ## Safe evaluation
 

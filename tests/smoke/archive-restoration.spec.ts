@@ -19,6 +19,12 @@ function seed() {
   const path = join(data, "aevoren-bot.sqlite");
   const repository = new AppRepository(path);
   try {
+    // Archive verification needs no model credentials. Real absent paths keep
+    // CLI scanning fail-closed without invoking the user's OAuth/Keychain CLI.
+    for (const id of ["claude.default", "codex.default"]) {
+      const configuration = repository.getProviderInstanceConfig(id);
+      repository.updateProviderInstanceConfig(id, configuration.version, { ...configuration.config, cliPath: join(data, `not-installed-${id}`) });
+    }
     const current = repository.createBot();
     repository.updateBot(current.bot.id, current.bot.version, { name: "当前对话" });
     const peer = repository.createBot();
@@ -56,7 +62,7 @@ async function launch(fixture: Fixture, expectedHeading: string | null = "当前
   for (const key of Object.keys(inherited)) if (key.startsWith("AEVOREN_BOT_FAKE_")) delete inherited[key];
   const application = await electron.launch({
     args: ["."], cwd: process.cwd(),
-    env: { ...inherited, AEVOREN_BOT_USER_DATA_DIR: fixture.data, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_ATTACHMENT_TEST_PATHS: fixture.attachmentPath },
+    env: { ...inherited, AEVOREN_BOT_USER_DATA_DIR: fixture.data, AEVOREN_BOT_DB_PATH: fixture.path, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_ATTACHMENT_TEST_PATHS: fixture.attachmentPath },
   });
   const page = await application.firstWindow();
   await expect(page).toHaveTitle("Aevoren Bot");
@@ -172,7 +178,7 @@ test("restoring preserves the current view, draft, attachment, unread state and 
     await page.getByLabel("添加文本附件").click();
     await expect(page.getByRole("button", { name: /移除附件 归档验收附件\.md/u })).toBeVisible();
     const draft = "不要发送：恢复另一个群聊时保留本对话的草稿。";
-    const description = "恢复及失败的打开不得丢掉当前详情编辑内容。";
+    const description = "归档管理前必须可靠保存当前联系人编辑内容。";
     await page.getByLabel("消息", { exact: true }).fill(draft);
     const selectionBefore = await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"));
     await openArchive(page, fixture.rooms.length);
@@ -188,12 +194,6 @@ test("restoring preserves the current view, draft, attachment, unread state and 
       END;
     `);
     for (const [index, detail] of fixture.rooms.entries()) {
-      if (index === 1) {
-        await openInspector(page);
-        execute(fixture.path, `CREATE TRIGGER reject_archive_open_save BEFORE UPDATE ON bots
-          WHEN NEW.id = '${fixture.current.bot.id}' BEGIN SELECT RAISE(ABORT, 'archive save guard test'); END;`);
-        await page.getByRole("textbox", { name: "描述", exact: true }).fill(description);
-      }
       const restore = archiveRow(page, detail.room.id).getByRole("button", { name: "恢复", exact: true });
       if (index === 0) {
         // Two actual DOM events exercise the synchronous pending lock. The real
@@ -211,17 +211,14 @@ test("restoring preserves the current view, draft, attachment, unread state and 
           (element as HTMLButtonElement).click();
         });
       } else {
-        // The real restoration callback must not flush or dismiss the dirty
-        // inspector. DOM events here test that boundary behind its backdrop.
-        await restore.evaluate(element => (element as HTMLButtonElement).click());
+        await restore.click();
       }
       await expect(archiveFeedback(page, detail.room.id)).toContainText("已恢复到聊天列表");
       await expect(archiveFeedback(page, detail.room.id).getByRole("button", { name: "打开", exact: true })).toBeEnabled();
       await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
-      await expect(page.getByRole("tab", { name: "工作区", exact: true })).toHaveAttribute("aria-selected", "true");
+      await expect(page.locator(".sidebar-workspace")).toBeVisible();
       await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);
       await expect(page.getByRole("button", { name: /移除附件 归档验收附件\.md/u })).toBeVisible();
-      if (index > 0) await expect(page.getByRole("textbox", { name: "描述", exact: true })).toHaveValue(description);
       expect(await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).toBe(selectionBefore);
       const after = inspect(fixture.path, detail.session.id, detail.room.id);
       const before = baselines[index]!;
@@ -250,18 +247,26 @@ test("restoring preserves the current view, draft, attachment, unread state and 
     // Success feedback stays reachable even after the last archived item leaves.
     const open = archiveFeedback(page, fixture.globalRoom.room.id).getByRole("button", { name: /^(?:打开|重新打开)$/u });
     await expect(open).toBeVisible();
-    // The inspector backdrop prevents pointer interaction with Workspace. This
-    // DOM event is a save-guard check, not a claim that the obscured button is
-    // physically clickable; it still invokes the real React/IPC save path.
-    await open.evaluate(element => (element as HTMLButtonElement).click());
-    await expect(archiveFeedback(page, fixture.globalRoom.room.id)).toContainText("请先保存当前更改");
+    // Contact editing is now a separate page: a dirty failed profile cannot
+    // physically share the archive controls. Exercise the real guard before
+    // returning to archive management instead of clicking detached/hidden UI.
+    await openInspector(page);
+    execute(fixture.path, `CREATE TRIGGER reject_archive_open_save BEFORE UPDATE ON bots
+      WHEN NEW.id = '${fixture.current.bot.id}' BEGIN SELECT RAISE(ABORT, 'archive save guard test'); END;`);
+    await page.getByRole("textbox", { name: "描述", exact: true }).fill(description);
+    await page.getByRole("button", { name: "发消息", exact: true }).click();
     await expect(page.getByTestId("profile-save-status")).toContainText("保存失败");
+    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+    await expect(page.getByRole("alert").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "描述", exact: true })).toHaveValue(description);
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);
     expect(inspect(fixture.path, fixture.globalRoom.session.id, fixture.globalRoom.room.id).conversation).toMatchObject({ has_unread: 1 });
     execute(fixture.path, "DROP TRIGGER reject_archive_open_save;");
-    await open.evaluate(element => (element as HTMLButtonElement).click());
+    await page.getByRole("button", { name: "发消息", exact: true }).click();
+    await openArchive(page, 0);
+    await open.click();
     await expect(page.getByRole("heading", { name: "未关联归档群聊", exact: true })).toBeVisible();
     await expect(page.locator("article.message-user")).toContainText("归档数据保留验收输入");
     expect(inspect(fixture.path, fixture.globalRoom.session.id, fixture.globalRoom.room.id).conversation).toMatchObject({ project_id: null, has_unread: 0 });
@@ -376,7 +381,8 @@ test("global archive controls remain usable in both themes and 1180/1020/620/390
       await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1180, 844));
       await openBotList(page);
       await page.getByRole("button", { name: "设置", exact: true }).click();
-      await page.getByLabel("外观主题").selectOption(theme);
+      await page.getByRole("button", { name: "通用", exact: true }).click();
+      await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: theme === "dark" ? /^暗黑/u : /^白昼/u }).click();
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
       await page.getByRole("button", { name: "关闭设置", exact: true }).click();
       for (const width of [1180, 1020, 620, 390]) {

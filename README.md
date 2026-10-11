@@ -62,7 +62,7 @@ The Fake Provider is deterministic and requires no account or API key. See [Inst
 
 ## Configure a model
 
-Open **Settings → Models & CLI**. Aevoren Bot scans common installation locations and `PATH` for supported CLIs and reads only the installation, login, and model information required by the corresponding adapter.
+Open **Contacts → select or create a Bot → Models & capabilities → Local connection settings**. Choose this Bot's source and model in the same contact page. Connection settings are shared on this computer; changes affect other Bots using that connection. Aevoren Bot scans common installation locations and `PATH` for supported CLIs and reads only the installation, login, and model information required by the corresponding adapter.
 
 - **API:** OpenAI-compatible Base URL, API Key, model discovery, and real request validation.
 - **Claude Code:** model/login discovery and conversations; compatible API-authenticated installations can use six scoped Workspace and public-web tools. Subscription-only OAuth tool mode is not supported yet.

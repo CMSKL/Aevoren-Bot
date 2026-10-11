@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
 import type { AppError, Workspace } from "@shared/contracts";
 import { CloseIcon, FolderIcon } from "./Icons";
+import { ConversationWorkspace, type ConversationWorkspaceProps } from "./ConversationWorkspace";
 
 type WorkspaceDialogProps = {
   open: boolean;
   workspaceId: string | null;
   workspaceIds?: readonly string[];
-  onOpenChatSettings?(): void;
+  conversationWorkspace?: ConversationWorkspaceProps;
   onClose(): void;
 };
 
-export function WorkspaceDialog({ open, workspaceId, workspaceIds, onOpenChatSettings, onClose }: WorkspaceDialogProps): React.JSX.Element | null {
+export function WorkspaceDialog({ open, workspaceId, workspaceIds, conversationWorkspace, onClose }: WorkspaceDialogProps): React.JSX.Element | null {
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [error, setError] = useState<AppError | null>(null);
@@ -88,12 +89,12 @@ export function WorkspaceDialog({ open, workspaceId, workspaceIds, onOpenChatSet
           </div>
           <button type="button" className="icon-button dialog-close-button" onClick={onClose} aria-label="关闭工作区权限" title="关闭工作区权限" disabled={busy !== null}><CloseIcon /></button>
         </header>
+        {conversationWorkspace ? <ConversationWorkspace {...conversationWorkspace} /> : null}
         <div className="workspace-list settings-list" aria-label="已授权文件夹">
           {workspaces === null ? <p role="status">正在读取文件夹权限…</p> : !error && allowedWorkspaces.length === 0 ? <div className="workspace-empty">
             {workspaceIds !== undefined ? <>
               <p>{workspaceIds.length === 0 ? "当前聊天未关联工作区" : "当前聊天的文件夹授权已不可用"}</p>
-              <p>请在聊天设置中选择工作区；打开此窗口不会增加文件访问权限。</p>
-              {onOpenChatSettings ? <button className="secondary-button" type="button" onClick={onOpenChatSettings}>打开聊天设置</button> : null}
+              <p>请为当前聊天选择已授权工作区；打开此窗口不会增加文件访问权限。</p>
             </> : "此工作区尚未授权文件夹，可在左侧重新授权。"}
           </div> : null}
           {allowedWorkspaces.length > 1 ? <label className="field">

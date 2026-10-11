@@ -69,13 +69,10 @@ test("boots Main, Preload and Renderer and completes Windows core IPC flows", as
 
     await page.evaluate(() => document.querySelector<HTMLButtonElement>(".sidebar-settings-button")?.click());
     await expect.poll(() => page.locator(".settings-dialog").count()).toBe(1);
-    expect(await page.locator(".settings-dialog").textContent()).toContain("模型与 CLI");
-    await page.evaluate(() => {
-      const theme = document.querySelector<HTMLSelectElement>('select[aria-label="外观主题"]');
-      if (!theme) throw new Error("Missing appearance theme control");
-      theme.value = "dark";
-      theme.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await expect(page.getByRole("region", { name: "设置", exact: true })).toBeVisible();
+    expect(await page.locator(".settings-dialog .settings-nav button").count()).toBe(6);
+    await expect(page.locator(".settings-dialog").getByRole("button", { name: "模型与 CLI", exact: true })).toHaveCount(0);
+    await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: "暗黑", exact: true }).click();
     await expect.poll(() => page.locator("html").getAttribute("data-theme")).toBe("dark");
     expect(consoleErrors).toEqual([]);
     await application.close();

@@ -18,6 +18,7 @@ type Props = {
   conversationWorkspace: ConversationWorkspaceProps;
   active: boolean;
   mobileOpen: boolean;
+  error?: AppError | null;
   onDetailUpdated(detail: RoomDetail): void;
   onError(error: AppError | null): void;
   onOpenBot(bot: Bot): void;
@@ -33,7 +34,7 @@ function same(left: Draft, right: Draft): boolean {
 }
 
 export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function RoomInspector(
-  { id, detail, bots, conversationWorkspace, active, mobileOpen, onDetailUpdated, onError, onOpenBot, onMobileClose },
+  { id, detail, bots, conversationWorkspace, active, mobileOpen, error, onDetailUpdated, onError, onOpenBot, onMobileClose },
   ref,
 ) {
   const [draft, setDraft] = useState<Draft | null>(detail ? toDraft(detail) : null);
@@ -48,6 +49,12 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const detailRef = useRef(detail);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const frame = requestAnimationFrame(() => dialogRef.current?.querySelector<HTMLButtonElement>('[aria-label="关闭群聊设置"]')?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [mobileOpen]);
   const availableBots = useMemo(
     () => bots.filter((bot) => !detail?.members.some((member) => member.botId === bot.id)),
     [bots, detail],
@@ -166,7 +173,14 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   </aside>;
 
   return (
-    <aside id={id} className={`inspector${mobileOpen ? " mobile-open" : ""}`} aria-label="群聊设置">
+    <aside ref={dialogRef} id={id} className={`inspector${mobileOpen ? " mobile-open" : ""}`} role="dialog" aria-modal="true" aria-label="群聊设置" onKeyDown={(event) => {
+      if (event.key !== "Tab") return;
+      const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary')].filter((element) => element.getClientRects().length > 0);
+      const first = controls[0];
+      const last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }}>
       <header className="inspector-header">
         <h2>群聊详情</h2>
         <div className="inspector-header-actions">
@@ -179,6 +193,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
           <button className="drawer-close-button dialog-close-button" type="button" aria-label="关闭群聊设置" title="关闭群聊设置" onClick={onMobileClose}><CloseIcon /></button>
         </div>
       </header>
+      {error ? <div className="dialog-error" role="alert">{error.safeMessage}</div> : null}
       <ConversationWorkspace {...conversationWorkspace} />
       <section className="inspector-group inspector-profile-fields" aria-label="群聊资料">
       <label className="field inspector-primary-field">

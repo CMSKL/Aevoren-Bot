@@ -12,7 +12,7 @@ Aevoren Bot's first-phase model scope contains exactly three sources:
 - Claude Code;
 - Codex CLI.
 
-Open **Settings → Models & CLI** to configure API, rescan installed CLIs, inspect login status, run a minimal real request, and choose a model. On Windows, CLI discovery also checks npm/pnpm, Volta, Scoop, Chocolatey, Program Files, and the current user's CLI directories; `.cmd`/`.bat` wrappers are launched through the Windows shell only after the executable path has been resolved.
+Open **Contacts → select or create a Bot → Models & capabilities** to choose its source and model. Expand **Local connection settings** to configure API, rescan installed CLIs, inspect login status, or run a minimal real request. These connection settings are shared on this computer; editing them affects other Bots using the same connection. On Windows, CLI discovery also checks npm/pnpm, Volta, Scoop, Chocolatey, Program Files, and the current user's CLI directories; `.cmd`/`.bat` wrappers are launched through the Windows shell only after the executable path has been resolved.
 
 API keys entered in the application are encrypted by Electron `safeStorage`. Saved secret values are never returned to the Renderer. Do not put production keys in `.env`, command-line arguments, screenshots, Issues, or test fixtures.
 

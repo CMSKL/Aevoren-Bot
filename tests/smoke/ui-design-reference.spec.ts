@@ -294,7 +294,7 @@ test("UI-only approved light/dark reference: real avatars and journal-backed fil
     await page.getByLabel("消息", { exact: true }).fill("继续讨论这份文件…");
     for (const theme of ["dark", "light"] as const) {
       await page.getByRole("button", { name: "设置", exact: true }).click();
-      await page.getByLabel("外观主题").selectOption(theme);
+      await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: theme === "dark" ? /^暗黑/u : /^白昼/u }).click();
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
       await page.getByRole("button", { name: "关闭设置", exact: true }).click();
       await expect.poll(() => page.locator(".nav-rail img, .sidebar-list img, .conversation img").evaluateAll((images) => images.every((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);

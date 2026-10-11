@@ -103,21 +103,22 @@ test("creates one neutral Bot and one MAIN session under a duplicate trigger, th
 
     await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
     await expect(page.locator(".bot-row.selected")).toHaveCount(1);
-    await expect(page.locator(".inspector")).toBeVisible();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await openInspector(page);
     await expect(page.getByLabel("名称")).toHaveValue("新建 Bot");
     await expect(page.getByLabel("标签（可选）")).toHaveValue("");
     await expect(page.getByLabel("标签（可选）")).toHaveAttribute("placeholder", "研究、市场、行政");
     await expect(page.getByLabel("描述")).toHaveValue("");
-    await expect(page.getByLabel("描述")).toHaveAttribute("placeholder", "详细说明用途和工作方式");
-    await expect(page.getByLabel("Instructions")).toHaveCount(0);
+    await expect(page.getByLabel("描述")).toHaveAttribute("placeholder", "说明这位 Bot 的用途");
+    await expect(page.getByLabel("Instructions")).toHaveValue("");
+    await expect(page.getByLabel("Instructions")).toBeHidden();
     const avatar = page.locator(".bot-row.selected .bot-avatar-icon");
     const avatarShape = await avatar.getAttribute("data-avatar-shape");
     const avatarColor = await avatar.getAttribute("data-avatar-color");
     expect(BOT_AVATAR_SHAPES).toContain(avatarShape);
     expect(BOT_AVATAR_COLORS).toContain(avatarColor);
-    await expect(page.locator(".avatar-settings .bot-avatar-icon")).toHaveAttribute("data-avatar-shape", avatarShape!);
-    await expect(page.locator(".avatar-settings .bot-avatar-icon")).toHaveAttribute("data-avatar-color", avatarColor!);
+    await expect(page.locator(".contact-profile-hero .bot-avatar-icon")).toHaveAttribute("data-avatar-shape", avatarShape!);
+    await expect(page.locator(".contact-profile-hero .bot-avatar-icon")).toHaveAttribute("data-avatar-color", avatarColor!);
     await expect(page.getByRole("radiogroup", { name: "Bot 头像造型" })).toHaveCount(0);
     await expect(page.getByRole("radiogroup", { name: "Bot 头像配色" })).toHaveCount(0);
     await page.screenshot({ path: "/tmp/aevoren-avatar-random-profile.png" });
@@ -217,7 +218,7 @@ test("filters and selects an existing Bot without creating another resource", as
 
     let dialog = await openChooser(page);
     await dialog.getByRole("button", { name: "创建新 Bot" }).click();
-    await expect(page.locator(".inspector")).toBeVisible();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await openInspector(page);
     await page.getByLabel("名称").fill("Alpha");
     await page.getByLabel("名称").blur();
@@ -225,7 +226,7 @@ test("filters and selects an existing Bot without creating another resource", as
 
     dialog = await openChooser(page);
     await dialog.getByRole("button", { name: "创建新 Bot" }).click();
-    await expect(page.locator(".inspector")).toBeVisible();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await openInspector(page);
     await page.getByLabel("名称").fill("Beta");
     await page.getByLabel("名称").blur();
