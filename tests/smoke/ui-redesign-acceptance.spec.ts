@@ -335,7 +335,9 @@ for (const theme of ["light", "dark"] as const) {
   for (const width of [1180, 1020, 620, 390]) {
     test(`keeps six settings pages, contacts, and navigation usable: ${theme}, ${width}px`, async () => {
       const testInfo = test.info();
-      test.setTimeout(60_000);
+      // Hidden Windows navigation takes about 55–60s across all six pages.
+      // Keep individual action and assertion deadlines unchanged.
+      test.setTimeout(process.platform === "win32" && width <= 620 ? 120_000 : 60_000);
       const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-ui-responsive-"));
       let application: ElectronApplication | undefined;
       let failed = false;

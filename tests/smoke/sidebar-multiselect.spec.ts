@@ -113,6 +113,7 @@ test("matches Grok-style Shift ranges, batch context menus, cancellation, and su
     await expect(page.getByRole("heading", { name: "Bot A" })).toBeVisible();
 
     await row(page, "群聊二").click();
+    await expect(page.getByRole("heading", { name: "群聊二", exact: true })).toBeVisible();
     await row(page, "Bot B").click({ modifiers: ["Shift"] });
     await expect(multiSelected(page)).toHaveCount(6);
     await expect(row(page, "群聊二")).toHaveAttribute("data-multi-selected", "true");
