@@ -183,7 +183,9 @@ function errorSummary(code: string | null | undefined): string {
   if (code.includes("NETWORK")) return "联网读取失败，已有本地结果仍然保留。";
   if (code.includes("TOOL_ROUND")) return "当前步骤尝试次数达到安全上限。";
   if (code.includes("HANDOFF")) return "Bot 交接未完成，未启动下一位 Bot。";
+  if (code === "WORKSPACE_WRITE_NOT_ENABLED") return "当前文件夹未开启写入，已有文件不会被覆盖。";
   if (code.includes("WORKSPACE")) return "文件操作未完成，已有文件不会被覆盖。";
+  if (code === "TASK_REQUIREMENTS_UNMET") return "任务要求的操作或成果还未完成，已成功的部分仍然保留。请先检查必要的输入与权限，再重试。";
   if (code.includes("INTERRUPTED") || code.includes("APP_INTERRUPTED")) return "运行被应用中断，没有自动重新发送。";
   return "模型回复未完整完成，系统已保留可验证结果。";
 }

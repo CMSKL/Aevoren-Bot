@@ -31,6 +31,7 @@ import {
   type RoomMention,
 } from "../room-mentions";
 import { conversationArtifacts, groupToolActivity } from "../conversation-view-model";
+import { latestRuntimeAttempts, runtimeTaskKey } from "../runtime-state";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { UserAvatar } from "./UserAvatar";
 import { AssistantMarkdown } from "./AssistantMarkdown";
@@ -337,6 +338,7 @@ const TranscriptItem = memo(function TranscriptItem({
     <article
       className={`message message-${entry.role}${longAssistant ? " message-long" : ""}${groupedWithPrevious ? " message-group-continuation" : ""}${groupedWithNext ? " message-group-has-next" : ""}${isSuperseded ? " message-superseded" : ""}`}
       data-status={entry.status}
+      data-runtime-run-id={run?.id}
       data-turn-purpose={turnPurpose}
     >
       <div className="message-row">
@@ -474,7 +476,7 @@ const TranscriptItem = memo(function TranscriptItem({
                 />
               </div>
             ) : isSuperseded ? (
-              <details className="superseded-attempt-details">
+              <details className="superseded-attempt-details" data-testid={entry.sourceTurnId ? undefined : "direct-attempt-history"}>
                 <summary>查看较早失败详情</summary>
                 <RunFailureCard step={speakerName} errorCode={run?.lastErrorCode} invocations={toolInvocations} canRetry={false} onRetry={() => undefined} />
               </details>
@@ -621,6 +623,7 @@ export function Conversation({
     [runs],
   );
   const runsById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);
+  const latestAttempts = useMemo(() => latestRuntimeAttempts(runs), [runs]);
   const toolsByAssistant = useMemo(() => {
     const result = new Map<string, ToolInvocation[]>();
     for (const invocation of toolInvocations) {
@@ -697,7 +700,7 @@ export function Conversation({
   );
   const latestFailedRun = latestFailedTurn?.runtimeRunId ? runsById.get(latestFailedTurn.runtimeRunId) ?? null : null;
   const latestRetryRun = !room
-    ? runs.toReversed().find((run) => ["failed", "cancelled", "interrupted"].includes(run.state) && run.clientNonce === latestUserNonce) ?? null
+    ? [...latestAttempts.values()].find((run) => ["failed", "cancelled", "interrupted"].includes(run.state) && run.clientNonce === latestUserNonce) ?? null
     : null;
   const retryableUserEntry = entries.toReversed().find((entry) => entry.role === "user" && entry.sendState === "failed-before-acceptance" && entry.clientNonce === latestUserNonce) ?? null;
   const latestFailedTools = latestFailedRun ? toolInvocations.filter((invocation) => invocation.runtimeRunId === latestFailedRun.id) : [];
@@ -1007,7 +1010,7 @@ export function Conversation({
                 />
               ))}
             </div>
-            <footer><button type="button" className="secondary-button" onClick={onOpenWorkspaces}>管理文件夹</button></footer>
+            <footer><button type="button" className="secondary-button" onClick={() => { setArtifactShelfScopeId(null); onOpenWorkspaces(); }}>管理文件夹</button></footer>
           </aside>
         </>
       ) : null}
@@ -1031,7 +1034,10 @@ export function Conversation({
         {!loading && (bot || room) && entries.length === 0 ? (
           <div className="center-state">
             <strong>开始对话</strong>
-            <span>{room ? "自动安排成员协作，或输入 @ 指定回复的 Bot。" : "告诉这个 Bot 你希望它完成什么。"}</span>
+            <span>{room ? room.room.leadBotId
+              ? "由群协调者安排成员协作，也可输入 @ 指定回复的 Bot。"
+              : "自动选择一位 Bot 回复；可输入 @ 指定成员，或选择全员分别回复。"
+              : "告诉这个 Bot 你希望它完成什么。"}</span>
           </div>
         ) : null}
         {entries.map((entry, index) => {
@@ -1044,6 +1050,7 @@ export function Conversation({
           const canRegenerate = Boolean(
             !room &&
             run &&
+            latestAttempts.get(runtimeTaskKey(run))?.id === run.id &&
             ["failed", "cancelled", "interrupted"].includes(run.state) &&
             run.clientNonce === latestUserNonce &&
             !busy,
@@ -1072,7 +1079,9 @@ export function Conversation({
               busy={busy}
               groupedWithPrevious={samePreviousDay && previousEntry?.role === entry.role && previousEntry?.speakerBotId === entry.speakerBotId}
               groupedWithNext={sameNextDay && nextEntry?.role === entry.role && nextEntry?.speakerBotId === entry.speakerBotId}
-              isSuperseded={Boolean(sourceTurn && (retriedTurnIds.has(sourceTurn.id) || roomTurnState.latestByLogicalTurn.get(`${sourceTurn.batchId}:${sourceTurn.logicalTurnId}`)?.id !== sourceTurn.id))}
+              isSuperseded={sourceTurn
+                ? retriedTurnIds.has(sourceTurn.id) || roomTurnState.latestByLogicalTurn.get(`${sourceTurn.batchId}:${sourceTurn.logicalTurnId}`)?.id !== sourceTurn.id
+                : Boolean(!room && run && latestAttempts.get(runtimeTaskKey(run))?.id !== run.id)}
               speakerBot={entry.role === "assistant"
                 ? entry.speakerBotId
                   ? room?.members.find((member) => member.botId === entry.speakerBotId)?.bot ?? (bot?.id === entry.speakerBotId ? bot : null)
@@ -1239,7 +1248,7 @@ export function Conversation({
                       setMentionQuery(null);
                     }}
                   >
-                    <option value="automatic">自动</option>
+                    <option value="automatic">{room.room.leadBotId ? "自动 · 协作" : "自动 · 单人"}</option>
                     <option value="explicit">@ 指定</option>
                     <option value="everyone">全员</option>
                   </select>

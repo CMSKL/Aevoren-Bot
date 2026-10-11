@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { closeInspector, openConversationMenu, openInspector } from "./navigation";
+import { closeInspector, openConversationMenu, openInspector, openWorkspaceTab } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -291,9 +291,12 @@ test("creates and manages a deterministic multi-Bot Room with speaker bubbles", 
     await openInspector(restarted.page);
     await restarted.page.getByLabel("描述").fill("恢复归档 Room 前必须先保存的 Bot 描述");
     await closeInspector(restarted.page);
+    await expect(restarted.page.getByRole("button", { name: "已归档 (1)" })).toHaveCount(0);
+    await openWorkspaceTab(restarted.page);
     await restarted.page.getByRole("button", { name: "已归档 (1)" }).click();
     await expect(restarted.page.getByText("产品协作室", { exact: true })).toBeVisible();
     await restarted.page.getByRole("button", { name: "恢复", exact: true }).click();
+    await restarted.page.locator('[data-testid^="archive-feedback-"]').getByRole("button", { name: "打开", exact: true }).click();
     await expect(restarted.page.getByRole("heading", { name: "产品协作室" })).toBeVisible();
     await application.close();
     application = undefined;

@@ -27,6 +27,14 @@ git diff --exit-code -- THIRD_PARTY_NOTICES.md
 pnpm sbom:generate
 ```
 
+Live UX acceptance additionally requires an installed, authenticated Codex CLI:
+
+```bash
+AEVOREN_BOT_REAL_UX_CLI=1 pnpm exec playwright test tests/smoke/ux-review-fixes.spec.ts
+```
+
+Set `AEVOREN_UX_REAL_HISTORY_DB` to an isolated database snapshot containing genuine failed and successful attempts to verify historical-result replay. Do not point it at a running user's profile. Live CLI and history cases are explicitly skipped when their prerequisites are not supplied; ordinary UI/SQLite checks remain part of CI. A skip is not evidence that the corresponding real-model flow passed.
+
 Also confirm:
 
 - `package.json` contains the intended SemVer;

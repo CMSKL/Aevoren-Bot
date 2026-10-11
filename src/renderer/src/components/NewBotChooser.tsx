@@ -31,7 +31,8 @@ export function NewBotChooser({
   const [query, setQuery] = useState("");
   const [groupMode, setGroupMode] = useState(initialGroupMode);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-  const [providers, setProviders] = useState<ProviderInstanceInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderInstanceInfo[] | null>(null);
+  const [providerError, setProviderError] = useState<string | null>(null);
   const [leadChoice, setLeadChoice] = useState("default");
   const createRef = useRef<HTMLButtonElement>(null);
   const visibleBots = bots;
@@ -41,14 +42,31 @@ export function NewBotChooser({
     return visibleBots.filter((bot) => `${bot.name}\n${bot.label}`.toLocaleLowerCase().includes(normalized));
   }, [query, visibleBots]);
   const botIdentities = useMemo(() => buildBotIdentityMap(visibleBots), [visibleBots]);
-  const eligibleLeads = eligibleRoomLeads(visibleBots.filter(bot => selectedIds.has(bot.id)), providers);
-  const selectedLead = leadChoice === "none" || eligibleLeads.some(bot => bot.id === leadChoice) ? leadChoice : "default";
+  const eligibleLeads = eligibleRoomLeads(visibleBots.filter(bot => selectedIds.has(bot.id)), providers ?? []);
+  const selectedLead = eligibleLeads.length === 0 || leadChoice === "none" ? "none" : eligibleLeads.some(bot => bot.id === leadChoice) ? leadChoice : "default";
 
   useEffect(() => {
     if (!groupMode) return;
     let cancelled = false;
-    void window.aevorenBot.providers.list().then(result => { if (!cancelled && result.ok) setProviders(result.data); });
-    return () => { cancelled = true; };
+    let request = 0;
+    const load = (): void => {
+      const currentRequest = ++request;
+      setProviders(null);
+      setProviderError(null);
+      void window.aevorenBot.providers.list().then(result => {
+        if (cancelled || currentRequest !== request) return;
+        setProviders(result.ok ? result.data : []);
+        if (!result.ok) setProviderError(result.error.safeMessage);
+      }).catch(failure => {
+        if (cancelled || currentRequest !== request) return;
+        console.error("Group coordinator capabilities could not be loaded", failure);
+        setProviders([]);
+        setProviderError("暂时无法确认协调能力，请关闭后重试；仍可创建不设协调者的群聊。");
+      });
+    };
+    load();
+    window.addEventListener("aevoren:providers-changed", load);
+    return () => { cancelled = true; window.removeEventListener("aevoren:providers-changed", load); };
   }, [groupMode]);
 
   useEffect(() => {
@@ -168,12 +186,17 @@ export function NewBotChooser({
         </div>
         {groupMode ? <label className="field recipient-lead">
           <span>群协调者</span>
-          <select aria-label="新群协调者" value={selectedLead} disabled={creating} onChange={(event) => setLeadChoice(event.target.value)}>
-            <option value="default">自动设置协调者</option>
-            <option value="none">每轮自动选择负责人</option>
+          <select aria-label="新群协调者" value={selectedLead} disabled={creating || providers === null} onChange={(event) => setLeadChoice(event.target.value)}>
+            <option value="default" disabled={eligibleLeads.length === 0}>自动设置协调者</option>
+            <option value="none">单人自动回复（不设协调者）</option>
             {eligibleLeads.map(bot => <option key={bot.id} value={bot.id}>{botIdentities.get(bot.id)?.inline ?? bot.name}</option>)}
           </select>
-          <small>协调者负责分工与汇总，可在群详情中更换。</small>
+          {providers === null ? <small role="status">正在确认成员的协调能力…</small>
+            : providerError ? <small role="alert">{providerError}</small>
+            : selectedIds.size < 2 ? <small>先选择群聊成员，再设置回复方式。</small>
+            : eligibleLeads.length === 0 ? <small>当前成员没有可用的自动接力能力。默认单人回复，也可 @ 指定或让全员分别回复；成员需配置可用模型，支持协作的 API 可设为协调者。</small>
+            : selectedLead === "none" ? <small>每轮自动选一位 Bot 回复，不自动接力；也可 @ 指定或让全员分别回复。</small>
+            : <small>协调者负责分工与汇总，可在群详情中更换。</small>}
         </label> : null}
         {groupMode ? (
           <footer className="recipient-footer">
@@ -181,7 +204,7 @@ export function NewBotChooser({
             <button
               className="primary-button"
               type="button"
-              disabled={creating || selectedIds.size < 2}
+              disabled={creating || selectedIds.size < 2 || providers === null}
               onClick={() => onCreateRoom(visibleBots.filter((bot) => selectedIds.has(bot.id)).map((bot) => bot.id), selectedLead === "default" ? undefined : selectedLead === "none" ? null : selectedLead)}
             >{creating ? "创建中…" : "创建群聊"}</button>
           </footer>

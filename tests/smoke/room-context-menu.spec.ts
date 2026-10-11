@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { openBotList } from "./navigation";
+import { openBotList, openWorkspaceTab } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,17 +80,22 @@ test("supports the first Grok-style Room context actions without touching the in
     await expect(roomRow(page, "新 协作室")).toBeVisible();
     await expect(page.getByRole("heading", { name: "新 协作室" })).toBeVisible();
 
-    menu = await roomMenu(page, "新 协作室");
-    await menu.getByRole("menuitem", { name: "复制对话 ID" }).click();
-    await expect.poll(() => application!.evaluate(({ clipboard }) => clipboard.readText())).toBe(detail.room.id);
+    // Hidden regression runs must not overwrite the user's system clipboard.
+    if (process.env.AEVOREN_BOT_TEST_HIDDEN !== "1") {
+      menu = await roomMenu(page, "新 协作室");
+      await menu.getByRole("menuitem", { name: "复制对话 ID" }).click();
+      await expect.poll(() => application!.evaluate(({ clipboard }) => clipboard.readText())).toBe(detail.room.id);
+    }
 
     menu = await roomMenu(page, "新 协作室");
     await menu.getByRole("menuitem", { name: "归档群聊" }).click();
     await expect(roomRow(page, "新 协作室")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "已归档 (1)" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "已归档 (1)" })).toHaveCount(0);
+    await openWorkspaceTab(page);
     await page.getByRole("button", { name: "已归档 (1)" }).click();
     await expect(page.getByText("新 协作室", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "恢复", exact: true }).click();
+    await page.getByTestId(`archive-room-${detail.room.id}`).getByRole("button", { name: "恢复", exact: true }).click();
+    await page.getByTestId(`archive-feedback-${detail.room.id}`).getByRole("button", { name: "打开", exact: true }).click();
     await expect(page.getByRole("heading", { name: "新 协作室" })).toBeVisible();
 
     await application.close();

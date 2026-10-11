@@ -139,14 +139,17 @@ const MAX_MEASUREMENT_TOOL_ROUNDS = 32;
 const CONTENT_TEAM_ROLES = new Set(["情报侦察员", "选题策划师", "内容主笔", "事实编辑", "数据复盘师"]);
 
 function claimsWorkspaceRead(body: string): boolean {
+  body = positiveToolRequestText(body);
   return /(?:已|已经|成功|完成|真实).{0,16}(?:读取|打开|解析).{0,32}(?:文件|CSV|工作区)|(?:文件|CSV).{0,16}(?:已读取|读取成功)|(?:workspace_read).{0,20}(?:成功|完成|已调用)|\b(?:file|csv|draft|brief|profile)\s+(?:was\s+)?read\b|\b(?:loaded|parsed)\s+(?:the\s+)?(?:file|csv)\b/iu.test(body);
 }
 
 function claimsRemoteEvidence(body: string): boolean {
+  body = positiveToolRequestText(body);
   return /(?:已|已经|成功|完成|真实).{0,16}(?:抓取|访问|联网搜索|核验).{0,32}(?:网页|页面|链接|来源)|(?:web_fetch|web_search).{0,20}(?:成功|完成|已调用)|\b(?:fetched|verified)\s+(?:the\s+)?(?:page|url|source)\b/iu.test(body);
 }
 
 function claimsWorkspaceWrite(body: string): boolean {
+  body = positiveToolRequestText(body);
   return /(?:已|已经|成功|完成|真实).{0,16}(?:写入|保存|落盘|生成).{0,32}(?:文件|Markdown|工作区|草稿|审校稿|Brief|报告)|(?:文件|Markdown|草稿|审校稿|Brief|报告).{0,20}(?:已|已经|成功|完成|真实).{0,8}(?:写入|保存|落盘|生成)|(?:workspace_write).{0,20}(?:成功|完成|已调用)|\b(?:wrote|saved|created)\s+(?:the\s+)?(?:file|markdown|draft|brief|report)\b/iu.test(body);
 }
 
@@ -240,10 +243,16 @@ function requestsLiveResearch(value: string): boolean {
   return /(?:去|联网|真实|实际)调研|调研一下|(?:请|帮我|帮我们)(?:你|先)?调研|research the (?:web|latest|current)/iu.test(value);
 }
 
+function positiveToolRequestText(value: string): string {
+  // Preserve explicit new requirements without splitting a negated and/or list.
+  value = value.replace(/但是|[但并](?=请|需要|必须|先|重新|实际|真实|已|成功|完成)|而是|\b(?:but|however|instead|and(?=\s+please\b))\b/giu, "，");
+  return value.replace(/(?:不要|不得|禁止|无需|无须|不需要|不允许|不必|不|别|do\s+not|don't|must\s+not|never|no\s+need\s+to)\s*(?:(?:再|先|实际|真实|主动)\s*)*(?:调用|使用|读取|打开|解析|列出|搜索|抓取|访问|核验|写入|保存|创建|新建|组建|计算|统计|联网|\b(?:use\s+tools?|read|fetch|search|verify|write|save|create|calculate|measure)\b)[^，,、。！？!?\n；;]*/giu, " ");
+}
+
 function requiresToolCall(value: string): boolean {
-  const explicitlyNoTools = /(?:不要|不得|禁止|无需|不需要|不允许).{0,20}(?:调用工具|读取|抓取|搜索|写入)|(?:do not|don't|must not).{0,20}(?:use tools?|read|fetch|search|write)/iu.test(value);
-  if (explicitlyNoTools) return false;
-  if (requestsLiveResearch(value)) return true;
+  const liveResearch = requestsLiveResearch(value);
+  value = positiveToolRequestText(value);
+  if (liveResearch) return true;
   return /(?:请|需要|必须|先|重新|实际|真实).{0,24}(?:读取|打开|解析|列出|搜索|抓取|访问|核验|写入|保存|计算|统计)|\b(?:read|fetch|search|verify|write|save|calculate|measure)\b|https?:\/\/|\.csv\b/iu.test(value);
 }
 
@@ -253,8 +262,10 @@ function requestsProjectManagement(value: string): boolean {
 }
 
 function requiredToolNames(value: string): string[] {
+  const liveResearch = requestsLiveResearch(value);
+  value = positiveToolRequestText(value);
   const names = new Set<string>();
-  if (requestsLiveResearch(value)) { names.add("web_search"); names.add("web_fetch"); }
+  if (liveResearch) { names.add("web_search"); names.add("web_fetch"); }
   if (/https?:\/\/|抓取|访问网页|web_fetch/iu.test(value)) names.add("web_fetch");
   if (/workspace_read|读取.{0,24}(?:文件|CSV|Brief|草稿|voice)|read.{0,24}(?:file|csv|brief|draft)/iu.test(value)) names.add("workspace_read");
   if (/workspace_write|写入|落盘|(?:保存|创建|新建).{0,24}(?:文件|Markdown|CSV|[^\s，。；]+\.(?:md|csv))|write.{0,24}(?:file|markdown|csv)/iu.test(value)) names.add("workspace_write");
@@ -1353,7 +1364,7 @@ export class RuntimeExecutor {
       }
     }
     const explicitlyUnable = /无法|未能|没有权限|尚未读取|尚未抓取|尚未写入|不能确认|unable|could not|no access|not read|not fetched|not written/iu.test(active.body);
-    const creationClaims = active.body.split(/[。！？\n]/u).filter((sentence) => !/尚未|未创建|未能创建|无法创建|创建失败|not created|failed to create|unable to create/iu.test(sentence)).join("\n");
+    const creationClaims = positiveToolRequestText(active.body).split(/[。！？\n]/u).filter((sentence) => !/尚未|未创建|未能创建|无法创建|创建失败|not created|failed to create|unable to create/iu.test(sentence)).join("\n");
     if (/(?:已|已经|成功).{0,12}(?:创建|新建).{0,24}(?:Bot|机器人|智能体)|(?:Bot|机器人|智能体).{0,12}(?:已创建|创建成功)|\bcreated\s+(?:an?\s+)?(?:bot|agent)\b/iu.test(creationClaims) && !hasKind("bot-create")) {
       throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "bot-create" });
     }

@@ -118,8 +118,16 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     })();
 
     menu = await menuFor(page, "Beta 副本");
-    await menu.getByRole("menuitem", { name: "复制对话 ID" }).click();
-    await expect.poll(() => application!.evaluate(({ clipboard }) => clipboard.readText())).toBe(duplicateId);
+    const copyId = menu.getByRole("menuitem", { name: "复制对话 ID" });
+    await expect(copyId).toBeEnabled();
+    // Hidden regression runs must not overwrite the user's system clipboard.
+    if (process.env.AEVOREN_BOT_TEST_HIDDEN !== "1") {
+      await copyId.click();
+      await expect.poll(() => application!.evaluate(({ clipboard }) => clipboard.readText())).toBe(duplicateId);
+    } else {
+      await copyId.click({ trial: true });
+      await page.keyboard.press("Escape");
+    }
 
     menu = await menuFor(page, "Beta 副本");
     await menu.getByRole("menuitem", { name: "移除聊天" }).click();

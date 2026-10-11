@@ -298,7 +298,7 @@
 .attachment-button:disabled, .composer-mention-button:disabled { opacity: .4; cursor: default; }
 .attachment-button svg, .composer-mention-button svg { width: 24px; height: 24px; }
 .composer-routing-control { flex: 0 0 auto; }
-.composer-routing-control select { width: auto; max-width: 96px; min-height: 32px; padding: 4px 3px; border: 0; color: var(--text); background: transparent; font-size: 14px; cursor: pointer; }
+.composer-routing-control select { width: auto; max-width: 120px; min-height: 32px; padding: 4px 3px; border: 0; color: var(--text); background: transparent; font-size: 14px; cursor: pointer; }
 .attachment-chips, .mention-chips { display: flex; flex: 0 1 auto; align-items: center; gap: 6px; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: thin; }
 .attachment-chip, .mention-chip { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; min-width: 0; max-width: 280px; height: 36px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--surface-soft); font-size: 14px; cursor: pointer; }
 .attachment-chip svg { flex: 0 0 20px; width: 20px; height: 20px; color: #80a5d7; }
@@ -492,7 +492,7 @@
   .composer-toolbar { flex-basis: 36px; gap: 8px; }
   .attachment-button, .composer-mention-button { flex-basis: 28px; width: 28px; height: 28px; padding: 3px; }
   .attachment-button svg, .composer-mention-button svg { width: 22px; height: 22px; }
-  .composer-routing-control select { max-width: 78px; font-size: 13px; }
+  .composer-routing-control select { max-width: 112px; font-size: 13px; }
   .attachment-chip { max-width: 160px; }
   .attachment-chip small { display: none; }
   .mention-chip { max-width: 150px; }
