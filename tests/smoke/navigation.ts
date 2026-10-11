@@ -48,6 +48,7 @@ export async function openConversationFiles(page: Page): Promise<void> {
 }
 
 export async function openBotList(page: Page): Promise<void> {
+  await expect(page.locator(".app-shell")).toBeVisible();
   const settingsClose = page.getByRole("button", { name: "关闭设置", exact: true });
   if (await settingsClose.isVisible()) await settingsClose.click();
   if (!await page.locator(".sidebar").isVisible()) {
