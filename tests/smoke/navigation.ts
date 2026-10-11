@@ -81,6 +81,7 @@ export async function openInspector(page: Page, tab: "profile" | "models" | "mem
   if (await page.getByRole("dialog", { name: "群聊设置", exact: true }).isVisible()) return;
   const contact = page.getByRole("main", { name: "联系人资料", exact: true });
   if (!await contact.isVisible()) {
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).not.toBeNull();
     const selected = await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"));
     const menu = await openConversationMenu(page);
     const group = menu.getByRole("menuitem", { name: "群聊管理", exact: true });
