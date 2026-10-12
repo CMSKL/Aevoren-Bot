@@ -12,7 +12,9 @@ Start with the [project portal](docs/PORTAL.md), [installation guide](docs/INSTA
 
 Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bounded multi-Agent collaboration. Chats, Contacts and Workspaces organize conversations, reusable Bots and local project files. Conversations, reviewed Memory, tool approvals and runtime recovery stay on the user's computer, with API, Claude Code or Codex CLI as the model source.
 
-> **Pre-release status:** signed macOS Beta binaries are distributed through [GitHub Releases](https://github.com/CMSKL/Aevoren-Bot/releases). macOS 13+ on Apple silicon is the signed release target; Windows 10/11 x64 remains in the Windows MVP validation track. Do not treat local unsigned builds as official releases.
+> **Release status:** Public macOS Apple silicon Beta installers are available from [GitHub Releases](https://github.com/CMSKL/Aevoren-Bot/releases). Check the specific release and its tagged documentation for supported systems, tools and limitations. The source instructions below describe the checked-out branch; local unsigned builds are not official releases.
+
+> **Maintainer and project records:** Allen and GitHub CMSKL are the same person. Allen leads Aevoren Bot; AI performs development. The [personal project record](https://www.minimalstudio.cn/allen/projects/aevoren.html) documents this role statement, its fixed Beta version and the boundaries of the available evidence.
 
 ## Highlights
 
