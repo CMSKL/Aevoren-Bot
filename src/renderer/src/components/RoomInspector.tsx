@@ -1,4 +1,5 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
+import { useEffectEvent, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { AppError, Bot, ProviderInstanceInfo, RoomDetail, RoomPatch } from "@shared/contracts";
 import { eligibleRoomLeads } from "../room-leads";
 import { buildBotIdentityMap } from "../bot-identity";
@@ -42,6 +43,13 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const [selectedBotId, setSelectedBotId] = useState("");
   const [memberPending, setMemberPending] = useState(false);
   const [membersExpanded, setMembersExpanded] = useState(false);
+  const handleProductView = useEffectEvent((event: Event) => {
+    const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
+    if (request.input.action !== "room_members") return;
+    if (!detail || request.input.roomId && request.input.roomId !== detail.room.id) { respond({ status: "waiting_user", reason: "请先打开指定群聊设置。" }); return; }
+    setMembersExpanded(request.input.expanded ?? true); respond({ status: "completed" });
+  });
+  useEffect(() => { const handler = (event: Event): void => handleProductView(event); window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   const [providers, setProviders] = useState<ProviderInstanceInfo[] | null>(null);
   const [providerLoadFailed, setProviderLoadFailed] = useState(false);
   const draftRef = useRef(draft);

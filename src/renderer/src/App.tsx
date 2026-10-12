@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent, type ProductViewRequest } from "@shared/product-view";
+import { useEffectEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_PROJECT_ID } from "@shared/contracts";
 import { isPublicReadTool } from "@shared/tool-automation";
 import type {
@@ -235,6 +236,7 @@ export function App(): React.JSX.Element {
   }, [rooms]);
 
   useEffect(() => {
+    let disposed = false;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     const scheduleRefresh = (): void => {
       if (refreshTimer) return;
@@ -311,6 +313,22 @@ export function App(): React.JSX.Element {
     });
     const unsubscribeTool = window.aevorenBot.events.subscribeTool((event) => {
       scheduleRefresh();
+      if (event.invocation.state === "succeeded" && event.invocation.toolKind === "product-call" && !["pure", "read-local", "read-remote"].includes(event.invocation.effectClass)) {
+        void Promise.all([window.aevorenBot.bots.list(), window.aevorenBot.rooms.list({ includeArchived: true }), window.aevorenBot.projects.list(), window.aevorenBot.settings.getGeneral(), window.aevorenBot.userProfile.get()]).then(([contacts, groups, projects, settings, profile]) => {
+          if (disposed) return;
+          if (contacts.ok) setBots(contacts.data);
+          if (groups.ok) setRooms(groups.data);
+          if (projects.ok) setProjects(projects.data);
+          if (settings.ok) {
+            setAppearanceTheme(settings.data.theme); setLaunchAtLogin(settings.data.launchAtLogin);
+            setLaunchAtLoginSupported(settings.data.launchAtLoginSupported); setLaunchAtLoginStatus(settings.data.launchAtLoginStatus);
+            setAutoApprovePublicReadTools(settings.data.autoApprovePublicReadTools); setUpdateCheckIntervalMinutes(settings.data.updateCheckIntervalMinutes);
+          }
+          if (contacts.ok) setSelectedBot((current) => current ? contacts.data.find((bot) => bot.id === current.id) ?? current : current);
+          if (profile.ok) setUserProfile(profile.data);
+          window.dispatchEvent(new Event("aevoren:workspaces-changed"));
+        });
+      }
       if (event.invocation.state === "succeeded" && ["bot-create", "room-create"].includes(event.invocation.toolKind)) {
         void Promise.all([window.aevorenBot.bots.list(), window.aevorenBot.rooms.list({ includeArchived: true })]).then(([botResult, roomResult]) => {
           const resourceId = event.invocation.resultMetadata?.resourceId;
@@ -361,6 +379,7 @@ export function App(): React.JSX.Element {
       }
     });
     return () => {
+      disposed = true;
       if (refreshTimer) clearTimeout(refreshTimer);
       window.removeEventListener("focus", scheduleRefresh);
       unsubscribeTranscript();
@@ -1379,6 +1398,40 @@ export function App(): React.JSX.Element {
     return true;
   }
 
+  const handleProductView = useEffectEvent(async (request: ProductViewRequest) => {
+    const input = request.input;
+    const respond = (result: import("@shared/product-view").ProductViewResult): void => { void window.aevorenBot.productUI.respond(request.id, result); };
+    try {
+      if (["open_chats", "open_contacts", "open_workspaces", "open_settings", "open_profile", "choose_avatar", "open_bot", "open_room", "open_bot_profile", "open_room_settings"].includes(input.action)) {
+        if (!(await flushActive())) { respond({ status: "waiting_user", reason: "当前编辑尚未保存，请先完成或取消。" }); return; }
+        if (input.action === "open_chats") { setSettingsOpen(false); setSidebarTab("chats"); }
+        if (input.action === "open_contacts") { setSettingsOpen(false); setSidebarTab("contacts"); }
+        if (input.action === "open_workspaces") { setSettingsOpen(false); setSidebarTab("workspace"); }
+        if (input.action === "open_settings") { setMobilePanel(null); setSettingsOpen(true); }
+        if (input.action === "open_profile" || input.action === "choose_avatar") setUserProfileOpen(true);
+        if (input.action === "open_bot" || input.action === "open_bot_profile") {
+          const bot = bots.find((item) => item.id === input.botId);
+          if (!bot) { respond({ status: "failed", reason: "联系人不存在。" }); return; }
+          if (input.action === "open_bot_profile") { setSettingsOpen(false); setSidebarTab("contacts"); setSelectedContactId(bot.id); }
+          else { await openBot(bot); setSettingsOpen(false); setSidebarTab("chats"); }
+        }
+        if (input.action === "open_room" || input.action === "open_room_settings") {
+          const room = rooms.find((item) => item.id === input.roomId);
+          if (!room) { respond({ status: "failed", reason: "群聊不存在。" }); return; }
+          const opened = await openRoom(room);
+          if (opened.status !== "opened") { respond({ status: "waiting_user", reason: "当前群聊暂时无法打开。" }); return; }
+          setSettingsOpen(false); setSidebarTab("chats");
+          if (input.action === "open_room_settings") setMobilePanel("profile");
+        }
+        if (input.action === "choose_avatar") { respond({ status: "waiting_user", reason: "个人资料已打开，请用户选择、裁剪并保存头像。" }); return; }
+        if (input.action !== "open_settings") { respond({ status: "completed", result: { view: input.action } }); return; }
+      }
+      const event: ProductViewEvent = { request, respond };
+      window.dispatchEvent(new CustomEvent(PRODUCT_VIEW_DOM_EVENT, { detail: event }));
+    } catch { respond({ status: "failed", reason: "界面操作未完成，请重试。" }); }
+  });
+  useEffect(() => window.aevorenBot.events.subscribeProductView((request) => { void handleProductView(request); }), []);
+
   return (
     <div className={`app-shell${settingsOpen ? " settings-active" : ""}`}>
       <Sidebar
@@ -1497,6 +1550,7 @@ export function App(): React.JSX.Element {
       </div>
       <div className="app-surface" hidden={settingsOpen || sidebarTab === "contacts"}>
       <Conversation
+        sessionId={session?.id}
         userProfile={userProfile}
         key={selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
         bot={selectedBot}

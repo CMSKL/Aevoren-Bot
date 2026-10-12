@@ -1,4 +1,6 @@
 export const IPC = {
+  productViewEvent: "events:product-view",
+  productViewReply: "product-view:reply",
   userProfileGet: "user-profile:get",
   userProfileUpdate: "user-profile:update",
   attachmentsPick: "attachments:pick",

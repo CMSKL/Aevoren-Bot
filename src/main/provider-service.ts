@@ -13,7 +13,6 @@ import { OpenAiCompatibleProvider, type ModelProvider } from "./model";
 import type { SecretCodec } from "./settings";
 import { CodexCliProvider, inspectCodexCli, inspectCodexCliFallback, type CodexCliInspection } from "./providers/codex-cli";
 import { ClaudeCliProvider, inspectClaudeCli, type ClaudeCliInspection } from "./providers/claude-cli";
-import { CLAUDE_HOST_TOOL_NAMES } from "./providers/claude-tool-bridge";
 import { OllamaCliProvider, inspectOllamaCli, type OllamaCliInspection } from "./providers/ollama-cli";
 import { AcpCliProvider, acpSpec, inspectAcpCli, type AcpCliInspection, type AcpCliSpec } from "./providers/acp-cli";
 import { findCliCandidates, resolveCliPath } from "./providers/cli-utils";
@@ -309,8 +308,8 @@ class CodexCliRuntime implements RuntimeProviderInstance {
 class ClaudeCliRuntime implements RuntimeProviderInstance {
   readonly driverKind = "claude-cli" as const;
   get capabilities(): ProviderCapabilities {
-    return this.configuration.enabled && this.inspection?.authenticated && this.inspection.hostToolsSupported && this.connectionError === null
-      ? { ...CLAUDE_CAPABILITIES, workspaceTools: true, networkTools: true, supportedToolNames: CLAUDE_HOST_TOOL_NAMES }
+    return this.configuration.enabled && this.inspection?.authenticated && this.connectionError === null
+      ? { ...CLAUDE_CAPABILITIES, workspaceTools: true, networkTools: true }
       : CLAUDE_CAPABILITIES;
   }
   readonly route = "claude-cli" as const;

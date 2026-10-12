@@ -19,6 +19,7 @@ Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bo
 - Reliable streamed conversations backed by SQLite Transcript, Send Journal, stable nonces, idempotent retry, cancellation, and crash recovery.
 - Bounded text/code attachments, validated ingestion, and real Markdown/CSV deliverables collected in task details.
 - Independent chat state and Agent identities: recent conversations, global contacts, unread replies, and separate remove-chat, clear-history and delete-contact actions.
+- Discoverable product operations for settings, Bot/Room management, conversations, delegated tasks, Memory, MCP, Routines, providers, projects and updates through a shared validated host service.
 - Direct Bot chats and 2–6 member Rooms with explicit `@Bot`, automatic owner selection, bounded handoff, speaker identity, and loop suppression.
 - Optional fixed group coordinators assign ordered member work and summarize verified results once. Explicit mentions and Everyone remain independent replies; failed work can be retried without repeating completed outputs.
 - Matching Dark and Daylight messenger layouts, editable local personal avatars, stable cartoon-human Bot portraits and on-demand collaboration details attached to each message.
@@ -65,7 +66,7 @@ The Fake Provider is deterministic and requires no account or API key. See [Inst
 Open **Contacts → select or create a Bot → Models & capabilities → Local connection settings**. Choose this Bot's source and model in the same contact page. Connection settings are shared on this computer; changes affect other Bots using that connection. Aevoren Bot scans common installation locations and `PATH` for supported CLIs and reads only the installation, login, and model information required by the corresponding adapter.
 
 - **API:** OpenAI-compatible Base URL, API Key, model discovery, and real request validation.
-- **Claude Code:** model/login discovery and conversations; compatible API-authenticated installations can use six scoped Workspace and public-web tools. Subscription-only OAuth tool mode is not supported yet.
+- **Claude Code:** model/login discovery and conversations; compatible API-authenticated installations use the scoped host MCP bridge; the safe text path uses a typed per-run host protocol. Product operations, Workspace/public-web tools, time/weather, text measurement, clipboard and reviewed MCP tools use the same application authorization rules. Authentication modes require actual CLI validation.
 - **Codex CLI:** model discovery, text conversations, and host Dynamic Tool support.
 
 Other Provider and CLI adapters are outside the first-phase product scope and are not exposed in the model UI.

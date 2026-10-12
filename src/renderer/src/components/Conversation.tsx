@@ -1,4 +1,6 @@
-import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
+import { productOperation } from "@shared/product-operations";
+import { useEffectEvent, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AppError,
   AttachmentDraft,
@@ -161,6 +163,7 @@ function toolActionLabel(invocation: ToolInvocation): string {
   if (invocation.toolKind === "mcp-call") return `外部工具 · ${invocation.arguments.kind === "mcp-call" ? invocation.arguments.toolName : "工具"}`;
   if (invocation.toolKind === "clipboard-read") return "读取剪贴板";
   if (invocation.toolKind === "text-measure") return "精确计算文本长度";
+  if (invocation.arguments.kind === "product-call") return invocation.arguments.action === "catalog" ? "查询产品功能" : productOperation(invocation.arguments.operation)?.description ?? "产品操作";
   if (invocation.toolKind === "project-bots") return "查看项目 Bot";
   if (invocation.toolKind === "bot-create") return "创建 Bot";
   if (invocation.toolKind === "room-create") return "创建群聊";
@@ -329,7 +332,7 @@ const TranscriptItem = memo(function TranscriptItem({
   const hasVisibleBody = entry.role === "user" || assistantBody.trim().length > 0;
   const speakerName = entry.role === "assistant"
     ? speakerDisplayName ?? speakerBot?.name ?? entry.speakerNameSnapshot ?? "Bot"
-    : userProfile.name;
+    : entry.origin ? `${entry.origin.fromBotNameSnapshot ?? "Bot"} · ${entry.origin.kind === "routine" ? "定时任务" : "AI 委派"}` : userProfile.name;
   const hasEvidence = toolInvocations.length > 0 || handoffs.length > 0 || handoffRejections.length > 0 || coordinationErrorCode !== null;
   const hasCollaboration = handoffs.length > 0 || handoffRejections.length > 0 || turnPurpose !== undefined;
 
@@ -419,6 +422,7 @@ const TranscriptItem = memo(function TranscriptItem({
                 {routeMode === "automatic" && routeReason ? <span className="message-route-reason">{routeReason}</span> : null}
               </div>
             ) : null}
+          {entry.origin ? <div className="message-route" aria-label="AI 委派来源"><span>{speakerName}</span></div> : null}
           {entry.role === "assistant"
               ? <AssistantMarkdown body={assistantBody} />
               : <p className="user-message-body">{entry.body}</p>}
@@ -493,13 +497,14 @@ const TranscriptItem = memo(function TranscriptItem({
             </div>
           ) : null}
         </div>
-        {entry.role === "user" ? <span className="message-avatar message-avatar-user"><UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={48} /></span> : null}
+        {entry.role === "user" ? <span className="message-avatar message-avatar-user">{entry.origin ? <BotAvatarIcon size={48} /> : <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={48} />}</span> : null}
       </div>
     </article>
   );
 });
 
 type ConversationProps = {
+  sessionId?: string;
   userProfile?: ConversationUserProfile;
   bot: Bot | null;
   room: RoomDetail | null;
@@ -535,6 +540,7 @@ type ConversationProps = {
 };
 
 export function Conversation({
+  sessionId,
   userProfile = defaultUserProfile,
   bot,
   room,
@@ -913,6 +919,32 @@ export function Conversation({
     refreshMentionQuery(nextDraft, caret + 1);
   }
 
+  const handleProductView = useEffectEvent(async (event: Event) => {
+    const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
+    const input = request.input;
+    if (!["task_details", "draft_get", "draft_update", "draft_remove_attachment", "draft_add_attachments"].includes(input.action)) return;
+    if (!sessionId || input.sessionId && input.sessionId !== sessionId) { respond({ status: "waiting_user", reason: "请先打开指定聊天。" }); return; }
+    if (input.action === "task_details") { openTaskDetails(input.tab ?? "artifacts"); respond({ status: "completed" }); return; }
+    const value = JSON.stringify({ sessionId, text: draft, attachments: attachments.map((item) => item.id), routingPreference, targets: targetBotIds });
+    const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    if (input.action === "draft_get") { respond({ status: "completed", result: { sessionId, text: draft, attachments: attachments.map(({ content: _content, ...item }) => item), routingMode: routingPreference, targetBotIds, digest } }); return; }
+    if (input.expectedDigest !== digest || composerInputRef.current?.value !== draft) { respond({ status: "waiting_user", reason: "草稿已变化或聊天正忙，请重新读取草稿后操作。" }); return; }
+    if (input.targetBotIds?.some((id) => !memberBotIds.includes(id))) { respond({ status: "failed", reason: "提及对象不是当前群成员。" }); return; }
+    if (input.action === "draft_remove_attachment") {
+      if (!attachments.some((item) => item.id === input.attachmentId)) { respond({ status: "failed", reason: "附件不存在。" }); return; }
+      setAttachments((current) => current.filter((item) => item.id !== input.attachmentId)); respond({ status: "completed" }); return;
+    }
+    if (input.action === "draft_add_attachments") {
+      const picked = await onPickAttachments();
+      setAttachments((current) => [...current, ...picked.filter((item) => !current.some((existing) => existing.sha256 === item.sha256))].slice(0, 6));
+      respond({ status: picked.length ? "completed" : "cancelled", result: picked.map(({ content: _content, ...item }) => item) }); return;
+    }
+    if (input.text !== undefined) setDraft(input.text);
+    if (input.routingMode) setRoutingPreference(input.routingMode);
+    if (input.targetBotIds) setRoomMentions(input.targetBotIds.map((id) => ({ kind: "bot", id, label: roomMemberIdentities.get(id)?.inline ?? id })));
+    respond({ status: "completed" });
+  });
+  useEffect(() => { const handler = (event: Event): void => { void handleProductView(event); }; window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   return (
     <main className="conversation">
       <header className="conversation-header">

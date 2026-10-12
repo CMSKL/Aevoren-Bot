@@ -25,6 +25,9 @@ type Waiter = {
 };
 
 type ToolExecutor = {
+  productRequestPreview?(tool: import("@shared/contracts").ProductToolRequest): string;
+  productRequestRequiresApproval?(tool: import("@shared/contracts").ProductToolRequest): boolean;
+  validateProductRequest?(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): void;
   execute(id: string, signal?: AbortSignal): Promise<{ invocation: ToolApprovalResult["invocation"]; content: string }>;
 };
 
@@ -45,6 +48,7 @@ export class WorkspaceToolCoordinator {
     signal: AbortSignal,
   ): Promise<WorkspaceToolOutcome> {
     if (tool.kind === "bot-create" && containsLikelySecret(JSON.stringify(tool))) throw new AevorenBotError("PROJECT_PROFILE_SENSITIVE");
+    if (tool.kind === "product-call") this.executor.validateProductRequest?.(tool, runtimeRunId);
     const runtime = this.repository.getRuntimeRun(runtimeRunId);
     this.repository.assertSessionExecutor(runtime.sessionId, runtime.executorBotId);
     if ("workspaceId" in tool) {
@@ -55,7 +59,7 @@ export class WorkspaceToolCoordinator {
       toolCallId,
       idempotencyKey: randomUUID(),
       tool,
-    });
+    }, undefined, tool.kind === "product-call" ? this.executor.productRequestPreview?.(tool) : undefined);
     if (["bot-create", "room-create"].includes(prepared.invocation.toolKind) && prepared.invocation.state === "succeeded") {
       return Promise.resolve({ toolCallId, tool, content: this.repository.projectCreationResult(prepared.invocation.id).content });
     }
@@ -67,9 +71,10 @@ export class WorkspaceToolCoordinator {
     const autoApprovePublicRead = this.repository.getSetting("tools.autoApprovePublicRead")?.value === "true" &&
       ["web-search", "web-fetch", "weather-current", "time-now"].includes(prepared.invocation.toolKind);
     if (
+      tool.kind === "product-call" && this.executor.productRequestRequiresApproval?.(tool) === false ||
       prepared.invocation.toolKind === "text-measure" || prepared.invocation.toolKind === "project-bots" ||
       autoApprovePublicRead ||
-      prepared.invocation.workspaceId && this.repository.listSessionWorkspaces(runtime.sessionId, runtime.executorBotId)
+      prepared.invocation.workspaceId && this.repository.getUserMessage(runtime.clientNonce).origin?.kind !== "ai-delegation" && this.repository.listSessionWorkspaces(runtime.sessionId, runtime.executorBotId)
         .some((workspace) => workspace.id === prepared.invocation.workspaceId && workspace.automationEnabled)
     ) {
       return this.executeAutomatically(prepared.approval.id, signal);
@@ -98,7 +103,7 @@ export class WorkspaceToolCoordinator {
 
   private async executeAutomatically(approvalId: string, signal: AbortSignal): Promise<WorkspaceToolOutcome> {
     const pending = this.repository.getApprovalRequest(approvalId);
-    this.emitCurrent(approvalId);
+    if (this.repository.getToolInvocation(pending.toolInvocationId).toolKind !== "product-call") this.emitCurrent(approvalId);
     try {
       if (pending.workspaceId) {
         this.repository.assertSessionWorkspaceAccess(pending.sessionId, pending.executorBotId, pending.workspaceId, "automation");

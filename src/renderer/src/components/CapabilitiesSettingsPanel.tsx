@@ -26,6 +26,7 @@ const availabilityLabels: Record<CapabilityAvailability, string> = {
 };
 
 const toolLabels: Record<string, string> = {
+  product_catalog: "产品功能目录", product_describe: "产品操作说明", product_execute: "产品功能执行",
   workspace_list: "查看已授权文件夹",
   workspace_read: "读取已授权文件夹文件",
   workspace_search: "搜索已授权文件夹文件",

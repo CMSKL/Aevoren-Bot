@@ -129,7 +129,7 @@ export class RoutineService {
         sessionId: session.id,
         clientNonce: run.clientNonce,
         text: `[Routine: ${run.routineName}]\n${run.promptSnapshot}`,
-      });
+      }, { kind: "routine", routineId: run.routineId, routineRunId: run.id, fromBotId: run.botId, fromBotNameSnapshot: run.routineName, fromSessionId: session.id, fromRuntimeRunId: "", rootClientNonce: run.clientNonce, depth: 0 });
       this.repository.attachRoutineRuntime(run.id, sent.runId);
     } catch (error) {
       const code = error instanceof AevorenBotError ? error.code : "INTERNAL_ERROR";

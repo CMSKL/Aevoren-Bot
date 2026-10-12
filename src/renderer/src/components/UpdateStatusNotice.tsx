@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
+import { useEffect, useEffectEvent, useState } from "react";
 import type { UpdateState } from "@shared/contracts";
 import { UPDATE_TASKS_RUNNING_MESSAGE, type UpdateAction } from "../update-actions";
 import { CloseIcon } from "./Icons";
@@ -25,6 +26,19 @@ export function UpdateStatusNotice({ state, restartBlocked, actionPending, actio
       return [];
     }
   });
+  const handleProductView = useEffectEvent((event: Event) => {
+    const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
+    if (request.input.action !== "dismiss_update") return;
+    if (state?.status === "downloaded" && state.availableVersion) {
+      setDismissedVersions((current) => {
+        const next = [...new Set([...current, state.availableVersion!])];
+        try { window.sessionStorage.setItem(dismissedVersionsKey, JSON.stringify(next)); } catch { /* In-memory state still applies. */ }
+        return next;
+      });
+    }
+    respond({ status: "completed" });
+  });
+  useEffect(() => { const handler = (event: Event): void => handleProductView(event); window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   if (state?.status !== "downloaded" || !state.availableVersion || dismissedVersions.includes(state.availableVersion)) return null;
   const availableVersion = state.availableVersion;
 

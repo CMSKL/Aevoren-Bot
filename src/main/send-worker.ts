@@ -57,11 +57,11 @@ export class RuntimeCoordinator {
     );
   }
 
-  send(command: SendCommand): SendResult {
+  send(command: SendCommand, origin?: import("@shared/contracts").DelegationOrigin): SendResult {
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const session = this.repository.getSession(command.sessionId);
     if (!session.botId || session.roomId) throw new AevorenBotError("SESSION_NOT_FOUND");
-    const prepared = this.repository.prepareMessage(command);
+    const prepared = this.repository.prepareMessage(command, origin);
     if (prepared.disposition === "duplicate") {
       const existingRun = this.repository.getLatestRuntimeRun(command.clientNonce);
       if (!existingRun) throw new AevorenBotError("RUNTIME_NOT_FOUND");

@@ -126,6 +126,18 @@ async function stableDirectoryEntries(path: string, signal: AbortSignal) {
 }
 
 export class WorkspaceToolExecutor {
+  private productOperations?: import("./product-operation-service").ProductOperationService;
+
+  setProductOperations(service: import("./product-operation-service").ProductOperationService): void { this.productOperations = service; }
+
+  productRequestPreview(tool: import("@shared/contracts").ProductToolRequest): string { return this.productOperations?.preview(tool) ?? "产品操作"; }
+
+  productRequestRequiresApproval(tool: import("@shared/contracts").ProductToolRequest): boolean { return this.productOperations?.requiresApproval(tool) ?? true; }
+
+  validateProductRequest(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): void {
+    if (!this.productOperations) throw new AevorenBotError("TOOL_STATE_INVALID");
+    this.productOperations.validate(tool, runtimeRunId);
+  }
   constructor(
     private readonly repository: AppRepository,
     private readonly workspaceService: WorkspaceService,
@@ -161,7 +173,9 @@ export class WorkspaceToolExecutor {
       const result = await this.run(initial.arguments, signal, initial);
       checkCancellation(signal);
       this.assertInvocationAccess(initial);
-      const invocation = this.repository.completeToolInvocation(id, digestResult(result.content), result.metadata);
+      const invocation = this.repository.getToolInvocation(id).state === "succeeded" ? this.repository.getToolInvocation(id) : initial.arguments.kind === "product-call"
+        ? this.repository.completeProductToolInvocation(id, digestResult(result.content), result.content, result.metadata)
+        : this.repository.completeToolInvocation(id, digestResult(result.content), result.metadata);
       return { invocation, content: result.content };
     } catch (error) {
       const normalized = signal.aborted ? cancelled() : stableError(error);
@@ -197,6 +211,10 @@ export class WorkspaceToolExecutor {
     signal: AbortSignal,
     invocation: ToolInvocation,
   ): Promise<{ content: string; metadata: ResultMetadata }> {
+    if (tool.kind === "product-call") {
+      if (!this.productOperations) throw new AevorenBotError("TOOL_STATE_INVALID");
+      return this.productOperations.execute(tool, invocation, signal);
+    }
     if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "time-now") {
       if (!this.networkTools) throw new AevorenBotError("NETWORK_TOOL_UNAVAILABLE");
       return this.networkTools.run(tool as NetworkToolRequest, signal);

@@ -129,6 +129,11 @@ type ActiveRun = {
   requiredMeasurementRanges: Array<{ min: number; max: number }>;
 };
 
+function requestsProjectManagement(value: string): boolean {
+  if (/(?:不要|禁止|不允许|不得).{0,12}(?:创建|新建|组建|添加).{0,24}(?:Bot|机器人|智能体|群聊)/iu.test(value)) return false;
+  return /(?:创建|新建|组建|添加|建立).{0,60}(?:Bot|机器人|智能体|群聊|团队)|(?:查看|列出|查询).{0,24}(?:项目成员|Bot)|project_list_bots|bot_create|room_create|\b(?:create|add|list)\b.{0,40}\b(?:bot|agent|room|group|team)\b/iu.test(value);
+}
+
 export const STALE_AFTER_MS = 30_000;
 const DELTA_FLUSH_MS = 50;
 const DELTA_FLUSH_CHARS = 512;
@@ -256,10 +261,7 @@ function requiresToolCall(value: string): boolean {
   return /(?:请|需要|必须|先|重新|实际|真实).{0,24}(?:读取|打开|解析|列出|搜索|抓取|访问|核验|写入|保存|计算|统计)|\b(?:read|fetch|search|verify|write|save|calculate|measure)\b|https?:\/\/|\.csv\b/iu.test(value);
 }
 
-function requestsProjectManagement(value: string): boolean {
-  if (/(?:不要|禁止|不允许|不得).{0,12}(?:创建|新建|组建|添加).{0,24}(?:Bot|机器人|智能体|群聊)/iu.test(value)) return false;
-  return /(?:创建|新建|组建|添加|建立).{0,60}(?:Bot|机器人|智能体|群聊|团队)|(?:查看|列出|查询).{0,24}(?:项目成员|Bot)|project_list_bots|bot_create|room_create|\b(?:create|add|list)\b.{0,40}\b(?:bot|agent|room|group|team)\b/iu.test(value);
-}
+
 
 function requiredToolNames(value: string): string[] {
   const liveResearch = requestsLiveResearch(value);
@@ -313,6 +315,8 @@ function requiredMeasurementRanges(bot: Bot, request: string): Array<{ min: numb
 }
 
 export class RuntimeExecutor {
+  private cancelDelegations?: (runId: string) => void;
+  setDelegationCancellation(handler: (runId: string) => void): void { this.cancelDelegations = handler; }
   private readonly active = new Map<string, ActiveRun>();
   private readonly inFlight = new Map<string, Promise<RuntimeExecutionResult>>();
   private shuttingDown = false;
@@ -365,7 +369,7 @@ export class RuntimeExecutor {
     const prompt = buildPrompt(
       bot,
       session,
-      this.repository.listPromptEntries(session.id, promptCutoffSeq),
+      user.origin?.kind === "ai-delegation" ? this.repository.listPromptEntries(session.id, promptCutoffSeq).filter((entry) => entry.clientNonce === input.clientNonce || entry.seq >= user.seq) : this.repository.listPromptEntries(session.id, promptCutoffSeq),
       inputSeq,
       input.room
           ? {
@@ -383,7 +387,7 @@ export class RuntimeExecutor {
             ...(toolsAllowed && input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
           }
         : undefined,
-      turnPurpose === "summary" ? [] : this.repository.listRuntimeMemories(bot.id, session.id),
+      turnPurpose === "summary" || user.origin?.kind === "ai-delegation" ? [] : this.repository.listRuntimeMemories(bot.id, session.id),
       capabilitySnapshot,
     );
     const route = this.route(modelSelection);
@@ -462,10 +466,10 @@ export class RuntimeExecutor {
           : [],
         networkTools: allowNetworkTools,
         mcpTools: allowMcpTools ? this.mcpTools?.availableTools(bot.id) ?? [] : [],
-        deviceTools: allowDeviceTools,
+        deviceTools: allowDeviceTools && user.origin?.kind !== "ai-delegation",
         requireToolCall: toolsAllowed && (requiresToolCall(evidenceRequestText) || Boolean(input.executionReceipt?.artifacts.length)),
-        textMeasureTools: toolsAllowed && evidenceToolNames.has("text_measure"),
-        projectTools: toolsAllowed && (providerCapabilities?.workspaceTools === true || providerCapabilities?.networkTools === true) && requestsProjectManagement(rootRequirements),
+        textMeasureTools: toolsAllowed && (providerCapabilities?.workspaceTools === true || providerCapabilities?.networkTools === true),
+        projectTools: toolsAllowed && (providerCapabilities?.workspaceTools === true || providerCapabilities?.networkTools === true),
         requiredToolNames: [...evidenceToolNames],
       },
       executorBotName: bot.name,
@@ -502,6 +506,7 @@ export class RuntimeExecutor {
 
   cancelRun(runId: string, reason: "user" | "deadline" = "user"): RuntimeRun {
     const current = this.repository.getRuntimeRun(runId);
+    this.cancelDelegations?.(runId);
     if (["completed", "failed", "cancelled", "interrupted", "cancel-requested"].includes(current.state)) return current;
     const active = this.active.get(runId);
     let effectiveReason: AbortReason = reason;
@@ -790,7 +795,7 @@ export class RuntimeExecutor {
         }
         if (event.type === "workspace-tool" || event.type === "network-tool" || event.type === "mcp-tool" || event.type === "device-tool" || event.type === "computation-tool" || event.type === "project-tool") {
           if (!active.providerStarted || !this.workspaceTools) throw new AevorenBotError("RUNTIME_STATE_INVALID");
-          if (event.type === "project-tool" && !active.providerContext.projectTools) throw new AevorenBotError("PROJECT_TOOL_NOT_REQUESTED");
+          if (event.type === "project-tool" && (!active.providerContext.projectTools || ["bot-create", "room-create"].includes(event.tool.kind) && !requestsProjectManagement(active.rootRequirements))) throw new AevorenBotError("PROJECT_TOOL_NOT_REQUESTED");
           const recordOrRespond = async (action: Extract<(typeof roundActions)[number], { kind: "tool" }>): Promise<void> => {
             if (event.respond) await event.respond(action.result.content);
             else roundActions.push(action);
@@ -1068,10 +1073,15 @@ export class RuntimeExecutor {
               event.toolSignal ? AbortSignal.any([active.controller.signal, event.toolSignal]) : active.controller.signal,
             );
           } catch (error) {
-            if (!event.toolSignal || !event.respond || active.controller.signal.aborted) throw error;
+            if (active.controller.signal.aborted) throw error;
             const failed = asAppError(error);
-            await event.respond(JSON.stringify({ ok: false, code: failed.code, safeMessage: failed.safeMessage }));
-            continue;
+            if (event.tool.kind === "product-call") {
+              outcome = { toolCallId: event.toolCallId, tool: event.tool, content: JSON.stringify({ ok: false, code: failed.code, safeMessage: `${failed.safeMessage} 请通过 product_describe 查询精确参数或查询实际状态后处理；这次失败不能算执行成功。` }) };
+            } else {
+              if (!event.toolSignal || !event.respond) throw error;
+              await event.respond(JSON.stringify({ ok: false, code: failed.code, safeMessage: failed.safeMessage }));
+              continue;
+            }
           }
           let providerOutcomeContent = outcome.content;
           if (event.type === "computation-tool" && event.tool.kind === "text-measure" && active.requiredMeasurementRanges.length > 0) {
@@ -1109,7 +1119,7 @@ export class RuntimeExecutor {
           if (event.respond) {
             await event.respond(providerOutcomeContent);
             if (event.toolSignal) {
-              const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
+              const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind" && !(event.tool.kind === "product-call" && key === "action")));
               active.messages.push({ role: "assistant", content: "", tool_calls: [{ id: event.toolCallId, type: "function", function: { name: event.providerToolName ?? event.tool.kind.replaceAll("-", "_"), arguments: JSON.stringify(argumentsValue) } }] }, { role: "tool", tool_call_id: outcome.toolCallId, content: providerOutcomeContent });
             }
             run = this.repository.touchRuntimeRun(runId);
@@ -1118,7 +1128,7 @@ export class RuntimeExecutor {
             continue;
           }
           const functionName = event.providerToolName ?? event.tool.kind.replaceAll("-", "_");
-          const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind"));
+          const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind" && !(event.tool.kind === "product-call" && key === "action")));
           roundActions.push({
             kind: "tool",
             call: {
@@ -1349,7 +1359,14 @@ export class RuntimeExecutor {
     const succeeded = this.repository.listToolInvocations(active.sessionId)
       .filter((invocation) => invocation.runtimeRunId === active.runId && invocation.state === "succeeded");
     const hasKind = (...kinds: Array<(typeof succeeded)[number]["toolKind"]>): boolean =>
-      succeeded.some((invocation) => kinds.includes(invocation.toolKind));
+      succeeded.some((invocation) => kinds.includes(invocation.toolKind) || (
+        invocation.arguments.kind === "product-call" && invocation.arguments.action === "execute" &&
+        invocation.resultMetadata?.status !== "cancelled" && invocation.resultMetadata?.status !== "waiting_user" && (
+          kinds.includes("bot-create") && ["bots.create", "bots.duplicate", "teams.createContentTeam"].includes(invocation.arguments.operation) ||
+          kinds.includes("room-create") && ["rooms.create", "teams.createContentTeam"].includes(invocation.arguments.operation) ||
+          kinds.includes("workspace-write") && invocation.arguments.operation === "artifacts.save"
+        )
+      ));
     const explicitRequirements = requiresToolCall(active.evidenceRequestText) ? requiredToolNames(active.evidenceRequestText) : [];
     const requiredKinds: Record<string, (typeof succeeded)[number]["toolKind"]> = { web_search: "web-search", web_fetch: "web-fetch", workspace_read: "workspace-read", workspace_write: "workspace-write", text_measure: "text-measure" };
     for (const name of explicitRequirements) {

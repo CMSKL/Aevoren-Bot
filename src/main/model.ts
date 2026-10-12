@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { projectRoomSummary, type PromptMessage } from "./prompt";
 import type { ComputationToolRequest, DeviceToolRequest, ExecutionEvidenceReceipt, McpToolInfo, McpToolRequest, NetworkToolRequest, ProjectToolRequest, RoomRunSummary, WorkspaceToolRequest } from "@shared/contracts";
-import { computationToolRequestSchema, deviceToolRequestSchema, mcpToolRequestSchema, networkToolRequestSchema, projectToolRequestSchema, workspaceToolRequestSchema } from "@shared/schemas";
+import { computationToolRequestSchema, deviceToolRequestSchema, mcpToolRequestSchema, networkToolRequestSchema, projectToolRequestSchema, productToolRequestSchema, workspaceToolRequestSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
 
 export type ChatMessage = PromptMessage | {
@@ -583,6 +583,14 @@ function finalizeToolCalls(
   const workspaceNames = new Set(Object.values(WORKSPACE_TOOL_NAMES));
   const networkNames = new Set(Object.values(NETWORK_TOOL_NAMES));
   return calls.map((call) => {
+    const productAction = { product_catalog: "catalog", product_describe: "describe", product_execute: "execute" }[call.name];
+    if (productAction) {
+      let argumentsValue: unknown;
+      try { argumentsValue = JSON.parse(call.arguments); } catch { argumentsValue = null; }
+      const tool = productToolRequestSchema.safeParse(argumentsValue && typeof argumentsValue === "object" && !Array.isArray(argumentsValue) ? { ...argumentsValue, kind: "product-call", action: productAction } : null);
+      if (!allowProjectTools || !validToolCallId(call.id) || !tool.success) return { type: "tool-rejection", toolCallId: call.id, providerToolName: call.name, arguments: call.arguments, code: "PROJECT_TOOL_INVALID", safeMessage: "请先查产品功能目录和动作参数，按结构化格式调用。" };
+      return { type: "project-tool", toolCallId: call.id, tool: tool.data, providerToolName: call.name };
+    }
     const projectKind = Object.entries(PROJECT_TOOL_NAMES).find(([, name]) => name === call.name)?.[0];
     if (projectKind) {
       let parsed: unknown;
@@ -869,6 +877,18 @@ export type StructuredModelToolDefinition = {
 function projectToolDefinitions(context?: ModelRunContext): StructuredModelToolDefinition[] {
   if (!context?.projectTools) return [];
   return [{
+    name: "product_catalog",
+    description: "Discover every existing product operation: settings, Bots, conversations, Rooms, tasks, Memory, MCP, providers, files and updates. Always available for discovery; execution still respects host approvals and scope.",
+    inputSchema: { type: "object", additionalProperties: false, properties: { query: { type: "string", maxLength: 200 } } },
+  }, {
+    name: "product_describe",
+    description: "Get the exact input schema and approval/interaction requirements for a product operation before calling it. Do not guess IDs or parameters.",
+    inputSchema: { type: "object", additionalProperties: false, properties: { operation: { type: "string", minLength: 1, maxLength: 100 } }, required: ["operation"] },
+  }, {
+    name: "product_execute",
+    description: "Execute a discovered product operation using exactly its described input. User approval is required for mutations and private data. Long tasks return a task ID and must be queried for their real result; never impersonate a human or approve your own requests.",
+    inputSchema: { type: "object", additionalProperties: false, properties: { operation: { type: "string", minLength: 1, maxLength: 100 }, input: {} }, required: ["operation"] },
+  }, {
     name: "project_list_bots",
     description: "List actual Bot IDs, names and roles in the current Bot's project only. Use these IDs to select Room members; never guess IDs.",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },

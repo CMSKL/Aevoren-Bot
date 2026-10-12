@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
+import { useEffectEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { AppError, Bot, ProviderInstanceInfo } from "@shared/contracts";
 import { BotIcon, CheckIcon, RefreshIcon } from "./Icons";
 import { ProviderMark } from "./ProviderPresentation";
@@ -27,6 +28,14 @@ export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderMo
   const [open, setOpen] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState(bot.modelSelection.providerInstanceId);
   const [query, setQuery] = useState("");
+  const handleProductView = useEffectEvent((event: Event) => {
+    const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
+    if (request.input.action !== "model_search") return;
+    setOpen(true);
+    setQuery(request.input.query ?? "");
+    respond({ status: "completed" });
+  });
+  useEffect(() => { const handler = (event: Event): void => handleProductView(event); window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
