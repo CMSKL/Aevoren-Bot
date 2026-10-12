@@ -30,9 +30,11 @@ test("runs semantic view operations through host approval and preserves changed 
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address(); if (!address || typeof address === "string") throw new Error("Fixture server unavailable");
-  const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: { ...process.env, AEVOREN_BOT_FAKE_PROVIDER: "0", AEVOREN_BOT_USER_DATA_DIR: data, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1" } });
+  const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
+  const application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: { ...process.env, AEVOREN_BOT_FAKE_PROVIDER: "0", AEVOREN_BOT_USER_DATA_DIR: data, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1" } });
   try {
     const page = await application.firstWindow();
+    if (executablePath) expect(await application.evaluate(({ app }) => app.isPackaged)).toBe(true);
     const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
     await expect(page.getByRole("heading", { name: "界面操作验收", exact: true })).toBeVisible();
     await page.evaluate(async (baseUrl) => {
