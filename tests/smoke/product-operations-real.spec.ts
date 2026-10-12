@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { _electron as electron, expect, test } from "@playwright/test";
 import type { AevorenBotApi } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
@@ -14,7 +14,7 @@ for (const driver of ["api", "codex", "claude"] as const) {
     const data = mkdtempSync(join(tmpdir(), `aevoren-product-real-${driver}-`));
     const evidence = process.env.AEVOREN_PRODUCT_EVIDENCE_DIR ?? tmpdir();
     mkdirSync(evidence, { recursive: true });
-    const apiModel = driver === "api" ? copyRealApiProfile(process.env.AEVOREN_REAL_API_PROFILE_DB ?? "/Users/machao/Library/Application Support/Aevoren Bot/aevoren-bot.sqlite", join(data, "aevoren-bot.sqlite")) : undefined;
+    const apiModel = driver === "api" ? copyRealApiProfile(process.env.AEVOREN_REAL_API_PROFILE_DB ?? join(homedir(), "Library", "Application Support", "Aevoren Bot", "aevoren-bot.sqlite"), join(data, "aevoren-bot.sqlite")) : undefined;
     const repository = new AppRepository(join(data, "aevoren-bot.sqlite"));
     const created = repository.createBot();
     const name = `能力验收 ${driver}`;

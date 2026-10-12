@@ -21,7 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Verified
 
-- API, Codex and Claude product workflows were exercised with real configured models in hidden windows and isolated databases. Authentication-specific and platform-specific coverage is documented in `docs/plans/ai-product-operations.md`.
+- API, Codex and Claude product workflows were exercised with real configured models in hidden windows and isolated databases. Authentication-specific and platform-specific coverage is documented in `docs/AI_PRODUCT_OPERATIONS.md`.
 - Business regressions cover genuine approval, creation rollback, duplicate requests, private data boundaries, delegated replies, cancellation and validation recovery. Existing native tools and scoped MCP approval protections remain in place.
 
 ## [0.3.0-beta.23] - 2026-10-12
