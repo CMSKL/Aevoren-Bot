@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.23] - 2026-10-12
+
+### Changed
+
+- Replaced the application icon with the approved graphite sculpture on a warm ivory background across window/Dock PNG, macOS ICNS, Windows ICO, documentation and the editable Apple Icon Composer project.
+- The Icon Composer project preserves separate foreground and background layers; Windows ICO includes 16–256px representations of the same approved artwork. Asset provenance and derivative checksums now record the new design.
+
 ## [0.3.0-beta.22] - 2026-10-11
 
 ### Changed
