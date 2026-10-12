@@ -12,7 +12,9 @@
 
 Aevoren Bot 是一个本地优先的 macOS AI Bot 工作台，用于持久化 Bot 对话和有边界的多 Bot 协作。对话、显式 Memory、工具审批、Tool Journal 和运行恢复都保存在用户自己的电脑上。
 
-> **预发布状态：** 当前公开的是开发中的源码，尚未发布正式二进制版本。支持目标为 macOS 13+ Apple silicon；本地未签名构建不代表官方发行版。
+> **发行状态：** 公开的 macOS Apple silicon Beta 安装包可从 [GitHub Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 获取。支持系统、工具和限制请按具体 Release 及同版本文档核对。下方源码说明对应检出的分支；本地未签名构建不代表官方发行版。
+
+> **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 
 ## 核心能力
 

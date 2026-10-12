@@ -12,7 +12,9 @@ Start with the [project portal](docs/PORTAL.md), [installation guide](docs/INSTA
 
 Aevoren Bot is a local-first macOS workspace for persistent AI Bots and deterministic multi-Bot collaboration. It keeps conversations, explicit Memory, tool approvals, and runtime recovery on the user's computer while allowing the user to choose a local CLI or OpenAI-compatible model source.
 
-> **Pre-release status:** the source is under active development and no public binary has been released yet. The supported target is macOS 13+ on Apple silicon. Do not treat local unsigned builds as official releases.
+> **Release status:** Public macOS Apple silicon Beta installers are available from [GitHub Releases](https://github.com/CMSKL/Aevoren-Bot/releases). Check the specific release and its tagged documentation for supported systems, tools and limitations. The source instructions below describe the checked-out branch; local unsigned builds are not official releases.
+
+> **Maintainer and project records:** Allen and GitHub CMSKL are the same person. Allen leads Aevoren Bot; AI performs development. The [personal project record](https://www.minimalstudio.cn/allen/projects/aevoren.html) documents this role statement, its fixed Beta version and the boundaries of the available evidence.
 
 ## Highlights
 
