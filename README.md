@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md) | English
 
-[![CI](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml)
+[![Beta CI](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml/badge.svg?branch=beta)](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml?query=branch%3Abeta)
 
 <p><img src="resources/icon.png" alt="Aevoren Bot logo" width="128"></p>
 
@@ -10,9 +10,9 @@
 
 Start with the [project portal](docs/PORTAL.md), [installation guide](docs/INSTALLATION.md), or [user guide](docs/USER_GUIDE.md).
 
-Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bounded multi-Agent collaboration. Chats, Contacts and Workspaces organize conversations, reusable Bots and local project files. Conversations, reviewed Memory, tool approvals and runtime recovery stay on the user's computer, with API, Claude Code or Codex CLI as the model source.
+Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bounded multi-Agent collaboration. Chats and Contacts organize conversations and reusable Bots; conversation-scoped workspaces provide access to local project files. Conversations, reviewed Memory, tool approvals and runtime recovery stay on the user's computer, with API, Claude Code or Codex CLI as the model source.
 
-> **Release status:** Public macOS Apple silicon Beta installers are available from [GitHub Releases](https://github.com/CMSKL/Aevoren-Bot/releases). Check the specific release and its tagged documentation for supported systems, tools and limitations. The source instructions below describe the checked-out branch; local unsigned builds are not official releases.
+> **Current Beta: [v0.3.0-beta.26](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.26).** Signed and notarized macOS Apple silicon installers are available on the release page. Existing official Beta installations can check for updates in **Settings → Version updates**. A signed public Windows installer is pending signing configuration. The source instructions below use the `beta` branch; local unsigned builds are not official releases. See the [changelog](CHANGELOG.md) for version history.
 
 > **Maintainer and project records:** Allen and GitHub CMSKL are the same person. Allen leads Aevoren Bot; AI performs development. The [personal project record](https://www.minimalstudio.cn/allen/projects/aevoren.html) documents this role statement, its fixed Beta version and the boundaries of the available evidence.
 
@@ -23,7 +23,8 @@ Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bo
 - Independent chat state and Agent identities: recent conversations, global contacts, unread replies, and separate remove-chat, clear-history and delete-contact actions.
 - Discoverable product operations for settings, Bot/Room management, conversations, delegated tasks, Memory, MCP, Routines, providers, projects and updates through a shared validated host service.
 - Direct Bot chats and 2–6 member Rooms with explicit `@Bot`, automatic owner selection, bounded handoff, speaker identity, and loop suppression.
-- Optional fixed group coordinators assign ordered member work and summarize verified results once. Explicit mentions remain independent replies; Everyone starts all members concurrently and streams each reply independently. Failed work can be retried without repeating completed outputs.
+- Optional fixed group coordinators assign ordered member work and summarize verified results once. Explicit mentions remain independent replies; coordinated work with dependencies retains its order.
+- **Everyone** (`@所有人`) starts all group members concurrently and streams each reply independently. Slow responses, pending approvals and individual failures do not block other members. Stop cancels the whole batch; member retry runs only the selected member without repeating completed replies.
 - Matching Dark and Daylight messenger layouts, editable local personal avatars, stable cartoon-human Bot portraits and on-demand collaboration details attached to each message.
 - First-phase model support for a manually configured OpenAI-compatible API, automatically discovered Claude Code, and automatically discovered Codex CLI.
 - Codex App Server Dynamic Tools routed through Aevoren's explicit Approval and Tool Journal boundary.
@@ -55,7 +56,7 @@ Requirements:
 - macOS 13 or newer on Apple silicon, or Windows 10/11 x64.
 
 ```bash
-git clone https://github.com/CMSKL/Aevoren-Bot.git
+git clone --branch beta https://github.com/CMSKL/Aevoren-Bot.git
 cd Aevoren-Bot
 pnpm install --frozen-lockfile
 AEVOREN_BOT_FAKE_PROVIDER=1 pnpm dev
@@ -75,7 +76,15 @@ Other Provider and CLI adapters are outside the first-phase product scope and ar
 
 Saved API keys and OAuth credentials are encrypted by Electron `safeStorage` and are not returned to the Renderer. See [Configuration](docs/CONFIGURATION.md) for MCP, Workspace, Routine, and environment-variable details, and [Memory architecture](docs/MEMORY.md) for reviewed capture and scope rules.
 
-Open **Chats** to resume direct or group conversations, **Contacts** to message or manage an Agent, and **Workspaces** to organize project files and related chats. The **+** beside Workspace selects a local folder; choosing the same folder reuses it. Agents can join groups across projects, while each chat has its own file-access scope. New ordinary chats start without a folder; select **Current chat workspace** in chat details to bind one. Existing chats retain their previous authorized-folder snapshot. Removing a chat keeps its history and contact; clearing history preserves the contact, approved Memory and local files.
+Open **Chats** to resume direct or group conversations and **Contacts** to message or manage an Agent. For folders, projects and archived chats, open **Settings → Capabilities and permissions → Local files and chat management → Open management**. The **+** beside Workspace selects a local folder; choosing the same folder reuses it. Agents can join groups across projects, while each chat has its own file-access scope. New ordinary chats start without a folder; select **Current chat workspace** in chat details to bind one. Existing chats retain their previous authorized-folder snapshot. Removing a chat keeps its history and contact; clearing history preserves the contact, approved Memory and local files.
+
+## Connected AI capabilities
+
+Connected models can discover product actions with `product_catalog`, inspect their inputs with `product_describe`, and invoke them with `product_execute`. Actions cover settings, Bot and group creation and management, messages to other Bots, task results, Memory, Routines, workspace permissions, MCP configuration, model connections and updates. Scoped view actions also support navigation, search, drafts and task details. See [AI product operations](docs/AI_PRODUCT_OPERATIONS.md) for scope, provider validation and limitations.
+
+AI actions use the same host validation and permission rules as the interface. Bot and group creation can continue after a clarification reply and still require real user approval. Results report actual execution or waiting states; model text alone does not prove success.
+
+The current Beta does not provide Skill discovery, installation or execution, browser tab/login/click control, or general desktop control. Public web search and page reading return text; scoped view actions operate Aevoren's own interface.
 
 ## Security model
 

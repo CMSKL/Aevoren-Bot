@@ -2,7 +2,7 @@
 
 简体中文 | [English](README.md)
 
-[![CI](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml)
+[![Beta CI](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml/badge.svg?branch=beta)](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml?query=branch%3Abeta)
 
 <p><img src="resources/icon.png" alt="Aevoren Bot Logo" width="128"></p>
 
@@ -10,9 +10,9 @@
 
 请先阅读[项目门户](docs/PORTAL.md)、[安装指南](docs/INSTALLATION.md)或[用户指南](docs/USER_GUIDE.md)。
 
-Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天、联系人和工作区组织长期使用的 Bot、群协作与项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
+Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联系人组织长期使用的 Bot 与群协作，通过按会话授权的工作区访问本地项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
 
-> **发行状态：** 公开的 macOS Apple silicon Beta 安装包可从 [GitHub Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 获取。支持系统、工具和限制请按具体 Release 及同版本文档核对。下方源码说明对应检出的分支；本地未签名构建不代表官方发行版。
+> **当前 Beta：[v0.3.0-beta.26](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.26)。** Release 页面提供已签名、公证的 macOS Apple silicon 安装包；已安装官方 Beta 的用户可在**设置 → 版本更新**中检查更新。Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建不代表官方发行版。版本历史见[变更记录](CHANGELOG.md)。
 
 > **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 
@@ -23,9 +23,11 @@ Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天、联�
 - 支持 API、Claude Code、Codex CLI，自动扫描两种 CLI 的安装、登录与模型信息。
 - 文本/代码附件、经过校验的内容读取，以及在任务详情中集中查看的真实 Markdown/CSV 交付物。
 - 聊天状态与 Agent 身份分离：最近会话、全局联系人、回复未读，以及独立的移除聊天、清空记录和删除联系人操作。
-- 可选固定群协调者，按顺序安排成员工作并统一汇总真实结果；指定 Bot 保持独立回复，`@所有人` 并行启动全部成员，逐个显示各自结果。失败步骤可重试，不重复已完成产出。
+- 可选固定群协调者，按顺序安排成员工作并统一汇总真实结果；指定 Bot 保持独立回复，有依赖的协调工作保留执行顺序。
+- `@所有人` 并行启动全部群成员，各自流式回复；慢响应、审批等待或单个失败不会阻塞其他成员。停止会取消整批，重试此成员只执行选中的成员，不重复已完成回复。
 - 暗黑、白昼共用微信式布局，支持本地个人头像与昵称、稳定的卡通数字人 Bot 头像，以及每条消息上方按需展开的协作详情。
 - Codex App Server Dynamic Tools，通过显式 Approval 和 Tool Journal 边界接入。
+- 接入的 AI 可通过统一产品操作目录使用设置、Bot/群管理、对话委派、任务结果、Memory、MCP、Routine、工作区、模型连接和更新，复用界面的业务校验与权限规则。
 - User、Bot、Workspace 作用域的显式 Memory，模型不能静默写入长期 Memory。
 - 用户授权的 Workspace 列表/读取/搜索，以及可选的仅新建 Markdown/CSV 成果；绝不覆盖已有文件。
 - 内容团队只在需要用户决策时显示 Brief 批准/退回/放弃操作，并提供结构化失败恢复、真实执行证据与交付文件状态；模型文字不会被当作工具成功。
@@ -54,7 +56,7 @@ Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天、联�
 - macOS 13+ Apple silicon，或 Windows 10/11 x64。
 
 ```bash
-git clone https://github.com/CMSKL/Aevoren-Bot.git
+git clone --branch beta https://github.com/CMSKL/Aevoren-Bot.git
 cd Aevoren-Bot
 pnpm install --frozen-lockfile
 AEVOREN_BOT_FAKE_PROVIDER=1 pnpm dev
@@ -67,14 +69,22 @@ Fake Provider 是确定性的，不需要账号或 API Key。源码构建、数�
 打开**联系人 → 选择或创建 Bot → 模型与能力 → 本机连接设置**，并在同一联系人页面选择此 Bot 的调用方式与模型。本机连接设置为共享配置，修改会影响使用相同连接的其他 Bot。Aevoren Bot 会扫描常见安装目录和 `PATH`，只读取对应适配器所需的 CLI 安装、登录和模型信息。
 
 - **API：** OpenAI-compatible Base URL、API Key、模型发现和真实请求验证；
-- **Claude Code：** 模型及登录状态发现和对话；兼容的 API 认证安装可调用六项受限工作区与联网工具，订阅 OAuth 工具模式尚未接入；
+- **Claude Code：** 模型及登录状态发现和对话；兼容的 API 认证安装使用按 Runtime 隔离的宿主 MCP 桥接，安全文本路径使用按运行绑定的结构化宿主协议。产品操作、工作区/公开网页、时间/天气、文本计数、剪贴板及经审查的 MCP 工具共用应用权限规则；具体认证模式需通过实际 CLI 验证；
 - **Codex CLI：** 模型发现、文本对话和宿主 Dynamic Tool 支持。
 
 其他 Provider 和 CLI 适配器不属于第一阶段产品范围，也不会显示在模型界面中。
 
 保存的 API Key 和 OAuth 凭据由 Electron `safeStorage` 加密，之后不会返回给 Renderer。MCP、Workspace、Routine 和环境变量说明见[配置指南](docs/CONFIGURATION.md)，经用户审核的 Memory 捕获及作用域规则见 [Memory 架构](docs/MEMORY.md)。
 
-在**聊天**继续私聊或群聊，在**联系人**查看、管理和联系 Agent，在**工作区**管理项目文件及相关聊天。“工作区”标题右侧的 **+** 用于选择本地文件夹，重复选择不会重复创建。Agent 可以加入不同项目的群，但文件权限按聊天隔离。新建普通聊天默认不关联目录，可在详情的“当前聊天工作区”中选择；旧聊天保留迁移前的目录授权快照。移除聊天保留历史与联系人；清空记录保留联系人、已接受记忆和实际文件。
+在**聊天**继续私聊或群聊，在**联系人**查看、管理和联系 Agent。目录、项目和归档聊天管理入口为**设置 → 能力与权限 → 本地文件与聊天管理 → 打开管理**。“工作区”标题右侧的 **+** 用于选择本地文件夹，重复选择不会重复创建。Agent 可以加入不同项目的群，但文件权限按聊天隔离。新建普通聊天默认不关联目录，可在详情的“当前聊天工作区”中选择；旧聊天保留迁移前的目录授权快照。移除聊天保留历史与联系人；清空记录保留联系人、已接受记忆和实际文件。
+
+## 接入 AI 的能力
+
+接入的模型可通过 `product_catalog` 发现产品动作、`product_describe` 查询参数、`product_execute` 发起执行，覆盖设置、创建和管理 Bot/群、向其他 Bot 发消息、任务结果、Memory、Routine、工作区权限、MCP 配置、模型连接和更新。受限界面动作还支持导航、搜索、草稿和任务详情。范围、模型来源验收及限制见[产品操作向 AI 开放](docs/AI_PRODUCT_OPERATIONS.md)。
+
+AI 操作与界面共用宿主校验和权限规则。创建 Bot 或群聊支持补充角色等多轮澄清，实际创建仍需要真实用户审批。工具回执区分实际执行与等待状态，模型文字本身不能证明操作成功。
+
+当前 Beta 尚未提供 Skill 发现、安装或执行、浏览器标签页/登录/点击控制及通用桌面控制。公开网页搜索和读取返回文本；受限界面动作操作 Aevoren 自身界面。
 
 ## 安全模型
 
