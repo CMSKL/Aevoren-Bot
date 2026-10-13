@@ -31,7 +31,7 @@ test("creates, runs, restores, and keeps one enabled Routine alive after the win
     await expect(card).toContainText("已启用");
     await card.getByRole("button", { name: "立即运行", exact: true }).click();
     await page.getByRole("button", { name: "关闭设置" }).click();
-    await expect(page.getByText("[Routine: 每小时检查]", { exact: false })).toBeVisible();
+    await expect(page.getByRole("main").getByText("[Routine: 每小时检查]", { exact: false })).toBeVisible();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
 
     await page.getByRole("button", { name: "设置", exact: true }).click();
