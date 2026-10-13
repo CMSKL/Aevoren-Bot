@@ -305,6 +305,8 @@ export class RoomCoordinator {
     const batch = this.repository.getRoomBatch(batchId);
     const room = this.repository.getRoom(batch.roomId);
     const fixedLead = batch.routingMode === "automatic" && Boolean(batch.leadBotId);
+    const parallelFanout = !coordinated && batch.routingMode === "everyone";
+    const completions: Promise<void>[] = [];
     const roomRoster = coordinated
       ? this.repository.listRoomMembers(room.id).map((member) => ({
           id: member.botId,
@@ -471,25 +473,23 @@ export class RoomCoordinator {
             : {}),
         });
         this.emit(this.repository.getRoomBatch(batchId));
-        const result = await started.completion;
-        this.settleTurn(turn.id, result);
-        this.settleHandoff(turn.id, result);
-      } catch (error) {
-        const appError = asAppError(error);
-        if (fixedLead && turn.turnPurpose === "coordinate") this.failLeadCoordination(turn, appError.code);
-        const current = this.repository.getRoomTurn(turn.id);
-        if (current.state === "running") {
-          this.repository.transitionRoomTurn(turn.id, "failed", {
-            errorCode: appError.code,
-            outcome: { kind: "error", errorCode: appError.code },
-          });
+        const completion = started.completion.then((result) => {
+          this.settleTurn(turn.id, result);
+          this.settleHandoff(turn.id, result);
+        });
+        if (parallelFanout && turn.origin !== "handoff" && !turn.dependencyLogicalTurnId) {
+          completions.push(completion.catch((error) => this.failTurn(turn, error, fixedLead)));
+        } else {
+          await completion;
         }
-        this.settleHandoffFailure(turn.id, appError.code === "MESSAGE_CANCELLED");
-        this.emit(this.repository.getRoomBatch(batchId), appError);
+      } catch (error) {
+        this.failTurn(turn, error, fixedLead);
       }
       if (this.shuttingDown || this.repository.getRoomBatch(batchId).state !== "running") break;
     }
 
+    // Every independent member settles before the shared batch becomes terminal.
+    await Promise.allSettled(completions);
     const current = this.repository.getRoomBatch(batchId);
     if (this.shuttingDown && ["queued", "running"].includes(current.state)) {
       this.repository.recoverInterruptedRooms();
@@ -497,6 +497,20 @@ export class RoomCoordinator {
       this.emit(this.repository.finishRoomBatchFromTurns(batchId));
     }
     if (!["queued", "running"].includes(this.repository.getRoomBatch(batchId).state)) this.clearDeadline(batchId);
+  }
+
+  private failTurn(turn: RoomTurn, error: unknown, fixedLead: boolean): void {
+    const appError = asAppError(error);
+    if (fixedLead && turn.turnPurpose === "coordinate") this.failLeadCoordination(turn, appError.code);
+    const current = this.repository.getRoomTurn(turn.id);
+    if (current.state === "running") {
+      this.repository.transitionRoomTurn(turn.id, "failed", {
+        errorCode: appError.code,
+        outcome: { kind: "error", errorCode: appError.code },
+      });
+    }
+    this.settleHandoffFailure(turn.id, appError.code === "MESSAGE_CANCELLED");
+    this.emit(this.repository.getRoomBatch(turn.batchId), appError);
   }
 
   private getRetryModelSelection(turn: RoomTurn): ModelSelection | undefined {

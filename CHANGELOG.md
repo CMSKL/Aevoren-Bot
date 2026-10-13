@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.26] - 2026-10-13
+
+### Added
+
+- Mentioning Everyone starts every group member concurrently. Each Bot keeps its own streaming reply, permissions and results; a slow response, pending approval or individual failure does not block the other members.
+
+### Fixed
+
+- A group finishes only after all parallel members settle, and stopping the reply cancels every active member. Independent replies use the same original-message context; coordinated work with dependencies retains its existing order.
+- Runtime storage permits concurrent independent members of the same Everyone batch while retaining exclusive private chats, member executions and other group modes. The index migration preserves existing records.
+- Release creation explicitly records the branch derived from the version, including Beta releases, before the Release becomes immutable.
+
+### Verified
+
+- Controlled six-member requests prove concurrent dispatch before any reply is released. Runtime, SQLite and hidden Electron checks cover fast and slow members, approvals, failure isolation, cancellation, reply attribution and ordinary routing protections.
+
 ## [0.3.0-beta.25] - 2026-10-13
 
 ### Fixed

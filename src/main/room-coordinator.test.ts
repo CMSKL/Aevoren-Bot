@@ -7,6 +7,9 @@ import { RuntimeExecutor } from "./runtime-executor";
 import { RuntimeCoordinator } from "./send-worker";
 import type { ProviderResolver } from "./providers/contracts";
 import { DecisionService, FakeDecisionProvider } from "./decision-service";
+import { WorkspaceService } from "./workspace-service";
+import { WorkspaceToolExecutor } from "./workspace-tool-executor";
+import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 
 const repositories: AppRepository[] = [];
 
@@ -50,6 +53,139 @@ function command(detail: ReturnType<AppRepository["createRoom"]>, targetBotIds: 
 }
 
 describe("RoomCoordinator", () => {
+  it("starts all six everyone members before any reply finishes and waits for the last member", async () => {
+    const started = new Set<string>();
+    const gates = new Map<string, { promise: Promise<void>; release(): void }>();
+    const captured = new Map<string, ChatMessage[]>();
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        const id = context!.executorBotId;
+        captured.set(id, messages);
+        started.add(id);
+        yield { type: "started", requestId: id };
+        await gates.get(id)!.promise;
+        yield { type: "delta", text: `reply-${id}` };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, bots, detail, coordinator, executor } = setup(provider, 6);
+    for (const { bot } of bots) {
+      let release!: () => void;
+      const promise = new Promise<void>((resolve) => { release = resolve; });
+      gates.set(bot.id, { promise, release });
+    }
+    const sent = await coordinator.routeAndSend({ ...command(detail, bots.map(({ bot }) => bot.id)), routingMode: "everyone" });
+    try {
+      await expect.poll(() => started.size).toBe(6);
+      expect(repository.listRoomTurns(sent.batchId).every((turn) => turn.state === "running")).toBe(true);
+      expect(repository.listRuntimeRuns(detail.session.id)).toHaveLength(6);
+      gates.get(bots[5]!.bot.id)!.release();
+      await expect.poll(() => repository.listRoomTurns(sent.batchId).find((turn) => turn.memberBotId === bots[5]!.bot.id)?.state).toBe("completed");
+      expect(repository.getRoomBatch(sent.batchId).state).toBe("running");
+      expect(executor.getLiveState(detail.session.id).state).not.toBe("idle");
+      expect([...captured.values()].every((messages) => messages.every((message) => !message.content.includes("reply-")))).toBe(true);
+    } finally {
+      for (const gate of gates.values()) gate.release();
+      await expect.poll(() => repository.getRoomBatch(sent.batchId).state).toBe("completed");
+    }
+    const turns = repository.listRoomTurns(sent.batchId);
+    const entries = repository.listTranscript(detail.session.id).filter((entry) => entry.role === "assistant");
+    expect(entries).toHaveLength(6);
+    for (const entry of entries) {
+      expect(entry.body).toBe(`reply-${entry.speakerBotId}`);
+      expect(turns.find((turn) => turn.id === entry.sourceTurnId)?.memberBotId).toBe(entry.speakerBotId);
+    }
+    expect(repository.listRuntimeRuns(detail.session.id).every((run) => run.promptCutoffSeq === turns[0]!.inputSeq)).toBe(true);
+  });
+
+  it.each(["failure", "cancel"] as const)("isolates parallel everyone members during %s", async (mode) => {
+    const started = new Map<string, AbortSignal>();
+    const gates = new Map<string, { promise: Promise<void>; release(): void }>();
+    let failureId = "";
+    const provider: ModelProvider = {
+      async *run(_messages, signal, context) {
+        const id = context!.executorBotId;
+        started.set(id, signal);
+        yield { type: "started", requestId: id };
+        await gates.get(id)!.promise;
+        if (mode === "failure" && id === failureId) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
+        yield { type: "delta", text: `result-${id}` };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, bots, detail, coordinator } = setup(provider);
+    failureId = bots[0]!.bot.id;
+    for (const { bot } of bots) {
+      let release!: () => void;
+      const promise = new Promise<void>((resolve) => { release = resolve; });
+      gates.set(bot.id, { promise, release });
+    }
+    const sent = await coordinator.routeAndSend({ ...command(detail, bots.map(({ bot }) => bot.id)), routingMode: "everyone" });
+    try {
+      await expect.poll(() => started.size).toBe(3);
+      if (mode === "failure") {
+        gates.get(failureId)!.release();
+        await expect.poll(() => repository.listRoomTurns(sent.batchId).find((turn) => turn.memberBotId === failureId)?.state).toBe("failed");
+        expect(repository.getRoomBatch(sent.batchId).state).toBe("running");
+        expect([...started.values()].every((signal) => !signal.aborted)).toBe(true);
+      } else {
+        coordinator.cancel(sent.batchId);
+        expect([...started.values()].every((signal) => signal.aborted)).toBe(true);
+      }
+    } finally {
+      for (const gate of gates.values()) gate.release();
+      await expect.poll(() => repository.listRoomTurns(sent.batchId).every((turn) => ["completed", "failed", "cancelled"].includes(turn.state))).toBe(true);
+    }
+    await expect.poll(() => repository.getRoomBatch(sent.batchId).state).toBe(mode === "failure" ? "partial" : "cancelled");
+    const entries = repository.listTranscript(detail.session.id).filter((entry) => entry.role === "assistant");
+    if (mode === "cancel") expect(entries.every((entry) => entry.status === "cancelled" && entry.body === "")).toBe(true);
+    else {
+      const successful = entries.filter((entry) => entry.status === "completed");
+      expect(successful).toHaveLength(2);
+      expect(successful.every((entry) => entry.body === `result-${entry.speakerBotId}`)).toBe(true);
+    }
+  });
+
+  it("does not block an independent member while another member awaits creation approval", async () => {
+    let requesterId = "";
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        yield { type: "started", requestId: context!.executorBotId };
+        if (context!.executorBotId === requesterId && messages.at(-1)?.role !== "tool") {
+          yield { type: "project-tool", toolCallId: "parallel-approval", tool: {
+            kind: "bot-create", name: "待批准成员", label: "", description: "", instructions: "仅完成批准的任务。",
+          } };
+        } else {
+          yield { type: "delta", text: context!.executorBotId === requesterId ? "创建未执行。" : "独立回复已完成。" };
+        }
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const f = setup(provider, 2);
+    requesterId = f.bots[0]!.bot.id;
+    const toolExecutor = new WorkspaceToolExecutor(f.repository, new WorkspaceService(f.repository));
+    const tools = new WorkspaceToolCoordinator(f.repository, toolExecutor, () => {});
+    const executor = new RuntimeExecutor(f.repository, null, { transcript: vi.fn(), runtime: vi.fn() }, false, provider, tools);
+    const coordinator = new RoomCoordinator(f.repository, executor, { transcript: vi.fn(), roomRuntime: vi.fn() });
+    const sent = await coordinator.routeAndSend({ ...command(f.detail, f.bots.map(({ bot }) => bot.id)), routingMode: "everyone" });
+    await expect.poll(() => f.repository.listToolInvocations(f.detail.session.id).at(-1)?.state).toBe("awaiting-approval");
+    await expect.poll(() => f.repository.listRoomTurns(sent.batchId).find((turn) => turn.memberBotId === f.bots[1]!.bot.id)?.state).toBe("completed");
+    expect(f.repository.getRoomBatch(sent.batchId).state).toBe("running");
+    expect(f.repository.listBots()).toHaveLength(2);
+    const invocation = f.repository.listToolInvocations(f.detail.session.id).at(-1)!;
+    expect(invocation.executorBotId).toBe(requesterId);
+    const approval = f.repository.getApprovalRequest(invocation.approvalRequestId);
+    await tools.resolve(f.detail.session.id, approval.id, approval.version, "deny");
+    await expect.poll(() => f.repository.getRoomBatch(sent.batchId).state).toBe("completed");
+    expect(f.repository.getToolInvocation(invocation.id).state).toBe("denied");
+    expect(f.repository.listBots()).toHaveLength(2);
+  });
+
+
+
   it("records automatic route agreement in Shadow Mode without changing the real owner", async () => {
     let decisionCalls = 0;
     let providerCalls = 0;

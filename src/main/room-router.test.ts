@@ -282,7 +282,9 @@ describe("M4 no-mention central router", () => {
     await waitForTerminal(value.repository, sent.batchId);
 
     const replies = value.repository.listTranscript(value.detail.session.id).filter((entry) => entry.role === "assistant");
-    expect(calls).toEqual([value.bots[0]!.id, value.bots[0]!.id, value.bots[1]!.id]);
+    expect(calls).toHaveLength(3);
+    expect(calls.filter((id) => id === value.bots[0]!.id)).toHaveLength(2);
+    expect(calls.filter((id) => id === value.bots[1]!.id)).toHaveLength(1);
     expect(fixedHandoffRejected).toBe(true);
     expect(value.repository.getRoomRun(sent.batchId).state).toBe("completed");
     expect(value.repository.listHandoffs(sent.batchId)).toEqual([]);

@@ -85,12 +85,13 @@ jobs:
         shell: pwsh
         env:
           RELEASE_TYPE: ${{ steps.release.outputs.release_type }}
+          EXPECTED_BRANCH: ${{ steps.release.outputs.expected_branch }}
         run: |
           $draft = gh release view $env:GITHUB_REF_NAME --json isDraft --jq .isDraft 2>$null
           if ($LASTEXITCODE -eq 0) {
             if ($draft -ne "true") { throw "Existing release is not a draft" }
           } else {
-            $args = @("--draft", "--verify-tag", "--generate-notes", "--title", $env:GITHUB_REF_NAME)
+            $args = @("--draft", "--verify-tag", "--generate-notes", "--title", $env:GITHUB_REF_NAME, "--target", $env:EXPECTED_BRANCH)
             if ($env:RELEASE_TYPE -eq "prerelease") { $args += @("--prerelease", "--latest=false") }
             gh release create $env:GITHUB_REF_NAME @args
           }

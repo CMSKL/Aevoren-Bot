@@ -506,6 +506,14 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
     await launched.page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(launched.page.getByRole("button", { name: "停止群聊回复" })).toBeVisible();
     const databasePath = join(userDataDir, "aevoren-bot.sqlite");
+    const dispatched = await getRoomRuntimeSnapshot(launched.page, "甲、乙、丙");
+    expect(dispatched.ok).toBe(true);
+    if (dispatched.ok) {
+      const active = dispatched.data.batches.at(-1)!;
+      const turns = dispatched.data.turns.filter((turn) => turn.batchId === active.id);
+      expect(turns).toHaveLength(3);
+      expect(turns.every((turn) => turn.state === "running" && turn.runtimeRunId && turn.promptCutoffSeq !== null)).toBe(true);
+    }
     await forceKill(application);
     application = undefined;
     let database = new DatabaseSync(databasePath, { readOnly: true });
@@ -530,7 +538,22 @@ test("reattaches Room streaming after five reloads and recovers a Main crash wit
       expect(recovered.data.turns.filter((turn) => turn.batchId === interruptedBatch?.id).map((turn) => turn.state)).toEqual(["interrupted", "interrupted", "interrupted"]);
     }
     const menu = await openConversationMenu(launched.page);
-    await expect(menu.getByRole("menuitem", { name: "继续未开始成员", exact: true })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "继续未开始成员", exact: true })).toHaveCount(0);
+    await menu.getByRole("menuitem", { name: "重试此成员", exact: true }).click();
+    await expect.poll(async () => {
+      const snapshot = await getRoomRuntimeSnapshot(launched.page, "甲、乙、丙");
+      return snapshot.ok ? snapshot.data.batches.at(-1)?.state : null;
+    }).toBe("partial");
+    const retried = await getRoomRuntimeSnapshot(launched.page, "甲、乙、丙");
+    expect(retried.ok).toBe(true);
+    if (retried.ok && dispatched.ok) {
+      expect(retried.data.runs).toHaveLength(dispatched.data.runs.length + 1);
+      const latestBatch = retried.data.batches.at(-1)!;
+      const turns = retried.data.turns.filter((turn) => turn.batchId === latestBatch.id);
+      expect(turns.filter((turn) => turn.attemptNo === 2)).toHaveLength(1);
+      expect(turns.filter((turn) => turn.attemptNo === 2)[0]?.state).toBe("completed");
+      expect(turns.filter((turn) => turn.attemptNo === 1).every((turn) => turn.state === "interrupted")).toBe(true);
+    }
   } finally {
     if (application) await forceKill(application);
     removeTestDirectory(userDataDir);

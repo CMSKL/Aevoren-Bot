@@ -2049,6 +2049,15 @@ export const MIGRATIONS = [
       ALTER TABLE transcript_entries ADD COLUMN origin_json TEXT CHECK (origin_json IS NULL OR json_valid(origin_json));
     `,
   },
+  {
+    version: 33,
+    sql: `
+      DROP INDEX runtime_one_active_per_session;
+      CREATE UNIQUE INDEX runtime_one_active_per_executor
+        ON runtime_runs(session_id, executor_bot_id)
+        WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested');
+    `,
+  },
 ] as const;
 
 type ConversationSidebarRow = {
@@ -7351,6 +7360,41 @@ export class AppRepository {
     return this.getTranscriptEntry(id);
   }
 
+  private assertIndependentEveryoneRuntime(
+    batch: RoomBatch,
+    input: TranscriptEntry,
+    runtime: Pick<RuntimeRun, "clientNonce" | "sessionId" | "executorBotId" | "executionKey" | "inputGeneration" | "inputSeq" | "promptCutoffSeq" | "promptManifest">,
+    boundRuntimeId?: string,
+  ): void {
+    const manifest = runtime.promptManifest;
+    if (!manifest.sourceTurnId) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+    const turn = this.getRoomTurn(manifest.sourceTurnId);
+    const latest = this.listRoomTurns(batch.id).filter((candidate) => candidate.logicalTurnId === turn.logicalTurnId)
+      .sort((left, right) => right.attemptNo - left.attemptNo)[0];
+    const session = this.getSession(batch.sessionId);
+    if (
+      batch.state !== "running" || batch.routingMode !== "everyone" || batch.orchestrationEnabled ||
+      batch.triggerMessageId !== input.id || batch.clientNonce !== runtime.clientNonce ||
+      batch.sessionId !== runtime.sessionId || session.roomId !== batch.roomId ||
+      turn.batchId !== batch.id || turn.state !== "running" || turn.runtimeRunId !== (boundRuntimeId ?? null) ||
+      latest?.id !== turn.id || turn.parentTurnId !== null || turn.dependencyLogicalTurnId || turn.hop !== 0 ||
+      !["initial", "retry"].includes(turn.origin) || turn.turnPurpose !== "work" || this.getIncomingHandoff(turn.id) ||
+      runtime.executorBotId !== turn.memberBotId || runtime.executionKey !== `${batch.id}:${turn.logicalTurnId}` ||
+      turn.inputGeneration !== input.generation || turn.inputGeneration !== session.generation ||
+      runtime.inputGeneration !== turn.inputGeneration || turn.inputSeq !== input.seq || runtime.inputSeq !== turn.inputSeq ||
+      turn.promptCutoffSeq !== turn.inputSeq || runtime.promptCutoffSeq !== turn.inputSeq ||
+      manifest.schemaVersion === 1 || manifest.sessionId !== batch.sessionId || manifest.roomId !== batch.roomId ||
+      manifest.roomMembershipVersion !== batch.membershipVersion || manifest.botId !== turn.memberBotId ||
+      manifest.executorBotId !== turn.memberBotId || manifest.generation !== turn.inputGeneration ||
+      manifest.inputSeq !== turn.inputSeq || manifest.promptCutoffSeq !== turn.inputSeq || manifest.handoff
+    ) {
+      throw new AevorenBotError("RUNTIME_STATE_INVALID");
+    }
+    this.assertRoomRunHardStopAllowsWork(batch);
+    if (this.getRoom(batch.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
+    this.assertRoomTurnMembershipAllowsRetry(batch, turn);
+  }
+
   createRuntimeRun(
     clientNonce: string,
     route: RuntimeRoute,
@@ -7366,13 +7410,35 @@ export class AppRepository {
   ): RuntimeRun {
     const journal = this.getSendOrThrow(clientNonce);
     const input = this.getUserMessage(clientNonce);
-    if (this.getActiveRuntimeRun(journal.sessionId)) throw new AevorenBotError("SESSION_BUSY");
     const executorBotId = options.executorBotId ?? this.getBotForSession(journal.sessionId).id;
     this.assertSessionExecutor(journal.sessionId, executorBotId);
     const executorBot = this.getBot(executorBotId);
     const providerInstanceId = options.providerInstanceId ?? (route === "fake" ? "fake" : executorBot.modelSelection.providerInstanceId);
     const providerModelId = options.providerModelId ?? (route === "fake" ? "" : executorBot.modelSelection.modelId);
     const executionKey = options.executionKey ?? clientNonce;
+    const batch = this.getRoomBatchByNonce(clientNonce);
+    const everyone = batch?.routingMode === "everyone" && !batch.orchestrationEnabled ? batch : null;
+    const placeholders = ACTIVE_RUNTIME_STATES.map(() => "?").join(",");
+    const activeRuns = (this.database
+      .prepare(`SELECT * FROM runtime_runs WHERE session_id = ? AND state IN (${placeholders})`)
+      .all(journal.sessionId, ...ACTIVE_RUNTIME_STATES) as RuntimeRow[]).map(toRuntime);
+    if (activeRuns.some((runtime) => !everyone || runtime.executorBotId === executorBotId || runtime.executionKey === executionKey)) {
+      throw new AevorenBotError("SESSION_BUSY");
+    }
+    if (everyone) {
+      this.assertIndependentEveryoneRuntime(everyone, input, {
+        clientNonce, sessionId: journal.sessionId, executorBotId, executionKey,
+        inputGeneration: input.generation, inputSeq: options.inputSeq ?? input.seq,
+        promptCutoffSeq: options.promptCutoffSeq ?? input.seq, promptManifest,
+      });
+      for (const active of activeRuns) {
+        try {
+          this.assertIndependentEveryoneRuntime(everyone, input, active, active.id);
+        } catch {
+          throw new AevorenBotError("SESSION_BUSY");
+        }
+      }
+    }
     const attempt = this.database
       .prepare("SELECT COALESCE(MAX(attempt_no), 0) AS current FROM runtime_runs WHERE execution_key = ?")
       .get(executionKey) as { current: number };
