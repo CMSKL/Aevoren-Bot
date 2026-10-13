@@ -140,6 +140,7 @@ Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac
 - [商标说明](TRADEMARKS.md)
 - [开源检查清单](docs/OPEN_SOURCE_CHECKLIST.md)
 - [Roadmap](ROADMAP.md)
+- [Grok Bot 功能对照与实施方案](docs/FEATURE_ADOPTION.md)
 
 开发流程为 `dev` → `beta` → `master`。贡献者 PR 应提交到 `dev`；只有完成分支晋级和验证后才创建 Release Tag，详见[发布流程](docs/RELEASING.md)和[自动更新设计](docs/plans/automatic-updates.md)。
 
