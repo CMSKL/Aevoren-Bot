@@ -77,6 +77,7 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
           ? "搜索关键词或网页地址会发送至相应服务。你可以记住公开查询授权，后续无需逐次确认。"
           : "仅授权当前操作，不会扩大这个 Bot 的其他权限。"}</p>
         <div className="tool-permission-target"><strong>{label}</strong><span>{target}</span></div>
+        {invocation.arguments.kind === "product-call" && invocation.arguments.action === "execute" ? <details><summary>查看本次操作内容</summary><pre>{JSON.stringify(invocation.arguments.input ?? null, null, 2)}</pre></details> : null}
         {localRead ? <p className="tool-permission-privacy">读取结果会进入模型上下文；使用云端模型时会发送至模型服务。请勿授权密码、密钥等敏感内容。</p> : null}
         {publicRead && onRememberPublicRead ? <p className="tool-permission-privacy">记住的范围仅包括公开网页搜索、抓取、天气与时间。文件、剪贴板、MCP 和外部写操作不包含在内，可在设置中随时关闭。</p> : null}
         {failed ? <p role="alert" className="tool-permission-error">授权未能提交，请重试。未确认的操作不会执行。</p> : null}

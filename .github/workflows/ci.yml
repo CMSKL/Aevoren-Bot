@@ -87,12 +87,14 @@ jobs:
       # on hosted Windows runners without weakening their completion assertions.
       - run: pnpm exec vitest run --maxWorkers=2
       - run: pnpm build
+      - name: Prepare Electron test runtime
+        run: pnpm exec electron --version
       - name: Run Windows Electron smoke tests
         env:
           # GitHub-hosted Windows runners have no interactive desktop. The
           # Playwright Electron connection still exercises the full Renderer.
           AEVOREN_BOT_TEST_HIDDEN: "1"
-        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts tests/smoke/p0-navigation.spec.ts tests/smoke/ui-redesign-acceptance.spec.ts
+        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts tests/smoke/p0-navigation.spec.ts tests/smoke/ui-redesign-acceptance.spec.ts tests/smoke/product-view.spec.ts
       - run: pnpm package:win
       - name: Verify packaged Windows locale resources
         shell: pwsh
@@ -133,7 +135,7 @@ jobs:
           AEVOREN_BOT_TEST_HIDDEN: "1"
         run: |
           $env:AEVOREN_PACKAGED_APP_PATH = Join-Path $env:RUNNER_TEMP "Aevoren Bot/Aevoren Bot.exe"
-          pnpm exec playwright test tests/smoke/ui-redesign-acceptance.spec.ts
+          pnpm exec playwright test tests/smoke/ui-redesign-acceptance.spec.ts tests/smoke/product-view.spec.ts
           if ($LASTEXITCODE -ne 0) { throw "Installed Windows UI acceptance failed" }
       - name: Preserve failed Windows UI diagnostics
         if: failure()

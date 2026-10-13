@@ -111,10 +111,11 @@ describe("real Provider handoff integration", () => {
     expect(transcript).not.toContain("select_room_continuation");
     const requestBodies = fetchMock.mock.calls.map((call) => JSON.parse((call[1] as RequestInit).body as string));
     expect(requestBodies).toHaveLength(3);
-    expect(requestBodies[0]).not.toHaveProperty("tools");
+    expect(requestBodies[0]?.tools?.map((tool: { function: { name: string } }) => tool.function.name)).toContain("product_catalog");
+    expect(requestBodies[0]?.tools?.map((tool: { function: { name: string } }) => tool.function.name)).not.toContain("handoff_to_agent");
     expect(requestBodies[1]?.tools).toHaveLength(1);
     expect(requestBodies[1]?.tools?.[0]?.function?.name).toBe("select_room_continuation");
-    expect(requestBodies[2]).not.toHaveProperty("tools");
+    expect(requestBodies[2]?.tools?.map((tool: { function: { name: string } }) => tool.function.name)).not.toContain("handoff_to_agent");
     expect(JSON.stringify(requestBodies)).not.toContain("handoff_to_agent");
     const rosterMessage = (requestBodies[0]?.messages as Array<{ role: string; content: string }>).find((message) =>
       message.role === "system" && message.content.includes("UNTRUSTED_ROOM_PEER_DATA")

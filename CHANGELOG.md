@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.24] - 2026-10-12
+
+### Added
+
+- Connected AI can discover, describe and execute all 96 existing host operations plus seven semantic operations through a shared product catalogue. Settings, Bot and group management, messages, task results, Memory, routines, workspace and MCP configuration, and updates reuse the same business handlers as the interface.
+- Twenty-five scoped view actions support navigation, search, task details, draft management, attachments, avatars and window controls. Draft changes require the current digest and preserve concurrent user input.
+
+### Fixed
+
+- Delegated messages persist their actual AI source, isolate the recipient's private history and Memory, and return real run/batch results. Root resource budgets cover new and legacy tools; cancellation follows descendants even after an intermediate sender finishes.
+- Canonical parameters normalize defaults and field order for approvals and replay protection. Atomic resource mutations commit their success receipt in the same transaction; interrupted unknown results cannot be blindly replayed.
+- User profile changes preserve omitted avatar/name fields. Approved update installation waits for the source request to finish and all other tasks to become idle.
+
+### Verified
+
+- API, Codex and Claude product workflows were exercised with real configured models in hidden windows and isolated databases. Authentication-specific and platform-specific coverage is documented in `docs/AI_PRODUCT_OPERATIONS.md`.
+- Business regressions cover genuine approval, creation rollback, duplicate requests, private data boundaries, delegated replies, cancellation and validation recovery. Existing native tools and scoped MCP approval protections remain in place.
+
 ## [0.3.0-beta.23] - 2026-10-12
 
 ### Changed

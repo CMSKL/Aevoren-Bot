@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
+import { useEffectEvent, useCallback, useEffect, useRef, useState } from "react";
 import darkThemePreview from "../assets/themes/dark.png";
 import lightThemePreview from "../assets/themes/light.png";
 import { UPDATE_CHECK_INTERVAL_MINUTES, type AppearanceTheme, type AppError, type LoginItemStatus, type UpdateCheckIntervalMinutes, type UpdateState } from "@shared/contracts";
@@ -87,6 +88,13 @@ export function SettingsDialog({
   onOpenWorkspaceManager,
 }: SettingsDialogProps): React.JSX.Element | null {
   const [section, setSection] = useState<SettingsSection>("general");
+  const handleProductView = useEffectEvent((event: Event) => {
+    const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
+    if (request.input.action !== "open_settings") return;
+    setSection(request.input.section ?? "general");
+    respond({ status: "completed", result: { section: request.input.section ?? "general" } });
+  });
+  useEffect(() => { const handler = (event: Event): void => handleProductView(event); window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   const [themePending, setThemePending] = useState(false);
   const [themeError, setThemeError] = useState<AppError | null>(null);
   const [launchPending, setLaunchPending] = useState(false);

@@ -89,7 +89,7 @@ describe("parseOpenAiStream", () => {
 
   it("exposes project creation to supported contexts and rejects forged project or credential fields", async () => {
     const context = { executorBotId: crypto.randomUUID(), executionKey: "project", projectTools: true };
-    expect(structuredModelToolDefinitions(context).map((tool) => tool.name)).toEqual(["project_list_bots", "bot_create", "room_create"]);
+    expect(structuredModelToolDefinitions(context).map((tool) => tool.name)).toEqual(["product_catalog", "product_describe", "product_execute", "project_list_bots", "bot_create", "room_create"]);
     expect(parseStructuredModelToolCall("create", "bot_create", { name: "审阅助手" }, context)).toMatchObject({ type: "project-tool", tool: { kind: "bot-create", name: "审阅助手" } });
     expect(() => parseStructuredModelToolCall("create", "bot_create", { name: "审阅助手" }, { ...context, projectTools: false })).toThrow();
     expect(() => parseStructuredModelToolCall("create", "bot_create", { name: "审阅助手", projectId: crypto.randomUUID() }, context)).toThrow();

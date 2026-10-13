@@ -147,7 +147,13 @@ const api: AevorenBotApi = {
     retry: () => ipcRenderer.invoke(IPC.updatesRetry),
     installAndRestart: () => ipcRenderer.invoke(IPC.updatesInstallAndRestart),
   },
+  productUI: { respond: (id, result) => ipcRenderer.invoke(IPC.productViewReply, id, result) },
   events: {
+    subscribeProductView: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, request: import("@shared/product-view").ProductViewRequest) => listener(request);
+      ipcRenderer.on(IPC.productViewEvent, handler);
+      return () => ipcRenderer.removeListener(IPC.productViewEvent, handler);
+    },
     subscribeTranscript(listener) {
       const wrapped = (_event: Electron.IpcRendererEvent, value: TranscriptEvent): void => listener(value);
       ipcRenderer.on(IPC.transcriptEvent, wrapped);

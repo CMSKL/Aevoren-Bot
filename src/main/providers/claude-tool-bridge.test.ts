@@ -18,7 +18,7 @@ function configuration(bridge: ClaudeToolBridge): { url: string; headers: Record
 }
 
 describe("Claude host MCP bridge", () => {
-  it("uses real HTTP MCP, exposes exactly the six scoped tools and preserves file evidence", async () => {
+  it("uses real HTTP MCP, exposes the complete scoped host tool set and preserves file evidence", async () => {
     const directory = mkdtempSync(join(tmpdir(), "aevoren-claude-bridge-"));
     const workspaceId = randomUUID();
     const content = readFileSync(join(process.cwd(), "LICENSE"), "utf8");
@@ -37,14 +37,14 @@ describe("Claude host MCP bridge", () => {
       const config = configuration(bridge);
       if (process.platform !== "win32") expect(statSync(bridge.configPath).mode & 0o777).toBe(0o600);
       await client.connect(new StreamableHTTPClientTransport(new URL(config.url), { requestInit: { headers: config.headers } }));
-      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(CLAUDE_HOST_TOOL_NAMES);
+      expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual([...CLAUDE_HOST_TOOL_NAMES].sort());
       const result = await client.callTool({ name: "workspace_read", arguments: { workspaceId, path: "license.txt", maxBytes: 30_000 } });
       expect(result.isError).toBe(false);
       expect(JSON.stringify(result)).toContain("Apache License");
       expect(JSON.stringify(result)).toContain(createHash("sha256").update(content).digest("hex"));
       expect(received).toEqual([expect.objectContaining({ type: "workspace-tool", tool: expect.objectContaining({ workspaceId, path: "license.txt" }), respond: expect.any(Function), toolSignal: expect.any(AbortSignal) })]);
       for (const args of [
-        { name: "clipboard_read", arguments: { maxCharacters: 10 } },
+        { name: "unknown_product_tool", arguments: {} },
         { name: "workspace_read", arguments: { workspaceId: randomUUID(), path: "license.txt" } },
         { name: "workspace_read", arguments: { workspaceId, path: "../outside.txt" } },
         { name: "workspace_read", arguments: { workspaceId, path: ".claude/settings.json" } },

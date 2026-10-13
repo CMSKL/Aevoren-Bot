@@ -1,4 +1,5 @@
-import { memo, useId, useState, type CSSProperties, type ReactNode } from "react";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
+import { useEffect, useEffectEvent, memo, useId, useState, type CSSProperties, type ReactNode } from "react";
 
 export type ExpandableTraceKind = "steps" | "reasoning" | "search" | "coding";
 export type ExpandableTraceTone = "working" | "success" | "attention" | "error" | "neutral";
@@ -81,6 +82,12 @@ export const ExpandableTrace = memo(function ExpandableTrace({
 }: ExpandableTraceProps): React.JSX.Element {
   const contentId = useId();
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
+  const handleProductView = useEffectEvent((event: Event) => {
+    const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
+    if (request.input.action !== "expand_record" || !rows.some((row) => row.id === request.input.recordId)) return;
+    setManualExpanded(request.input.expanded ?? true); respond({ status: "completed" });
+  });
+  useEffect(() => { const handler = (event: Event): void => handleProductView(event); window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   const expanded = manualExpanded ?? autoExpanded;
   const label = active ? activeLabel : settledLabel;
 

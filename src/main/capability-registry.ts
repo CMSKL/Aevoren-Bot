@@ -68,6 +68,14 @@ function capabilityDescriptors(
   const mcpAvailable = networkAvailable && context.mcpTools.length > 0;
   return [
     {
+      id: "product.operations", name: "产品操作", category: "conversation",
+      description: "查询完整产品动作目录，按统一授权调用设置、Bot、群聊、消息、任务、Memory、MCP、模型连接、项目、文件与更新。",
+      effectClass: "write-reversible", adapterKind: "core",
+      availability: context.providerCapabilities?.workspaceTools || context.providerCapabilities?.networkTools ? "available" : "unavailable",
+      reason: context.providerCapabilities?.workspaceTools || context.providerCapabilities?.networkTools ? null : "当前模型来源尚未接入宿主产品工具。",
+      permissionState: "not-required", toolNames: context.providerCapabilities?.workspaceTools || context.providerCapabilities?.networkTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
       id: "project.provisioning",
       name: "项目内 Bot 与群聊创建",
       category: "conversation",

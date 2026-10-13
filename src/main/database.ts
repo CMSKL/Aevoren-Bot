@@ -1,3 +1,5 @@
+import { normalizeProductRequest } from "./product-request";
+import { productOperation } from "@shared/product-operations";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -1966,6 +1968,87 @@ export const MIGRATIONS = [
       ALTER TABLE room_turns ADD COLUMN lead_assignments_json TEXT CHECK (lead_assignments_json IS NULL OR json_valid(lead_assignments_json));
     `,
   },
+  {
+    version: 32,
+    foreignKeysOff: true,
+    sql: `
+
+      CREATE TABLE approval_requests_v32 (
+        id TEXT PRIMARY KEY,
+        tool_invocation_id TEXT NOT NULL UNIQUE
+          REFERENCES tool_invocations_v32(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        action_kind TEXT NOT NULL CHECK (action_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure', 'project-bots', 'bot-create', 'room-create', 'product-call'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible', 'write-external', 'irreversible', 'computer-control')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        target_digest TEXT NOT NULL CHECK (length(target_digest) = 64),
+        arguments_digest TEXT NOT NULL CHECK (length(arguments_digest) = 64),
+        requested_scope TEXT NOT NULL CHECK (requested_scope = 'once'),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'allowed', 'denied', 'expired', 'cancelled')),
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('allow-once', 'deny')),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE tool_invocations_v32 (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure', 'project-bots', 'bot-create', 'room-create', 'product-call'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible', 'write-external', 'irreversible', 'computer-control')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 600000),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded', 'failed',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests_v32(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      INSERT INTO approval_requests_v32 SELECT * FROM approval_requests;
+      INSERT INTO tool_invocations_v32 SELECT * FROM tool_invocations;
+      DROP TABLE tool_invocations;
+      DROP TABLE approval_requests;
+      ALTER TABLE approval_requests_v32 RENAME TO approval_requests;
+      ALTER TABLE tool_invocations_v32 RENAME TO tool_invocations;
+      CREATE INDEX tool_invocations_by_session ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime ON tool_invocations(runtime_run_id, created_at, id);
+      CREATE INDEX approval_requests_pending ON approval_requests(state, expires_at, created_at, id);
+      ALTER TABLE tool_invocations ADD COLUMN product_result_content TEXT CHECK (product_result_content IS NULL OR length(product_result_content) <= 600000);
+      ALTER TABLE transcript_entries ADD COLUMN origin_json TEXT CHECK (origin_json IS NULL OR json_valid(origin_json));
+    `,
+  },
 ] as const;
 
 type ConversationSidebarRow = {
@@ -2111,6 +2194,7 @@ type TranscriptRow = {
   role: TranscriptRole;
   body: string;
   attachments_json?: string;
+  origin_json?: string | null;
   status: TranscriptStatus;
   send_state?: SendState | null;
   speaker_bot_id: string | null;
@@ -2558,6 +2642,7 @@ function toSession(row: SessionRow): Session {
 
 function toTranscript(row: TranscriptRow): TranscriptEntry {
   return {
+    ...(row.origin_json ? { origin: JSON.parse(row.origin_json) as import("@shared/contracts").DelegationOrigin } : {}),
     id: row.id,
     sessionId: row.session_id,
     generation: row.generation,
@@ -2992,6 +3077,7 @@ function canonicalToolCommand(input: ToolInvocationCommand): string {
 }
 
 function toolEffectClass(tool: ToolRequest): CapabilityEffectClass {
+  if (tool.kind === "product-call") return tool.action === "execute" ? productOperation(tool.operation)?.effectClass ?? "irreversible" : "pure";
   if (tool.kind === "time-now" || tool.kind === "text-measure") return "pure";
   if (tool.kind === "workspace-write" || tool.kind === "bot-create" || tool.kind === "room-create") return "write-reversible";
   if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "mcp-call") return "read-remote";
@@ -3012,6 +3098,7 @@ function toolWorkspaceId(tool: ToolRequest): string | null {
 
 function toolTargetPath(tool: ToolRequest): string {
   switch (tool.kind) {
+    case "product-call": return tool.action === "catalog" ? "产品功能目录" : tool.operation;
     case "workspace-list":
     case "workspace-read":
     case "workspace-search":
@@ -3228,16 +3315,21 @@ export class AppRepository {
     return row?.value || null;
   }
 
+  private transactionDepth = 0;
+
   private transaction<T>(operation: () => T): T {
-    this.database.exec("BEGIN IMMEDIATE;");
+    const depth = this.transactionDepth;
+    const savepoint = `aevoren_${depth}`;
+    this.database.exec(depth === 0 ? "BEGIN IMMEDIATE;" : `SAVEPOINT ${savepoint};`);
+    this.transactionDepth += 1;
     try {
       const result = operation();
-      this.database.exec("COMMIT;");
+      this.database.exec(depth === 0 ? "COMMIT;" : `RELEASE SAVEPOINT ${savepoint};`);
       return result;
     } catch (error) {
-      this.database.exec("ROLLBACK;");
+      this.database.exec(depth === 0 ? "ROLLBACK;" : `ROLLBACK TO SAVEPOINT ${savepoint}; RELEASE SAVEPOINT ${savepoint};`);
       throw error;
-    }
+    } finally { this.transactionDepth -= 1; }
   }
 
   private nextTranscriptUpdateSeq(sessionId: string): number {
@@ -4148,11 +4240,51 @@ export class AppRepository {
     return this.getWorkspace(id, true);
   }
 
+  commitProductMutation<T>(id: string, operation: () => T, receipt: (result: T) => { content: string; metadata: Record<string, string | number | boolean | null> }): T {
+    return this.transaction(() => {
+      const result = operation();
+      const recorded = receipt(result);
+      this.completeProductToolInvocation(id, digestMessage(recorded.content), recorded.content, recorded.metadata);
+      return result;
+    });
+  }
+
+  productResourceCount(rootClientNonce: string): number {
+    const row = this.database.prepare(`SELECT coalesce(sum(CASE WHEN tool_invocations.tool_kind IN ('bot-create', 'room-create') THEN CASE WHEN json_extract(result_metadata_json, '$.reused') = 1 THEN 0 ELSE 1 END ELSE coalesce(json_extract(result_metadata_json, '$.resourceCount'), 0) END), 0) AS count FROM tool_invocations JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id JOIN transcript_entries ON transcript_entries.client_nonce = runtime_runs.client_nonce AND transcript_entries.role = 'user' WHERE tool_invocations.state = 'succeeded' AND (runtime_runs.client_nonce = ? OR json_extract(transcript_entries.origin_json, '$.rootClientNonce') = ?)`).get(rootClientNonce, rootClientNonce) as { count: number };
+    return row.count;
+  }
+
+  assertProductReplaySafe(clientNonce: string, tool: import("@shared/contracts").ProductToolRequest): void {
+    if (this.database.prepare(`SELECT 1 FROM tool_invocations JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id WHERE runtime_runs.client_nonce = ? AND arguments_json = ? AND tool_invocations.state = 'interrupted-unknown'`).get(clientNonce, JSON.stringify(normalizeProductRequest(tool)))) {
+      throw new AevorenBotError("TOOL_STATE_INVALID", "上次执行中断，结果尚未确认；请先查询实际状态，不能自动重发。");
+    }
+  }
+
+  completeProductToolInvocation(id: string, resultDigest: string, content: string, metadata: Record<string, string | number | boolean | null>): ToolInvocation {
+    if (content.length > 600_000) throw new AevorenBotError("INVALID_REQUEST", "结果过大，请缩小查询范围。");
+    return this.transaction(() => {
+      const invocation = this.completeToolInvocation(id, resultDigest, metadata);
+      this.database.prepare("UPDATE tool_invocations SET product_result_content = ? WHERE id = ?").run(content, id);
+      return invocation;
+    });
+  }
+
+  findProductOperationResult(clientNonce: string, tool: import("@shared/contracts").ProductToolRequest): string | null {
+    const rows = this.database.prepare(`SELECT product_result_content FROM tool_invocations JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id WHERE runtime_runs.client_nonce = ? AND tool_kind = 'product-call' AND arguments_json = ? AND tool_invocations.state = 'succeeded'`).all(clientNonce, JSON.stringify(normalizeProductRequest(tool))) as Array<{ product_result_content: string | null }>;
+    for (const row of rows) {
+      const content = row.product_result_content;
+      if (typeof content === "string") return content;
+    }
+    return null;
+  }
+
   prepareToolInvocation(
     input: ToolInvocationCommand,
     expiresAt = defaultApprovalExpiry(),
+    displayTarget?: string,
   ): ToolPrepareResult {
     const parsed = toolInvocationCommandSchema.parse(input) as ToolInvocationCommand;
+    if (parsed.tool.kind === "product-call") parsed.tool = normalizeProductRequest(parsed.tool);
     if (!Number.isFinite(Date.parse(expiresAt))) throw new AevorenBotError("INVALID_REQUEST");
     const runtime = this.getRuntimeRun(parsed.runtimeRunId);
     if (runtime.state !== "running" && runtime.state !== "streaming") {
@@ -4192,7 +4324,7 @@ export class AppRepository {
     const targetDigest = toolTargetDigest(parsed.tool);
     const effectClass = toolEffectClass(parsed.tool);
     const workspaceId = toolWorkspaceId(parsed.tool);
-    const targetPath = toolTargetPath(parsed.tool);
+    const targetPath = displayTarget?.slice(0, 2_048) ?? toolTargetPath(parsed.tool);
     this.transaction(() => {
       this.database
         .prepare(
@@ -4494,13 +4626,8 @@ export class AppRepository {
         const result = this.projectCreationResult(previous.id);
         return { invocation: this.completeToolInvocation(id, digestMessage(result.content), result.metadata), content: result.content };
       }
-      const count = this.database.prepare(
-        `SELECT COUNT(DISTINCT json_extract(invocation.result_metadata_json, '$.resourceId')) AS count
-         FROM tool_invocations AS invocation JOIN runtime_runs AS runtime ON runtime.id = invocation.runtime_run_id
-         WHERE runtime.client_nonce = ? AND invocation.executor_bot_id = ? AND invocation.state = 'succeeded'
-           AND invocation.tool_kind IN ('bot-create', 'room-create')`,
-      ).get(runtime.clientNonce, owner.id) as { count: number };
-      if (count.count >= 8) throw new AevorenBotError("PROJECT_CREATION_LIMIT");
+      const rootNonce = this.getUserMessage(runtime.clientNonce).origin?.rootClientNonce ?? runtime.clientNonce;
+      if (this.productResourceCount(rootNonce) >= 8) throw new AevorenBotError("PROJECT_CREATION_LIMIT");
       const tool = invocation.arguments;
       let resource: Bot | Room;
       if (tool.kind === "bot-create") {
@@ -5388,7 +5515,41 @@ export class AppRepository {
     return JSON.stringify(metadata);
   }
 
-  prepareMessage(command: SendCommand): { disposition: "prepared" | "duplicate"; journal: SendJournalEntry } {
+  listDelegatedRuntimeRuns(parentRunId: string): RuntimeRun[] {
+    const rows = this.database.prepare(`SELECT runtime_runs.* FROM runtime_runs JOIN transcript_entries ON transcript_entries.client_nonce = runtime_runs.client_nonce AND transcript_entries.role = 'user' WHERE (json_extract(transcript_entries.origin_json, '$.fromRuntimeRunId') = ? OR EXISTS (SELECT 1 FROM json_each(json_extract(transcript_entries.origin_json, '$.ancestorRunIds')) WHERE value = ?)) AND json_extract(transcript_entries.origin_json, '$.kind') = 'ai-delegation'`).all(parentRunId, parentRunId) as RuntimeRow[];
+    return rows.map(toRuntime);
+  }
+
+  listDelegatedRoomBatches(parentRunId: string): RoomBatch[] {
+    const rows = this.database.prepare(`SELECT room_batches.id FROM room_batches JOIN transcript_entries ON transcript_entries.id = room_batches.trigger_message_id WHERE (json_extract(transcript_entries.origin_json, '$.fromRuntimeRunId') = ? OR EXISTS (SELECT 1 FROM json_each(json_extract(transcript_entries.origin_json, '$.ancestorRunIds')) WHERE value = ?)) AND json_extract(transcript_entries.origin_json, '$.kind') = 'ai-delegation'`).all(parentRunId, parentRunId) as Array<{ id: string }>;
+    return rows.map((row) => this.getRoomBatch(row.id));
+  }
+
+  private recordDelegationOrigin(clientNonce: string, origin: import("@shared/contracts").DelegationOrigin): void {
+    if (origin.kind === "routine") {
+      if (!origin.routineRunId) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      const run = this.getRoutineRun(origin.routineRunId);
+      const message = this.getUserMessage(clientNonce);
+      if (run.clientNonce !== clientNonce || origin.rootClientNonce !== clientNonce || run.routineId !== origin.routineId ||
+          run.botId !== origin.fromBotId || message.sessionId !== this.getMainSession(run.botId).id || origin.depth !== 0 ||
+          message.body !== `[Routine: ${run.routineName}]\n${run.promptSnapshot}`) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      this.database.prepare("UPDATE transcript_entries SET origin_json = ? WHERE client_nonce = ? AND role = 'user' AND origin_json IS NULL").run(JSON.stringify(origin), clientNonce);
+      return;
+    }
+    const parent = this.getRuntimeRun(origin.fromRuntimeRunId);
+    if (!["running", "streaming"].includes(parent.state)) throw new AevorenBotError("TOOL_EXECUTION_CANCELLED");
+    const source = this.getUserMessage(parent.clientNonce);
+    const rootNonce = source.origin?.rootClientNonce ?? parent.clientNonce;
+    if (parent.executorBotId !== origin.fromBotId || parent.sessionId !== origin.fromSessionId ||
+        rootNonce !== origin.rootClientNonce || origin.depth !== (source.origin?.depth ?? 0) + 1 || origin.depth > 3 ||
+        this.getUserMessage(rootNonce).origin?.kind === "ai-delegation") throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const count = this.database.prepare("SELECT count(*) AS count FROM transcript_entries WHERE json_extract(origin_json, '$.rootClientNonce') = ?").get(rootNonce) as { count: number };
+    if (count.count >= 8) throw new AevorenBotError("TOOL_ROUND_LIMIT_EXCEEDED");
+    this.database.prepare("UPDATE transcript_entries SET origin_json = ? WHERE client_nonce = ? AND role = 'user' AND origin_json IS NULL")
+      .run(JSON.stringify({ ...origin, ancestorRunIds: [...(source.origin?.ancestorRunIds ?? []), parent.id] }), clientNonce);
+  }
+
+  prepareMessage(command: SendCommand, origin?: import("@shared/contracts").DelegationOrigin): { disposition: "prepared" | "duplicate"; journal: SendJournalEntry } {
     const attachments = normalizeAttachmentDrafts(command.attachments);
     const attachmentMetadata = attachments.map(({ content: _content, ...attachment }) => attachment);
     const digest = digestMessage(command.text, attachmentMetadata);
@@ -5420,6 +5581,7 @@ export class AppRepository {
         )
         .run(userEntryId, session.id, session.generation, sequence, command.clientNonce, command.text, JSON.stringify(attachmentMetadata), updatedSeq, timestamp, timestamp);
       this.insertMessageAttachments(userEntryId, command.clientNonce, attachments);
+      if (origin) this.recordDelegationOrigin(command.clientNonce, origin);
     });
     return { disposition: "prepared", journal: this.getSendOrThrow(command.clientNonce) };
   }
@@ -5634,6 +5796,7 @@ export class AppRepository {
           timestamp,
         );
       this.insertMessageAttachments(triggerMessageId, input.clientNonce, attachments);
+      if (input.origin) this.recordDelegationOrigin(input.clientNonce, input.origin);
       this.database
         .prepare(
           `INSERT INTO room_batches(
@@ -6296,7 +6459,7 @@ export class AppRepository {
       if (
         approvalEntry.id !== batch.triggerMessageId || approvalEntry.clientNonce !== batch.clientNonce ||
         approvalEntry.sessionId !== session.id || approvalEntry.generation !== session.generation ||
-        approvalEntry.role !== "user" || approvalEntry.status !== "completed" || approvalEntry.seq <= assistant.seq ||
+        approvalEntry.origin || approvalEntry.role !== "user" || approvalEntry.status !== "completed" || approvalEntry.seq <= assistant.seq ||
         !brief || !brief.invocation.targetPath.startsWith("02-briefs/") || brief.invocation.resultMetadata?.sha256 !== approval.sha256
       ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
       approvedBrief = approval;

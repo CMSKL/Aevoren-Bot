@@ -91,7 +91,7 @@ describe("Conversation repository", () => {
     expect(reopened.listConversations()).toEqual(expected);
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(inspected.prepare("SELECT * FROM bots").all()).toEqual(identities);
-    expect(inspected.prepare("SELECT * FROM transcript_entries ORDER BY id").all()).toEqual(transcript);
+    expect(inspected.prepare("SELECT * FROM transcript_entries ORDER BY id").all().map(({ origin_json, ...row }) => { expect(origin_json).toBeNull(); return row; })).toEqual(transcript);
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     inspected.close();
     const backupDirectory = join(filename, "..", "Backups");

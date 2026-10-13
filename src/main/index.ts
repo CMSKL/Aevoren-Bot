@@ -50,6 +50,7 @@ let routineService: RoutineService | null = null;
 let allowClose = false;
 let closeRequested = false;
 let quitRequested = false;
+let productExitRequested = false;
 let rendererReady = false;
 let rendererEverReady = false;
 let pendingClose = false;
@@ -282,9 +283,10 @@ app.whenReady().then(async () => {
   const workspaceService = new WorkspaceService(repository);
   mcpService = new McpService(repository, electronSecretCodec, app.getVersion(), (url) => shell.openExternal(url));
   await mcpService.initialize();
+  const workspaceToolExecutor = new WorkspaceToolExecutor(repository, workspaceService, new NetworkToolExecutor(), mcpService, new DeviceToolExecutor(() => clipboard.readText()));
   const workspaceToolCoordinator = new WorkspaceToolCoordinator(
     repository,
-    new WorkspaceToolExecutor(repository, workspaceService, new NetworkToolExecutor(), mcpService, new DeviceToolExecutor(() => clipboard.readText())),
+    workspaceToolExecutor,
     emitTool,
     decisionService,
   );
@@ -354,7 +356,8 @@ app.whenReady().then(async () => {
     emit: emitUpdate,
   });
   const updateRepository = repository;
-  registerIpc({
+  const productUpdateService = updateService;
+  const productOperations = registerIpc({
     window: mainWindow,
     repository,
     providers: providerService,
@@ -424,6 +427,39 @@ app.whenReady().then(async () => {
       if (!hideTestWindow) shell.showItemInFolder(target.canonicalPath);
       return true;
     },
+    requestUpdateAfterRun(runId) {
+      const downloaded = productUpdateService.getState();
+      if (downloaded.status !== "downloaded") throw new AevorenBotError("UPDATE_NOT_READY");
+      const timer = setInterval(() => {
+        if (!repository) { clearInterval(timer); return; }
+        let run: import("@shared/contracts").RuntimeRun;
+        try { run = repository.getRuntimeRun(runId); } catch { clearInterval(timer); return; }
+        if (["failed", "cancelled", "interrupted"].includes(run.state)) { clearInterval(timer); return; }
+        if (run.state !== "completed" || repository.hasActiveTasks()) return;
+        clearInterval(timer);
+        const current = productUpdateService.getState();
+        if (current.status !== "downloaded" || current.availableVersion !== downloaded.availableVersion) return;
+        allowClose = true;
+        try { productUpdateService.installAndRestart(); } catch { allowClose = false; }
+      }, 100);
+      timer.unref();
+      return { status: "running", result: { scheduled: true, condition: "当前请求完成且没有其他活跃任务时安装更新；请求被取消或失败则取消安装。" } };
+    },
+    requestExitAfterRun(runId) {
+      const timer = setInterval(() => {
+        if (!mainWindow || mainWindow.isDestroyed() || !repository) { clearInterval(timer); return; }
+        let run: import("@shared/contracts").RuntimeRun;
+        try { run = repository.getRuntimeRun(runId); } catch { clearInterval(timer); return; }
+        if (["failed", "cancelled", "interrupted"].includes(run.state)) { clearInterval(timer); return; }
+        if (run.state !== "completed" || repository.hasActiveTasks()) return;
+        clearInterval(timer);
+        productExitRequested = true;
+        quitRequested = true;
+        requestRendererFlush(mainWindow);
+      }, 100);
+      timer.unref();
+      return { status: "running", result: { scheduled: true, condition: "当前请求完成且没有其他活跃任务时退出；请求被取消或失败则取消退出。" } };
+    },
     forceFakeProvider,
     rendererReady() {
       if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -434,6 +470,12 @@ app.whenReady().then(async () => {
     confirmClose(canClose) {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       if (!closeRequested) return;
+      if (productExitRequested && repository?.hasActiveTasks()) {
+        productExitRequested = false; quitRequested = false; closeRequested = false; pendingClose = false;
+        clearCloseConfirmationTimer();
+        return;
+      }
+      productExitRequested = false;
       clearCloseConfirmationTimer();
       if (!canClose) {
         closeRequested = false;
@@ -450,6 +492,11 @@ app.whenReady().then(async () => {
     cancelUpdateInstall() {
       allowClose = false;
     },
+  });
+  workspaceToolExecutor.setProductOperations(productOperations);
+  sendWorker.executor.setDelegationCancellation((runId) => {
+    for (const child of updateRepository.listDelegatedRuntimeRuns(runId)) sendWorker.executor.cancelRun(child.id);
+    for (const batch of updateRepository.listDelegatedRoomBatches(runId)) roomCoordinator?.cancel(batch.id);
   });
   updateService.start();
   routineService.start();

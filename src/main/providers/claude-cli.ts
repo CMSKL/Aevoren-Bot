@@ -1,3 +1,4 @@
+import { createClaudeTextTools } from "./claude-text-tools";
 import { execFile, spawn } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -191,7 +192,7 @@ export async function inspectClaudeCli(cliCommand: string): Promise<ClaudeCliIns
 function promptText(messages: ChatMessage[]): string {
   return messages.map((message) => {
     if (message.role === "tool") return `[tool ${message.tool_call_id}]\n${message.content}`;
-    return `[${message.role}]\n${message.content}`;
+    return `[${message.role}]\n${message.content}${"tool_calls" in message && message.tool_calls.length ? `\n[host-tool-requests] ${JSON.stringify(message.tool_calls)}` : ""}`;
   }).join("\n\n");
 }
 
@@ -252,6 +253,7 @@ export class ClaudeCliProvider implements ModelProvider {
       await bridge?.close();
       throw new AevorenBotError("MODEL_HOST_TOOL_UNAVAILABLE");
     }
+    const textTools = !bridge && context && structuredModelToolDefinitions(context).length > 0 ? createClaudeTextTools(context) : null;
     const environment = claudeEnvironment(Boolean(bridge));
     const args = [
       "-p",
@@ -280,12 +282,13 @@ export class ClaudeCliProvider implements ModelProvider {
     let streamed = false;
     let completed = false;
     let assistantFallback = "";
+    let bufferedText = "";
     child.once("error", () => events.fail(new AevorenBotError("MODEL_CLI_INVALID")));
     const abort = (): void => { events.fail(new DOMException("Aborted", "AbortError")); child.kill("SIGTERM"); };
     signal.addEventListener("abort", abort, { once: true });
     const heartbeat = setInterval(() => events.push({ type: "activity" }), 15_000);
     heartbeat.unref();
-    child.stdin.end(promptText(messages));
+    child.stdin.end(`${textTools ? `[system]\n${textTools.prompt}\n\n` : ""}${promptText(messages)}`);
     child.stderr.resume();
     const lines = createInterface({ input: child.stdout });
     void (async () => {
@@ -311,7 +314,8 @@ export class ClaudeCliProvider implements ModelProvider {
           if (event.type === "content_block_delta" && delta?.type === "text_delta" && typeof delta.text === "string" && delta.text) {
             accept();
             streamed = true;
-            events.push({ type: "delta", text: delta.text });
+            if (!textTools) events.push({ type: "delta", text: delta.text });
+            else { bufferedText += delta.text; if (bufferedText.length > 600_000) throw new AevorenBotError("MODEL_CLI_PROTOCOL_ERROR"); }
           }
           continue;
         }
@@ -322,8 +326,10 @@ export class ClaudeCliProvider implements ModelProvider {
         if (frame.type !== "result") continue;
         if (frame.subtype !== "success" || frame.is_error === true) throw claudeResultError(frame);
         accept();
-        const fallback = typeof frame.result === "string" ? frame.result : assistantFallback;
-        if (!streamed && fallback) events.push({ type: "delta", text: fallback });
+        const fallback = (typeof frame.result === "string" ? frame.result : assistantFallback) || bufferedText;
+        const requestedTools = textTools?.parse(fallback) ?? null;
+        if (requestedTools) for (const tool of requestedTools) events.push(tool);
+        else if ((textTools || !streamed) && fallback) events.push({ type: "delta", text: fallback });
         completed = true;
         events.push({ type: "completed", finishReason: "stop" });
         events.end();

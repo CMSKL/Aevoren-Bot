@@ -164,6 +164,7 @@ export type SendState =
   | "interrupted-unknown";
 
 export type TranscriptEntry = {
+  origin?: DelegationOrigin;
   id: string;
   sessionId: string;
   generation: number;
@@ -491,7 +492,18 @@ export type ComputationToolRequest = {
   text: string;
 };
 
+export type ProductToolRequest =
+  | { kind: "product-call"; action: "catalog"; query?: string }
+  | { kind: "product-call"; action: "describe"; operation: string }
+  | { kind: "product-call"; action: "execute"; operation: string; input?: unknown };
+
+export type DelegationOrigin = {
+  ancestorRunIds?: string[];
+  kind: "ai-delegation" | "routine"; routineId?: string; routineRunId?: string; fromBotNameSnapshot?: string; fromBotId: string; fromSessionId: string; fromRuntimeRunId: string; rootClientNonce: string; depth: number;
+};
+
 export type ProjectToolRequest =
+  | ProductToolRequest
   | { kind: "project-bots" }
   | { kind: "bot-create"; name: string; label: string; description: string; instructions: string }
   | { kind: "room-create"; name: string; description: string; memberBotIds: string[] };
@@ -896,6 +908,7 @@ export type InitialAgentTurnInput = {
 };
 
 export type CreateRoomRunInput = {
+  origin?: DelegationOrigin;
   roomId: string;
   sessionId: string;
   clientNonce: string;
@@ -1365,7 +1378,11 @@ export interface AevorenBotApi {
     retry(): Promise<ApiResult<UpdateState>>;
     installAndRestart(): Promise<ApiResult<UpdateState>>;
   };
+  productUI: {
+    respond(id: string, result: import("./product-view").ProductViewResult): Promise<ApiResult<boolean>>;
+  };
   events: {
+    subscribeProductView(listener: (request: import("./product-view").ProductViewRequest) => void): () => void;
     subscribeTranscript(listener: (event: TranscriptEvent) => void): () => void;
     subscribeSendState(listener: (event: SendStateEvent) => void): () => void;
     subscribeRuntime(listener: (event: RuntimeEvent) => void): () => void;

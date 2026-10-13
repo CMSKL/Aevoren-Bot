@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
+import { useEffectEvent, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { Bot, ConversationBatchDeleteInput, ConversationSummary, Project, Room, Workspace } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import { buildBotIdentityMap } from "../bot-identity";
@@ -225,6 +226,26 @@ export function Sidebar({
   const [roomContextMenu, setRoomContextMenu] = useState<{ roomId: string; x: number; y: number } | null>(null);
   const [batchContextMenu, setBatchContextMenu] = useState<BatchContextMenuState | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<ConversationKey>>(EMPTY_SELECTION);
+  const handleProductView = useEffectEvent((event: Event) => {
+    const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
+    const input = request.input;
+    if (input.action === "sidebar_search") { setQuery(input.query ?? ""); setUnreadOnly(input.unreadOnly ?? false); setSelectedKeys(EMPTY_SELECTION); respond({ status: "completed" }); }
+    if (input.action === "sidebar_expand") {
+      if (input.group === "hidden") setHiddenOpen(input.expanded ?? true);
+      else if (input.group === "archived") setArchivedOpen(input.expanded ?? true);
+      else if (input.group === "workspaces") setWorkspaceExpanded(input.expanded ?? true);
+      else if ((input.group === "bot_group" || input.group === "room_group") && input.projectId) { const setter = input.group === "bot_group" ? setCollapsedBotGroupIds : setCollapsedRoomGroupIds; setter((current) => { const next = new Set(current); if (input.expanded ?? true) next.delete(input.projectId!); else next.add(input.projectId!); return next; }); }
+      else if (input.group === "project" && input.projectId) setCollapsedProjectIds((current) => { const next = new Set(current); if (input.expanded ?? true) next.delete(input.projectId!); else next.add(input.projectId!); return next; });
+      else { respond({ status: "failed", reason: "请选择有效的分组。" }); return; }
+      respond({ status: "completed" });
+    }
+    if (input.action === "sidebar_select") {
+      const keys = [...(input.botIds ?? []).map((id) => `bot:${id}` as ConversationKey), ...(input.roomIds ?? []).map((id) => `room:${id}` as ConversationKey)];
+      if ((input.botIds ?? []).some((id) => !bots.some((bot) => bot.id === id)) || (input.roomIds ?? []).some((id) => !rooms.some((room) => room.id === id))) { respond({ status: "failed", reason: "选择目标不存在。" }); return; }
+      setSelectedKeys(new Set(keys)); respond({ status: "completed", result: { count: keys.length } });
+    }
+  });
+  useEffect(() => { const handler = (event: Event): void => handleProductView(event); window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   const [batchDeleteTarget, setBatchDeleteTarget] = useState<ConversationKey[] | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");

@@ -92,6 +92,7 @@ describe("CapabilityRegistry", () => {
     repository.setConversationProject(created.session.id, registered.project.id, repository.getConversation(created.session.id).version);
     const afterGrant = await registry.getSnapshot({ botId: bot.id });
     expect(afterGrant.availableTools).toEqual([
+      "product_catalog", "product_describe", "product_execute",
       "project_list_bots", "bot_create", "room_create",
       "text_measure", "workspace_list", "workspace_read", "workspace_search", "web_search", "web_fetch", "time_now", "weather_current", "clipboard_read",
     ]);
@@ -99,6 +100,7 @@ describe("CapabilityRegistry", () => {
 
     const prompt = registry.forPrompt(bot.id, bot.modelSelection, true);
     expect(prompt.availableTools).toEqual([
+      "product_catalog", "product_describe", "product_execute",
       "project_list_bots", "bot_create", "room_create",
       "handoff_to_agent", "text_measure", "workspace_list", "workspace_read", "workspace_search", "web_search", "web_fetch", "time_now", "weather_current", "clipboard_read",
     ]);

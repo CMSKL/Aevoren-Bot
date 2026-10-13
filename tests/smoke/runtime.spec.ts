@@ -387,7 +387,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
     ]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations,

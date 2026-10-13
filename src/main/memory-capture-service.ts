@@ -82,7 +82,7 @@ export class MemoryCaptureService {
   async capture(input: MemoryCaptureInput): Promise<number> {
     const bot = this.repository.getBot(input.botId);
     const sourceEntry = this.repository.getTranscriptEntry(input.sourceEntryId);
-    if (sourceEntry.role !== "user" || sourceEntry.body !== input.userText || !input.userText.trim()) return 0;
+    if (sourceEntry.origin || sourceEntry.role !== "user" || sourceEntry.body !== input.userText || !input.userText.trim()) return 0;
     const allowedScopes = this.repository.getMemoryCaptureScopes(bot.id, sourceEntry.sessionId);
     const active = this.repository.listRuntimeMemories(bot.id, sourceEntry.sessionId);
     const system = [

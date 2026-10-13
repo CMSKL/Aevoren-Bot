@@ -423,6 +423,7 @@
 .tool-permission-target { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; margin-bottom: 14px; border-radius: 6px; background: var(--surface-soft); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
 .tool-permission-target strong { font-weight: 500; }
 .tool-permission-target span { white-space: pre-wrap; }
+.tool-permission-dialog details pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
 .tool-permission-dialog .tool-permission-privacy { font-size: 13px; }
 .tool-permission-dialog .tool-permission-error { color: var(--danger); }
 .tool-permission-dialog > footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }

@@ -40,6 +40,7 @@ function publicHandoffTask(task: string): string {
 }
 
 export type CoordinatedRoomPolicy = {
+  origin?: import("@shared/contracts").DelegationOrigin;
   maxTurns?: number;
   maxHops?: number;
   maxTargetsPerTurn?: number;
@@ -155,6 +156,7 @@ export class RoomCoordinator {
     const prepared = existing
       ? this.prepareExactDuplicate(command, existing)
       : this.repository.createRoomRunWithInitialTurns({
+          origin: policy.origin,
           roomId: command.roomId,
           sessionId: command.sessionId,
           clientNonce: command.clientNonce,
@@ -685,6 +687,7 @@ export class RoomCoordinator {
         reason,
       });
       const prepared = this.repository.createRoomRunWithInitialTurns({
+        origin: policy.origin,
         roomId: command.roomId,
         sessionId: command.sessionId,
         clientNonce: command.clientNonce,

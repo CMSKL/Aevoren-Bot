@@ -8,7 +8,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } fr
 import { AevorenBotError } from "../errors";
 import { parseStructuredModelToolCall, structuredModelToolDefinitions, type ModelEvent, type ModelRunContext } from "../model";
 
-export const CLAUDE_HOST_TOOL_NAMES = ["workspace_list", "workspace_read", "workspace_search", "workspace_write", "web_search", "web_fetch"] as const;
+export const CLAUDE_HOST_TOOL_NAMES = ["workspace_list", "workspace_read", "workspace_search", "workspace_write", "web_search", "web_fetch", "weather_current", "time_now", "text_measure", "clipboard_read", "project_list_bots", "bot_create", "room_create", "product_catalog", "product_describe", "product_execute"] as const;
 const MAX_BODY_BYTES = 1_048_576;
 // API tools are budgeted in rounds, which can contain several calls. Native MCP
 // must allow a bounded multi-source task, not treat every parallel call as a round.
@@ -49,11 +49,11 @@ export class ClaudeToolBridge {
     this.scopedContext = {
       ...context,
       workspaces: context.workspaces?.map((workspace) => ({ ...workspace })),
-      supportedToolNames: CLAUDE_HOST_TOOL_NAMES.filter((name) => !context.supportedToolNames || context.supportedToolNames.includes(name)),
+      supportedToolNames: context.supportedToolNames,
     };
     const definitions = structuredModelToolDefinitions(this.scopedContext);
     this.toolNames = definitions.map(({ name }) => `mcp__aevoren_host__${name}`);
-    this.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: definitions.map((tool) => ({ ...tool, inputSchema: tool.inputSchema as { type: "object" }, annotations: { readOnlyHint: tool.name !== "workspace_write", destructiveHint: false, openWorldHint: tool.name.startsWith("web_") } })) }));
+    this.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: definitions.map((tool) => ({ ...tool, inputSchema: tool.inputSchema as { type: "object" }, annotations: { readOnlyHint: !["workspace_write", "bot_create", "room_create", "product_execute"].includes(tool.name), destructiveHint: tool.name === "product_execute", openWorldHint: tool.name.startsWith("web_") } })) }));
     this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => {
       if (this.closed || parentSignal.aborted) return errorResult("TOOL_EXECUTION_CANCELLED");
       const key = String(extra.requestId);

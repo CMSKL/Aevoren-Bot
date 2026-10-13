@@ -226,7 +226,12 @@ export const projectToolRequestSchema = z.discriminatedUnion("kind", [
     memberBotIds: z.array(z.string().uuid()).min(2).max(6).refine((ids) => new Set(ids).size === ids.length),
   }).strict(),
 ]);
-export const toolRequestSchema = z.union([workspaceToolRequestSchema, networkToolRequestSchema, mcpToolRequestSchema, deviceToolRequestSchema, computationToolRequestSchema, projectToolRequestSchema]);
+export const productToolRequestSchema = z.discriminatedUnion("action", [
+  z.object({ kind: z.literal("product-call"), action: z.literal("catalog"), query: z.string().max(200).optional() }).strict(),
+  z.object({ kind: z.literal("product-call"), action: z.literal("describe"), operation: z.string().min(1).max(100) }).strict(),
+  z.object({ kind: z.literal("product-call"), action: z.literal("execute"), operation: z.string().min(1).max(100), input: z.unknown().optional() }).strict(),
+]);
+export const toolRequestSchema = z.union([productToolRequestSchema, workspaceToolRequestSchema, networkToolRequestSchema, mcpToolRequestSchema, deviceToolRequestSchema, computationToolRequestSchema, projectToolRequestSchema]);
 export const toolInvocationCommandSchema = z.object({
   runtimeRunId: runIdSchema,
   toolCallId: z.string().trim().min(1).max(200),

@@ -20,11 +20,11 @@ Other Provider or CLI adapters are intentionally not exposed in this release lin
 
 ### Claude Code host tools
 
-Compatible Claude Code CLIs can use these six Aevoren tools: `workspace_list`, `workspace_read`, `workspace_search`, `workspace_write`, `web_search`, and `web_fetch`. Rescan the CLI after upgrading it. This integration reuses the existing CLI API authentication configuration; it does not require entering the same key in Aevoren.
+Compatible Claude Code CLIs can discover Aevoren product operations, scoped Workspace and network tools, text measurement, project creation, and reviewed MCP tools. Rescan the CLI after upgrading it. This integration reuses the existing CLI API authentication configuration; it does not require entering the same key in Aevoren.
 
-Each Runtime starts its own authenticated localhost MCP endpoint. Claude runs with `--bare`, `--restricted`, no built-in tools, and only that explicit MCP configuration. User/global MCP servers, shell, native file tools, browser control, project creation, Handoff and additional tools are not exposed by this bridge. Existing API and Codex CLI integrations are unchanged.
+Each Runtime starts its own authenticated localhost MCP endpoint. Claude runs with `--bare`, `--restricted`, no built-in tools, and only that explicit MCP configuration. The bridge exposes only the host-provided tool catalogue and approved MCP definitions. User/global MCP servers, shell, native file tools and native browser control stay disabled; each model instance retains its actual Handoff capabilities.
 
-Only CLIs advertising the required isolation flags **and** having reusable `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` configuration advertise host-tool capability. Subscription-only OAuth/keychain authentication remains on the existing text path: `--bare` does not read it, and a separate isolated OAuth tool mode has not been verified. This is not reported as successful tool support.
+CLIs advertising the required isolation flags and reusable API credentials use the per-Runtime host MCP bridge. Other authenticated configurations retain the isolated safe text path: native CLI tools stay disabled and complete structured requests with a per-run marker are parsed into the same scoped host operations. OAuth authentication still requires its actual configured login; native OAuth MCP isolation is not claimed. Product operations are discovered with `product_catalog` and `product_describe`, then executed with `product_execute` under the application approval policy.
 
 Select a folder Workspace and enable create-only writes if the task should save a report. Tool calls go through the same approval, permissions and Tool Journal as API/Codex calls. Approving a local read permits its contents to enter model context and, for a cloud model, leave the computer. Do not approve private credentials. Denial, cancellation and network errors are returned to the model without bypassing approvals.
 
