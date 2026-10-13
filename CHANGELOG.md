@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.25] - 2026-10-13
+
+### Fixed
+
+- Bot and group creation can continue after a clarification reply such as supplying the Bot's role. The latest sentence no longer needs creation keywords; each creation still requires genuine per-call approval before any resource is added.
+- Explicit prohibitions and cancellations apply to the requested resource across both legacy and product operation tools. Denying Bot creation does not also prevent a separately requested group, and vice versa.
+- Replies reporting rejected or cancelled creation no longer count as successful creation claims. Affirmative claims still require matching successful tool evidence.
+
+### Verified
+
+- Runtime and SQLite regressions cover clarification replies, approval, denial, cancellation, scoped prohibitions and both creation tool entry points. Hidden Electron acceptance follows the two-message conversation and verifies the actual approval dialog, resource count, sidebar and completed runtime.
+
 ## [0.3.0-beta.24] - 2026-10-12
 
 ### Added

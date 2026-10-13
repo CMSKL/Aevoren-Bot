@@ -48,6 +48,29 @@ afterEach(async () => { for (const item of fixtures.splice(0)) { item.repository
 const call = (operation: string, input?: unknown): ProductToolRequest => ({ kind: "product-call", action: "execute", operation, ...(input === undefined ? {} : { input }) });
 
 describe("product operations", () => {
+  it.each(["allow-once", "deny"] as const)("uses genuine approval for creation after a short reply: %s", async (decision) => {
+    const provider: ModelProvider = {
+      async *run(messages) {
+        yield { type: "started", requestId: "product-follow-up" };
+        if (messages.at(-1)?.role !== "tool") yield { type: "project-tool", toolCallId: "product-create", tool: call("bots.create") };
+        else yield { type: "delta", text: decision === "allow-once" ? "已创建一个 Bot。" : "创建未执行。" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const f = fixture(provider);
+    const actor = f.repository.createBot();
+    const sent = f.worker.send({ sessionId: actor.session.id, clientNonce: crypto.randomUUID(), text: "自媒体选题吧" });
+    await expect.poll(() => f.repository.listToolInvocations(actor.session.id).at(-1)?.state).toBe("awaiting-approval");
+    expect(f.repository.listBots()).toHaveLength(2);
+    const invocation = f.repository.listToolInvocations(actor.session.id).at(-1)!;
+    const approval = f.repository.getApprovalRequest(invocation.approvalRequestId);
+    await f.coordinator.resolve(actor.session.id, approval.id, approval.version, decision);
+    await expect.poll(() => f.repository.getRuntimeRun(sent.runId).state).toBe("completed");
+    expect(f.repository.listBots()).toHaveLength(decision === "allow-once" ? 3 : 2);
+    expect(f.repository.getToolInvocation(invocation.id).state).toBe(decision === "allow-once" ? "succeeded" : "denied");
+  });
+
   it("discovers every UI operation and describes actual field constraints without keyword gating", async () => {
     const f = fixture();
     const catalog = JSON.parse((await f.execute({ kind: "product-call", action: "catalog" })).content);

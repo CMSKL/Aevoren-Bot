@@ -4,6 +4,7 @@ import type {
   CapabilityPromptSnapshot,
   ExecutionEvidenceReceipt,
   ModelSelection,
+  ProjectToolRequest,
   RuntimeEvent,
   RuntimeRoute,
   RuntimeRun,
@@ -129,9 +130,20 @@ type ActiveRun = {
   requiredMeasurementRanges: Array<{ min: number; max: number }>;
 };
 
-function requestsProjectManagement(value: string): boolean {
-  if (/(?:不要|禁止|不允许|不得).{0,12}(?:创建|新建|组建|添加).{0,24}(?:Bot|机器人|智能体|群聊)/iu.test(value)) return false;
-  return /(?:创建|新建|组建|添加|建立).{0,60}(?:Bot|机器人|智能体|群聊|团队)|(?:查看|列出|查询).{0,24}(?:项目成员|Bot)|project_list_bots|bot_create|room_create|\b(?:create|add|list)\b.{0,40}\b(?:bot|agent|room|group|team)\b/iu.test(value);
+function prohibitsProjectCreation(value: string, tool: ProjectToolRequest): boolean {
+  const operation = tool.kind === "product-call" && tool.action === "execute" ? tool.operation : "";
+  const createsBot = tool.kind === "bot-create" || ["bots.create", "bots.duplicate", "teams.createContentTeam"].includes(operation);
+  const createsRoom = tool.kind === "room-create" || ["rooms.create", "teams.createContentTeam"].includes(operation);
+  if (!createsBot && !createsRoom) return false;
+  if (/^\s*(?:算了|取消(?:了|吧)?|先不做了|不用了|不需要了|不要了|cancel(?:\s+it)?|never\s+mind)[。.!！?？\s]*$/iu.test(value)) return true;
+  const clauses = value.replace(/但是|但|而是|\b(?:but|instead)\b/giu, "，");
+  const denials = clauses.match(/(?:不要|禁止|不允许|不得|别|不用|无需|不必|不需要|先不|暂不|取消|停止|暂缓)[^，,。！？!?\n；;]{0,12}(?:创建|新建|组建|添加|建立|建)[^，,。！？!?\n；;]{0,24}|\b(?:do\s+not|don't|must\s+not|never|cancel|stop|pause)\s+(?:create|creating|add|adding|build|building)\b[^，,.!?\n;]{0,40}/giu) ?? [];
+  return denials.some((clause) => {
+    const bot = /Bot|机器人|智能体|\b(?:bots?|agents?)\b/iu.test(clause);
+    const room = /群聊|群|团队|\b(?:rooms?|groups?|teams?)\b/iu.test(clause);
+    const unspecified = /(?:创建|新建|组建|添加|建立|建)(?:了|吧)?\s*$|\b(?:create|creating|add|adding|build|building)(?:\s+it)?\s*$/iu.test(clause);
+    return createsBot && bot || createsRoom && room || !bot && !room && unspecified;
+  });
 }
 
 export const STALE_AFTER_MS = 30_000;
@@ -251,7 +263,7 @@ function requestsLiveResearch(value: string): boolean {
 function positiveToolRequestText(value: string): string {
   // Preserve explicit new requirements without splitting a negated and/or list.
   value = value.replace(/但是|[但并](?=请|需要|必须|先|重新|实际|真实|已|成功|完成)|而是|\b(?:but|however|instead|and(?=\s+please\b))\b/giu, "，");
-  return value.replace(/(?:不要|不得|禁止|无需|无须|不需要|不允许|不必|不|别|do\s+not|don't|must\s+not|never|no\s+need\s+to)\s*(?:(?:再|先|实际|真实|主动)\s*)*(?:调用|使用|读取|打开|解析|列出|搜索|抓取|访问|核验|写入|保存|创建|新建|组建|计算|统计|联网|\b(?:use\s+tools?|read|fetch|search|verify|write|save|create|calculate|measure)\b)[^，,、。！？!?\n；;]*/giu, " ");
+  return value.replace(/(?:不要|不得|禁止|无需|无须|不需要|不允许|不必|不|别|拒绝|取消|do\s+not|don't|must\s+not|never|no\s+need\s+to)\s*(?:(?:再|先|实际|真实|主动)\s*)*(?:调用|使用|读取|打开|解析|列出|搜索|抓取|访问|核验|写入|保存|创建|新建|组建|计算|统计|联网|\b(?:use\s+tools?|read|fetch|search|verify|write|save|create|calculate|measure)\b)[^，,、。！？!?\n；;]*/giu, " ");
 }
 
 function requiresToolCall(value: string): boolean {
@@ -795,7 +807,11 @@ export class RuntimeExecutor {
         }
         if (event.type === "workspace-tool" || event.type === "network-tool" || event.type === "mcp-tool" || event.type === "device-tool" || event.type === "computation-tool" || event.type === "project-tool") {
           if (!active.providerStarted || !this.workspaceTools) throw new AevorenBotError("RUNTIME_STATE_INVALID");
-          if (event.type === "project-tool" && (!active.providerContext.projectTools || ["bot-create", "room-create"].includes(event.tool.kind) && !requestsProjectManagement(active.rootRequirements))) throw new AevorenBotError("PROJECT_TOOL_NOT_REQUESTED");
+          // A follow-up can supply only the missing role/name. Exact user approval,
+          // rather than creation keywords in the latest sentence, authorizes writes.
+          if (event.type === "project-tool" && (!active.providerContext.projectTools ||
+            [this.repository.getUserMessage(active.clientNonce).body, active.rootRequirements, active.evidenceRequestText]
+              .some((request) => prohibitsProjectCreation(request, event.tool)))) throw new AevorenBotError("PROJECT_TOOL_NOT_REQUESTED");
           const recordOrRespond = async (action: Extract<(typeof roundActions)[number], { kind: "tool" }>): Promise<void> => {
             if (event.respond) await event.respond(action.result.content);
             else roundActions.push(action);
