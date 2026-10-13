@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Bot and group creation can continue after a clarification reply such as supplying the Bot's role. The latest sentence no longer needs creation keywords; each creation still requires genuine per-call approval before any resource is added.
 - Explicit prohibitions and cancellations apply to the requested resource across both legacy and product operation tools. Denying Bot creation does not also prevent a separately requested group, and vice versa.
 - Replies reporting rejected or cancelled creation no longer count as successful creation claims. Affirmative claims still require matching successful tool evidence.
+- Delayed contact-name autofocus no longer takes focus away from a field the user has selected or a chat they have opened, preventing description text from replacing a Bot's name.
 
 ### Verified
 
