@@ -39,6 +39,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
   const [notice, setNotice] = useState("");
   const [tab, setTab] = useState<ProfileTab>("profile");
   const [editing, setEditing] = useState(false);
+  const profileElementRef = useRef<HTMLElement>(null);
   const editorRef = useRef<ProfileInspectorHandle>(null);
   const availableRooms = rooms.filter((room) => room.archivedAt === null);
   const selectedRoom = availableRooms.find((room) => room.id === selectedRoomId);
@@ -47,11 +48,15 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
   async function flush(): Promise<boolean> { return await editorRef.current?.flush() ?? true; }
 
   function focusName(): void {
+    const focusOwner = document.activeElement;
     void flush().then((saved) => {
       if (!saved) return;
       setTab("profile");
       setEditing(true);
-      requestAnimationFrame(() => editorRef.current?.focusName());
+      requestAnimationFrame(() => {
+        if (document.activeElement !== focusOwner || !profileElementRef.current?.getClientRects().length) return;
+        editorRef.current?.focusName();
+      });
     });
   }
 
@@ -80,7 +85,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
   }
 
   return (
-    <section className="contact-profile-panel" aria-label="联系人资料">
+    <section ref={profileElementRef} className="contact-profile-panel" aria-label="联系人资料">
       <div className="contact-profile-hero">
         <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={92} title={`${bot.name}头像`} />
         <div><h2>{bot.name}</h2><p>{bot.label || "Bot"}</p></div>

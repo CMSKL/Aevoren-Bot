@@ -36,6 +36,40 @@ afterEach(() => { for (const item of fixtures.splice(0)) { item.repository.close
 const profile: Extract<ProjectToolRequest, { kind: "bot-create" }> = { kind: "bot-create", name: "审阅助手", label: "审阅", description: "负责资料审阅", instructions: "仅审阅用户交付的资料，标注不确定项。" };
 
 describe("project provisioning tools", () => {
+  it.each(["allow-once", "deny", "cancel"] as const)("keeps a follow-up creation behind real approval: %s", async (decision) => {
+    const f = fixture();
+    const actor = f.repository.createBot();
+    const provider: ModelProvider = {
+      async *run(messages) {
+        yield { type: "started", requestId: "follow-up-test" };
+        const latest = messages.filter((message) => message.role === "user").at(-1)?.content ?? "";
+        if (!latest.includes("自媒体选题吧")) {
+          yield { type: "delta", text: "可以，创建时需要你批准。你想让它负责什么？" };
+        } else if (messages.at(-1)?.role !== "tool") {
+          yield { type: "project-tool", toolCallId: "follow-up-create", tool: profile };
+        } else {
+          yield { type: "delta", text: decision === "allow-once" ? "已创建一个 Bot。" : "创建未执行。" };
+        }
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const coordinator = new WorkspaceToolCoordinator(f.repository, f.executor, () => {});
+    const worker = new SendWorker(f.repository, null, { transcript: () => {}, runtime: () => {}, sendState: () => {} }, false, provider, undefined, coordinator);
+    const first = worker.send({ sessionId: actor.session.id, clientNonce: crypto.randomUUID(), text: "你可以创建bot补" });
+    await expect.poll(() => f.repository.getRuntimeRun(first.runId).state).toBe("completed");
+    const sent = worker.send({ sessionId: actor.session.id, clientNonce: crypto.randomUUID(), text: "自媒体选题吧" });
+    await expect.poll(() => f.repository.listToolInvocations(actor.session.id).at(-1)?.state).toBe("awaiting-approval");
+    expect(f.repository.listBots()).toHaveLength(2);
+    const invocation = f.repository.listToolInvocations(actor.session.id).at(-1)!;
+    const approval = f.repository.getApprovalRequest(invocation.approvalRequestId);
+    if (decision === "cancel") worker.cancelRun(sent.runId);
+    else await coordinator.resolve(actor.session.id, approval.id, approval.version, decision);
+    await expect.poll(() => f.repository.getRuntimeRun(sent.runId).state).toBe(decision === "cancel" ? "cancelled" : "completed");
+    expect(f.repository.listBots()).toHaveLength(decision === "allow-once" ? 3 : 2);
+    expect(f.repository.getToolInvocation(invocation.id).state).toBe(decision === "allow-once" ? "succeeded" : decision === "deny" ? "denied" : "cancelled");
+  });
+
   it("refuses unsolicited creation and refuses claims of creation without successful tools", async () => {
     for (const unsolicited of [true, false]) {
       const f = fixture();
@@ -57,6 +91,70 @@ describe("project provisioning tools", () => {
       expect(f.repository.listBots()).toHaveLength(2);
       expect(f.repository.listToolInvocations(actor.session.id)).toEqual([]);
     }
+  });
+
+  it.each(["你已拒绝创建，没有新增 Bot。", "已拒绝创建 Bot。", "已取消创建 Bot。", "已拒绝创建 Bot，但已创建群聊。"])("does not confuse denied creation with success: %s", async (body) => {
+    const f = fixture();
+    const actor = f.repository.createBot();
+    const provider: ModelProvider = {
+      async *run() {
+        yield { type: "started", requestId: "denied-creation-text" };
+        yield { type: "delta", text: body };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const worker = new SendWorker(f.repository, null, { transcript: () => {}, runtime: () => {}, sendState: () => {} }, false, provider);
+    const sent = worker.send({ sessionId: actor.session.id, clientNonce: crypto.randomUUID(), text: "只回复创建状态。" });
+    const unverifiedRoom = body.includes("已创建群聊");
+    await expect.poll(() => f.repository.getRuntimeRun(sent.runId).state).toBe(unverifiedRoom ? "failed" : "completed");
+    expect(f.repository.getRuntimeRun(sent.runId).lastErrorCode).toBe(unverifiedRoom ? "TOOL_EVIDENCE_REQUIRED" : null);
+    expect(f.repository.listBots()).toHaveLength(2);
+    expect(f.repository.listToolInvocations(actor.session.id)).toEqual([]);
+  });
+
+  it.each([
+    ["不要创建 Bot", "bot-create", true],
+    ["不需要创建 Bot", "bot-create", true],
+    ["先不创建 Bot", "bot-create", true],
+    ["不要建群，先创建 Bot", "bot-create", false],
+    ["不要创建文件，先创建 Bot", "bot-create", false],
+    ["不要创建 Bot，但创建群聊", "room-create", false],
+    ["取消 Bot 创建，继续创建群聊", "room-create", false],
+    ["停止群聊创建，创建 Bot", "bot-create", false],
+    ["先别创建群聊", "room-create", true],
+    ["取消吧", "bot-create", true],
+    ["Do not create a Bot", "bots.create", true],
+    ["不要创建群聊", "rooms.create", true],
+    ["不要创建 Bot", "teams.createContentTeam", true],
+  ] as const)("respects creation constraints for %s via %s", async (text, kind, blocked) => {
+    const f = fixture();
+    const actor = f.repository.createBot();
+    const tool: ProjectToolRequest = kind === "bot-create" ? profile : kind === "room-create"
+      ? { kind, name: "选题讨论群", description: "", memberBotIds: [actor.bot.id, f.created.bot.id] }
+      : { kind: "product-call", action: "execute", operation: kind };
+    const provider: ModelProvider = {
+      async *run() {
+        yield { type: "started", requestId: "creation-constraint-test" };
+        yield { type: "project-tool", toolCallId: "creation-constraint", tool };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const coordinator = new WorkspaceToolCoordinator(f.repository, f.executor, () => {});
+    const worker = new SendWorker(f.repository, null, { transcript: () => {}, runtime: () => {}, sendState: () => {} }, false, provider, undefined, coordinator);
+    const sent = worker.send({ sessionId: actor.session.id, clientNonce: crypto.randomUUID(), text });
+    if (blocked) {
+      await expect.poll(() => f.repository.getRuntimeRun(sent.runId).state).toBe("failed");
+      expect(f.repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("PROJECT_TOOL_NOT_REQUESTED");
+      expect(f.repository.listToolInvocations(actor.session.id)).toEqual([]);
+    } else {
+      await expect.poll(() => f.repository.listToolInvocations(actor.session.id).at(-1)?.state).toBe("awaiting-approval");
+      worker.cancelRun(sent.runId);
+      await expect.poll(() => f.repository.getRuntimeRun(sent.runId).state).toBe("cancelled");
+    }
+    expect(f.repository.listBots()).toHaveLength(2);
+    expect(f.repository.listRooms()).toEqual([]);
   });
   it("creates real configured resources in the caller's project without dispatching them, and deduplicates repeated commands", async () => {
     const f = fixture();

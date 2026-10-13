@@ -90,7 +90,7 @@ export const ERROR_REGISTRY = {
   TOOL_EXECUTION_CANCELLED: { domain: "tool", retryable: false, safeMessage: "已取消这次工具调用。", allowedDetailKeys: [] },
   TOOL_ROUND_LIMIT_EXCEEDED: { domain: "tool", retryable: false, safeMessage: "工具调用次数已达到本次运行上限。", allowedDetailKeys: [] },
   PROJECT_CREATION_LIMIT: { domain: "tool", retryable: false, safeMessage: "本次请求创建的 Bot 和群聊已达到上限，请使用现有资源。", allowedDetailKeys: [] },
-  PROJECT_TOOL_NOT_REQUESTED: { domain: "tool", retryable: false, safeMessage: "当前请求未要求创建或查询项目成员，这次操作未执行。", allowedDetailKeys: [] },
+  PROJECT_TOOL_NOT_REQUESTED: { domain: "tool", retryable: false, safeMessage: "当前回合未开放该产品操作，或当前请求已禁止创建；这次操作未执行。", allowedDetailKeys: [] },
   PROJECT_PROFILE_SENSITIVE: { domain: "tool", retryable: false, safeMessage: "Bot 角色说明中包含疑似密钥、密码或令牌，请移除后重试。", allowedDetailKeys: [] },
   TOOL_EVIDENCE_REQUIRED: { domain: "tool", retryable: true, safeMessage: "回复声称执行了工具，但没有对应的成功工具记录，本轮未标记完成。", allowedDetailKeys: ["requirement"] },
   TASK_REQUIREMENTS_UNMET: { domain: "tool", retryable: true, safeMessage: "任务尚未完成：必要的工具执行或成果验证未通过，成功结果仍然保留。", allowedDetailKeys: ["requirement"] },
