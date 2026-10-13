@@ -172,11 +172,12 @@ jobs:
         shell: bash
         env:
           RELEASE_TYPE: ${{ steps.release.outputs.release_type }}
+          EXPECTED_BRANCH: ${{ steps.release.outputs.expected_branch }}
         run: |
           if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft >/tmp/aevoren-release-draft.txt 2>/dev/null; then
             test "$(cat /tmp/aevoren-release-draft.txt)" = "true"
           else
-            args=(--draft --verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+            args=(--draft --verify-tag --generate-notes --title "$GITHUB_REF_NAME" --target "$EXPECTED_BRANCH")
             if [[ "$RELEASE_TYPE" == "prerelease" ]]; then args+=(--prerelease --latest=false); fi
             gh release create "$GITHUB_REF_NAME" "${args[@]}"
           fi

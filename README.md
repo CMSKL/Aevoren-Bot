@@ -23,7 +23,7 @@ Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bo
 - Independent chat state and Agent identities: recent conversations, global contacts, unread replies, and separate remove-chat, clear-history and delete-contact actions.
 - Discoverable product operations for settings, Bot/Room management, conversations, delegated tasks, Memory, MCP, Routines, providers, projects and updates through a shared validated host service.
 - Direct Bot chats and 2–6 member Rooms with explicit `@Bot`, automatic owner selection, bounded handoff, speaker identity, and loop suppression.
-- Optional fixed group coordinators assign ordered member work and summarize verified results once. Explicit mentions and Everyone remain independent replies; failed work can be retried without repeating completed outputs.
+- Optional fixed group coordinators assign ordered member work and summarize verified results once. Explicit mentions remain independent replies; Everyone starts all members concurrently and streams each reply independently. Failed work can be retried without repeating completed outputs.
 - Matching Dark and Daylight messenger layouts, editable local personal avatars, stable cartoon-human Bot portraits and on-demand collaboration details attached to each message.
 - First-phase model support for a manually configured OpenAI-compatible API, automatically discovered Claude Code, and automatically discovered Codex CLI.
 - Codex App Server Dynamic Tools routed through Aevoren's explicit Approval and Tool Journal boundary.
