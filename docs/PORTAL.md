@@ -29,6 +29,7 @@ Aevoren Bot is an open-source, local-first desktop workspace for persistent AI B
 | Review public-release gates | [Open-source checklist](OPEN_SOURCE_CHECKLIST.md) |
 | Read licensing and brand rules | [LICENSE](../LICENSE), [Trademark notice](../TRADEMARKS.md) |
 | See planned direction | [Roadmap](../ROADMAP.md) |
+| Review Grok Bot features, Aevoren gaps and implementation order | [Feature comparison and implementation plan](FEATURE_ADOPTION.md) |
 
 ## Product boundaries
 

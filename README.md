@@ -140,6 +140,7 @@ Models and enabled external services receive only the context and tool inputs re
 - [Trademark notice](TRADEMARKS.md)
 - [Open-source release checklist](docs/OPEN_SOURCE_CHECKLIST.md)
 - [Roadmap](ROADMAP.md)
+- [Feature comparison and implementation plan (Chinese)](docs/FEATURE_ADOPTION.md)
 
 Development follows `dev` → `beta` → `master`. Contributor pull requests should target `dev`. Release tags are created only after branch promotion and validation; see [Release Process](docs/RELEASING.md) and [Automatic Update Design](docs/plans/automatic-updates.md).
 

@@ -7,15 +7,20 @@ This roadmap is intentionally short and describes direction, not a promise of da
 - macOS-first local Bot and Room conversations;
 - first-phase API, Claude Code, and Codex CLI discovery, validation, and model selection;
 - reviewed long-term Memory capture, read-only Workspace access, reviewed MCP tools, and approval journals;
+- discoverable AI product operations and concurrent Everyone group replies;
 - bounded Routines and recovery-aware signed update infrastructure;
 - Apache-2.0 source with brand identity handled separately.
 
 ## Next priorities
 
-1. Complete the first signed Beta release and validate the GitHub update channel with two real public artifacts.
-2. Improve onboarding, user documentation, accessibility checks, and safe diagnostics.
-3. Expand provider compatibility only when each adapter has a stable discovery, authentication, streaming, and recovery contract.
-4. Add SBOM and release provenance to every signed artifact.
+1. Add persistent documents and text Skills with import, search, editing, scoped context loading and AI product operations.
+2. Build a configured execution environment with terminal, files, background processes, cancellation and recovery.
+3. Add browser sessions, computer views, user takeover and verified service previews.
+4. Add executable Skill packages, application connectors, reviewed write actions and richer MCP results.
+5. Add media attachments and previews, speech transcription and playback, then real-time voice.
+6. Expand resource search, task threads, event-triggered Routines, templates, exports and optional self-hosted sharing.
+
+The [Grok Bot feature comparison and implementation plan](docs/FEATURE_ADOPTION.md) records shipped-client evidence, current Aevoren gaps and acceptance criteria. Product login and registration are outside the current implementation scope. Planned capabilities remain unavailable until their actual adapters pass validation; provider keys and third-party authorization are still required where applicable.
 
 ## Later exploration
 
