@@ -146,7 +146,9 @@ test("starts all six @everyone Bot replies together and displays a fast result b
     await expect(page.getByRole("button", { name: "停止群聊回复" })).toBeVisible();
     const evidence = process.env.AEVOREN_PRODUCT_EVIDENCE_DIR ?? tmpdir();
     mkdirSync(evidence, { recursive: true });
-    await page.screenshot({ path: join(evidence, "room-parallel-fast-result.png") });
+    // Hidden Windows runners can stall compositor capture. The concurrency,
+    // visible reply and host-state assertions remain required on every platform.
+    if (process.platform !== "win32") await page.screenshot({ path: join(evidence, "room-parallel-fast-result.png"), animations: "disabled" });
 
     for (const bot of bots.slice(0, 5)) release(bot.modelId);
     await expect(completed).toHaveCount(6);
@@ -162,7 +164,7 @@ test("starts all six @everyone Bot replies together and displays a fast result b
         body: `${bot.name}独立回复`, status: "completed", sourceTurnId: turn.id, speakerNameSnapshot: bot.name,
       });
     }
-    await page.screenshot({ path: join(evidence, "room-parallel-completed.png") });
+    if (process.platform !== "win32") await page.screenshot({ path: join(evidence, "room-parallel-completed.png"), animations: "disabled" });
   });
 });
 
