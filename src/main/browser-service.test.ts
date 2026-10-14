@@ -13,7 +13,7 @@ import { ExecutionWorkerClient } from "./execution-worker-client";
 import type { BrowserPage, BrowserScope, BrowserSession, BrowserWorkerControl } from "@shared/browser-contracts";
 
 type Fixture = { repository: AppRepository; service: BrowserService; environments: EnvironmentService; driver: BrowserDockerDriver; scope: BrowserScope; browser: BrowserSession; page: BrowserPage; control: BrowserWorkerControl;
-  calls: Array<{ path: string; body: Record<string, unknown> }>; changed: ReturnType<typeof vi.fn>; root: string; server: Server; executionServers?: Server[]; readonly inputCount: number; holdFrame(fn: () => Promise<void>): void };
+  calls: Array<{ path: string; body: Record<string, unknown> }>; changed: ReturnType<typeof vi.fn>; root: string; server: Server; executionServers?: Server[]; readonly inputCount: number; holdFrame(fn: () => Promise<void>): void; setFramePage(page: BrowserPage | null): void };
 const fixtures: Fixture[] = [];
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6iFAAAAAASUVORK5CYII=", "base64");
 async function fixture(): Promise<Fixture> {
@@ -28,6 +28,7 @@ async function fixture(): Promise<Fixture> {
   const extraPages: BrowserPage[] = [];
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [], completed = new Map<string, unknown>();
   let inputCount = 0, timestamps = 0;
+  let framePage: BrowserPage | null = page;
   let holdFrame: (() => Promise<void>) | undefined;
   const server = createServer(async (request, response) => {
     expect(request.headers.authorization).toBe(`Bearer ${token}`);
@@ -45,7 +46,7 @@ async function fixture(): Promise<Fixture> {
     if (path === "/v1/computer/takeover" || path === "/v1/computer/return") { control.owner = path.endsWith("return") ? "ai" : "user"; control.controlEpoch++; control.observedEpoch = null; answer(control); return; }
     if (path === "/v1/computer/screenshot") {
       await holdFrame?.();
-      answer({ browserSessionId: browser.id, pageId: page.id, observationId: randomUUID(), controlEpoch: body.expectedEpoch, documentVersion: page.documentVersion,
+      answer({ browserSessionId: browser.id, pageId: framePage?.id ?? null, observationId: randomUUID(), controlEpoch: body.expectedEpoch, documentVersion: framePage?.documentVersion ?? null,
         dataBase64: png.toString("base64"), mimeType: "image/png", size: png.length, sha256: createHash("sha256").update(png).digest("hex"), width: 1, height: 1, capturedAt: now }); return;
     }
     if (path.endsWith("/click")) {
@@ -64,7 +65,7 @@ async function fixture(): Promise<Fixture> {
   vi.spyOn(driver, "inspectBrowser").mockResolvedValue({ id: "fixture-container", name: "fixture", imageId: `sha256:${"c".repeat(64)}`, state: "running", workerPort: address.port, oomKilled: false });
   const environments = new EnvironmentService(repository.environments, codec, root);
   const service = new BrowserService(repository, codec, root, join(root, "media"), environments, changed, driver);
-  const value = { repository, service, environments, driver, scope, browser, page, control, calls, changed, root, server, get inputCount() { return inputCount; }, holdFrame(fn: () => Promise<void>) { holdFrame = fn; } };
+  const value = { repository, service, environments, driver, scope, browser, page, control, calls, changed, root, server, get inputCount() { return inputCount; }, holdFrame(fn: () => Promise<void>) { holdFrame = fn; }, setFramePage(value: BrowserPage | null) { framePage = value; } };
   fixtures.push(value); return value;
 }
 afterEach(async () => {
@@ -157,6 +158,15 @@ describe("host browser permission and pixel transport boundaries (controlled HTT
   it("validates the desktop's actual scoped page rather than a stale UI-selected page id", async () => {
     const f = await fixture(), shot = await f.service.computerScreenshot({ ...f.scope, expectedEpoch: 1, pageId: randomUUID() });
     expect(shot.frame.pageId).toBe(f.page.id); expect(shot.media.pageId).toBe(f.page.id);
+  });
+  it("keeps a user's real unassociated desktop frame readable without creating an AI proof or image carrier", async () => {
+    const f = await fixture(); f.setFramePage(null);
+    const shot = await f.service.computerScreenshot({ ...f.scope, expectedEpoch: 1 });
+    expect(shot.frame).toMatchObject({ pageId: null, documentVersion: null });
+    expect(f.repository.browsers.assertFrame(f.scope, shot.media.id, 1, "user")).toMatchObject({ pageId: null });
+    expect(f.repository.browsers.view(f.scope)?.observedEpoch).toBeNull();
+    await expect(f.service.imageAttachment(f.scope, shot.media.id, 1)).rejects.toMatchObject({ code: "BROWSER_OBSERVATION_REQUIRED" });
+    await expect(f.service.computerScreenshot({ ...f.scope, expectedEpoch: 1 }, { actor: "ai" })).rejects.toMatchObject({ code: "BROWSER_OBSERVATION_REQUIRED" });
   });
   it("reuses the same preview intent and capability without creating another page or metadata row", async () => {
     const f = await fixture(); await f.service.computerScreenshot({ ...f.scope, expectedEpoch: 1 }, { actor: "ai" });

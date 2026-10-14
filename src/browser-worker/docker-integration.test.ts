@@ -31,12 +31,24 @@ async function withContainer(callback: (fixture: Fixture) => Promise<void>): Pro
   try {
     await execute("docker", ["run", "--detach", "--name", name, "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m", "--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID", "--cap-add", "CHOWN", "--cap-add", "KILL", "--security-opt", "no-new-privileges", "--memory", "768m", "--pids-limit", "256", "--publish", "127.0.0.1::8081",
       ...(process.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
+      ...(process.env.AEVOREN_BROWSER_DIAGNOSTICS === "1" ? ["--env", "AEVOREN_BROWSER_DIAGNOSTICS=1"] : []),
       "--mount", `type=volume,source=${volumes[0]},target=/var/lib/aevoren-browser-profile`, "--mount", `type=volume,source=${volumes[1]},target=/var/lib/aevoren-browser-state`, "--mount", `type=volume,source=${volumes[2]},target=/var/lib/aevoren-browser-downloads`,
       "--env", "AEVOREN_BROWSER_TOKEN", "--env", `AEVOREN_BROWSER_ENVIRONMENT_ID=${environmentId}`, "--env", `AEVOREN_BROWSER_SESSION_ID=${browserSessionId}`, image], { env: { ...process.env, AEVOREN_BROWSER_TOKEN: token } });
     await reconnect();
     await expect.poll(async () => { try { return browserWorkerHealthSchema.parse(await request("/v1/health")).browserSessionId; } catch { return null; } }, { timeout: 50_000 }).toBe(browserSessionId);
     const fixture: Fixture = { name, get url() { return url; }, token, environmentId, browserSessionId, request, reconnect };
     await callback(fixture);
+  } catch (error) {
+    if (process.env.AEVOREN_BROWSER_DIAGNOSTICS === "1") {
+      const diagnostic = await docker(["exec", "--user", "1000", name, "node", "-e", "try{console.log(require('fs').readFileSync('/tmp/aevoren-ffmpeg-diagnostics.json','utf8'))}catch{console.log('No ffmpeg failure diagnostic')}" ]).catch(() => "Diagnostic container unavailable");
+      console.error("Controlled browser capture diagnostic:", diagnostic);
+      const memory = await docker(["exec", "--user", "1000", name, "node", "-e", `const fs=require('fs');const read=p=>{try{return fs.readFileSync(p,'utf8').trim()}catch{return null}};const cgroup=Object.fromEntries(['memory.events','memory.peak','memory.current','memory.max'].map(file=>[file,read('/sys/fs/cgroup/'+file)]));const processes=fs.readdirSync('/proc').filter(pid=>/^\\d+$/.test(pid)).flatMap(pid=>{const comm=read('/proc/'+pid+'/comm'),status=read('/proc/'+pid+'/status');if(!comm||!status)return [];const rssKiB=Number(/^VmRSS:\\s+(\\d+)/mu.exec(status)?.[1])||0;return [{pid:Number(pid),comm:comm.slice(0,48),rssKiB}]});processes.sort((a,b)=>b.rssKiB-a.rssKiB);console.log(JSON.stringify({cgroup,processes:processes.slice(0,16)}))`]).catch(() => "Memory diagnostic unavailable");
+      console.error("Controlled browser cgroup and process RSS:", memory);
+      const stats = await docker(["stats", "--no-stream", "--format", "{{.MemUsage}} CPU={{.CPUPerc}} PIDs={{.PIDs}}", name]).catch(() => "Stats unavailable");
+      const state = await docker(["inspect", "--format", "status={{.State.Status}} oomKilled={{.State.OOMKilled}}", name]).catch(() => "State unavailable");
+      console.error("Controlled browser resources:", stats, state);
+    }
+    throw error;
   } finally {
     await docker(["rm", "--force", name]).catch(() => undefined);
     await docker(["volume", "rm", ...volumes]).catch(() => undefined);
@@ -58,7 +70,8 @@ async function withSite(callback: (url: string, clicks: () => number, focused: (
     response.setHeader("content-type", "text/html; charset=utf-8");
     if (url.searchParams.has("focusFixture")) {
       const label = url.searchParams.get("focusFixture")!, background = label === "A" ? "rgb(23,145,213)" : "white";
-      response.end(`<!doctype html><html><head><title>focus fixture ${label}</title><style>html,body,button{width:100%;height:100%;margin:0;padding:0;border:0}button{background:${background};font:30px sans-serif}</style></head><body><button onclick="fetch('/clicked')">focus fixture ${label}</button><script>const report=()=>fetch('/focused?page=${label}&value='+(document.hasFocus()?'1':'0'));setInterval(report,100);report();</script></body></html>`);
+      const spoof = url.searchParams.has("spoofFocus") ? "document.hasFocus=()=>true;" : "";
+      response.end(`<!doctype html><html><head><title>focus fixture ${label}</title><style>html,body,button{width:100%;height:100%;margin:0;padding:0;border:0}button{background:${background};font:30px sans-serif}</style></head><body><button onclick="fetch('/clicked')">focus fixture ${label}</button><script>${spoof}const report=()=>fetch('/focused?page=${label}&value='+(document.hasFocus()?'1':'0'));setInterval(report,100);report();</script></body></html>`);
       return;
     }
     response.end(`<!doctype html><html><head><title>controlled browser fixture</title><style>html,body{background:rgb(23,145,213);margin:0;min-height:100%;}input,button,a{font:20px sans-serif;margin:8px}h1{margin:8px}${url.searchParams.has("wait") ? "#late{pointer-events:none}" : ""}</style></head><body><h1>controlled browser fixture</h1><p>COOKIE ${String(request.headers.cookie ?? "ABSENT")}</p><input aria-label="Draft" oninput="document.getElementById('typed').textContent=this.value"><span id="typed"></span><button id="late" onclick="fetch('/clicked');this.textContent='Clicked'">Click fixture</button><a href="/download">Download fixture</a><a href="/large">Oversized fixture</a><script>if(location.search.includes('wait=1'))setTimeout(()=>document.getElementById('late').style.pointerEvents='auto',1500)</script></body></html>`);
@@ -147,19 +160,26 @@ describe.skipIf(!enabled)("real isolated Chromium and desktop Worker", () => {
       const first = await navigate(f, `${site}/?focusFixture=A`);
       const original = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", { ...access(1), pageId: first.id }));
       const second = await f.request<BrowserPage>("/v1/browser/pages", "POST", { ...mutation(1), url: `${site}/?focusFixture=B` });
-      await f.request("/v1/computer/screenshot", "POST", { ...access(1), pageId: second.id });
+      // New native tabs can retain omnibox focus. Establish real content focus
+      // through a known DOM target before requiring a page-bound desktop proof.
+      const content = await observe(f, second.id);
+      await f.request(`/v1/browser/pages/${second.id}/click`, "POST", { ...mutation(1), observationId: content.id,
+        documentVersion: content.documentVersion, ref: content.elements.find(value => value.name === "focus fixture B")!.ref });
+      await expect.poll(clicks).toBe(1);
+      const baseline = clicks();
       await expect.poll(focused).toEqual({ A: false, B: true });
+      await f.request("/v1/computer/screenshot", "POST", { ...access(1), pageId: second.id });
       const current = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", access(1, "user")));
       expect(current.pageId).toBe(second.id);
       expect(await screenshotPixel(f, current, 700, 600)).toEqual([255, 255, 255]);
       await expect(f.request("/v1/computer/click", "POST", { ...mutation(1), pageId: first.id, observationId: original.observationId,
         documentVersion: original.documentVersion, x: 650, y: 500 })).rejects.toMatchObject({ message: "BROWSER_OBSERVATION_STALE", status: 409 });
-      expect(clicks()).toBe(0);
+      expect(clicks()).toBe(baseline);
       expect((await pages(f, 1)).find(page => page.id === first.id)?.documentVersion).toBe(original.documentVersion);
       await f.request("/v1/computer/takeover", "POST", mutation(1, "user"));
       const rfb = new RfbFixture(f, 2);
       try {
-        await rfb.handshake(); rfb.click(650, 500); await expect.poll(clicks).toBe(1);
+        await rfb.handshake(); rfb.click(650, 500); await expect.poll(clicks).toBe(baseline + 1);
         rfb.nextTab(); await expect.poll(focused).toEqual({ A: true, B: false });
         const native = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", access(2, "user")));
         expect(native.pageId).toBe(first.id);
@@ -172,7 +192,12 @@ describe.skipIf(!enabled)("real isolated Chromium and desktop Worker", () => {
         expect(mouse).toContain("X=650\nY=500");
         await f.request("/v1/computer/click", "POST", { ...mutation(2, "user"), pageId: second.id, observationId: ready.observationId,
           documentVersion: ready.documentVersion, x: 650, y: 500 });
-        await expect.poll(clicks).toBe(2);
+        await expect.poll(clicks).toBe(baseline + 2);
+        await f.request(`/v1/browser/pages/${first.id}/navigate`, "POST", { ...mutation(2, "user"), url: `${site}/?focusFixture=A&spoofFocus=1` });
+        await expect.poll(focused).toEqual({ A: true, B: true });
+        const spoofed = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", access(2, "user")));
+        expect(spoofed.pageId).toBe(second.id);
+        expect(await screenshotPixel(f, spoofed, 700, 600)).toEqual([255, 255, 255]);
         expect((await f.request<BrowserWorkerControl>("/v1/computer/control")).observedEpoch).toBeNull();
       } finally { rfb.close(); }
     }));

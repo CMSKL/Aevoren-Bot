@@ -45,6 +45,14 @@ afterEach(() => {
 });
 
 describe("scoped browser control in the shared SQLite database", () => {
+  it("retains nullable user frames but refuses them as AI-authorized image references", () => {
+    const f = fixture(); running(f); const capture = { ...frame(f), pageId: null, documentVersion: null };
+    const observed = f.browser.view(f.scope)!.observedEpoch;
+    f.browser.recordFrame(f.scope, capture, "user");
+    expect(f.browser.assertFrame(f.scope, capture.id, 1, "user").pageId).toBeNull();
+    expect(f.browser.view(f.scope)!.observedEpoch).toBe(observed);
+    expect(() => f.browser.assertFrame(f.scope, capture.id, 1, "ai")).toThrowError(expect.objectContaining({ code: "BROWSER_OBSERVATION_REQUIRED" }));
+  });
   it("projects public metadata without companion credentials, image internals or private blobs", () => {
     const f = fixture(); expect(f.browser.get(f.scope)).toBeNull(); running(f);
     f.browser.updateConnection(f.scope, { encryptedToken: "INDEPENDENT_BROWSER_CIPHERTEXT", containerId: "PRIVATE_COMPANION_CONTAINER", workerPort: 43001,

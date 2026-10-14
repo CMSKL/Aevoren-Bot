@@ -1,7 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
-import type { Bot, RoomDetail } from "@shared/contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ApiResult, Bot, RoomDetail } from "@shared/contracts";
+import type { BrowserDownloadsPage, BrowserEpochInput } from "@shared/browser-contracts";
 import { ComputerPanel } from "./ComputerPanel";
+import { pollBrowserDownloads } from "./browser-download-poller";
 import { ContactDetail } from "./ContactDetail";
 import { RoomInspector } from "./RoomInspector";
 
@@ -55,5 +57,62 @@ describe("browser and computer surfaces", () => {
       expect(selector).toContain('value="bot-2"');
       expect(selector).not.toContain("private-bot");
     }
+  });
+});
+
+describe("scoped asynchronous download receipts", () => {
+  const input: BrowserEpochInput = { sessionId: "private-a", executorBotId: "bot-1", expectedEpoch: 2 };
+  const failed: BrowserDownloadsPage = { items: [], errors: [{ id: "failure-1", pageId: "page-1", name: "too-large.bin", errorCode: "BROWSER_DOWNLOAD_TOO_LARGE", createdAt: bot.createdAt }] };
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+  it("publishes a failure completed after the initial post-click snapshot", async () => {
+    vi.useFakeTimers();
+    const read = vi.fn<(input: BrowserEpochInput) => Promise<ApiResult<BrowserDownloadsPage>>>()
+      .mockResolvedValueOnce({ ok: true, data: { items: [], errors: [] } }).mockResolvedValue({ ok: true, data: failed });
+    const receipts = vi.fn(); const errors = vi.fn();
+    const dispose = pollBrowserDownloads(input, read, receipts, errors);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(receipts).toHaveBeenLastCalledWith({ items: [], errors: [] });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(receipts).toHaveBeenLastCalledWith(failed);
+    expect(read).toHaveBeenLastCalledWith(input);
+    expect(errors).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("does not overlap reads or publish a late reply after switching member scope", async () => {
+    vi.useFakeTimers();
+    let resolveOld!: (result: ApiResult<BrowserDownloadsPage>) => void;
+    const oldRead = vi.fn<(input: BrowserEpochInput) => Promise<ApiResult<BrowserDownloadsPage>>>(() => new Promise(resolve => { resolveOld = resolve; }));
+    const oldReceipts = vi.fn(); const oldErrors = vi.fn();
+    const disposeOld = pollBrowserDownloads(input, oldRead, oldReceipts, oldErrors);
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(oldRead).toHaveBeenCalledTimes(1);
+    disposeOld();
+    const nextInput = { ...input, sessionId: "group-a", executorBotId: "bot-2", expectedEpoch: 8 };
+    const newRead = vi.fn<(input: BrowserEpochInput) => Promise<ApiResult<BrowserDownloadsPage>>>().mockResolvedValue({ ok: true, data: failed });
+    const newReceipts = vi.fn(); const newErrors = vi.fn();
+    const disposeNew = pollBrowserDownloads(nextInput, newRead, newReceipts, newErrors);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(newReceipts).toHaveBeenLastCalledWith(failed);
+    resolveOld({ ok: true, data: { items: [], errors: [] } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(oldReceipts).not.toHaveBeenCalled(); expect(oldErrors).not.toHaveBeenCalled();
+    expect(newReceipts).toHaveBeenCalledTimes(1);
+    disposeNew();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(newRead).toHaveBeenCalledTimes(1); expect(newErrors).not.toHaveBeenCalled();
+  });
+
+  it("reports a live connection failure without inventing an empty successful download list", async () => {
+    vi.useFakeTimers();
+    const read = vi.fn<(input: BrowserEpochInput) => Promise<ApiResult<BrowserDownloadsPage>>>().mockRejectedValueOnce(new Error("connection lost")).mockResolvedValue({ ok: true, data: failed });
+    const receipts = vi.fn(); const errors = vi.fn();
+    const dispose = pollBrowserDownloads(input, read, receipts, errors);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(receipts).not.toHaveBeenCalled(); expect(errors).toHaveBeenCalledWith("无法更新下载状态，请刷新实际连接。");
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(receipts).toHaveBeenLastCalledWith(failed);
+    dispose();
   });
 });

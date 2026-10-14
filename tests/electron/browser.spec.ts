@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import type { AevorenBotApi, ApiResult } from "../../src/shared/contracts";
-import type { BrowserScope, ComputerView } from "../../src/shared/browser-contracts";
+import type { BrowserDownloadsPage, BrowserScope, ComputerView } from "../../src/shared/browser-contracts";
 import { ENV_WORKER_VERSION } from "../../src/shared/environment-contracts";
 import { AppRepository } from "../../src/main/database";
 import { DockerDriver } from "../../src/main/docker-driver";
@@ -177,12 +177,38 @@ test.describe("actual browser companion through hidden Electron", () => {
       await panel.getByRole("button", { name: "保存下载文件", exact: true }).click();
       await expect.poll(() => existsSync(f.downloadPath)).toBe(true); expect(readFileSync(f.downloadPath)).toEqual(Buffer.from("BROWSER_ACTUAL_DOWNLOAD\n", "utf8"));
       await panel.getByRole("button", { name: "读取页面", exact: true }).click(); await panel.getByLabel("浏览器页面元素", { exact: true }).selectOption({ label: "a · 超限下载文件" }); await panel.getByRole("button", { name: "点击元素", exact: true }).click();
+      let downloadReceipt: BrowserDownloadsPage | undefined;
+      try {
+        // The Worker bounds a download to 10s; allow 2s for the completion receipt over local IPC.
+        await expect.poll(async () => {
+          downloadReceipt = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser.downloads(input), { ...scope, expectedEpoch: (await control(f.page, scope))!.epoch }));
+          return downloadReceipt.errors.some(error => error.name === "too-large.bin" && error.errorCode === "BROWSER_DOWNLOAD_TOO_LARGE");
+        }, { timeout: 12_000 }).toBe(true);
+      } finally { await test.info().attach("actual-download-receipts", { body: JSON.stringify(downloadReceipt ?? null), contentType: "application/json" }); }
+      expect(downloadReceipt!.items).toHaveLength(1);
       await expect(panel.getByText("too-large.bin · 下载失败（BROWSER_DOWNLOAD_TOO_LARGE）。文件未保存。", { exact: true })).toBeVisible();
       await expect(panel.getByRole("button", { name: "保存下载文件", exact: true })).toHaveCount(1);
 
       const selectedBeforeNativeTab = await panel.getByLabel("当前浏览器页面", { exact: true }).inputValue();
+      await canvas.click();
+      const currentUserView = (await control(f.page, scope))!;
+      const focusedBefore = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computer.screenshot(input), { ...scope, expectedEpoch: currentUserView.epoch }));
+      expect(focusedBefore.frame.pageId).toBe(selectedBeforeNativeTab);
+      expect(focusedBefore.frame.documentVersion).not.toBeNull();
+      await test.info().attach("actual-desktop-before-tab", { body: Buffer.from(focusedBefore.frame.dataBase64, "base64"), contentType: focusedBefore.frame.mimeType });
       await nativeUrl(f.page, canvas, `${f.url}/check`, true);
       await expect.poll(async () => value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser.tabs(input), { ...scope, expectedEpoch: (await control(f.page, scope))!.epoch })).some(page => page.url === `${f.url}/check`)).toBe(true);
+      const nativeNewPage = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser.tabs(input), { ...scope, expectedEpoch: currentUserView.epoch })).find(page => page.url === `${f.url}/check`)!;
+      const desktopBounds = await canvas.boundingBox(); if (!desktopBounds) throw new Error("Native desktop bounds unavailable");
+      await canvas.click({ position: { x: desktopBounds.width / 2, y: desktopBounds.height * 0.75 }, delay: 100 });
+      const focusedAfter = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computer.screenshot(input), { ...scope, expectedEpoch: currentUserView.epoch }));
+      await test.info().attach("actual-desktop-after-tab", { body: Buffer.from(focusedAfter.frame.dataBase64, "base64"), contentType: focusedAfter.frame.mimeType });
+      await test.info().attach("actual-focus-after-native-click", { body: JSON.stringify({ ...focusedAfter.frame, dataBase64: undefined }), contentType: "application/json" });
+      expect(focusedAfter.frame.browserSessionId).toBe(focusedBefore.frame.browserSessionId); expect(focusedAfter.frame.controlEpoch).toBe(focusedBefore.frame.controlEpoch);
+      const stalePhysicalInput = await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computer.key(input), { ...scope, expectedEpoch: currentUserView.epoch, pageId: focusedBefore.frame.pageId!, observationId: focusedBefore.frame.observationId, documentVersion: focusedBefore.frame.documentVersion!, key: "F8", clientNonce: randomUUID() });
+      expect(stalePhysicalInput).toMatchObject({ ok: false, error: { code: "BROWSER_OBSERVATION_REQUIRED" } });
+      await test.info().attach("actual-focus-provenance", { body: JSON.stringify({ before: { ...focusedBefore.frame, dataBase64: undefined }, after: { ...focusedAfter.frame, dataBase64: undefined }, stalePhysicalInput }), contentType: "application/json" });
+      expect(focusedAfter.frame.pageId).toBe(nativeNewPage.id); expect(focusedAfter.frame.pageId).not.toBe(focusedBefore.frame.pageId);
       await panel.getByRole("button", { name: "刷新状态", exact: true }).click(); await panel.getByLabel("当前浏览器页面", { exact: true }).selectOption(selectedBeforeNativeTab);
       // The desktop's focused native tab differs from the DOM selector. UI capture must retain the actual screen's provenance.
       await panel.getByRole("button", { name: "归还 AI", exact: true }).click(); await expect(image).toBeVisible();

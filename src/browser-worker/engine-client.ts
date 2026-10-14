@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { ControlRecord, DownloadRecord, DownloadFailure } from "./state-store";
 import type { EngineAction, EngineEvent, EngineResponse } from "./engine-protocol";
 import { BrowserWorkerError } from "./worker-error";
+import type { DownloadLease } from "./cdp-downloads";
 
 export const ENGINE_ENVIRONMENT = {
   PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8", HOME: "/tmp/aevoren-browser-home",
@@ -16,11 +17,12 @@ export class EngineClient {
   private browserReady = false;
   get isAlive(): boolean { return !this.closed && this.browserReady && Boolean(this.child?.connected); }
 
-  constructor(private readonly options: { enginePath: string; browserSessionId: string; environmentId: string; previewExecutionIp?: string; profileDirectory: string; downloadsDirectory: string; onDownload(record: DownloadRecord): void; onDownloadFailure(record: DownloadFailure): void; onStopped(): void }) {}
+  constructor(private readonly options: { enginePath: string; browserSessionId: string; environmentId: string; previewExecutionIp?: string; profileDirectory: string; downloadsDirectory: string; onDownload(record: DownloadRecord, lease: DownloadLease): void; onDownloadFailure(record: DownloadFailure, lease: DownloadLease): void; onStopped(): void }) {}
 
   async start(control: ControlRecord): Promise<void> {
     const child = spawn(process.execPath, [this.options.enginePath, this.options.browserSessionId, this.options.profileDirectory, this.options.downloadsDirectory], {
       uid: 1_000, gid: 1_000, cwd: "/", env: { ...ENGINE_ENVIRONMENT, AEVOREN_PREVIEW_ENVIRONMENT_ID: this.options.environmentId,
+        ...(process.env.AEVOREN_BROWSER_DIAGNOSTICS === "1" ? { AEVOREN_BROWSER_DIAGNOSTICS: "1" } : {}),
         ...(this.options.previewExecutionIp ? { AEVOREN_PREVIEW_EXECUTION_IP: this.options.previewExecutionIp } : {}) }, stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
     this.child = child;
@@ -32,8 +34,8 @@ export class EngineClient {
         const message = value as EngineEvent | EngineResponse;
         if (message.type === "ready") { this.browserReady = true; clearTimeout(timer); resolve(); return; }
         if (message.type === "browser-stopped") { this.browserReady = false; this.options.onStopped(); return; }
-        if (message.type === "download") { this.options.onDownload(message.download); return; }
-        if (message.type === "download-error") { this.options.onDownloadFailure(message.error); return; }
+        if (message.type === "download") { this.options.onDownload(message.download, message.lease); return; }
+        if (message.type === "download-error") { this.options.onDownloadFailure(message.error, message.lease); return; }
         if (message.type !== "response") return;
         const pending = this.pending.get(message.id);
         if (!pending) return;

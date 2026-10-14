@@ -218,6 +218,7 @@ export class BrowserService {
   async computerScreenshot(input: ComputerScreenshotInput, context: BrowserCallContext = {}): Promise<ComputerScreenshot> {
     const parsed = schemas.computerScreenshotSchema.parse(input); const { frame, bytes } = verifiedFrame(await this.request(parsed, "/v1/computer/screenshot", "POST", this.wire(parsed, context), context));
     if (frame.controlEpoch !== parsed.expectedEpoch || frame.browserSessionId !== this.repository.browsers.get(parsed)!.id) throw new AevorenBotError("BROWSER_SCOPE_INVALID");
+    if (this.actor(context) === "ai" && frame.pageId === null) throw new AevorenBotError("BROWSER_OBSERVATION_REQUIRED");
     if (frame.pageId) await this.tabs({ ...scope(parsed), expectedEpoch: parsed.expectedEpoch }, context);
     const blobPath = await this.media.put(bytes, frame.sha256, context.signal); this.access(parsed, context);
     const metadata = schemas.screenshotMediaSchema.parse({ ...Object.fromEntries(Object.entries(frame).filter(([key]) => key !== "dataBase64")), ...scope(parsed),
@@ -226,7 +227,8 @@ export class BrowserService {
     return { media, frame };
   }
   async imageAttachment(input: BrowserScope, id: string, expectedEpoch: number): Promise<ModelImageAttachment> {
-    const record = this.repository.browsers.getFrame(input, id, expectedEpoch, "ai"), bytes = await this.media.read(record.blobPath, record.sha256, record.size);
+    const record = this.repository.browsers.getFrame(input, id, expectedEpoch, "ai"); this.repository.browsers.assertFrame(input, id, expectedEpoch, "ai");
+    const bytes = await this.media.read(record.blobPath, record.sha256, record.size);
     this.repository.browsers.assertFrame(input, id, expectedEpoch, "ai");
     return { reference: this.repository.browsers.assertFrame(input, id, expectedEpoch, "ai"), dataBase64: bytes.toString("base64"), isAuthorized: () => { try { this.repository.browsers.assertFrame(input, id, expectedEpoch, "ai"); return true; } catch { return false; } } };
   }

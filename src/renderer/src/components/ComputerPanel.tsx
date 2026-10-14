@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import type { ApiResult } from "@shared/contracts";
-import type { BrowserChangedEvent, BrowserDownload, BrowserDownloadFailure, BrowserObservation, BrowserPage, BrowserSession, ComputerScreenshot, ComputerView, ComputerVncTicket, ServicePreview } from "@shared/browser-contracts";
+import type { BrowserChangedEvent, BrowserDownload, BrowserDownloadFailure, BrowserDownloadsPage, BrowserObservation, BrowserPage, BrowserSession, ComputerScreenshot, ComputerView, ComputerVncTicket, ServicePreview } from "@shared/browser-contracts";
 import type RFB from "@novnc/novnc";
+import { pollBrowserDownloads } from "./browser-download-poller";
 import "../styles/computer.css";
 
 type BrowserDraft = { url: string; ref: string; text: string; key: string };
@@ -66,7 +67,7 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
       setLoaded(true); setSession(nextSession); setView(nextView);
       if (nextSession?.state !== "running" || !nextView || nextView.browserSessionId !== nextSession.id || nextView.epoch !== nextSession.controlEpoch) { setPages([]); setDownloads([]); setDownloadFailures([]); setPreviews([]); return; }
       const input = { ...scope, expectedEpoch: nextView.epoch };
-      const results = await Promise.allSettled([window.aevorenBot.browser.tabs(input), window.aevorenBot.browser.downloads(input), window.aevorenBot.preview.list(input)]);
+      const results = await Promise.allSettled([window.aevorenBot.browser.tabs(input), window.aevorenBot.preview.list(input)]);
       if (!current(scopeKey, generation) || request !== snapshotRequestRef.current) return;
       const messages: string[] = [];
       const inspect = <T,>(result: PromiseSettledResult<ApiResult<T>>, apply: (data: T) => void): void => {
@@ -78,7 +79,7 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
         const selected = data.some(page => page.id === pageRef.current) ? pageRef.current : data.some(page => page.id === initialPageId) ? initialPageId! : data.some(page => page.id === nextSession.activePageId) ? nextSession.activePageId! : data[0]?.id ?? "";
         if (selected !== pageRef.current) { pageRef.current = selected; setPageId(selected); setObservation(null); setScreenshot(null); }
       });
-      inspect(results[1]!, data => { setDownloads(data.items); setDownloadFailures(data.errors); }); inspect(results[2]!, setPreviews);
+      inspect(results[1]!, setPreviews);
       if (messages.length) setError([...new Set(messages)].join(" "));
     } catch { if (current(scopeKey, generation) && request === snapshotRequestRef.current) setError("无法确认浏览器连接，请刷新实际状态。草稿仍然保留。"); }
   }, [active, sessionId, executorBotId, scopeKey, initialPageId, current]);
@@ -146,6 +147,20 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
   const viewOwner = view?.owner;
   const viewSessionId = view?.browserSessionId;
   const sessionState = session?.state;
+  const sessionBrowserId = session?.id;
+  const sessionEpoch = session?.controlEpoch;
+  const applyDownloadReceipt = useEffectEvent((key: string, generation: number, epoch: number, browserId: string, result: BrowserDownloadsPage | string): void => {
+    if (!active || !current(key, generation) || session?.state !== "running" || session.id !== browserId || session.controlEpoch !== epoch || view?.browserSessionId !== browserId || view.epoch !== epoch) return;
+    if (typeof result === "string") setError(result);
+    else { setDownloads(result.items); setDownloadFailures(result.errors); }
+  });
+  useEffect(() => {
+    if (!active || sessionState !== "running" || !viewSessionId || viewSessionId !== sessionBrowserId || viewEpoch === undefined || viewEpoch !== sessionEpoch) return;
+    const generation = generationRef.current;
+    return pollBrowserDownloads({ sessionId, executorBotId, expectedEpoch: viewEpoch }, input => window.aevorenBot.browser.downloads(input), data => {
+      applyDownloadReceipt(scopeKey, generation, viewEpoch, viewSessionId, data);
+    }, message => { applyDownloadReceipt(scopeKey, generation, viewEpoch, viewSessionId, message); });
+  }, [active, sessionState, sessionBrowserId, sessionEpoch, viewSessionId, viewEpoch, sessionId, executorBotId, scopeKey]);
   const readFrame = useCallback(async (): Promise<void> => {
     if (!active || viewEpoch === undefined || viewOwner !== "ai" || sessionState !== "running" || framePendingRef.current !== null) return;
     const generation = generationRef.current; const request = ++frameRequestRef.current; framePendingRef.current = request;

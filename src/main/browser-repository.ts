@@ -278,7 +278,9 @@ export class BrowserRepository {
     if (row.control_epoch !== expectedEpoch) throw new AevorenBotError("COMPUTER_CONTROL_CHANGED"); return this.media(input, row);
   }
   assertFrame(input: BrowserScope, id: string, expectedEpoch: number, actor: ComputerOwner = "ai"): ScreenshotMedia {
-    return screenshotMediaSchema.strip().parse(this.getFrame(input, id, expectedEpoch, actor));
+    const frame = this.getFrame(input, id, expectedEpoch, actor);
+    if (actor === "ai" && frame.pageId === null) throw new AevorenBotError("BROWSER_OBSERVATION_REQUIRED");
+    return screenshotMediaSchema.strip().parse(frame);
   }
   recordDownload(input: BrowserScope, value: BrowserDownload, blobPath: string, expectedEpoch: number, actor: ComputerOwner = "ai"): BrowserDownload {
     const control = this.assertAccess(input, expectedEpoch, actor), parsed = browserDownloadSchema.parse(value); blobPathSchema.parse(blobPath);

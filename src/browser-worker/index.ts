@@ -27,10 +27,19 @@ process.umask(0o077);
 const desktop = new Desktop();
 await desktop.start();
 const engine = new EngineClient({ enginePath: join(dirname(fileURLToPath(import.meta.url)), "engine.mjs"), browserSessionId, environmentId, previewExecutionIp, profileDirectory, downloadsDirectory,
-  onDownload: record => {
-    const valid = browserDownloadSchema.parse({ ...record, browserSessionId, mimeType: "application/octet-stream" });
-    worker.store.addDownload(valid);
-  }, onDownloadFailure: record => { worker.store.addDownloadFailure(browserDownloadFailureSchema.parse(record)); }, onStopped: () => worker.engineStopped() });
+  onDownload: (record, lease) => {
+    const control = worker.store.control();
+    const valid = browserDownloadSchema.safeParse({ ...record, browserSessionId, mimeType: "application/octet-stream" });
+    if (!valid.success || !lease || lease.epoch !== control.epoch || lease.owner !== control.owner) {
+      if (z.string().uuid().safeParse(record.id).success) void engine.request("discard-download", { id: record.id }).catch(() => undefined);
+      return;
+    }
+    worker.store.addDownload(valid.data);
+  }, onDownloadFailure: (record, lease) => {
+    const control = worker.store.control();
+    const valid = browserDownloadFailureSchema.safeParse(record);
+    if (valid.success && lease?.epoch === control.epoch && lease.owner === control.owner) worker.store.addDownloadFailure(valid.data);
+  }, onStopped: () => worker.engineStopped() });
 const worker = new BrowserWorker({ environmentId, browserSessionId, stateDirectory, downloadsDirectory }, engine);
 await engine.start(worker.store.control());
 worker.acknowledgeControl();
