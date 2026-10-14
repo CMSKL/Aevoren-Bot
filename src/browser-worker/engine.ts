@@ -1,4 +1,4 @@
-import { chromium, type BrowserContext, type ElementHandle, type Page } from "playwright-core";
+import { chromium, type BrowserContext, type CDPSession, type ElementHandle, type Page } from "playwright-core";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
@@ -14,7 +14,7 @@ import { BrowserWorkerError } from "./worker-error";
 import { imageDimensions } from "./image";
 import { readDownload } from "./download-reader";
 
-type PageRecord = { page: Page; id: string; version: number; createdAt: string };
+type PageRecord = { page: Page; focusSession: CDPSession; id: string; version: number; createdAt: string };
 type ObservationRecord = { id: string; pageId: string; epoch: number; actor: "ai" | "user"; documentVersion: number; refs: Map<string, ElementHandle> };
 type Input = Record<string, unknown> & { actor: "ai" | "user"; expectedEpoch: number; pageId?: string; observationId?: string; documentVersion?: number };
 const send = (value: EngineResponse | EngineEvent): void => { if (process.connected) process.send?.(value); };
@@ -22,6 +22,7 @@ const send = (value: EngineResponse | EngineEvent): void => { if (process.connec
 export class BrowserEngine {
   private context: BrowserContext | null = null;
   private readonly pages = new Map<string, PageRecord>();
+  private readonly registering = new Map<Page, Promise<PageRecord>>();
   private readonly observations = new Map<string, ObservationRecord>();
   private readonly active = new Set<Promise<unknown>>();
   private control: ControlRecord = { owner: "user", epoch: 0, needsObservation: true };
@@ -59,20 +60,35 @@ export class BrowserEngine {
       }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
     };
     await this.context.addInitScript(watchDocument, { name: this.changeBinding });
-    for (const page of this.context.pages()) this.register(page);
+    await Promise.all(this.context.pages().map(page => this.register(page)));
     await Promise.all(this.context.pages().map(page => page.evaluate(watchDocument, { name: this.changeBinding })));
-    this.context.on("page", page => this.register(page));
-    if (this.pages.size === 0) this.register(await this.context.newPage());
+    this.context.on("page", page => { void this.register(page).catch(() => page.close().catch(() => undefined)); });
+    if (this.pages.size === 0) await this.register(await this.context.newPage());
   }
 
-  private register(page: Page): PageRecord {
+  private register(page: Page): Promise<PageRecord> {
     const existing = [...this.pages.values()].find(value => value.page === page);
-    if (existing) return existing;
-    const record = { page, id: randomUUID(), version: 1, createdAt: new Date().toISOString() };
+    if (existing) return Promise.resolve(existing);
+    const pending = this.registering.get(page);
+    if (pending) return pending;
+    const prepared = (async () => {
+      const session = await this.context!.newCDPSession(page);
+      // Playwright otherwise reports every tab as focused, including background
+      // tabs. Physical desktop pixels and input require the real browser focus.
+      await session.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+      return this.registerReady(page, session);
+    })();
+    this.registering.set(page, prepared);
+    void prepared.then(() => this.registering.delete(page), () => this.registering.delete(page));
+    return prepared;
+  }
+
+  private registerReady(page: Page, focusSession: CDPSession): PageRecord {
+    const record = { page, focusSession, id: randomUUID(), version: 1, createdAt: new Date().toISOString() };
     this.pages.set(record.id, record);
     this.activePageId = record.id;
     page.on("framenavigated", frame => { if (frame === page.mainFrame()) { record.version++; this.invalidate(record.id); } });
-    page.on("close", () => { this.pages.delete(record.id); this.invalidate(record.id); if (this.activePageId === record.id) this.activePageId = this.pages.keys().next().value ?? null; });
+    page.on("close", () => { this.pages.delete(record.id); this.invalidate(record.id); void focusSession.detach().catch(() => undefined); if (this.activePageId === record.id) this.activePageId = this.pages.keys().next().value ?? null; });
     page.on("download", download => {
       const epoch = this.control.epoch, owner = this.control.owner;
       const work = (async () => {
@@ -127,6 +143,17 @@ export class BrowserEngine {
     const value = this.pages.get(id ?? this.activePageId ?? "");
     if (!value || value.page.isClosed()) throw new BrowserWorkerError("BROWSER_PAGE_NOT_FOUND", 404);
     return value;
+  }
+
+  private async focusedPage(): Promise<PageRecord | null> {
+    const candidates = await Promise.all([...this.pages.values()].map(async record => ({ record,
+      focused: await record.page.evaluate(() => document.hasFocus()).catch(() => false) })));
+    const focused = candidates.filter(value => value.focused);
+    return focused.length === 1 ? focused[0]!.record : null;
+  }
+
+  private async assertFocused(record: PageRecord): Promise<void> {
+    if ((await this.focusedPage())?.id !== record.id) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
   }
 
   private async pageDTO(record: PageRecord): Promise<BrowserPage> {
@@ -211,22 +238,23 @@ export class BrowserEngine {
   }
 
   private async frame(input: Input, desktop: boolean): Promise<BrowserWorkerFrame> {
-    let record = this.page(input.pageId);
-    if (desktop && input.actor === "user") {
-      const focused = await Promise.all([...this.pages.values()].map(async value => ({ value, focused: await value.page.evaluate(() => document.hasFocus()).catch(() => false) })));
-      record = focused.find(value => value.focused)?.value ?? record;
+    const record = desktop && input.actor === "user" ? await this.focusedPage() : this.page(input.pageId);
+    if (input.actor === "ai") {
+      await record!.page.bringToFront(); this.activePageId = record!.id;
+      await this.assertFocused(record!);
     }
-    const observation = input.actor === "ai" ? await this.observe(record, input.expectedEpoch, 0, 18_000, "ai") : { id: randomUUID(), documentVersion: record.version };
-    if (input.actor === "user") this.remember({ id: observation.id, pageId: record.id, actor: "user", epoch: input.expectedEpoch, documentVersion: record.version, refs: new Map() });
-    if (input.actor === "ai") { await record.page.bringToFront(); this.activePageId = record.id; }
+    const observation = input.actor === "ai" ? await this.observe(record!, input.expectedEpoch, 0, 18_000, "ai") : { id: randomUUID(), documentVersion: record?.version ?? null };
+    if (input.actor === "user" && record) this.remember({ id: observation.id, pageId: record.id, actor: "user", epoch: input.expectedEpoch, documentVersion: record.version, refs: new Map() });
     const bytes = desktop
       ? await this.runProgram("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "x11grab", "-video_size", "1280x800", "-i", ":99", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "4", "pipe:1"])
-      : await record.page.screenshot({ type: "jpeg", quality: 80, caret: "initial", timeout: 5_000 });
+      : await record!.page.screenshot({ type: "jpeg", quality: 80, caret: "initial", timeout: 5_000 });
     this.assertAccess(input.expectedEpoch, input.actor);
     if (bytes.length > BROWSER_FRAME_MAX_BYTES) throw new BrowserWorkerError("BROWSER_IMAGE_TOO_LARGE", 413);
-    if (record.version !== observation.documentVersion) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
-    return { browserSessionId: this.options.browserSessionId, pageId: record.id, observationId: observation.id, controlEpoch: input.expectedEpoch,
-      documentVersion: record.version, dataBase64: bytes.toString("base64"), mimeType: "image/jpeg", size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"),
+    if (desktop && (await this.focusedPage())?.id !== record?.id) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+    this.assertAccess(input.expectedEpoch, input.actor);
+    if (record && record.version !== observation.documentVersion) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+    return { browserSessionId: this.options.browserSessionId, pageId: record?.id ?? null, observationId: observation.id, controlEpoch: input.expectedEpoch,
+      documentVersion: record?.version ?? null, dataBase64: bytes.toString("base64"), mimeType: "image/jpeg", size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"),
       ...imageDimensions(bytes, "image/jpeg"), capturedAt: new Date().toISOString() };
   }
 
@@ -271,7 +299,7 @@ export class BrowserEngine {
     if (action === "create") {
       if (input.actor === "ai" && this.control.needsObservation) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
       if (this.pages.size >= 20) throw new BrowserWorkerError("BROWSER_PAGE_LIMIT", 409);
-      const record = this.register(await this.context!.newPage());
+      const record = await this.register(await this.context!.newPage());
       const operation = this.operations.get(String(input.operationId));
       if (operation) operation.page = record.page;
       if (operation?.cancelled) { await record.page.close(); throw new BrowserWorkerError("BROWSER_OPERATION_CANCELLED", 409); }
@@ -288,34 +316,37 @@ export class BrowserEngine {
       if (action === "navigate") { await record.page.goto(browserUrlSchema.parse(input.url), { waitUntil: "domcontentloaded" }); return this.pageDTO(record); }
       await record.page.close(); return { pageId: record.id, closed: true };
     }
-    const proof = this.proof(input);
-    await record.page.bringToFront(); this.activePageId = record.id;
-    this.assertOperation(input);
+    this.proof(input);
     if (action === "computer-action") {
-      this.assertAccess(input.expectedEpoch, input.actor);
+      await this.assertFocused(record);
+      this.proof(input);
       const button = { left: "1", middle: "2", right: "3" }[String(input.button ?? "left") as "left" | "middle" | "right"];
       if (input.method === "click") {
         if (Number(input.x) >= 1_280 || Number(input.y) >= 800) throw new BrowserWorkerError("BROWSER_COORDINATE_INVALID");
-        await this.runProgram("xdotool", ["mousemove", "--sync", String(input.x), String(input.y), "click", button!], undefined, String(input.operationId));
+        await this.runProgram("xdotool", ["mousemove", String(input.x), String(input.y), "click", button!], undefined, String(input.operationId));
       } else if (input.method === "type") await this.runProgram("xdotool", ["type", "--clearmodifiers", "--delay", "0", "--file", "-"], String(input.text), String(input.operationId));
       else if (input.method === "key") await this.runProgram("xdotool", ["key", "--clearmodifiers", String(input.key).replaceAll("Control", "ctrl").replaceAll("Meta", "super").replaceAll("Arrow", "")], undefined, String(input.operationId));
       else if (input.method === "scroll") {
-        if (input.x !== undefined && input.y !== undefined) await this.runProgram("xdotool", ["mousemove", "--sync", String(input.x), String(input.y)], undefined, String(input.operationId));
+        if (input.x !== undefined && input.y !== undefined) await this.runProgram("xdotool", ["mousemove", String(input.x), String(input.y)], undefined, String(input.operationId));
         const deltaY = Number(input.deltaY), deltaX = Number(input.deltaX);
         if (deltaY) await this.runProgram("xdotool", ["click", "--repeat", String(Math.min(100, Math.ceil(Math.abs(deltaY) / 100))), "--delay", "0", deltaY > 0 ? "5" : "4"], undefined, String(input.operationId));
         this.assertAccess(input.expectedEpoch, input.actor);
         if (deltaX) await this.runProgram("xdotool", ["click", "--repeat", String(Math.min(100, Math.ceil(Math.abs(deltaX) / 100))), "--delay", "0", deltaX > 0 ? "7" : "6"], undefined, String(input.operationId));
       } else throw new BrowserWorkerError("BROWSER_INVALID_REQUEST");
-    } else if (input.method === "click" || input.method === "type") {
-      const target = proof.observation.refs.get(String(input.ref));
-      if (!target || !await target.evaluate(node => node.isConnected)) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
-      this.assertAccess(input.expectedEpoch, input.actor);
-      if (input.method === "click") await target.click({ button: (input.button ?? "left") as "left" | "middle" | "right", timeout: 5_000 });
-      else if (input.replace) await target.fill(String(input.text), { timeout: 5_000 });
-      else await target.type(String(input.text), { timeout: 5_000 });
-    } else if (input.method === "key") { this.assertAccess(input.expectedEpoch, input.actor); await record.page.keyboard.press(String(input.key)); }
-    else if (input.method === "scroll") { this.assertAccess(input.expectedEpoch, input.actor); await record.page.mouse.wheel(Number(input.deltaX), Number(input.deltaY)); }
-    else throw new BrowserWorkerError("BROWSER_INVALID_REQUEST");
+    } else {
+      await record.page.bringToFront(); this.activePageId = record.id;
+      const proof = this.proof(input);
+      if (input.method === "click" || input.method === "type") {
+        const target = proof.observation.refs.get(String(input.ref));
+        if (!target || !await target.evaluate(node => node.isConnected)) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+        this.proof(input);
+        if (input.method === "click") await target.click({ button: (input.button ?? "left") as "left" | "middle" | "right", timeout: 5_000 });
+        else if (input.replace) await target.fill(String(input.text), { timeout: 5_000 });
+        else await target.type(String(input.text), { timeout: 5_000 });
+      } else if (input.method === "key") { this.assertAccess(input.expectedEpoch, input.actor); await record.page.keyboard.press(String(input.key)); }
+      else if (input.method === "scroll") { this.assertAccess(input.expectedEpoch, input.actor); await record.page.mouse.wheel(Number(input.deltaX), Number(input.deltaY)); }
+      else throw new BrowserWorkerError("BROWSER_INVALID_REQUEST");
+    }
     this.assertAccess(input.expectedEpoch, input.actor);
     record.version++; this.invalidate(record.id);
     return this.pageDTO(record);

@@ -43,23 +43,30 @@ async function withContainer(callback: (fixture: Fixture) => Promise<void>): Pro
   }
 }
 
-async function withSite(callback: (url: string, clicks: () => number) => Promise<void>): Promise<void> {
+async function withSite(callback: (url: string, clicks: () => number, focused: () => Record<string, boolean>) => Promise<void>): Promise<void> {
   let clicks = 0;
+  const focused: Record<string, boolean> = {};
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://fixture.invalid");
     if (url.pathname === "/clicked") { clicks++; response.end("counted"); return; }
+    if (url.pathname === "/focused") { focused[url.searchParams.get("page")!] = url.searchParams.get("value") === "1"; response.end("counted"); return; }
     if (url.pathname === "/download" || url.pathname === "/large") {
       response.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": 'attachment; filename="controlled.bin"' });
       response.end(Buffer.alloc(url.pathname === "/large" ? 1_048_577 : 1_024, 0xab)); return;
     }
     if (url.searchParams.has("login")) response.setHeader("set-cookie", `fixture_login=${url.searchParams.get("login")}; Max-Age=3600; Path=/; HttpOnly; SameSite=Lax`);
     response.setHeader("content-type", "text/html; charset=utf-8");
+    if (url.searchParams.has("focusFixture")) {
+      const label = url.searchParams.get("focusFixture")!, background = label === "A" ? "rgb(23,145,213)" : "white";
+      response.end(`<!doctype html><html><head><title>focus fixture ${label}</title><style>html,body,button{width:100%;height:100%;margin:0;padding:0;border:0}button{background:${background};font:30px sans-serif}</style></head><body><button onclick="fetch('/clicked')">focus fixture ${label}</button><script>const report=()=>fetch('/focused?page=${label}&value='+(document.hasFocus()?'1':'0'));setInterval(report,100);report();</script></body></html>`);
+      return;
+    }
     response.end(`<!doctype html><html><head><title>controlled browser fixture</title><style>html,body{background:rgb(23,145,213);margin:0;min-height:100%;}input,button,a{font:20px sans-serif;margin:8px}h1{margin:8px}${url.searchParams.has("wait") ? "#late{pointer-events:none}" : ""}</style></head><body><h1>controlled browser fixture</h1><p>COOKIE ${String(request.headers.cookie ?? "ABSENT")}</p><input aria-label="Draft" oninput="document.getElementById('typed').textContent=this.value"><span id="typed"></span><button id="late" onclick="fetch('/clicked');this.textContent='Clicked'">Click fixture</button><a href="/download">Download fixture</a><a href="/large">Oversized fixture</a><script>if(location.search.includes('wait=1'))setTimeout(()=>document.getElementById('late').style.pointerEvents='auto',1500)</script></body></html>`);
   });
   await new Promise<void>(resolve => server.listen(0, "0.0.0.0", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("fixture bind failed");
-  try { await callback(`http://host.docker.internal:${address.port}`, () => clicks); }
+  try { await callback(`http://host.docker.internal:${address.port}`, () => clicks, () => ({ ...focused })); }
   finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }
 
@@ -123,10 +130,54 @@ class RfbFixture {
       event[1] = 0; this.send(Buffer.from(event));
     }
   }
+  click(x: number, y: number): void {
+    const event = Buffer.alloc(6); event[0] = 5; event[1] = 1; event.writeUInt16BE(x, 2); event.writeUInt16BE(y, 4); this.send(event);
+    event[1] = 0; this.send(Buffer.from(event));
+  }
+  nextTab(): void {
+    const event = Buffer.alloc(8); event[0] = 4;
+    for (const [key, down] of [[0xffe3, 1], [0xff09, 1], [0xff09, 0], [0xffe3, 0]]) { event[1] = down!; event.writeUInt32BE(key!, 4); this.send(Buffer.from(event)); }
+  }
   close(): void { this.socket.terminate(); }
 }
 
 describe.skipIf(!enabled)("real isolated Chromium and desktop Worker", () => {
+  it("binds actual native tab pixels and input to one focused page and clicks at the unchanged cursor position", async () => {
+    await withSite(async (site, clicks, focused) => withContainer(async f => {
+      const first = await navigate(f, `${site}/?focusFixture=A`);
+      const original = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", { ...access(1), pageId: first.id }));
+      const second = await f.request<BrowserPage>("/v1/browser/pages", "POST", { ...mutation(1), url: `${site}/?focusFixture=B` });
+      await f.request("/v1/computer/screenshot", "POST", { ...access(1), pageId: second.id });
+      await expect.poll(focused).toEqual({ A: false, B: true });
+      const current = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", access(1, "user")));
+      expect(current.pageId).toBe(second.id);
+      expect(await screenshotPixel(f, current, 700, 600)).toEqual([255, 255, 255]);
+      await expect(f.request("/v1/computer/click", "POST", { ...mutation(1), pageId: first.id, observationId: original.observationId,
+        documentVersion: original.documentVersion, x: 650, y: 500 })).rejects.toMatchObject({ message: "BROWSER_OBSERVATION_STALE", status: 409 });
+      expect(clicks()).toBe(0);
+      expect((await pages(f, 1)).find(page => page.id === first.id)?.documentVersion).toBe(original.documentVersion);
+      await f.request("/v1/computer/takeover", "POST", mutation(1, "user"));
+      const rfb = new RfbFixture(f, 2);
+      try {
+        await rfb.handshake(); rfb.click(650, 500); await expect.poll(clicks).toBe(1);
+        rfb.nextTab(); await expect.poll(focused).toEqual({ A: true, B: false });
+        const native = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", access(2, "user")));
+        expect(native.pageId).toBe(first.id);
+        const blue = await screenshotPixel(f, native, 700, 600);
+        expect(blue[0]).toBeLessThan(40); expect(blue[1]).toBeGreaterThan(125); expect(blue[2]).toBeGreaterThan(190);
+        rfb.nextTab(); await expect.poll(focused).toEqual({ A: false, B: true });
+        const ready = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", access(2, "user")));
+        expect(ready.pageId).toBe(second.id);
+        const mouse = await docker(["exec", "--user", "1000", f.name, "env", "DISPLAY=:99", "xdotool", "getmouselocation", "--shell"]);
+        expect(mouse).toContain("X=650\nY=500");
+        await f.request("/v1/computer/click", "POST", { ...mutation(2, "user"), pageId: second.id, observationId: ready.observationId,
+          documentVersion: ready.documentVersion, x: 650, y: 500 });
+        await expect.poll(clicks).toBe(2);
+        expect((await f.request<BrowserWorkerControl>("/v1/computer/control")).observedEpoch).toBeNull();
+      } finally { rfb.close(); }
+    }));
+  }, 90_000);
+
   it("transfers real screenshot pixels and bounds downloads without publishing partial resources", async () => {
     await withSite(async site => withContainer(async f => {
       expect((await fetch(`${f.url}/v1/health`)).status).toBe(401);
