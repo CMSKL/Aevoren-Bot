@@ -104,6 +104,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Bound worker contention so filesystem-backed Runtime checks can settle
       # on hosted Windows runners without weakening their completion assertions.
+      - name: Verify isolated fixture teardown
+        run: node --test scripts/fixture-close.test.mjs
       - run: pnpm exec vitest run --maxWorkers=2
       - run: pnpm build
       - name: Prepare Electron test runtime
