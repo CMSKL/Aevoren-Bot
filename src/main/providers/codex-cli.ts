@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
@@ -148,13 +148,33 @@ class CodexRpcClient {
     const child = this.child;
     this.closed = true;
     this.failAll(new AevorenBotError("MODEL_TRANSPORT_ERROR"));
-    if (!child || child.exitCode !== null) return;
-    child.kill("SIGTERM");
-    await Promise.race([
-      new Promise<void>((resolve) => child.once("close", () => resolve())),
-      new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
-    ]);
-    if (child.exitCode === null) child.kill("SIGKILL");
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    let closed = false;
+    const markClosed = (): void => { closed = true; };
+    child.once("close", markClosed);
+    const waitForClose = (milliseconds: number): Promise<boolean> => closed ? Promise.resolve(true) : new Promise(resolve => {
+      const done = (result: boolean): void => { clearTimeout(timer); child.removeListener("close", onClose); resolve(result); };
+      const onClose = (): void => done(true);
+      const timer = setTimeout(() => done(false), milliseconds);
+      child.once("close", onClose);
+    });
+    const live = (): boolean => !closed && child.exitCode === null && child.signalCode === null;
+    try {
+      child.stdin.once("error", () => undefined);
+      child.stdin.end();
+      if (await waitForClose(1_000)) return;
+      if (process.platform === "win32" && child.pid && live()) {
+        // Kill the known, still-live wrapper and its descendants before losing
+        // its PID; terminating cmd.exe first can orphan a persistent CLI server.
+        await new Promise<void>(resolve => execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], { timeout: 5_000, windowsHide: true }, () => resolve()));
+        if (await waitForClose(1_000)) return;
+      } else if (live()) {
+        child.kill("SIGTERM");
+        if (await waitForClose(1_000)) return;
+      }
+      if (live()) child.kill("SIGKILL");
+      await waitForClose(1_000);
+    } finally { child.removeListener("close", markClosed); }
   }
 
   private handleLine(line: string): void {
@@ -191,15 +211,17 @@ class CodexRpcClient {
   }
 
   private async handleServerRequest(id: string | number, method: string, params: unknown): Promise<void> {
-    if (!this.child) return;
+    if (!this.child || this.closed) return;
     if (!this.serverRequestHandler) {
       this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message: "method not found" } })}\n`);
       return;
     }
     try {
       const result = await this.serverRequestHandler(method, params);
+      if (this.closed) return;
       this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
     } catch {
+      if (this.closed) return;
       this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message: "tool request failed" } })}\n`);
     }
   }

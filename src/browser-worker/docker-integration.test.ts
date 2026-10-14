@@ -30,6 +30,7 @@ async function withContainer(callback: (fixture: Fixture) => Promise<void>): Pro
   };
   try {
     await execute("docker", ["run", "--detach", "--name", name, "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m", "--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID", "--cap-add", "CHOWN", "--cap-add", "KILL", "--security-opt", "no-new-privileges", "--memory", "768m", "--pids-limit", "256", "--publish", "127.0.0.1::8081",
+      ...(process.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
       "--mount", `type=volume,source=${volumes[0]},target=/var/lib/aevoren-browser-profile`, "--mount", `type=volume,source=${volumes[1]},target=/var/lib/aevoren-browser-state`, "--mount", `type=volume,source=${volumes[2]},target=/var/lib/aevoren-browser-downloads`,
       "--env", "AEVOREN_BROWSER_TOKEN", "--env", `AEVOREN_BROWSER_ENVIRONMENT_ID=${environmentId}`, "--env", `AEVOREN_BROWSER_SESSION_ID=${browserSessionId}`, image], { env: { ...process.env, AEVOREN_BROWSER_TOKEN: token } });
     await reconnect();

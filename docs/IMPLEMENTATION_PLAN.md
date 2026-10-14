@@ -27,7 +27,7 @@
 | --- | --- | --- | --- |
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 源码和跨平台包验证通过；签名包 fixture 超时待修复，未公开发布 | dev／beta 已晋级；签名失败的实际记录见阶段 1，不把未签名包当官方发行 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | beta.28 开发候选；本机／源码 UI／最终未签名 macOS 包通过，签名发布待完成 | 33 项专项无跳过通过，含 18 项真实 Docker／AI 工具链；源码隐藏 Electron 3 项、最终未签名包 3 项通过；Windows 真 Docker 待验证 |
-| 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | beta.29 开发候选；源码与最终未签名 macOS 包验收通过，跨平台 CI／签名发布待完成 | 21 项 Worker／代理专项、4 项真实 Host、20 项像素 wire，完整单元 1,352 通过；最终包 13 项通过，未签名包不作为官方发行 |
+| 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | beta.29 开发候选；源码与最终未签名 macOS 包验收通过，跨平台 CI／签名发布待完成 | 21 项 Worker／代理专项、4 项真实 Host、23 项图片／CLI 生命周期，完整单元 1,355 通过；最终包 13 项通过，未签名包不作为官方发行 |
 | 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 未开始 | 待补充 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
@@ -102,10 +102,10 @@
 
 | 验证项 | 当前状态与证据 |
 | --- | --- |
-| 完整本机单元／质量 | 1,352 通过、35 跳过；Node/Web/执行 Worker/浏览器 Worker TypeScript、ESLint、构建、许可／文档／开源／安全检查通过，跳过的 Docker 场景单独启用验证 |
+| 完整本机单元／质量 | 1,355 通过、35 跳过；Node/Web/执行 Worker/浏览器 Worker TypeScript、ESLint、构建、许可／文档／开源／安全检查通过，跳过的 Docker 场景单独启用验证 |
 | Worker／代理实际专项 | 21／21、无跳过：8 个真实 Chromium Docker、7 单元、4 localhost HTTP／WS 单元、2 实际代理 Docker；包含六环境同时启动、实际桌面／RFB、profile／Shell 隔离、旧端口复用失效、SPA 绝对路径与 WS |
 | 真实 Host／AI 工具链 | 最终 4／4、无跳过：真实 JPEG、Scope、接管、审批、旧回执、Runtime cancel、兄弟页／后台保存；最早一次首启短暂 BROWSER_UNAVAILABLE 原因未确定，后续三次首启正常，保留仅 route/code/OOM 的测试诊断 |
-| 图片 wire | 20／20 通过，验证真实 localhost API payload、MCP 图片块、实际版本 JSON schema 下的 Codex inputImage、过期授权和同 ID 重放；未调用用户真实云模型 |
+| 图片／CLI 生命周期 | 23／23 通过，验证真实 localhost API payload、MCP 图片块、实际版本 JSON schema 下的 Codex inputImage、过期授权和同 ID 重放；未调用用户真实云模型 |
 | 隐藏界面／安装包 | 原 Runtime／200% 缩放／窄屏 14 项通过，真实 Browser 源码 2／2 通过；最终未签名 macOS beta.29 包 13／13（资料库 8、真实环境 3、真实 Browser 2）通过。实查 isPackaged、版本、两套 Worker Resources 与说明文件；RFB 输入采用实际物理键保持／Shift chord，fixture 持久 cookie／真实 listener 就绪与精确清理均保留 |
 | 平台／发布 | macOS arm64 与 Linux Docker 真实专项已有证据；Windows Linux Docker 仍未验证；本阶段未晋级或签名发布，master 暂不晋级 |
 

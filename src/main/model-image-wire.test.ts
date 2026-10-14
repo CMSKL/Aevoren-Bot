@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -57,7 +60,7 @@ function createCodexFixture(directory: string, version = "0.162.1"): string {
   const script = join(directory, "controlled-codex.mjs");
   writeFileSync(script, `#!/usr/bin/env node\nimport {createInterface} from 'node:readline';import {writeFileSync} from 'node:fs';
 if(process.argv.includes('--version')){console.log('codex-cli ${version}');process.exit(0)}
-const send=value=>process.stdout.write(JSON.stringify(value)+'\\n');
+const send=(value,done)=>process.stdout.write(JSON.stringify(value)+'\\n',done);
 createInterface({input:process.stdin}).on('line',line=>{const message=JSON.parse(line);if(message.method==='initialize')send({jsonrpc:'2.0',id:message.id,result:{}});else if(message.method==='account/read')send({jsonrpc:'2.0',id:message.id,result:{account:{type:'chatgpt',email:'fixture@invalid.test'},requiresOpenaiAuth:true}});else if(message.method==='model/list')send({jsonrpc:'2.0',id:message.id,result:{data:[{id:'fixture-model',displayName:'Fixture',isDefault:true}],nextCursor:null}});else if(message.method==='thread/start')send({jsonrpc:'2.0',id:message.id,result:{thread:{id:'image-thread'}}});else if(message.method==='turn/start'){send({jsonrpc:'2.0',id:message.id,result:{turn:{id:'image-turn'}}});send({jsonrpc:'2.0',id:'native-image-request',method:'item/tool/call',params:{threadId:'image-thread',turnId:'image-turn',callId:'captured-frame',namespace:null,tool:'time_now',arguments:{timezone:'UTC'}}})}else if(message.id==='native-image-request'){writeFileSync('received.json',JSON.stringify(message.result));send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:'image-thread',turn:{id:'image-turn',status:'completed'}}})}else if(message.method==='turn/interrupt')send({jsonrpc:'2.0',id:message.id,result:{}})});\n`, "utf8");
   if (process.platform !== "win32") { chmodSync(script, 0o700); return script; }
   const wrapper = join(directory, "controlled-codex.cmd");
@@ -73,6 +76,19 @@ const codexResponseSchema = z.object({ success: z.boolean(), contentItems: z.arr
 afterEach(() => vi.restoreAllMocks());
 
 describe("real local model image wire", () => {
+  it("closes the persistent controlled JSON-RPC process on EOF before removing its working directory", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-image-codex-exit-"));
+    const path = createCodexFixture(directory);
+    const child = spawn(path, ["app-server", "--stdio"], { cwd: directory, env: { PATH: process.env.PATH }, stdio: ["pipe", "pipe", "pipe"], ...cliUtils.cliShellOptions(path) });
+    const closed = once(child, "close"); child.stdout.resume(); child.stderr.resume();
+    try {
+      child.stdin.end(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "turn/start" })}\n${JSON.stringify({ jsonrpc: "2.0", id: "native-image-request", result: { success: true, contentItems: [] } })}\n`);
+      expect(await closed).toEqual([0, null]);
+      expect(JSON.parse(readFileSync(join(directory, "received.json"), "utf8"))).toEqual({ success: true, contentItems: [] });
+    } finally { if (child.exitCode === null) child.kill("SIGTERM"); await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+    expect(existsSync(directory)).toBe(false);
+  });
+
   it("keeps all six parallel API tool replies textual and then uploads real pixels in one user image message", async () => {
     await withApi(async (url, requests) => {
       const attachments = Array.from({ length: 6 }, () => image());
@@ -159,7 +175,7 @@ describe("real local model image wire", () => {
       expect(reply.success).toBe(true);
       const pictures = reply.contentItems.filter(item => item.type === "inputImage");
       expect(pictures).toHaveLength(1); expect(pictures[0]!.imageUrl).toMatch(/^data:image\/png;base64,/); verifyPixels(pictures[0]!.imageUrl.split(",")[1]!);
-    } finally { rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+    } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
   });
 
   it("does not send stale Codex pixels after capture and before native respond", async () => {
@@ -172,7 +188,7 @@ describe("real local model image wire", () => {
       const reply = codexResponseSchema.parse(JSON.parse(readFileSync(join(directory, "received.json"), "utf8")));
       expect(reply.contentItems.some(item => item.type === "inputImage")).toBe(false);
       expect(JSON.stringify(reply)).toContain("授权已失效");
-    } finally { rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+    } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
   });
 
   it.each(["0.162.0", "0.162.1"])("reports image transport from the inspected Codex %s fixture version", async version => {

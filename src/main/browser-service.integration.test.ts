@@ -28,14 +28,29 @@ const dockerCommand = promisify(execFile), enabled = process.env.AEVOREN_BROWSER
 describe.skipIf(!enabled)("host browser service with real local Docker and Chromium", () => {
   let root: string, repository: AppRepository, environments: EnvironmentService, browser: BrowserService;
   const driver = new BrowserDockerDriver(), changed: unknown[] = [];
-  const startupTrace: { route: string; code: string }[] = [];
+  const startupTrace: { route: string; base: string; code: string }[] = [];
   beforeAll(async () => {
     if (process.env.AEVOREN_BROWSER_STARTUP_DIAGNOSTICS === "1") {
       const request = ExecutionWorkerClient.prototype.request;
       vi.spyOn(ExecutionWorkerClient.prototype, "request").mockImplementation(async function<T>(this: ExecutionWorkerClient, ...args: Parameters<ExecutionWorkerClient["request"]>): Promise<T> {
-        const route = args[0].split("?")[0]!.replace(/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/g, ":id");
-        try { const result = await request.apply(this, args); startupTrace.push({ route, code: "OK" }); return result as T; }
-        catch (error) { startupTrace.push({ route, code: (error as { code?: string }).code ?? (error as Error).name }); throw error; }
+        const route = args[0].split("?")[0]!.replace(/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/g, ":id"), base = (this as unknown as { base: string }).base;
+        try { const result = await request.apply(this, args); startupTrace.push({ route, base, code: "OK" }); return result as T; }
+        catch (error) {
+          const code = (error as { code?: string }).code ?? (error as Error).name; startupTrace.push({ route, base, code });
+          if (route === "/v1/files/content") {
+            const saved = repository.environments.listInternal().find(item => item.workerPort === Number(new URL(base).port));
+            const actual = saved ? await driver.inspect(saved.id).catch(() => null) : null;
+            const health = async (port: number | null | undefined): Promise<string | null> => {
+              if (!saved?.encryptedToken || !port) return null;
+              try { await new ExecutionWorkerClient(port, Buffer.from(saved.encryptedToken, "base64").toString(), saved.id).health(); return "OK"; }
+              catch (failure) { return (failure as { code?: string }).code ?? (failure as Error).name; }
+            };
+            const oldHealth = await health(saved?.workerPort), currentHealth = await health(actual?.workerPort);
+            console.error("Execution connection diagnostic", JSON.stringify({ route, base, code, environmentId: saved?.id,
+              savedPort: saved?.workerPort, inspectedPort: actual?.workerPort, oldHealth, currentHealth, containerState: actual?.state, oomKilled: actual?.oomKilled }));
+          }
+          throw error;
+        }
         finally { if (startupTrace.length > 20) startupTrace.shift(); }
       });
     }
@@ -62,6 +77,7 @@ describe.skipIf(!enabled)("host browser service with real local Docker and Chrom
   async function start(): Promise<BrowserScope> {
     const owner = repository.createBot(), scope = { sessionId: owner.session.id, executorBotId: owner.bot.id };
     await environments.start(scope);
+    const before = repository.environments.getInternal(scope)!;
     try { await browser.start({ ...scope, clientNonce: randomUUID() }); }
     catch (error) {
       if (process.env.AEVOREN_BROWSER_STARTUP_DIAGNOSTICS === "1") {
@@ -69,6 +85,11 @@ describe.skipIf(!enabled)("host browser service with real local Docker and Chrom
         console.error("Browser startup diagnostic", JSON.stringify({ trace: startupTrace, hostState: record?.state, containerState: container?.state, oomKilled: container?.oomKilled }));
       }
       throw error;
+    }
+    if (process.env.AEVOREN_BROWSER_STARTUP_DIAGNOSTICS === "1") {
+      const actual = await driver.inspect(before.id);
+      console.error("Execution binding after browser attachment", JSON.stringify({ environmentId: before.id, beforePort: before.workerPort,
+        savedPort: repository.environments.getInternal(scope)?.workerPort, inspectedPort: actual?.workerPort, containerState: actual?.state, oomKilled: actual?.oomKilled }));
     }
     return scope;
   }
