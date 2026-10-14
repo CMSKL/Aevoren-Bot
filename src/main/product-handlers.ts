@@ -150,7 +150,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     if (!result.snapshot || !result.executable) return result;
     try {
       if (!dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
-      dependencies.skillExecutionService.assertApprovalReview(result.snapshot, parsed);
+      dependencies.skillExecutionService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
       return result;
     } catch (error) {
       return { ...result, executable: false, reason: error instanceof AevorenBotError ? error.message : "授权或环境已改变，请重新准备操作。" };

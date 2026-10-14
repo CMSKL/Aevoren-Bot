@@ -13,6 +13,9 @@ import { ProductOperationService } from "./product-operation-service";
 import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
+import { SkillExecutionService } from "./skill-execution-service";
+import { LibraryService } from "./library-service";
+import { EnvironmentService } from "./environment-service";
 
 vi.mock("electron", () => ({ clipboard: { writeText: vi.fn() } }));
 const fixtures: { repository: AppRepository; root: string }[] = [];
@@ -77,10 +80,26 @@ function fixture() {
     } });
     return running;
   });
-  return { repository, service, executor, coordinator, adapter, grants, runs, revoke: () => { revoked = true; } };
+  return { root, repository, service, executor, coordinator, adapter, grants, runs, revoke: () => { revoked = true; } };
 }
 
 describe("script Skill product approval gateway", () => {
+  it("makes a valid host review executable using the real strict Scope service, then disables it on revocation", async () => {
+    const f = fixture(), run = f.runs[0]!, selection = scope(run);
+    const actual = new SkillExecutionService(f.repository, new LibraryService(f.repository, join(f.root, "owned")),
+      new EnvironmentService(f.repository.environments, { isAvailable: () => true, encrypt: value => value, decrypt: value => value }, join(f.root, "worker")));
+    f.adapter.assertApprovalReview = actual.assertApprovalReview.bind(actual);
+    const grantId = f.grants.get(run.executorBotId)!.target.grantId;
+    const tool = call("skills.runScript", { grantId, expectedGrantVersion: 1 });
+    const pending = f.repository.prepareToolInvocation({ runtimeRunId: run.id, toolCallId: randomUUID(), idempotencyKey: randomUUID(), tool },
+      undefined, undefined, f.service.approvalReview(tool, run.id));
+    const input = { ...selection, id: pending.approval.id, expectedVersion: pending.approval.version };
+    const valid = await f.service.handlers.get("approvals:review")!(input);
+    expect(valid).toMatchObject({ executable: true, snapshot: { kind: "skill-script", target: { grantId } } });
+    f.repository.skillExecutions.revoke({ ...selection, id: grantId, expectedVersion: 1 });
+    expect(await f.service.handlers.get("approvals:review")!(input)).toMatchObject({ executable: false, snapshot: (valid as { snapshot: unknown }).snapshot });
+    expect(f.adapter.runScript).not.toHaveBeenCalled();
+  });
   it("persists the host review before asking, keeps its content fixed, and rejects revoked execution", async () => {
     const f = fixture(), run = f.runs[0]!;
     const tool = call("skills.runScript", { grantId: f.grants.get(run.executorBotId)!.target.grantId, expectedGrantVersion: 1 });
