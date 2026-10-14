@@ -27,7 +27,7 @@
 | --- | --- | --- | --- |
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 源码和跨平台包验证通过；签名包 fixture 超时待修复，未公开发布 | dev／beta 已晋级；签名失败的实际记录见阶段 1，不把未签名包当官方发行 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | beta.28 开发候选；本机／源码 UI／最终未签名 macOS 包通过，签名发布待完成 | 33 项专项无跳过通过，含 18 项真实 Docker／AI 工具链；源码隐藏 Electron 3 项、最终未签名包 3 项通过；Windows 真 Docker 待验证 |
-| 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | beta.29 开发候选；源码与最终未签名 macOS 包验收通过，跨平台 CI／签名发布待完成 | 21 项 Worker／代理专项、4 项真实 Host、23 项图片／CLI 生命周期，完整单元 1,355 通过；最终包 13 项通过，未签名包不作为官方发行 |
+| 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | beta.29 开发候选；源码与最终未签名 macOS 包验收通过，跨平台 CI／签名发布待完成 | 21 项 Worker／代理专项、4 项真实 Host、23 项图片／CLI 生命周期，完整单元 1,376 通过；最终包 13 项通过，未签名包不作为官方发行 |
 | 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 未开始 | 待补充 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
@@ -55,11 +55,11 @@
 
 验收采用临时数据与受控 localhost HTTP，未调用真实云模型或用户聊天数据库。Windows 符号链接相关用例受运行器权限限制而跳过；未将这些边界标为实际验证。
 
-阶段 1 只完成文本资料与 Skill 能力。阶段 2 已完成开发验收；阶段 3 的浏览器／电脑进入联调，阶段 4–6 尚未实施。未发布能力不能作为已安装产品的可用功能。
+阶段 1 只完成文本资料与 Skill 能力。阶段 2 已完成开发验收；阶段 3 已完成本机与原生 Linux 核心验收，跨平台最终 CI／签名发布仍在收尾，阶段 4–6 尚未实施。未发布能力不能作为已安装产品的可用功能。
 
 ## 阶段 2 交付记录：v0.3.0-beta.28 开发候选
 
-开发分支为 `codex/docker-execution`，从已验收的 `dev` 创建；源码版本为 `v0.3.0-beta.28` 开发候选。当前未晋级 beta、未正式发布，master 不晋级。
+开发分支为 `codex/docker-execution`，从已验收的 `dev` 创建；`v0.3.0-beta.28` 已合入 beta 并建立同名标签，尚未公开发布，master 不晋级。
 
 - 23 个共用 `environments.*`、`execution.*`、`processes.*` 操作，联系人／群成员执行页和设置 Docker 状态卡；AI 由宿主补全会话与执行者，拒绝跨范围身份，变更进入真实审批。
 - 本机 Docker Linux 探测、镜像准备、创建／唤醒／休眠／重建；Worker 1.0.0、协议 1、版本／能力健康检查、认证 loopback 控制与实际镜像摘要。应用升级不自动替换已运行环境。
@@ -82,7 +82,7 @@
 | 隐藏源码 Electron | 3 项执行环境场景通过，使用临时数据与受控环境 |
 | 最终 macOS 安装包 | 未签名 beta.28 包的 3／3 执行环境场景通过，实查 `appVersion=0.3.0-beta.28`／`isPackaged=true`、Worker 与许可指南来自 Resources；未签名包不作为官方发行或签名验收证据 |
 | Windows Linux 容器 | 未验证；CI 无 Docker daemon，不将其声明为真实环境支持验收通过 |
-| 分支与发布 | [PR #22](https://github.com/CMSKL/Aevoren-Bot/pull/22) 的[最终 CI](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38511154615) 四项全绿，已合入 dev `752a50e`；[Beta PR #23](https://github.com/CMSKL/Aevoren-Bot/pull/23) 正在验证。正式签名发行待完成；不得把候选文档当已发布版本 |
+| 分支与发布 | [PR #22](https://github.com/CMSKL/Aevoren-Bot/pull/22) 四项 CI 全绿并合入 dev；[Beta PR #23](https://github.com/CMSKL/Aevoren-Bot/pull/23) 已合入 beta `dabe27fc`，标签 `v0.3.0-beta.28` 指向该提交。签名包资料库验收已修复，但 Apple stapler 验证两次遭遇网络连接丢失（-1005／Error 68），中间一次保存 fixture 回执竞态已由 [PR #26](https://github.com/CMSKL/Aevoren-Bot/pull/26) 修复。未创建 Release；下一候选纳入有界网络重试，不移动旧标签 |
 
 镜像 base manifest 固定为 `node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20`，实际构建 digest／平台保存在环境记录。Docker 由用户提供，首期保持同一个本机 context，不挂宿主 HOME、Docker socket 或浏览器 profile。Worker 保留对外网络，审批过的命令仍可能产生外部副作用；执行目录不代替容器隔离。镜像内 Node／Python／Debian 工具各自保留许可，见[执行环境与镜像说明](EXECUTION_ENVIRONMENT.md)。
 
@@ -92,7 +92,7 @@
 
 从 dev 基线创建 `codex/browser-computer` 并纳入已验证的阶段 2；当前源码与镜像已经构建，尚未作为第三阶段正式发行。
 
-后续跨平台检查确认 Linux Docker 网络接入会重新分配 published port，宿主端口重新核验修复已经通过原生 Linux CI。补充桌面复核发现 Playwright 模拟焦点会导致截图 pageId 与实际标签页不一致、旧截图可输入，当前正修复并等待新 Worker／包回归；之前包的通过记录不代替此修复验收。签名测试隔离与 Windows 清理修复 [PR #24](https://github.com/CMSKL/Aevoren-Bot/pull/24) 已四项 CI 全绿并合入 dev `6c99b7b`，Beta.28 晋级／签名发布继续独立进行。
+后续跨平台检查确认 Linux Docker 网络接入会重新分配 published port，宿主端口重新核验修复已经通过原生 Linux CI。桌面复核发现并修复 Playwright 模拟焦点造成的画面来源与旧截图输入问题；最终冻结包已完成相应回归，证据如下。签名测试隔离与 Windows 清理修复 [PR #24](https://github.com/CMSKL/Aevoren-Bot/pull/24) 已四项 CI 全绿并合入 dev `6c99b7b`。
 
 - 迁移 36 保存 BrowserSession、页面／观察／控制 epoch、下载、截图引用与服务预览，使用原应用 SQLite；真实会话／执行者边界贯穿界面、AI、Worker 与媒体读取。
 - 27 个共享 `browser.*`、`computer.*`、`preview.*` 操作，独立 Chromium 持久 profile、Xvfb/Openbox/x11vnc/noVNC，浏览器登录卷和控制密钥不暴露给执行 Shell。
@@ -104,7 +104,7 @@
 
 | 验证项 | 当前状态与证据 |
 | --- | --- |
-| 完整本机单元／质量 | 1,355 通过、35 跳过；Node/Web/执行 Worker/浏览器 Worker TypeScript、ESLint、构建、许可／文档／开源／安全检查通过，跳过的 Docker 场景单独启用验证 |
+| 完整本机单元／质量 | 1,376 通过、35 跳过；Node/Web/执行 Worker/浏览器 Worker TypeScript、ESLint、构建、许可／文档／开源／安全检查通过，跳过的 Docker 场景单独启用验证 |
 | Worker／代理实际专项 | 21／21、无跳过：8 个真实 Chromium Docker、7 单元、4 localhost HTTP／WS 单元、2 实际代理 Docker；包含六环境同时启动、实际桌面／RFB、profile／Shell 隔离、旧端口复用失效、SPA 绝对路径与 WS |
 | 真实 Host／AI 工具链 | 最终 4／4、无跳过：真实 JPEG、Scope、接管、审批、旧回执、Runtime cancel、兄弟页／后台保存；最早一次首启短暂 BROWSER_UNAVAILABLE 原因未确定，后续三次首启正常，保留仅 route/code/OOM 的测试诊断 |
 | 图片／CLI 生命周期 | 23／23 通过，验证真实 localhost API payload、MCP 图片块、实际版本 JSON schema 下的 Codex inputImage、过期授权和同 ID 重放；未调用用户真实云模型 |
@@ -113,9 +113,9 @@
 
 使用、镜像与边界见[浏览器与电脑说明](BROWSER_COMPUTER.md)。阶段 4–6 仍按顺序实施，不据此声明脚本 Skill、应用连接、多媒体解析、语音和全资源任务能力已完成。
 
-真实焦点修复采用应用自启的隔离 Chromium、私有调试管道与随机能力地址的 loopback WebSocket 桥，再用公开 `connectOverCDP(noDefaults: true)` 保留浏览器真实焦点。原始 Chrome HTTP 调试端口的网页关闭标签页风险已在隔离 probe 中复现并排除；新方案已实证拒绝 HTTP／未知地址／网页 Origin，仍保留真实 CDP 下载事件和文件字节。产品集成与最新 Worker 验收尚在进行，不能把 probe 作为最终包通过证据。
+真实焦点修复采用应用自启的隔离 Chromium、私有调试管道与随机能力地址的 loopback WebSocket 桥，再用公开 `connectOverCDP(noDefaults: true)` 保留浏览器真实焦点。原始 Chrome HTTP 调试端口的网页关闭标签页风险已在隔离 probe 中复现并排除；新方案已实证拒绝 HTTP／未知地址／网页 Origin，仍保留真实 CDP 下载事件和文件字节。最终 Worker、Host 与安装包验证均已完成，不以 probe 代替产品验收。
 
-新管道首轮专项 28／30 通过：真实焦点、原生 RFB、旧截图拒绝、同点点击、下载与桥接单元已过；cookie 重启保存和六环境截图两项失败仍在修复。旧包的 13 项通过记录保留为先前证据，最新实现须在修复后重跑。
+新管道首轮专项 28／30 通过，cookie 重启保存和六环境截图曾失败。后续保存问题已修复并完成最终包重跑；六环境的本机内存边界与原生 Linux 通过证据分别记录如下。
 
 后续 cookie 持久化通过真实浏览器协议关闭修复；本机剩余八个真实 Docker 场景与 21 个单元共 29 项通过。六环境场景未通过：六个均先到启动屏障，随后多个容器 OOM；截图子进程已实证仅一线程且 RSS 不超过约 12.5 MiB，Docker VM 总内存约 3.83 GiB。未修改 VM、容器内存限额或超时；六并行完整断言继续在原生 Linux CI 启用，并增加仅自有容器的 cgroup memory.events/peak 与进程名/RSS 诊断，以区分单容器限额和整机压力。此处不把本机失败算通过，也不声称更大 VM 必然解决。
 
