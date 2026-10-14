@@ -222,3 +222,7 @@ The license identifiers below are informational; the corresponding license texts
 | zod | 4.6.1 | MIT | [link](https://zod.dev) |
 | zod-to-json-schema | 3.25.2 | ISC | [link](https://github.com/StefanTerdell/zod-to-json-schema#readme) |
 | zwitch | 2.0.4 | MIT | [link](https://github.com/wooorm/zwitch#readme) |
+
+## Separately built execution image
+
+The optional local Docker execution image includes independently licensed Linux tools outside this npm inventory. See [execution image versions, base digest and license notices](docs/EXECUTION_ENVIRONMENT.md#images-and-third-party-licenses). Docker is user-provided; the app does not bundle its distribution.

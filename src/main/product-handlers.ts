@@ -75,8 +75,9 @@ import { UserProfileService } from "./user-profile-service";
 import { addLibraryProductHandlers, type LibraryExecutionContext } from "./library-product-handlers";
 import type { LibraryService } from "./library-service";
 import type { LibraryChangedEvent, LibraryExportResult, LibraryResourceKind } from "@shared/library-contracts";
+import { addEnvironmentProductHandlers, type EnvironmentProductDependencies } from "./environment-product-handlers";
 
-export type ProductDependencies = {
+export type ProductDependencies = EnvironmentProductDependencies & {
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
   pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
@@ -130,6 +131,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
 
   const handlers = new Map<string, (input?: unknown) => unknown>();
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
+  addEnvironmentProductHandlers(handlers, dependencies, commit, libraryContext);
   const handle = (channel: string, operation: (input?: unknown) => unknown): void => { handlers.set(channel, operation); };
 
   handle(IPC.userProfileGet, () => userProfile.get());
@@ -193,9 +195,13 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const parsed = conversationProjectSchema.parse(input);
     return commit(() => repository.setConversationProject(parsed.sessionId, parsed.projectId, parsed.expectedVersion));
   });
-  handle(IPC.conversationsDeleteBatch, (input: unknown) =>
-    commit(() => repository.deleteConversations(conversationBatchDeleteSchema.parse(input))),
-  );
+  handle(IPC.conversationsDeleteBatch, (input: unknown) => {
+    const parsed = conversationBatchDeleteSchema.parse(input);
+    const remove = () => commit(() => repository.deleteConversations(parsed));
+    return dependencies.environmentService ? dependencies.environmentService.retire(
+      parsed.roomIds.map(id => repository.getRoomMainSession(id).id), parsed.botIds,
+      () => repository.assertConversationsDeletable(parsed), remove) : remove();
+  });
   handle(IPC.teamsCreateContentTeam, (input: unknown) => {
     const parsed = projectContextSchema.parse(input ?? {});
     return commit(() => repository.createContentTeamTemplate(parsed.projectId));
@@ -225,7 +231,10 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     return commit(() => repository.setBotHidden(parsed.id, parsed.hidden));
   });
   handle(IPC.botsDuplicate, (id: unknown) => commit(() => repository.duplicateBot(botIdSchema.parse(id))));
-  handle(IPC.botsDelete, (id: unknown) => commit(() => repository.deleteBot(botIdSchema.parse(id))));
+  handle(IPC.botsDelete, (id: unknown) => {
+    const parsed = botIdSchema.parse(id), remove = () => commit(() => repository.deleteBot(parsed));
+    return dependencies.environmentService ? dependencies.environmentService.retire([], [parsed], () => repository.assertBotDeletable(parsed), remove) : remove();
+  });
   handle(IPC.botsCopyConversationId, (id: unknown) => {
     const parsed = botIdSchema.parse(id);
     repository.getBot(parsed);
@@ -341,14 +350,20 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     repository.getRoom(parsed);
     clipboard.writeText(parsed);
   });
-  handle(IPC.roomsDelete, (id: unknown) => commit(() => repository.deleteRoom(roomIdSchema.parse(id))));
+  handle(IPC.roomsDelete, (id: unknown) => {
+    const parsed = roomIdSchema.parse(id), remove = () => commit(() => repository.deleteRoom(parsed));
+    return dependencies.environmentService ? dependencies.environmentService.retire([repository.getRoomMainSession(parsed).id], [], () => repository.assertRoomDeletable(parsed), remove) : remove();
+  });
   handle(IPC.roomsAddMember, (input: unknown) => {
     const parsed = roomMembershipSchema.parse(input);
     return commit(() => repository.addRoomMember(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion));
   });
   handle(IPC.roomsRemoveMember, (input: unknown) => {
     const parsed = roomMembershipSchema.parse(input);
-    return commit(() => repository.removeRoomMember(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion));
+    const remove = () => commit(() => repository.removeRoomMember(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion));
+    return dependencies.environmentService ? dependencies.environmentService.retire([], [],
+      () => repository.assertRoomMemberRemovable(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion), remove,
+      [{ sessionId: repository.getRoomMainSession(parsed.roomId).id, executorBotId: parsed.botId }]) : remove();
   });
   handle(IPC.sessionsGetMain, (botId: unknown) => repository.getMainSession(botIdSchema.parse(botId)));
   handle(IPC.transcriptList, (sessionId: unknown) => repository.listTranscript(sessionIdSchema.parse(sessionId)));

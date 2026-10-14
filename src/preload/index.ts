@@ -1,10 +1,49 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
 import { LIBRARY_CHANNELS } from "@shared/library-channels";
+import { ENVIRONMENT_CHANNELS, EXECUTION_CHANNELS, PROCESS_CHANNELS, ENVIRONMENT_EVENTS } from "@shared/environment-channels";
+import type { EnvironmentChangedEvent } from "@shared/environment-contracts";
 import type { LibraryChangedEvent } from "@shared/library-contracts";
 import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
 
+function onEnvironmentChanged(listener: (event: EnvironmentChangedEvent) => void): () => void {
+  const handler = (_event: Electron.IpcRendererEvent, data: EnvironmentChangedEvent): void => listener(data);
+  ipcRenderer.on(ENVIRONMENT_EVENTS.changed, handler);
+  return () => ipcRenderer.removeListener(ENVIRONMENT_EVENTS.changed, handler);
+}
+
 const api: AevorenBotApi = {
+  environments: {
+    probe: () => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.probe),
+    initialize: () => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.initialize),
+    list: (input) => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.list, input),
+    get: (input) => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.get, input),
+    start: (input) => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.start, input),
+    stop: (input) => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.stop, input),
+    rebuild: (input) => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.rebuild, input),
+    onChanged: onEnvironmentChanged,
+  },
+  execution: {
+    list: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.list, input),
+    get: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.get, input),
+    run: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.run, input),
+    cancel: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.cancel, input),
+    logs: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.logs, input),
+    listFiles: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.listFiles, input),
+    readFile: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.readFile, input),
+    writeFile: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.writeFile, input),
+    pickUpload: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.pickUpload, input),
+    downloadFile: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.downloadFile, input),
+    onChanged: onEnvironmentChanged,
+  },
+  processes: {
+    list: (input) => ipcRenderer.invoke(PROCESS_CHANNELS.list, input),
+    start: (input) => ipcRenderer.invoke(PROCESS_CHANNELS.start, input),
+    stop: (input) => ipcRenderer.invoke(PROCESS_CHANNELS.stop, input),
+    registerPort: (input) => ipcRenderer.invoke(PROCESS_CHANNELS.registerPort, input),
+    listPorts: (input) => ipcRenderer.invoke(PROCESS_CHANNELS.listPorts, input),
+    onChanged: onEnvironmentChanged,
+  },
   library: {
     list: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.list, input),
     available: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.available, input),
