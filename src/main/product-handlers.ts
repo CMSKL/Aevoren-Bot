@@ -72,8 +72,15 @@ import type { CapabilityRegistry } from "./capability-registry";
 import type { McpService } from "./mcp-service";
 import type { RoutineService } from "./routine-service";
 import { UserProfileService } from "./user-profile-service";
+import { addLibraryProductHandlers, type LibraryExecutionContext } from "./library-product-handlers";
+import type { LibraryService } from "./library-service";
+import type { LibraryChangedEvent, LibraryExportResult, LibraryResourceKind } from "@shared/library-contracts";
 
 export type ProductDependencies = {
+  libraryService?: LibraryService;
+  libraryChanged?(event: LibraryChangedEvent): void;
+  pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
+  exportLibraryResource?(input: { sessionId: string; id: string; revisionId?: string }, signal?: AbortSignal): Promise<LibraryExportResult | null>;
   productChanged?(): void;
   requestUpdateAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
   requestExitAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
@@ -99,7 +106,7 @@ export type ProductDependencies = {
   cancelUpdateInstall(): void;
 };
 
-export function createProductHandlers(dependencies: ProductDependencies, commit: <T>(operation: () => T) => T = (operation) => operation(), memorySourceEntryId?: string): Map<string, (input?: unknown) => unknown> {
+export function createProductHandlers(dependencies: ProductDependencies, commit: <T>(operation: () => T) => T = (operation) => operation(), memorySourceEntryId?: string, libraryContext?: LibraryExecutionContext): Map<string, (input?: unknown) => unknown> {
   const { repository, providers, generalSettings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
   const userProfile = new UserProfileService(repository);
 
@@ -122,6 +129,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   };
 
   const handlers = new Map<string, (input?: unknown) => unknown>();
+  addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
   const handle = (channel: string, operation: (input?: unknown) => unknown): void => { handlers.set(channel, operation); };
 
   handle(IPC.userProfileGet, () => userProfile.get());

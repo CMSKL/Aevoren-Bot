@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PromptManifest, RoomTurn } from "@shared/contracts";
-import { AppRepository } from "./database";
+import { AppRepository, MIGRATIONS } from "./database";
 
 const repositories: AppRepository[] = [];
 const temporaryDirectories: string[] = [];
@@ -310,7 +310,7 @@ describe("independent everyone runtime admission", () => {
     expect(inspected.prepare("PRAGMA index_info(runtime_one_active_per_executor)").all().map((row) => row.name))
       .toEqual(["session_id", "executor_bot_id"]);
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(inspected.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 33 });
+    expect(inspected.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: MIGRATIONS.at(-1)!.version });
     inspected.close();
     start({ ...f, repository: migrated }, f.turns[1]!);
   });

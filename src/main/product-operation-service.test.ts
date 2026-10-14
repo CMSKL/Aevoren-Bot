@@ -1,11 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UserProfileService } from "./user-profile-service";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ProductToolRequest } from "@shared/contracts";
+import type { ProductToolRequest, ResourceReference } from "@shared/contracts";
 import { PRODUCT_OPERATIONS } from "@shared/product-operations";
 import { AppRepository } from "./database";
 import { ProductOperationService } from "./product-operation-service";
@@ -16,6 +16,8 @@ import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
+import { LibraryService } from "./library-service";
+import { writeLibraryExport } from "./library-export";
 import type { ModelProvider } from "./model";
 vi.mock("electron", () => ({ clipboard: { writeText: vi.fn() } }));
 
@@ -33,19 +35,31 @@ function fixture(provider?: ModelProvider) {
   const executor = new WorkspaceToolExecutor(repository, new WorkspaceService(repository));
   const coordinator = new WorkspaceToolCoordinator(repository, executor, () => {});
   const worker = new SendWorker(repository, null, { transcript: () => {}, sendState: () => {}, runtime: () => {} }, false, provider, undefined, coordinator);
-  const dependencies = { repository, workspaceToolCoordinator: coordinator, sendWorker: worker, roomCoordinator: new RoomCoordinator(repository, worker.executor, { transcript: () => {}, roomRuntime: () => {} }), generalSettings: new GeneralSettingsService(repository), providers: { list: async () => [], isSupported: () => true }, updateService: {}, workspaceService: new WorkspaceService(repository), productChanged: vi.fn() } as unknown as ProductDependencies;
+  const workspaceService = new WorkspaceService(repository);
+  const libraryService = new LibraryService(repository, join(root, "owned"), { workspaceService });
+  const dependencies = { repository, libraryService, workspaceToolCoordinator: coordinator, sendWorker: worker, roomCoordinator: new RoomCoordinator(repository, worker.executor, { transcript: () => {}, roomRuntime: () => {} }), generalSettings: new GeneralSettingsService(repository), providers: { list: async () => [], isSupported: () => true }, updateService: {}, workspaceService, productChanged: vi.fn() } as unknown as ProductDependencies;
   const service = new ProductOperationService(dependencies);
   executor.setProductOperations(service);
-  const prepare = (tool: ProductToolRequest) => repository.prepareToolInvocation({ runtimeRunId: runtime.id, toolCallId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), tool });
-  const execute = async (tool: ProductToolRequest) => {
-    const prepared = prepare(tool);
+  const prepare = (tool: ProductToolRequest, runtimeRunId = runtime.id) => repository.prepareToolInvocation({ runtimeRunId, toolCallId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), tool });
+  const execute = async (tool: ProductToolRequest, runtimeRunId = runtime.id) => {
+    const prepared = prepare(tool, runtimeRunId);
     repository.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
     return executor.execute(prepared.invocation.id);
   };
-  return { root, repository, actor, runtime, executor, coordinator, service, prepare, execute, worker, dependencies };
+  return { root, repository, actor, runtime, executor, coordinator, service, prepare, execute, worker, dependencies, libraryService };
 }
 afterEach(async () => { for (const item of fixtures.splice(0)) { item.repository.close(); rmSync(item.root, { recursive: true, force: true }); } });
 const call = (operation: string, input?: unknown): ProductToolRequest => ({ kind: "product-call", action: "execute", operation, ...(input === undefined ? {} : { input }) });
+
+function libraryRuntime(repository: AppRepository, actor: ReturnType<AppRepository["createBot"]>, resourceRefs: ResourceReference[] = []) {
+  const nonce = crypto.randomUUID();
+  repository.prepareMessage({ sessionId: actor.session.id, clientNonce: nonce, text: "使用本轮资料", resourceRefs });
+  const entry = repository.getUserMessage(nonce);
+  const runtime = repository.createRuntimeRun(nonce, "fake", { schemaVersion: 1, botId: actor.bot.id, profileVersion: actor.bot.version,
+    sessionId: actor.session.id, generation: actor.session.generation, inputSeq: entry.seq, blocks: [], digest: "library-tool-test" });
+  repository.transitionRuntimeRun(runtime.id, "dispatching");
+  return repository.transitionRuntimeRun(runtime.id, "running", { providerRequestId: "library-tool-test" });
+}
 
 describe("product operations", () => {
   it.each(["allow-once", "deny"] as const)("uses genuine approval for creation after a short reply: %s", async (decision) => {
@@ -74,7 +88,7 @@ describe("product operations", () => {
   it("discovers every UI operation and describes actual field constraints without keyword gating", async () => {
     const f = fixture();
     const catalog = JSON.parse((await f.execute({ kind: "product-call", action: "catalog" })).content);
-    expect(catalog.operations).toHaveLength(103);
+    expect(catalog.operations).toHaveLength(PRODUCT_OPERATIONS.length);
     expect(new Set(catalog.operations.map((op: { name: string }) => op.name))).toEqual(new Set(PRODUCT_OPERATIONS.map((op) => op.name)));
     const description = JSON.parse((await f.execute({ kind: "product-call", action: "describe", operation: "settings.saveGeneral" })).content);
     expect(description.inputSchema.properties.theme.enum).toEqual(["system", "light", "dark"]);
@@ -268,5 +282,133 @@ describe("product operations", () => {
     const another = f.worker.send({ sessionId: other.session.id, clientNonce: crypto.randomUUID(), text: "private task" });
     expect(() => f.service.validate(call("tasks.getResult", { runId: another.runId }), f.runtime.id)).toThrow();
     await f.worker.shutdown();
+  });
+
+  it.each(["library.read", "documents.read", "skills.read", "skills.load", "skills.readFile"])("pins implicit %s to this message's selected revision and permits an explicit other version", async (operation) => {
+    const f = fixture();
+    const first = f.libraryService.create({ sessionId: f.actor.session.id, kind: operation.startsWith("documents.") ? "document" : "skill", name: "Pinned resource", body: "PINNED_V1" });
+    f.repository.transitionRuntimeRun(f.runtime.id, "completed");
+    const runtime = libraryRuntime(f.repository, f.actor, [first.reference]);
+    const second = f.libraryService.update({ sessionId: f.actor.session.id, id: first.resource.id, expectedVersion: 1, body: "EDITED_V2" });
+    const input = { id: first.resource.id, ...(operation === "skills.readFile" ? { path: "SKILL.md" } : {}) };
+    const implicit = JSON.parse((await f.execute(call(operation, input), runtime.id)).content).result;
+    if (operation === "skills.readFile") expect(implicit.data).toBe("PINNED_V1");
+    else expect(implicit.revision).toMatchObject({ id: first.revision.id, body: "PINNED_V1", digest: first.reference.digest });
+    const explicit = JSON.parse((await f.execute(call(operation, { ...input, revisionId: second.revision.id }), runtime.id)).content).result;
+    if (operation === "skills.readFile") expect(explicit.data).toBe("EDITED_V2");
+    else expect(explicit.revision).toMatchObject({ id: second.revision.id, body: "EDITED_V2" });
+    f.repository.library.unbind({ sessionId: f.actor.session.id, id: first.resource.id });
+    await expect(f.execute(call(operation, input), runtime.id)).rejects.toMatchObject({ code: "LIBRARY_NOT_BOUND" });
+  });
+
+  it.each([
+    ["unbind", "LIBRARY_NOT_BOUND"], ["disable", "LIBRARY_DISABLED"], ["delete", "LIBRARY_NOT_FOUND"],
+  ])("refuses cached created document bodies after %s without creating another resource", async (change, code) => {
+    const f = fixture();
+    const command = call("documents.create", { name: "Receipt resource", body: "REVOKED_BODY_CANARY" });
+    const created = JSON.parse((await f.execute(command)).content).result;
+    const mutation = { sessionId: f.actor.session.id, id: created.resource.id, expectedVersion: created.resource.version };
+    if (change === "unbind") f.repository.library.unbind({ sessionId: mutation.sessionId, id: mutation.id });
+    else if (change === "disable") f.repository.library.setEnabled({ ...mutation, enabled: false });
+    else f.repository.library.delete(mutation);
+    await expect(f.execute(command)).rejects.toMatchObject({ code });
+    expect(f.repository.library.available({ includeDisabled: true, includeDeleted: true })).toHaveLength(1);
+    expect(f.repository.productResourceCount(f.runtime.clientNonce)).toBe(1);
+  });
+
+  it("refuses cached update and restored-version bodies after revocation without writing another revision", async () => {
+    const f = fixture();
+    const original = f.libraryService.create({ sessionId: f.actor.session.id, kind: "document", name: "Versions", body: "VERSION_ONE" });
+    const update = call("documents.update", { id: original.resource.id, expectedVersion: 1, body: "VERSION_TWO" });
+    const second = JSON.parse((await f.execute(update)).content).result;
+    f.repository.library.unbind({ sessionId: f.actor.session.id, id: original.resource.id });
+    await expect(f.execute(update)).rejects.toMatchObject({ code: "LIBRARY_NOT_BOUND" });
+    f.repository.library.bind({ sessionId: f.actor.session.id, id: original.resource.id });
+    expect(f.repository.library.versions({ sessionId: f.actor.session.id, id: original.resource.id })).toHaveLength(2);
+    const restore = call("documents.restoreVersion", { id: original.resource.id, expectedVersion: second.resource.version, revisionId: original.revision.id });
+    const restored = JSON.parse((await f.execute(restore)).content).result;
+    f.repository.library.setEnabled({ sessionId: f.actor.session.id, id: original.resource.id, expectedVersion: restored.resource.version, enabled: false });
+    await expect(f.execute(restore)).rejects.toMatchObject({ code: "LIBRARY_DISABLED" });
+    expect(f.repository.library.versions({ sessionId: f.actor.session.id, id: original.resource.id, includeDisabled: true })).toHaveLength(3);
+  });
+
+  it("rechecks every cached import body and refuses a revoked member of the imported array", async () => {
+    const f = fixture();
+    const source = join(f.root, "sources");
+    mkdirSync(join(source, "batch"), { recursive: true });
+    writeFileSync(join(source, "batch", "one.md"), "IMPORTED_ONE");
+    writeFileSync(join(source, "batch", "two.md"), "IMPORTED_TWO");
+    const registration = await f.dependencies.workspaceService.registerRoot(source);
+    const actor = f.repository.createBot(registration.project.id);
+    const runtime = libraryRuntime(f.repository, actor);
+    const command = call("documents.import", { workspaceId: registration.workspace.id, path: "batch" });
+    const first = JSON.parse((await f.execute(command, runtime.id)).content).result;
+    f.repository.library.unbind({ sessionId: actor.session.id, id: first.imported[0].resource.id });
+    rmSync(source, { recursive: true });
+    await expect(f.execute(command, runtime.id)).rejects.toMatchObject({ code: "LIBRARY_NOT_BOUND" });
+    expect(f.repository.library.available()).toHaveLength(2);
+  });
+
+  it("exports the current message's selected version by default while accepting an explicit later version", async () => {
+    const f = fixture();
+    const first = f.libraryService.create({ sessionId: f.actor.session.id, kind: "document", name: "Pinned export", body: "EXPORT_V1" });
+    f.repository.transitionRuntimeRun(f.runtime.id, "completed");
+    const runtime = libraryRuntime(f.repository, f.actor, [first.reference]);
+    const second = f.libraryService.update({ sessionId: f.actor.session.id, id: first.resource.id, expectedVersion: 1, body: "EXPORT_V2" });
+    f.dependencies.exportLibraryResource = vi.fn(async (input, signal) => {
+      const snapshot = await f.libraryService.prepareExport(input, signal);
+      const path = await writeLibraryExport(snapshot, join(f.root, `${crypto.randomUUID()}.md`), signal,
+        () => { f.repository.library.read(input, f.actor.bot.id); });
+      return { path, resourceId: snapshot.resourceId, revisionId: snapshot.revisionId };
+    });
+    const implicit = JSON.parse((await f.execute(call("documents.export", { id: first.resource.id }), runtime.id)).content).result;
+    expect(implicit.revisionId).toBe(first.revision.id);
+    expect(readFileSync(implicit.path, "utf8")).toBe("EXPORT_V1");
+    const explicit = JSON.parse((await f.execute(call("documents.export", { id: first.resource.id, revisionId: second.revision.id }), runtime.id)).content).result;
+    expect(explicit.revisionId).toBe(second.revision.id);
+    expect(readFileSync(explicit.path, "utf8")).toBe("EXPORT_V2");
+  });
+
+  it.each(["library.export", "documents.export", "skills.export"])("reports repeated %s only as a historical receipt after the actual output is deleted", async (operation) => {
+    const f = fixture();
+    const content = f.libraryService.create({ sessionId: f.actor.session.id, kind: operation === "skills.export" ? "skill" : "document", name: "Export receipt", body: "EXPORTED_CONTENT" });
+    f.dependencies.exportLibraryResource = vi.fn(async (input, signal) => {
+      const snapshot = await f.libraryService.prepareExport(input, signal);
+      const path = await writeLibraryExport(snapshot, join(f.root, snapshot.kind === "skill" ? "exported-skill" : "exported.md"), signal,
+        () => { f.repository.library.read(input, f.actor.bot.id); });
+      return { path, resourceId: snapshot.resourceId, revisionId: snapshot.revisionId };
+    });
+    const command = call(operation, { id: content.resource.id });
+    const first = JSON.parse((await f.execute(command)).content);
+    expect(existsSync(first.result.path)).toBe(true);
+    rmSync(first.result.path, { recursive: true });
+    const replay = await f.execute(command);
+    const output = JSON.parse(replay.content);
+    expect(output).toMatchObject({ status: "previously_completed", reused: true, outputVerification: "not_rechecked", result: first.result });
+    expect(replay.invocation.resultMetadata).toMatchObject({ status: "previously_completed", reused: true, outputVerification: "not_rechecked" });
+    expect(f.dependencies.exportLibraryResource).toHaveBeenCalledTimes(1);
+    expect(existsSync(output.result.path)).toBe(false);
+  });
+
+  it("keeps a cancelled export cancelled when its receipt is reused", async () => {
+    const f = fixture();
+    const content = f.libraryService.create({ sessionId: f.actor.session.id, kind: "document", name: "Cancelled export", body: "content" });
+    f.dependencies.exportLibraryResource = vi.fn(async () => null);
+    const command = call("documents.export", { id: content.resource.id });
+    expect(JSON.parse((await f.execute(command)).content).status).toBe("cancelled");
+    expect(JSON.parse((await f.execute(command)).content)).toMatchObject({ status: "cancelled", reused: true, result: null });
+    expect(f.dependencies.exportLibraryResource).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks cached binding metadata as a prior receipt without silently granting access again", async () => {
+    const f = fixture();
+    const content = f.libraryService.create({ sessionId: f.actor.session.id, kind: "document", name: "Binding receipt", body: "body" });
+    const command = call("library.bind", { id: content.resource.id });
+    const first = JSON.parse((await f.execute(command)).content);
+    f.repository.library.unbind({ sessionId: f.actor.session.id, id: content.resource.id });
+    const replay = JSON.parse((await f.execute(command)).content);
+    expect(replay).toMatchObject({ reused: true, result: first.result });
+    expect(replay.receiptNotice).toContain("首次操作回执");
+    expect(() => f.repository.library.read({ sessionId: f.actor.session.id, id: content.resource.id })).toThrow(/未授权/);
   });
 });

@@ -218,6 +218,7 @@ The license identifiers below are informational; the corresponding license texts
 | vfile-message | 4.0.3 | MIT | [link](https://github.com/vfile/vfile-message#readme) |
 | which | 2.0.2 | ISC | [link](https://github.com/isaacs/node-which#readme) |
 | wrappy | 1.0.2 | ISC | [link](https://github.com/npm/wrappy) |
+| yaml | 2.9.1 | ISC | [link](https://eemeli.org/yaml/) |
 | zod | 4.6.1 | MIT | [link](https://zod.dev) |
 | zod-to-json-schema | 3.25.2 | ISC | [link](https://github.com/StefanTerdell/zod-to-json-schema#readme) |
 | zwitch | 2.0.4 | MIT | [link](https://github.com/wooorm/zwitch#readme) |

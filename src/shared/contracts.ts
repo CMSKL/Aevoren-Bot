@@ -2,6 +2,9 @@ import type { BotAvatarColor, BotAvatarShape } from "./bot-avatar";
 
 export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
 
+import type { LibraryApi, LibraryContent, ResourceReference } from "./library-contracts";
+export type { LibraryResource, LibraryContent, ResourceRevision, ResourceReference, MediaRef } from "./library-contracts";
+
 export type Bot = {
   id: string;
   /** Legacy origin only. Current chat association and tool access come from ConversationSummary/session scope, never this field. */
@@ -173,6 +176,9 @@ export type TranscriptEntry = {
   role: TranscriptRole;
   body: string;
   attachments?: MessageAttachment[];
+  resourceRefs?: ResourceReference[];
+  /** Main-only authorized resource snapshot, never returned in Renderer transcripts. */
+  resourceContents?: LibraryContent[];
   /** Main-only prompt enrichment; never populated in Renderer-facing snapshots. */
   attachmentContents?: Array<MessageAttachment & { content: string }>;
   status: TranscriptStatus;
@@ -227,6 +233,7 @@ export type SendCommand = {
   clientNonce: string;
   text: string;
   attachments?: AttachmentDraft[];
+  resourceRefs?: ResourceReference[];
 };
 
 export type SendResult = {
@@ -367,7 +374,7 @@ export type SaveCliProviderInput = {
 };
 
 export type RuntimeRoute = "fake" | ProviderDriverKind;
-export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "user" | "assistant";
+export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "user" | "assistant";
 
 export type PromptManifestBlock = {
   authority: PromptAuthority;
@@ -380,7 +387,7 @@ export type PromptManifestBlock = {
 };
 
 export type PromptManifest = {
-  schemaVersion: 1 | 2 | 3 | 4;
+  schemaVersion: 1 | 2 | 3 | 4 | 5;
   botId: string;
   profileVersion: number;
   sessionId: string;
@@ -914,6 +921,7 @@ export type CreateRoomRunInput = {
   clientNonce: string;
   text: string;
   attachments?: AttachmentDraft[];
+  resourceRefs?: ResourceReference[];
   membershipVersion: number;
   maxTurns: number;
   maxHops: number;
@@ -1231,6 +1239,7 @@ export type UserProfile = {
 };
 
 export interface AevorenBotApi {
+  library: LibraryApi;
   userProfile: {
     get(): Promise<ApiResult<UserProfile>>;
     update(input: UserProfile): Promise<ApiResult<UserProfile>>;

@@ -112,6 +112,14 @@ jobs:
           git diff --exit-code -- THIRD_PARTY_NOTICES.md
       - name: Build, sign and notarize update artifacts
         run: pnpm release:mac
+      - name: Validate library and Skills in the signed macOS app
+        shell: bash
+        env:
+          AEVOREN_BOT_TEST_HIDDEN: "1"
+        run: |
+          export AEVOREN_PACKAGED_APP_PATH="$PWD/dist/mac-arm64/Aevoren Bot.app/Contents/MacOS/Aevoren Bot"
+          test -f "$AEVOREN_PACKAGED_APP_PATH"
+          pnpm exec playwright test tests/smoke/library.spec.ts
       - name: Notarize signed disk image
         shell: bash
         env:

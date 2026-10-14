@@ -1,6 +1,6 @@
 # User guide
 
-This guide describes the supported pre-release workflow. It applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build.
+This guide covers the v0.3.0-beta.27 document/text-Skill workflow. Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). It applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build.
 
 ## First run
 
@@ -12,11 +12,43 @@ This guide describes the supported pre-release workflow. It applies to macOS 13 
 
 ## Interface and appearance
 
-The narrow left navigation switches between Chats, Contacts and Workspaces. Settings stays at the bottom. The adjacent list keeps names, previews, unread markers and actual activity times together; project-specific creation remains under the corresponding Workspace.
+The narrow left navigation switches between Chats and Contacts. Existing Workspace/project management is available through Settings. Settings stays at the bottom. The adjacent list keeps names, previews, unread markers and actual activity times together; project-specific creation remains under the corresponding Workspace.
 
 Choose **Dark** or **Daylight** in **Settings → General**. Both themes use the same layout and controls. Click the personal avatar at the top of the navigation to change your nickname or upload a PNG, JPEG or WebP image up to 5 MB. Cropping and storage happen on this computer; the app saves a centered 256-pixel PNG. The personal avatar updates in your messages and group collages. Bots receive stable cartoon-human portraits derived from their existing saved avatar identity.
 
 The conversation's **…** menu opens group management, files and execution records. Edit Bot profiles and model selection within **Contacts**; group management opens in a closable dialog. The next-message response mode sits beside **@** in the composer; explicit mentions still override it. **View collaboration details** or **View tool activity** above a related message expands that message's records without adding a permanent process panel. Enter sends; Shift, Ctrl or Cmd + Enter inserts a newline.
+
+## Documents and text Skills
+
+### Create, import and bind
+
+For a Bot's private MAIN conversation, open **Contacts → select Bot → Library (资料库) / Skill**. For a group, open **… → Group settings → Library / Skill**. These resources belong to the selected session; joining a Bot to a group does not bring its private library into that group.
+
+Use **New document / New Skill** to edit a name, description and Markdown body, or **Import file** for UTF-8 text. **Import Skill directory** accepts a directory containing `SKILL.md` with YAML `name` and `description`. Skill names in that frontmatter use lowercase letters/digits separated by hyphens. Imported references, scripts and assets retain their relative paths and checksums; application-owned copies remain available after the original directory is moved or removed. The import reports unsupported entries instead of treating them as successfully loaded.
+
+Each text or resource file is limited to 1 MiB; an import and a saved resource's body plus files are limited to 4 MiB, with at most 250 files. Symlinks, path traversal, invalid UTF-8 and invalid Skill metadata are rejected or explicitly skipped; ignored build/dependency directories are not imported. Cancellation or invalid input does not publish half of the accepted resource set.
+
+**Add existing resource → Add to current conversation** explicitly shares an existing resource. Its future versions are shared by all bound conversations, but sent messages retain their fixed revision. **Remove from current conversation** revokes only that session's binding. **Delete resource** affects every bound session and preserves recoverable contents; use **Show deleted → Restore resource** to restore it. These library actions remain available while an earlier reply is streaming.
+
+### Edit, review and recover
+
+Editing creates an immutable revision and uses the expected current version to detect concurrent changes. Conflicts preserve your local draft. **Read latest version, keep draft** updates the saved baseline; expand **Current saved content** to review it before saving again. Leaving a changed resource requires **Save and continue**, **Discard draft and continue**, or **Continue editing**. Markdown preview skips raw HTML and does not execute imported code.
+
+**Version history → Restore this version** creates a new revision from the selected historical contents. **Export saved version** writes the selected revision to a user-chosen destination. Document exports contain its saved text; Skill exports create a new directory containing `SKILL.md` and its accepted resource paths. Existing destinations are not overwritten. Exports can be imported again with the saved bytes and metadata preserved.
+
+### Use a fixed reference in a message
+
+In the composer, type `/` to search Skills, or `@` and choose the **Documents / Skill** group. Group chats retain the separate **Bot** and **Everyone** choices: selecting a document or Skill does not select a Bot or change group routing. Selected resources appear as removable chips, and a message accepts up to 20 references.
+
+**Add Skill to message (添加 Skill 到消息)** prepares the ordinary composer. It retains existing text and fills the default task prompt only when the composer is empty. Click **Send** after adding the actual task; selection alone does not create a Runtime. Drafts and references remain scoped to their session when switching chats. A successful send clears only the unchanged submitted draft; concurrent new typing remains intact.
+
+The message pins `resourceId`, `revisionId` and `digest`. Editing the resource later does not rewrite that message or a member's retry context. Disabled, deleted or unbound resources cannot be read again; historical messages retain the reference ID and display an unavailable badge where the current session has no access.
+
+### Connected AI access and current limits
+
+Connected models discover the 38 new `library.*`, `documents.*` and `skills.*` operations through `product_catalog`, `product_describe` and `product_execute`. `skills.load` returns an authorized text Skill to the current Runtime; `skills.readFile` reads accepted auxiliary text, with paging and truncation information. Binary assets return metadata only. File imports from AI must use the current conversation's authorized Workspace; selecting arbitrary native import/export locations requires the user's file dialog interaction. Mutations and sharing continue through the existing permission and approval rules.
+
+Text Skill metadata, including declared tool names, does not grant tool permissions. Scripts are preserved and may be read as text, but do not execute. This stage does not provide Docker terminals, browser sessions, desktop control, native Gmail/Drive/Notion connectors, media interpretation or voice. Those capabilities remain later stages in the [implementation record](IMPLEMENTATION_PLAN.md).
 
 ## Content-team workflow UI
 

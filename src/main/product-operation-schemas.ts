@@ -1,7 +1,10 @@
 import { z } from "zod";
+import { LIBRARY_OPERATION_SCHEMAS } from "@shared/library-product";
+import { resourceReferencesSchema } from "@shared/library-schemas";
 import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema, mcpServerMutationSchema, mcpServerEnabledSchema, mcpServerIdSchema, mcpServerMutationIdSchema, routineIdSchema, routineCreateSchema, routineUpdateSchema, routineEnabledSchema, routineMutationSchema, conversationPinnedSchema, conversationUnreadSchema, conversationHiddenSchema, sessionIdSchema, conversationProjectSchema, conversationBatchDeleteSchema, projectContextSchema, projectCreateSchema, briefApprovalReadSchema, briefApprovalCommandSchema, botUpdateSchema, botPinnedSchema, botUnreadSchema, botHiddenSchema, botIdSchema, memoryListSchema, memoryCreateSchema, memoryUpdateSchema, memoryMutationSchema, memoryProposalListSchema, memoryProposalAcceptSchema, workspacePermissionsSchema, workspaceRevealSchema, workspaceMutationSchema, toolSessionScopeSchema, approvalResolutionSchema, roomListSchema, roomCreateSchema, roomIdSchema, roomUpdateSchema, roomArchiveSchema, roomPinnedSchema, roomUnreadSchema, roomHiddenSchema, roomMembershipSchema, sendCommandSchema, nonceSchema, runIdSchema, roomSendCommandSchema, batchIdSchema, turnIdSchema, generalSettingsSchema, saveOpenAiCompatibleProviderSchema, saveCliProviderSchema, providerInstanceIdInputSchema } from "@shared/schemas";
 
 export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
+  ...LIBRARY_OPERATION_SCHEMAS,
   "userProfile.get": z.undefined(),
   "userProfile.update": z.object({ name: z.string().min(1).max(80).optional(), avatarUrl: z.string().max(524_288).nullable().optional() }).strict(),
   "attachments.pick": z.undefined(),
@@ -114,5 +117,6 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
     attachmentId: z.string().uuid().optional(), recordId: z.string().uuid().optional(),
     text: z.string().max(100_000).optional(), expectedDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
     routingMode: z.enum(["automatic", "explicit", "everyone"]).optional(), targetBotIds: z.array(botIdSchema).max(6).optional(),
+    resourceRefs: resourceReferencesSchema.optional(),
   }).strict(),
 };

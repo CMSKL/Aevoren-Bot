@@ -1,14 +1,17 @@
 import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
 import { useEffectEvent, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { AppError, Bot, ProviderInstanceInfo, RoomDetail, RoomPatch } from "@shared/contracts";
+import type { ResourceReference } from "@shared/library-contracts";
 import { eligibleRoomLeads } from "../room-leads";
 import { buildBotIdentityMap } from "../bot-identity";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { CheckIcon, CloseIcon } from "./Icons";
 import { ConversationWorkspace, type ConversationWorkspaceProps } from "./ConversationWorkspace";
+import { LibraryPanel, type LibraryPanelHandle } from "./LibraryPanel";
 
 type Draft = Pick<RoomDetail["room"], "name" | "description"> & { leadBotId: string | null };
 type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
+type InspectorTab = "details" | "library" | "skill";
 
 export type RoomInspectorHandle = { flush(): Promise<boolean> };
 
@@ -24,6 +27,7 @@ type Props = {
   onError(error: AppError | null): void;
   onOpenBot(bot: Bot): void;
   onMobileClose(): void;
+  onUseResource?(reference: ResourceReference, text?: string): void;
 };
 
 function toDraft(detail: RoomDetail): Draft {
@@ -35,7 +39,7 @@ function same(left: Draft, right: Draft): boolean {
 }
 
 export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function RoomInspector(
-  { id, detail, bots, conversationWorkspace, active, mobileOpen, error, onDetailUpdated, onError, onOpenBot, onMobileClose },
+  { id, detail, bots, conversationWorkspace, active, mobileOpen, error, onDetailUpdated, onError, onOpenBot, onMobileClose, onUseResource },
   ref,
 ) {
   const [draft, setDraft] = useState<Draft | null>(detail ? toDraft(detail) : null);
@@ -43,10 +47,16 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const [selectedBotId, setSelectedBotId] = useState("");
   const [memberPending, setMemberPending] = useState(false);
   const [membersExpanded, setMembersExpanded] = useState(false);
+  const [tab, setTab] = useState<InspectorTab>("details");
+  const [changingTab, setChangingTab] = useState(false);
+  const tabChangeRef = useRef(false);
+  const documentsRef = useRef<LibraryPanelHandle>(null);
+  const skillsRef = useRef<LibraryPanelHandle>(null);
   const handleProductView = useEffectEvent((event: Event) => {
     const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
     if (request.input.action !== "room_members") return;
     if (!detail || request.input.roomId && request.input.roomId !== detail.room.id) { respond({ status: "waiting_user", reason: "请先打开指定群聊设置。" }); return; }
+    if (tab !== "details") { respond({ status: "waiting_user", reason: "请先保存或丢弃资料草稿，并打开群聊设置的资料页。" }); return; }
     setMembersExpanded(request.input.expanded ?? true); respond({ status: "completed" });
   });
   useEffect(() => { const handler = (event: Event): void => handleProductView(event); window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
@@ -140,10 +150,28 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
     const saved = await saveCurrent();
     if (!saved) return false;
     if (draftRef.current && savedRef.current && !same(draftRef.current, savedRef.current)) return flush();
+    if (tab === "library") return await documentsRef.current?.flush() ?? true;
+    if (tab === "skill") return await skillsRef.current?.flush() ?? true;
     return true;
   }
 
   useImperativeHandle(ref, () => ({ flush }));
+
+  async function changeTab(next: InspectorTab): Promise<boolean> {
+    if (next === tab) return true;
+    if (tabChangeRef.current) return false;
+    tabChangeRef.current = true;
+    setChangingTab(true);
+    try {
+      if (!(await flush())) return false;
+      setTab(next);
+      return true;
+    } finally { tabChangeRef.current = false; setChangingTab(false); }
+  }
+
+  function closeInspector(): void {
+    void flush().then(saved => { if (saved) onMobileClose(); });
+  }
 
   function update<K extends keyof Draft>(field: K, value: Draft[K]): void {
     if (!draftRef.current) return;
@@ -198,10 +226,21 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
             {status === "failed" ? "保存失败" : null}
             {status === "idle" || status === "saved" ? <><CheckIcon />已保存</> : null}
           </div>
-          <button className="drawer-close-button dialog-close-button" type="button" aria-label="关闭群聊设置" title="关闭群聊设置" onClick={onMobileClose}><CloseIcon /></button>
+          <button className="drawer-close-button dialog-close-button" type="button" aria-label="关闭群聊设置" title="关闭群聊设置" onClick={closeInspector}><CloseIcon /></button>
         </div>
       </header>
       {error ? <div className="dialog-error" role="alert">{error.safeMessage}</div> : null}
+      <div className="library-tabs" role="tablist" aria-label="群聊配置">
+        {([["details", "资料"], ["library", "资料库"], ["skill", "Skill"]] as const).map(([value, label]) => <button id={`room-${detail.room.id}-${value}-tab`} key={value} type="button" role="tab" tabIndex={tab === value ? 0 : -1} disabled={changingTab} aria-selected={tab === value} aria-controls={`room-${detail.room.id}-${value}-panel`} onClick={() => void changeTab(value)} onKeyDown={event => {
+          const tabs: InspectorTab[] = ["details", "library", "skill"];
+          const index = tabs.indexOf(value);
+          const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : null;
+          if (!next) return;
+          event.preventDefault();
+          void changeTab(next).then(changed => { if (changed) document.getElementById(`room-${detail.room.id}-${next}-tab`)?.focus(); });
+        }}>{label}</button>)}
+      </div>
+      <div id={`room-${detail.room.id}-details-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-details-tab`} hidden={tab !== "details"}>
       <ConversationWorkspace {...conversationWorkspace} />
       <section className="inspector-group inspector-profile-fields" aria-label="群聊资料">
       <label className="field inspector-primary-field">
@@ -247,7 +286,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
             {detail.members.map((member) => {
               const identity = botIdentities.get(member.botId)!;
               return <div className="room-member-row settings-list-row" key={member.botId}>
-                <button className="member-main-link" type="button" title={identity.inline} onClick={() => onOpenBot(member.bot)}>
+                <button className="member-main-link" type="button" title={identity.inline} onClick={() => { void flush().then(saved => { if (saved) onOpenBot(member.bot); }); }}>
                   <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={20} />
                   <span>{identity.inline}</span>
                 </button>
@@ -270,6 +309,13 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
             ) : null}
             {active ? <p className="room-lock-note">本批回复完成或取消后才能修改成员。</p> : null}
       </section>
+      </div>
+      <div id={`room-${detail.room.id}-library-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-library-tab`} hidden={tab !== "library"}>
+        <LibraryPanel ref={documentsRef} sessionId={detail.session.id} kind="document" active={tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} />
+      </div>
+      <div id={`room-${detail.room.id}-skill-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-skill-tab`} hidden={tab !== "skill"}>
+        <LibraryPanel ref={skillsRef} sessionId={detail.session.id} kind="skill" active={tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} />
+      </div>
     </aside>
   );
 });

@@ -12,7 +12,7 @@
 
 Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联系人组织长期使用的 Bot 与群协作，通过按会话授权的工作区访问本地项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
 
-> **当前 Beta：[v0.3.0-beta.26](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.26)。** Release 页面提供已签名、公证的 macOS Apple silicon 安装包；已安装官方 Beta 的用户可在**设置 → 版本更新**中检查更新。Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建不代表官方发行版。版本历史见[变更记录](CHANGELOG.md)。
+> **源码版本：v0.3.0-beta.27。** 本版加入持久资料库与文本 Skill。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
 > **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 
@@ -22,6 +22,8 @@ Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联�
 - 单 Bot 对话和 2–6 个成员的 Room，支持显式 `@Bot`、自动 owner 选择、边界内 handoff、speaker 身份和循环抑制。
 - 支持 API、Claude Code、Codex CLI，自动扫描两种 CLI 的安装、登录与模型信息。
 - 文本/代码附件、经过校验的内容读取，以及在任务详情中集中查看的真实 Markdown/CSV 交付物。
+- 持久资料库与文本 Skill，支持不可变版本、按会话绑定、Markdown 编辑与安全预览、正文检索、导入导出、版本恢复和启停。
+- 输入框 `/Skill`、`@资料` 和 `@Skill` 使用真实资源 ID、固定版本与摘要。添加 Skill 只准备当前草稿，点击发送后才启动既有 Runtime；AI 可使用 38 个新增资料/Skill 操作，包括 `skills.load` 和辅助文本读取。
 - 聊天状态与 Agent 身份分离：最近会话、全局联系人、回复未读，以及独立的移除聊天、清空记录和删除联系人操作。
 - 可选固定群协调者，按顺序安排成员工作并统一汇总真实结果；指定 Bot 保持独立回复，有依赖的协调工作保留执行顺序。
 - `@所有人` 并行启动全部群成员，各自流式回复；慢响应、审批等待或单个失败不会阻塞其他成员。停止会取消整批，重试此成员只执行选中的成员，不重复已完成回复。
@@ -80,11 +82,17 @@ Fake Provider 是确定性的，不需要账号或 API Key。源码构建、数�
 
 ## 接入 AI 的能力
 
-接入的模型可通过 `product_catalog` 发现产品动作、`product_describe` 查询参数、`product_execute` 发起执行，覆盖设置、创建和管理 Bot/群、向其他 Bot 发消息、任务结果、Memory、Routine、工作区权限、MCP 配置、模型连接和更新。受限界面动作还支持导航、搜索、草稿和任务详情。范围、模型来源验收及限制见[产品操作向 AI 开放](docs/AI_PRODUCT_OPERATIONS.md)。
+接入的模型可通过 `product_catalog` 发现产品动作、`product_describe` 查询参数、`product_execute` 发起执行，覆盖设置、创建和管理 Bot/群、向其他 Bot 发消息、任务结果、Memory、Routine、工作区权限、MCP 配置、模型连接、更新、资料库与文本 Skill。受限界面动作还支持导航、搜索、草稿和任务详情。范围、模型来源验收及限制见[产品操作向 AI 开放](docs/AI_PRODUCT_OPERATIONS.md)。
 
 AI 操作与界面共用宿主校验和权限规则。创建 Bot 或群聊支持补充角色等多轮澄清，实际创建仍需要真实用户审批。工具回执区分实际执行与等待状态，模型文字本身不能证明操作成功。
 
-当前 Beta 尚未提供 Skill 发现、安装或执行、浏览器标签页/登录/点击控制及通用桌面控制。公开网页搜索和读取返回文本；受限界面动作操作 Aevoren 自身界面。
+现在可创建、导入、发现并按需加载已授权文本 Skill。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用；脚本仅保存，不执行。`skills.readFile` 可读取辅助文本，二进制仅返回元信息，不自动授予工具或提供图像理解。Docker 环境、浏览器标签页/登录/点击、通用桌面、内置 Gmail/Drive/Notion 连接与语音仍属于后续阶段。公开网页搜索和读取返回文本；受限界面动作操作 Aevoren 自身界面。
+
+## 资料库与文本 Skill
+
+Bot 私聊入口为**联系人 → 资料库／Skill**，群聊入口为**群聊设置 → 资料库／Skill**。新建或导入后绑定当前会话；共享已有资料时使用“添加到当前会话”。Bot 加入群聊不会自动共享私聊资源。“移出当前会话”只撤销当前绑定；“删除资源”影响所有已绑定会话，但保留可恢复内容和版本。
+
+在输入框用 `/Skill` 或 `@` 的“资料／Skill”分组选取固定版本。编辑共享资源会产生新版本，已发送消息和成员重试沿用原版本。离开未保存编辑时选择保存、丢弃或继续编辑；版本冲突保留草稿并可读取最新内容核对。导入限制与 AI 加载说明见[用户指南](docs/USER_GUIDE.md#documents-and-text-skills)。
 
 ## 安全模型
 
@@ -122,7 +130,7 @@ Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac
 
 应用数据存储在 Electron 的 user-data 目录。Aevoren Bot 会在 SQLite 中保存 Bot、Room、Transcript、显式 Memory、设置、Tool Journal 元数据和 Routine 历史；密钥值通过 `safeStorage` 单独存储。
 
-模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远程桌面、无限制 Shell、任意文件覆盖/删除、未经审核的自动 Memory 写入或可写 MCP 工具。Workspace 写入只允许在明确开启的根目录中新建 UTF-8 Markdown/CSV。
+资料与 Skill 的正文、版本和会话绑定保存在 SQLite；导入的辅助文件由应用内容寻址存储保存并核对摘要。模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远程桌面、无限制 Shell、任意文件覆盖/删除、未经审核的自动 Memory 写入或可写 MCP 工具。Workspace 写入只允许在明确开启的根目录中新建 UTF-8 Markdown/CSV。
 
 ## 文档、贡献和支持
 
