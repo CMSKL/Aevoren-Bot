@@ -319,6 +319,8 @@ export type DecisionJournalEntry = {
 };
 
 export type ProviderCapabilities = {
+  /** Verified adapter transport for real tool image bytes; model understanding is separate. */
+  toolImageInput?: boolean;
   /** When specified, expose only these host tools; legacy adapters keep their existing set. */
   supportedToolNames?: readonly string[];
   roomOwnerSelection: boolean;
@@ -1239,6 +1241,9 @@ export type UserProfile = {
 };
 
 export interface AevorenBotApi {
+  browser: import("./browser-contracts").BrowserApi;
+  computer: import("./browser-contracts").ComputerApi;
+  preview: import("./browser-contracts").PreviewApi;
   environments: import("./environment-contracts").EnvironmentsApi;
   execution: import("./environment-contracts").ExecutionApi;
   processes: import("./environment-contracts").ProcessesApi;

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { once } from "node:events";
+import { join } from "node:path";
 import { z } from "zod";
 import { ENV_HTTP_BODY_MAX_BYTES, ENV_PROTOCOL_VERSION, ENV_WORKER_VERSION } from "@shared/environment-contracts";
 import {
@@ -9,6 +10,7 @@ import {
 } from "@shared/environment-schemas";
 import type { ExecutionWorker } from "./execution-worker";
 import { WorkerError } from "./worker-error";
+import { PreviewProxy } from "./preview-proxy";
 
 async function jsonBody(request: IncomingMessage): Promise<unknown> {
   const declared = Number(request.headers["content-length"] ?? "0");
@@ -70,7 +72,10 @@ async function streamLogs(worker: ExecutionWorker, id: string, after: number, re
 export function createWorkerServer(worker: ExecutionWorker, token: string): Server {
   if (!/^[a-f0-9]{64}$/u.test(token)) throw new WorkerError("WORKER_TOKEN_INVALID", 503);
   const expected = Buffer.from(`Bearer ${token}`);
+  const previews = new PreviewProxy(join(worker.options.stateDirectory, "previews.sqlite"), worker.options.environmentId, token, id => worker.previewTarget(id));
+  worker.events.once("closing", () => previews.close());
   const server = createServer(async (request, response) => {
+    if (previews.handles(request)) { await previews.http(request, response); return; }
     const authorization = Buffer.from(request.headers.authorization ?? "");
     if (authorization.length !== expected.length || !timingSafeEqual(expected, authorization)) { respond(response, { error: { code: "WORKER_UNAUTHORIZED" } }, 401); return; }
     try {
@@ -79,8 +84,11 @@ export function createWorkerServer(worker: ExecutionWorker, token: string): Serv
       if (parts[0] !== "v1") throw new WorkerError("WORKER_ROUTE_NOT_FOUND", 404);
       if (request.method === "GET" && url.pathname === "/v1/health") {
         respond(response, { environmentId: worker.options.environmentId, bootId: worker.bootId, protocolVersion: ENV_PROTOCOL_VERSION,
-          workerVersion: ENV_WORKER_VERSION, capabilities: ["execution", "processes", "files", "ports", "sse", "uid-isolation"] }); return;
+          workerVersion: ENV_WORKER_VERSION, capabilities: ["execution", "processes", "files", "ports", "sse", "uid-isolation", "preview"] }); return;
       }
+      if (url.pathname === "/v1/previews" && request.method === "POST") { respond(response, await previews.open(await jsonBody(request))); return; }
+      if (parts[1] === "previews" && parts.length === 3 && request.method === "GET") { respond(response, await previews.get(uuid.parse(parts[2]))); return; }
+      if (parts[1] === "previews" && parts.length === 4 && parts[3] === "close" && request.method === "POST") { respond(response, previews.closeTicket(uuid.parse(parts[2]))); return; }
       if (parts[1] === "execution-sessions" && parts.length === 4 && parts[3] === "cancel" && request.method === "POST") {
         respond(response, await worker.cancelSession(uuid.parse(parts[2]))); return;
       }
@@ -142,5 +150,10 @@ export function createWorkerServer(worker: ExecutionWorker, token: string): Serv
   });
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
+  server.on("upgrade", (request, socket, head) => {
+    if (previews.handles(request)) { void previews.upgrade(request, socket as import("node:net").Socket, head); return; }
+    socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+  });
+  server.once("close", () => previews.close());
   return server;
 }

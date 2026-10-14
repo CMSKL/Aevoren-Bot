@@ -1,6 +1,6 @@
 import type { ApiResult } from "./contracts";
 
-export const ENV_WORKER_VERSION = "1.0.0";
+export const ENV_WORKER_VERSION = "1.1.0";
 export const ENV_PROTOCOL_VERSION = 1;
 export const ENV_FILE_MAX_BYTES = 1_048_576;
 export const ENV_COMMAND_MAX_BYTES = 65_536;

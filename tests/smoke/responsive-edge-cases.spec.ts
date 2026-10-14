@@ -202,6 +202,7 @@ test("keeps contact editing, model configuration and settings usable at 200 perc
     writeFileSync("/tmp/aevoren-bot-sidebar-zoom-200-native.png", Buffer.from(sidebarCapture, "base64"));
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await expect(page.getByRole("region", { name: "设置", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Docker 执行环境", exact: true }).getByRole("button", { name: "准备 Linux 镜像", exact: true })).toBeVisible();
     const settingsLayout = await page.locator(".settings-dialog").evaluate((dialog) => {
       const dialogRect = dialog.getBoundingClientRect();
       const panel = dialog.querySelector('.settings-panel:not([hidden])');

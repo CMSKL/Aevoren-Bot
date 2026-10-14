@@ -4,12 +4,12 @@ import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import type { ExecutionLogsPage, WorkerExecution, WorkerExecutionRequest, WorkerHealth, RegisteredPort, EnvironmentFileContent } from "@shared/environment-contracts";
-import { ENV_FILE_MAX_BYTES, ENV_HTTP_BODY_MAX_BYTES } from "@shared/environment-contracts";
+import { ENV_FILE_MAX_BYTES, ENV_HTTP_BODY_MAX_BYTES, ENV_WORKER_VERSION } from "@shared/environment-contracts";
 import { workerExecutionSchema, workerHealthSchema, workerLogsPageSchema, registeredPortSchema, workerPendingCancelAckSchema } from "@shared/environment-schemas";
 
 const execute = promisify(execFile);
 const enabled = process.env.AEVOREN_WORKER_DOCKER_TEST === "1";
-const image = process.env.AEVOREN_WORKER_TEST_IMAGE ?? "aevoren-worker-fixture:stage2";
+const image = process.env.AEVOREN_WORKER_TEST_IMAGE ?? "aevoren-worker-fixture:stage3";
 async function docker(args: string[], environment?: NodeJS.ProcessEnv): Promise<string> {
   return (await execute("docker", args, { ...(environment ? { env: environment } : {}), maxBuffer: 2_097_152 })).stdout.trim();
 }
@@ -57,7 +57,7 @@ describe.skipIf(!enabled)("real isolated Linux Worker", () => {
     await withContainer(async f => {
       const unauthorized = await fetch(`${f.url}/v1/health`);
       expect(unauthorized.status).toBe(401);
-      expect(workerHealthSchema.parse(await f.request("/v1/health"))).toMatchObject({ environmentId: f.environmentId, protocolVersion: 1, workerVersion: "1.0.0" });
+      expect(workerHealthSchema.parse(await f.request("/v1/health"))).toMatchObject({ environmentId: f.environmentId, protocolVersion: 1, workerVersion: ENV_WORKER_VERSION });
       const escaping = command(`python3 - <<'PY'\nimport os,time\nprint('UID',os.getuid(),flush=True)\nif os.fork() == 0:\n os.setsid()\n if os.fork() > 0: os._exit(0)\n print('DETACHED',os.getpid(),flush=True)\nwhile True: time.sleep(1)\nPY`);
       const commands = [escaping, ...Array.from({ length: 5 }, () => command("node -e 'console.log(\"UID\",process.getuid());setInterval(()=>{},1000)'"))];
       const jobs = await Promise.all(commands.map(input => f.request<WorkerExecution>("/v1/executions", "POST", input)));

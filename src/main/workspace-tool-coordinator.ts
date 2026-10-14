@@ -14,6 +14,7 @@ export type WorkspaceToolOutcome = {
   toolCallId: string;
   tool: ToolRequest;
   content: string;
+  images?: import("./model-image").ModelImageAttachment[];
 };
 
 type Waiter = {
@@ -28,7 +29,7 @@ type ToolExecutor = {
   productRequestPreview?(tool: import("@shared/contracts").ProductToolRequest): string;
   productRequestRequiresApproval?(tool: import("@shared/contracts").ProductToolRequest): boolean;
   validateProductRequest?(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): void;
-  execute(id: string, signal?: AbortSignal): Promise<{ invocation: ToolApprovalResult["invocation"]; content: string }>;
+  execute(id: string, signal?: AbortSignal): Promise<{ invocation: ToolApprovalResult["invocation"]; content: string; images?: import("./model-image").ModelImageAttachment[] }>;
 };
 
 export class WorkspaceToolCoordinator {
@@ -114,7 +115,7 @@ export class WorkspaceToolCoordinator {
       const current = { invocation: result.invocation, approval: this.repository.getApprovalRequest(approvalId) };
       void this.recordToolResultShadow(current.invocation, current.approval, result.content);
       this.emitCurrent(approvalId);
-      return { toolCallId: result.invocation.toolCallId, tool: result.invocation.arguments, content: result.content };
+      return { toolCallId: result.invocation.toolCallId, tool: result.invocation.arguments, content: result.content, ...(result.images ? { images: result.images } : {}) };
     } catch (error) {
       const appError = asAppError(error);
       let current = this.repository.getToolInvocation(pending.toolInvocationId);
@@ -243,6 +244,7 @@ export class WorkspaceToolCoordinator {
         toolCallId: result.invocation.toolCallId,
         tool: result.invocation.arguments,
         content: result.content,
+        ...(result.images ? { images: result.images } : {}),
       });
       return current;
     } catch (error) {

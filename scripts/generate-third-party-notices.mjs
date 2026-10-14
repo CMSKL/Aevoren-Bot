@@ -32,6 +32,7 @@ const lines = [
   "## Separately built execution image",
   "",
   "The optional local Docker execution image includes independently licensed Linux tools outside this npm inventory. See [execution image versions, base digest and license notices](docs/EXECUTION_ENVIRONMENT.md#images-and-third-party-licenses). Docker is user-provided; the app does not bundle its distribution.",
+  "The separately built browser companion also includes Chromium, Playwright, Xvfb, Openbox, x11vnc, xdotool and FFmpeg. See [browser image versions and isolation](docs/BROWSER_COMPUTER.md#isolation-and-lifecycle); these distributions retain their own notices in the image.",
 ];
 const target = resolve("THIRD_PARTY_NOTICES.md");
 writeFileSync(target, `${lines.join("\n")}\n`, "utf8");

@@ -1,0 +1,23 @@
+.computer-panel { min-width: 0; padding: 16px 0; color: var(--text); }
+.computer-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.computer-heading h3, .computer-section h4 { margin: 0; font-size: 16px; font-weight: 500; }
+.computer-heading > span, .computer-note { color: var(--text-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.computer-note { margin: 10px 0; }
+.computer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+.computer-panel :is(.primary-button, .secondary-button) { min-height: 34px; padding: 6px 12px; font-size: 13px; }
+.computer-panel .text-button { font-size: 12px; }
+.computer-panel button:disabled { cursor: default; opacity: .55; }
+.computer-panel .field { margin: 10px 0; }
+.computer-panel .field :is(input, textarea, select) { width: 100%; min-width: 0; }
+.computer-error { color: var(--danger); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.computer-control-status { color: var(--text); font-size: 12px; line-height: 1.6; }
+.computer-confirm { position: sticky; top: 0; z-index: 4; margin: 12px 0; padding: 12px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface-soft); font-size: 13px; line-height: 1.6; }
+.computer-screen { min-width: 0; margin: 12px 0; padding: 8px; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--code-bg); }
+.computer-screen img { display: block; width: 100%; height: auto; max-height: 440px; object-fit: contain; }
+.computer-vnc { width: 100%; height: 300px; overflow: hidden; }
+.computer-vnc[hidden] { display: none; }
+.computer-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.computer-url { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.computer-page-text { max-height: 260px; padding: 10px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--code-bg); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.computer-resource-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 10px 0; font-size: 12px; overflow-wrap: anywhere; }
+.computer-resource-row > :first-child { min-width: 0; text-align: left; overflow-wrap: anywhere; }

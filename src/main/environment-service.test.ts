@@ -3,10 +3,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { EnvironmentScope } from "@shared/environment-contracts";
+import { ENV_WORKER_VERSION, type EnvironmentScope } from "@shared/environment-contracts";
 import { AppRepository } from "./database";
 import { DockerDriver, EXECUTION_IMAGE_REF, type DockerImage } from "./docker-driver";
 import { EnvironmentService } from "./environment-service";
+import { ExecutionWorkerClient, ExecutionWorkerError } from "./execution-worker-client";
+import { apiResult } from "./errors";
 
 const repositories: AppRepository[] = [];
 const directories: string[] = [];
@@ -29,7 +31,7 @@ function fixture() {
   };
   const hash = createHash("sha256");
   for (const [name, bytes] of Object.entries(files)) { writeFileSync(join(directory, name), bytes); hash.update(name); hash.update(bytes); }
-  const image: DockerImage = { id: `sha256:${"a".repeat(64)}`, ref: EXECUTION_IMAGE_REF, platform: "linux/arm64", workerVersion: "1.0.0", bundleSha256: hash.digest("hex") };
+  const image: DockerImage = { id: `sha256:${"a".repeat(64)}`, ref: EXECUTION_IMAGE_REF, platform: "linux/arm64", workerVersion: ENV_WORKER_VERSION, bundleSha256: hash.digest("hex") };
   const configuration = { workerVersion: image.workerVersion, imageRef: image.ref, imageDigest: image.id, platform: image.platform };
   const driver = new DockerDriver();
   const service = new EnvironmentService(repository.environments, { isAvailable: () => true, encrypt: value => value, decrypt: value => value }, directory, () => undefined, driver);
@@ -108,5 +110,36 @@ describe("environment lifecycle admission with real SQLite", () => {
     expect(cancel.mock.calls.every(([input]) => input.sessionId === liveScope.sessionId && input.executorBotId === liveScope.executorBotId)).toBe(true);
     expect(f.repository.environments.getExecution(liveScope, background.id)).toEqual(background);
     expect(f.repository.environments.getExecution(liveScope, foreground.id).state).toBe("unknown");
+  });
+});
+
+describe("environment port registration error boundaries with real SQLite", () => {
+  function backgroundFixture() {
+    const f = fixture(), owner = f.repository.createBot(), scope = { sessionId: owner.session.id, executorBotId: owner.bot.id };
+    const environment = f.repository.environments.ensure(scope, f.configuration);
+    f.repository.environments.update(scope, environment.version, { state: "running", workerPort: 41321, encryptedToken: "a".repeat(64) });
+    const session = f.repository.environments.createSession(scope, null);
+    const process = f.repository.environments.createExecution(scope, { executionSessionId: session.id, clientNonce: randomUUID(), kind: "background", command: "unconfirmed background service" }).execution;
+    return { ...f, scope, process };
+  }
+
+  it("reports the Worker's missing or wrong-owner listener without publishing a port or bypassing process scope", async () => {
+    const f = backgroundFixture();
+    const request = vi.spyOn(ExecutionWorkerClient.prototype, "request").mockRejectedValue(new ExecutionWorkerError("WORKER_PORT_NOT_OWNED", 409));
+    expect(await apiResult(() => f.service.registerPort({ ...f.scope, processId: f.process.id, port: 8127 }))).toMatchObject({ ok: false, error: {
+      code: "ENVIRONMENT_PORT_NOT_FOUND", safeMessage: "后台服务尚未监听该端口，或端口不属于所选进程。请先查看服务日志并确认启动完成。",
+    } });
+    expect(f.repository.environments.listPorts(f.scope)).toEqual([]);
+    const peer = f.repository.createBot(), peerScope = { sessionId: peer.session.id, executorBotId: peer.bot.id };
+    f.repository.environments.ensure(peerScope, f.configuration); request.mockClear();
+    await expect(f.service.registerPort({ ...peerScope, processId: f.process.id, port: 8127 })).rejects.toMatchObject({ code: "ENVIRONMENT_EXECUTION_NOT_FOUND" });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("normalizes other Worker connection failures without misreporting a missing listener", async () => {
+    const f = backgroundFixture();
+    vi.spyOn(ExecutionWorkerClient.prototype, "request").mockRejectedValue(new ExecutionWorkerError("WORKER_CONNECTION_FAILED"));
+    expect(await apiResult(() => f.service.registerPort({ ...f.scope, processId: f.process.id, port: 8127 }))).toMatchObject({ ok: false, error: { code: "ENVIRONMENT_UNAVAILABLE" } });
+    expect(f.repository.environments.listPorts(f.scope)).toEqual([]);
   });
 });

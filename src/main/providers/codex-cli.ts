@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { parseStructuredModelToolCall, structuredModelToolDefinitions, type ChatMessage, type ModelEvent, type ModelProvider, type ModelRunContext } from "../model";
+import { toolImageResponse, modelImageDataUrl } from "../model-image";
 import { AevorenBotError } from "../errors";
 import { containsLikelySecret } from "../memory-safety";
 import { cliEnvironment, cliShellOptions, isolatedCodexEnvironment, probeCliVersion, readCodexConfiguredSelection, resolveCliPath } from "./cli-utils";
@@ -570,8 +571,9 @@ export class CodexCliProvider implements ModelProvider {
         let answered = false;
         queue.push({
           ...parsed,
-          respond: async (content) => {
+          respond: async (content, images) => {
             if (answered) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+            const visual = toolImageResponse(content, images);
             answered = true;
             let success = true;
             try {
@@ -580,7 +582,7 @@ export class CodexCliProvider implements ModelProvider {
             } catch {
               // A successful read result is commonly a plain structured JSON object.
             }
-            resolve({ contentItems: [{ type: "inputText", text: content }], success });
+            resolve({ contentItems: [{ type: "inputText", text: visual.text }, ...visual.images.map(image => ({ type: "inputImage", imageUrl: modelImageDataUrl(image) }))], success });
           },
         });
       });

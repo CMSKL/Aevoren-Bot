@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import type {
   Environment, EnvironmentChangedEvent, EnvironmentFileContent, EnvironmentFileList, EnvironmentFileReadInput,
   EnvironmentFileWriteInput, EnvironmentFileWriteResult, EnvironmentInitializeResult, EnvironmentMutationInput, EnvironmentProbe, EnvironmentScope,
@@ -18,6 +19,10 @@ import { AevorenBotError } from "./errors";
 import { DockerCommandError, DockerDriver, EXECUTION_IMAGE_REF, type DockerImage } from "./docker-driver";
 import { ExecutionWorkerClient, ExecutionWorkerError } from "./execution-worker-client";
 
+const executionPreviewSchema = z.object({ id: z.string().uuid(), registeredPortId: z.string().uuid(), processId: z.string().uuid(),
+  port: z.number().int().min(1).max(65_535), host: z.string().min(1).max(256), expiresAt: z.string().datetime({ offset: true }) }).strict();
+export type ExecutionPreview = z.infer<typeof executionPreviewSchema>;
+
 function failure(error: unknown): AevorenBotError {
   if (error instanceof AevorenBotError) return error;
   if (error instanceof DockerCommandError && /OWNERSHIP|IMAGE_INVALID/.test(error.code)) return new AevorenBotError("ENVIRONMENT_IMAGE_INVALID");
@@ -34,6 +39,9 @@ export class EnvironmentService {
   private readonly retiringExecutors = new Set<string>();
   private readonly retiringScopes = new Set<string>();
   private initializing?: Promise<EnvironmentInitializeResult>;
+  private companionLifecycle?: (scope: EnvironmentScope, remove: boolean) => Promise<void>;
+
+  setCompanionLifecycle(callback: (scope: EnvironmentScope, remove: boolean) => Promise<void>): void { this.companionLifecycle = callback; }
 
   constructor(private readonly repository: EnvironmentRepository, private readonly codec: SecretCodec, private readonly contextPath: string,
     private readonly changed: (event: EnvironmentChangedEvent) => void = () => undefined, private readonly docker: DockerDriver = new DockerDriver()) {}
@@ -67,6 +75,7 @@ export class EnvironmentService {
       if (index < records.length) return this.locked(records[index]!, () => acquire(index + 1));
       preflight();
       for (const record of records) {
+        await this.companionLifecycle?.(record, true);
         await this.docker.stop(record.id);
         await this.docker.remove(record.id);
         for (const execution of this.repository.listExecutions(record)) this.watchers.get(execution.id)?.abort();
@@ -198,6 +207,7 @@ export class EnvironmentService {
       const value = this.repository.get(parsed);
       if (!value) throw new AevorenBotError("ENVIRONMENT_NOT_FOUND");
       if (parsed.expectedVersion !== undefined && value.version !== parsed.expectedVersion) throw new AevorenBotError("ENVIRONMENT_VERSION_CONFLICT");
+      await this.companionLifecycle?.(parsed, false);
       try { await this.docker.stop(value.id, signal); } catch (error) { throw failure(error); }
       const current = this.repository.get(parsed)!;
       const result = this.repository.update(parsed, current.version, { state: "stopped", workerPort: null });
@@ -217,6 +227,7 @@ export class EnvironmentService {
     const image = await this.docker.inspectImage(undefined, signal);
     if (!image || image.bundleSha256 !== await this.bundleDigest()) throw new AevorenBotError("ENVIRONMENT_IMAGE_INVALID");
     await this.stopUnlocked(parsed, signal);
+    await this.companionLifecycle?.(parsed, true);
     await this.docker.remove(current.id, signal);
     const stopped = this.repository.get(parsed)!;
     this.repository.update(parsed, stopped.version, { workerVersion: image.workerVersion, imageRef: image.ref, imageDigest: image.id, platform: image.platform,
@@ -390,10 +401,18 @@ export class EnvironmentService {
   async registerPort(input: RegisterPortInput, signal?: AbortSignal): Promise<RegisteredPort> {
     const parsed = registerPortSchema.parse(input), process = this.repository.getExecution(parsed, parsed.processId);
     if (process.kind !== "background") throw new AevorenBotError("ENVIRONMENT_EXECUTION_STATE_INVALID");
-    const client = await this.client(parsed);
     const existing = this.repository.listPorts(parsed).find(port => port.processId === parsed.processId && port.port === parsed.port);
     const id = existing?.id ?? globalThis.crypto.randomUUID();
-    const result = registeredPortSchema.parse(await client.request("/v1/ports", "POST", { id, processId: parsed.processId, port: parsed.port, label: parsed.label ?? "" }, signal));
+    let wire: unknown;
+    try {
+      const client = await this.client(parsed);
+      wire = await client.request("/v1/ports", "POST", { id, processId: parsed.processId, port: parsed.port, label: parsed.label ?? "" }, signal);
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof ExecutionWorkerError && error.code === "WORKER_PORT_NOT_OWNED") throw new AevorenBotError("ENVIRONMENT_PORT_NOT_FOUND");
+      throw failure(error);
+    }
+    const result = registeredPortSchema.parse(wire);
     if (result.id !== id || result.processId !== parsed.processId || result.port !== parsed.port) throw new AevorenBotError("ENVIRONMENT_SCOPE_INVALID");
     return this.repository.upsertPort(parsed, result);
   }
@@ -435,6 +454,28 @@ export class EnvironmentService {
         }
       }
     }));
+  }
+
+  async createPreview(input: EnvironmentScope, id: string, registeredPortId: string, signal?: AbortSignal): Promise<ExecutionPreview> {
+    const parsed = environmentScopeSchema.parse(input); z.string().uuid().parse(id); z.string().uuid().parse(registeredPortId);
+    const actual = (await this.listPorts(parsed)).find(port => port.id === registeredPortId && port.state === "listening");
+    if (!actual) throw new AevorenBotError("PREVIEW_UNAVAILABLE");
+    const client = await this.client(parsed);
+    try {
+      const preview = executionPreviewSchema.parse(await client.request("/v1/previews", "POST", { id, registeredPortId }, signal));
+      const environment = this.repository.get(parsed)!;
+      if (preview.id !== id || preview.registeredPortId !== registeredPortId || preview.processId !== actual.processId || preview.port !== actual.port
+        || !new RegExp(`^[a-f0-9]{32}\\.[a-f0-9]{32}\\.aevoren-preview-${environment.id}\\.internal$`).test(preview.host)) throw new AevorenBotError("ENVIRONMENT_SCOPE_INVALID");
+      return preview;
+    } catch (error) {
+      if (error instanceof ExecutionWorkerError && error.status === 404) throw new AevorenBotError("PREVIEW_UNAVAILABLE", "当前执行镜像未提供受控预览；请在停止相关服务后明确重建环境。");
+      signal?.throwIfAborted(); throw failure(error);
+    }
+  }
+
+  async closePreview(input: EnvironmentScope, id: string): Promise<void> {
+    const parsed = environmentScopeSchema.parse(input); z.string().uuid().parse(id);
+    await (await this.client(parsed)).request(`/v1/previews/${id}/close`, "POST", {});
   }
 
   async recover(): Promise<void> {

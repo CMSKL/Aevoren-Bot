@@ -76,8 +76,9 @@ import { addLibraryProductHandlers, type LibraryExecutionContext } from "./libra
 import type { LibraryService } from "./library-service";
 import type { LibraryChangedEvent, LibraryExportResult, LibraryResourceKind } from "@shared/library-contracts";
 import { addEnvironmentProductHandlers, type EnvironmentProductDependencies } from "./environment-product-handlers";
+import { addBrowserProductHandlers, type BrowserProductDependencies } from "./browser-product-handlers";
 
-export type ProductDependencies = EnvironmentProductDependencies & {
+export type ProductDependencies = EnvironmentProductDependencies & BrowserProductDependencies & {
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
   pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
@@ -132,6 +133,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   const handlers = new Map<string, (input?: unknown) => unknown>();
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
   addEnvironmentProductHandlers(handlers, dependencies, commit, libraryContext);
+  addBrowserProductHandlers(handlers, dependencies, commit, libraryContext);
   const handle = (channel: string, operation: (input?: unknown) => unknown): void => { handlers.set(channel, operation); };
 
   handle(IPC.userProfileGet, () => userProfile.get());

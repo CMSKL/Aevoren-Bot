@@ -6,6 +6,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { AevorenBotError } from "../errors";
+import { toolImageResponse, type ModelImageAttachment } from "../model-image";
 import { parseStructuredModelToolCall, structuredModelToolDefinitions, type ModelEvent, type ModelRunContext } from "../model";
 
 export const CLAUDE_HOST_TOOL_NAMES = ["workspace_list", "workspace_read", "workspace_search", "workspace_write", "web_search", "web_fetch", "weather_current", "time_now", "text_measure", "clipboard_read", "project_list_bots", "bot_create", "room_create", "product_catalog", "product_describe", "product_execute"] as const;
@@ -19,17 +20,18 @@ function errorResult(code: "INVALID_REQUEST" | "TOOL_EXECUTION_CANCELLED" | "TOO
   return { isError: true, content: [{ type: "text", text: JSON.stringify({ ok: false, code, safeMessage: error.safeMessage }) }] };
 }
 
-function toolResult(content: string): CallToolResult {
+function toolResult(content: string, images?: readonly ModelImageAttachment[]): CallToolResult {
   let isError = false;
   try { isError = (JSON.parse(content) as { ok?: unknown }).ok === false; } catch { /* Plain file text is valid. */ }
-  return { isError, content: [{ type: "text", text: content }] };
+  const visual = toolImageResponse(content, images);
+  return { isError, content: [{ type: "text", text: visual.text }, ...visual.images.map(image => ({ type: "image" as const, data: image.dataBase64, mimeType: image.reference.mimeType }))] };
 }
 
 /** A per-Runtime transport only: it never reads files or executes tools itself. */
 export class ClaudeToolBridge {
   private readonly lifetime = new AbortController();
   private readonly token = randomBytes(32).toString("hex");
-  private readonly calls = new Map<string, { signature: string; result: Promise<CallToolResult> }>();
+  private readonly calls = new Map<string, { signature: string; result: Promise<() => CallToolResult> }>();
   private readonly pending = new Set<() => void>();
   private readonly server = new Server({ name: "aevoren-host-tools", version: "1.0.0" }, { capabilities: { tools: {} } });
   private readonly transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID, enableJsonResponse: true });
@@ -59,7 +61,7 @@ export class ClaudeToolBridge {
       const key = String(extra.requestId);
       const signature = createHash("sha256").update(JSON.stringify({ name: request.params.name, arguments: request.params.arguments })).digest("hex");
       const previous = this.calls.get(key);
-      if (previous) return previous.signature === signature ? previous.result : errorResult("TOOL_IDEMPOTENCY_CONFLICT");
+      if (previous) return previous.signature === signature ? previous.result.then(render => render()) : errorResult("TOOL_IDEMPOTENCY_CONFLICT");
       if (this.calls.size >= MAX_TOOL_CALLS) return errorResult("TOOL_ROUND_LIMIT_EXCEEDED");
       const toolCallId = `claude_${createHash("sha256").update(`${context.executionKey}:${this.token}:${key}`).digest("hex")}`;
       let event: ReturnType<typeof parseStructuredModelToolCall>;
@@ -72,23 +74,23 @@ export class ClaudeToolBridge {
         return errorResult("INVALID_REQUEST");
       }
       const toolSignal = AbortSignal.any([parentSignal, this.lifetime.signal, extra.signal]);
-      const result = new Promise<CallToolResult>((resolve) => {
+      const result = new Promise<() => CallToolResult>((resolve) => {
         let answered = false;
-        const finish = (value: CallToolResult): void => {
+        const finish = (value: () => CallToolResult): void => {
           if (answered) return;
           answered = true;
           this.pending.delete(cancel);
           toolSignal.removeEventListener("abort", cancel);
           resolve(value);
         };
-        const cancel = (): void => finish(errorResult("TOOL_EXECUTION_CANCELLED"));
+        const cancel = (): void => finish(() => errorResult("TOOL_EXECUTION_CANCELLED"));
         this.pending.add(cancel);
         toolSignal.addEventListener("abort", cancel, { once: true });
         if (toolSignal.aborted) { cancel(); return; }
-        this.emit({ ...event, toolSignal, respond: async (content) => finish(toolResult(content)) });
+        this.emit({ ...event, toolSignal, respond: async (content, images) => finish(() => toolResult(content, images)) });
       });
       this.calls.set(key, { signature, result });
-      return result;
+      return result.then(render => render());
     });
   }
 

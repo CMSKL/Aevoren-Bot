@@ -40,14 +40,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm open-source:check
       - run: pnpm verify
-      - name: Verify actual Linux Docker execution and host tools
-        timeout-minutes: 15
+      - name: Verify actual Linux Docker execution, browser and host tools
+        timeout-minutes: 30
         env:
           AEVOREN_DOCKER_INTEGRATION: "1"
           AEVOREN_WORKER_DOCKER_TEST: "1"
+          AEVOREN_BROWSER_DOCKER_TEST: "1"
         run: |
-          docker build --tag aevoren-worker-fixture:stage2 out/worker
-          pnpm exec vitest run src/worker/docker-integration.test.ts src/main/environment-service.integration.test.ts src/main/environment-product.integration.test.ts --maxWorkers=1
+          docker build --tag aevoren-worker-fixture:stage3 --tag aevoren-worker-fixture:stage2 out/worker
+          docker build --tag aevoren-browser-fixture:stage3 out/browser-worker
+          pnpm exec vitest run src/worker/docker-integration.test.ts src/worker/preview-proxy.docker.test.ts src/main/environment-service.integration.test.ts src/main/environment-product.integration.test.ts src/browser-worker/docker-integration.test.ts src/main/browser-service.integration.test.ts --maxWorkers=1
       - run: pnpm security:audit
       - name: Verify third-party notice is current
         run: |
