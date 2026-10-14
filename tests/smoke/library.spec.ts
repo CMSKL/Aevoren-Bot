@@ -32,7 +32,7 @@ type LibraryFixture = {
 type DelayedLibraryMain = { libraryDelay?: { entered: boolean; returned: boolean; release?: () => void } };
 
 // Hold the real host handler at a deterministic barrier; do not replace its result.
-async function holdLibraryIpc(application: ElectronApplication, channel: string, id: string): Promise<void> {
+async function holdLibraryIpc(application: ElectronApplication, channel: string, id: string, phase: "before" | "after" = "before"): Promise<void> {
   await application.evaluate(({ ipcMain }, input) => {
     const globals = globalThis as DelayedLibraryMain;
     const original = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => unknown> })._invokeHandlers.get(input.channel);
@@ -41,15 +41,16 @@ async function holdLibraryIpc(application: ElectronApplication, channel: string,
     ipcMain.removeHandler(input.channel);
     ipcMain.handle(input.channel, async (...args: unknown[]) => {
       const request = args[1];
-      const requestId = typeof request === "string" ? request : (request as { id?: string } | null)?.id;
+      const requestId = typeof request === "string" ? request : (request as { id?: string; sessionId?: string } | null)?.id ?? (request as { sessionId?: string } | null)?.sessionId;
       if (requestId !== input.id || globals.libraryDelay!.entered) return original(...args);
+      const completed = input.phase === "after" ? await original(...args) : undefined;
       globals.libraryDelay!.entered = true;
       await new Promise<void>(resolve => { globals.libraryDelay!.release = resolve; });
-      const result = await original(...args);
+      const result = input.phase === "after" ? completed : await original(...args);
       globals.libraryDelay!.returned = true;
       return result;
     });
-  }, { channel, id });
+  }, { channel, id, phase });
 }
 
 async function releaseLibraryIpc(application: ElectronApplication): Promise<void> {
@@ -277,10 +278,26 @@ test("edits documents through the UI, preserves conflicting drafts and restores 
     await panel.getByRole("button", { name: "新建资料", exact: true }).click();
     await panel.getByLabel("资料名称", { exact: true }).fill("冲突保留测试");
     await panel.getByLabel("资料正文", { exact: true }).fill("LIBRARY_SAVED_V1");
-    await panel.getByRole("button", { name: "保存资料", exact: true }).click();
+    const status = panel.locator(".library-panel-heading").getByRole("status");
+    let content!: LibraryContent;
+    await holdLibraryIpc(f.application, LIBRARY_CHANNELS.create, bot.sessionId, "after");
+    try {
+      await panel.getByRole("button", { name: "保存资料", exact: true }).click();
+      await expect.poll(() => f.application.evaluate(() => Boolean((globalThis as DelayedLibraryMain).libraryDelay?.entered))).toBe(true);
+      // The database commit and a disabled Save button can precede the editor's completion acknowledgement.
+      await expect(status).toHaveText("处理中…");
+      await expect(panel.getByRole("button", { name: "保存资料", exact: true })).toBeDisabled();
+      await expect(panel.getByLabel("资料正文", { exact: true })).toBeDisabled();
+      content = value(await libraryCall<LibraryContent>(f.page, "read", { sessionId: bot.sessionId, id: value(await libraryCall<LibraryResource[]>(f.page, "list", { sessionId: bot.sessionId }))[0]!.id }));
+      expect(content.revision.body).toBe("LIBRARY_SAVED_V1");
+      await test.info().attach("pending-editor-with-real-saved-version", { body: JSON.stringify({ version: content.resource.version, body: content.revision.body, editorStatus: await status.textContent() }), contentType: "application/json" });
+    } finally { await releaseLibraryIpc(f.application); }
+    await expect(status).toHaveText("已保存");
+    await expect(panel.getByLabel("资料正文", { exact: true })).toBeEnabled();
     await expect(panel.getByRole("button", { name: "保存资料", exact: true })).toBeDisabled();
-    const content = value(await libraryCall<LibraryContent>(f.page, "read", { sessionId: bot.sessionId, id: value(await libraryCall<LibraryResource[]>(f.page, "list", { sessionId: bot.sessionId }))[0]!.id }));
     await panel.getByLabel("资料正文", { exact: true }).fill("LIBRARY_LOCAL_UNSAVED_DRAFT");
+    await expect(status).toHaveText("未保存");
+    await expect(panel.getByRole("button", { name: "保存资料", exact: true })).toBeEnabled();
     value(await libraryCall<LibraryContent>(f.page, "update", { sessionId: bot.sessionId, id: content.resource.id, expectedVersion: content.resource.version, body: "LIBRARY_EXTERNAL_V2" }));
     await panel.getByRole("button", { name: "保存资料", exact: true }).click();
     await expect(panel.getByRole("alert")).toContainText("当前草稿");
