@@ -110,7 +110,9 @@ for (const resolution of ["allow-once", "deny"] as const) {
       await expect(page.locator('article.message-assistant[data-status="failed"]')).toHaveCount(0);
       expect(errors).toEqual([]);
       expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((window) => window.isVisible()))).toBe(false);
-      if (resolution === "allow-once") await page.screenshot({ path: join(process.env.AEVOREN_PRODUCT_EVIDENCE_DIR ?? tmpdir(), "aevoren-followup-creation-fixed.png") });
+      // Optional screenshot capture is unreliable in hidden Windows CI windows.
+      const hiddenWindowsCi = process.platform === "win32" && Boolean(process.env.CI) && process.env.AEVOREN_BOT_TEST_HIDDEN === "1";
+      if (resolution === "allow-once" && !hiddenWindowsCi) await page.screenshot({ path: join(process.env.AEVOREN_PRODUCT_EVIDENCE_DIR ?? tmpdir(), "aevoren-followup-creation-fixed.png") });
     } finally {
       await application.close().catch(() => application.process().kill("SIGKILL"));
       await new Promise<void>((resolve) => server.close(() => resolve()));
