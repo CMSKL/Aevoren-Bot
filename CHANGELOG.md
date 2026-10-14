@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
-## [0.3.0-beta.27] - Unreleased
+## [0.3.0-beta.27] - 2026-10-13
 
 ### Added
 
@@ -21,10 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Import prepares and validates all accepted bytes before publishing revisions/bindings; invalid input and cancellation cannot publish a partial library. Export refuses existing targets and preserves original resource bytes for round-trip imports.
 - Composer resources follow the session, participate in draft digests and are verified before AI draft updates. Delayed reads and sends preserve concurrent user edits and unrelated chats. Historical references display an unavailable state after authorization is revoked.
 - Library IPC channel identifiers are isolated from main-process schemas so the sandboxed Preload does not load host validation dependencies.
+- Late resource-opening and save replies preserve a user's newer contact selection or cancelled navigation. The contact header remains contained at 200% zoom in narrow windows.
+- Export rollback retains original file handles, preventing Linux inode reuse from deleting another owner's replacement file or directory.
 
 ### Validation status
 
-- Complete unit suite: 1,195 passed, three skipped. Hidden Electron acceptance is being rerun after the Preload correction; installed-package, CI and signed Release evidence remain pending.
+- Linux CI: 1,219 unit tests passed, three skipped. macOS: 121 source smoke tests passed, 33 skipped, and eight packaged library scenarios passed. Windows: 1,214 unit tests passed, eight skipped, 26 source smoke tests and 24 installed-package tests passed. Real cloud inference and permission-dependent Windows symlink cases remain unverified; signing/publication is a separate release gate.
 - Target release title and tag are `v0.3.0-beta.27`. Docker execution, browser/computer control, executable Skill scripts, native app connectors and voice are not part of this stage.
 
 ## [0.3.0-beta.26] - 2026-10-13

@@ -1,6 +1,6 @@
 # User guide
 
-This guide includes the v0.3.0-beta.27 document/text-Skill release candidate, which is still undergoing release validation; v0.3.0-beta.26 remains the latest published installer until promotion completes. It describes the supported pre-release workflow. It applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build.
+This guide covers the v0.3.0-beta.27 document/text-Skill workflow. Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). It applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build.
 
 ## First run
 

@@ -12,7 +12,7 @@
 
 Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联系人组织长期使用的 Bot 与群协作，通过按会话授权的工作区访问本地项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
 
-> **下一 Beta：v0.3.0-beta.27，发布验收中。** 本次源码更新加入持久资料库与文本 Skill；新版本通过发布门禁前，最新已发布安装包仍为 [v0.3.0-beta.26](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.26)。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明在晋级后使用 `beta` 分支；本地未签名构建不代表官方发行版。版本历史见[变更记录](CHANGELOG.md)。
+> **源码版本：v0.3.0-beta.27。** 本版加入持久资料库与文本 Skill。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
 > **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 
