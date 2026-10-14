@@ -46,6 +46,7 @@ jobs:
         timeout-minutes: 30
         env:
           AEVOREN_DOCKER_INTEGRATION: "1"
+          AEVOREN_SKILL_DOCKER_TEST: "1"
           AEVOREN_WORKER_DOCKER_TEST: "1"
           AEVOREN_BROWSER_DOCKER_TEST: "1"
           AEVOREN_BROWSER_STARTUP_DIAGNOSTICS: "1"
@@ -53,7 +54,7 @@ jobs:
         run: |
           docker build --tag aevoren-worker-fixture:stage3 --tag aevoren-worker-fixture:stage2 out/worker
           docker build --tag aevoren-browser-fixture:stage3 out/browser-worker
-          pnpm exec vitest run src/worker/docker-integration.test.ts src/worker/preview-proxy.docker.test.ts src/main/environment-service.integration.test.ts src/main/environment-product.integration.test.ts src/browser-worker/docker-integration.test.ts src/main/browser-service.integration.test.ts --maxWorkers=1 --silent=false
+          pnpm exec vitest run src/worker/docker-integration.test.ts src/worker/preview-proxy.docker.test.ts src/main/environment-service.integration.test.ts src/main/environment-product.integration.test.ts src/browser-worker/docker-integration.test.ts src/main/browser-service.integration.test.ts src/main/skill-execution-service.integration.test.ts --maxWorkers=1 --silent=false
       - run: pnpm security:audit
       - name: Verify third-party notice is current
         run: |

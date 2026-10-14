@@ -1254,10 +1254,7 @@ export function Conversation({
         label={toolActionLabel(pendingTool.invocation)}
         onResolve={onResolveApproval}
         onRememberPublicRead={onRememberPublicRead}
-        onStop={() => {
-          if (activeBatch) onCancelRoomBatch(activeBatch.id);
-          else onCancelRun(pendingTool.invocation.runtimeRunId);
-        }}
+        onStop={() => onCancelRun(pendingTool.invocation.runtimeRunId)}
       /> : null}
 
       <footer className="composer-wrap">

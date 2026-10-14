@@ -3,6 +3,8 @@ import { IPC } from "@shared/channels";
 import { LIBRARY_CHANNELS } from "@shared/library-channels";
 import { ENVIRONMENT_CHANNELS, EXECUTION_CHANNELS, PROCESS_CHANNELS, ENVIRONMENT_EVENTS } from "@shared/environment-channels";
 import { BROWSER_CHANNELS, COMPUTER_CHANNELS, PREVIEW_CHANNELS, BROWSER_EVENTS } from "@shared/browser-channels";
+import { SKILL_EXECUTION_CHANNELS, SKILL_EXECUTION_EVENTS } from "@shared/skill-execution-channels";
+import type { SkillExecutionChangedEvent } from "@shared/skill-execution-contracts";
 import type { BrowserChangedEvent } from "@shared/browser-contracts";
 import type { EnvironmentChangedEvent } from "@shared/environment-contracts";
 import type { LibraryChangedEvent } from "@shared/library-contracts";
@@ -21,6 +23,19 @@ function onBrowserChanged(listener: (event: BrowserChangedEvent) => void): () =>
 }
 
 const api: AevorenBotApi = {
+  skillsExecution: {
+    scripts: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.scripts, input),
+    executionGrants: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.executionGrants, input),
+    grantExecution: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.grantExecution, input),
+    revokeExecution: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.revokeExecution, input),
+    runScript: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.runScript, input),
+    scriptExecution: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.scriptExecution, input),
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, value: SkillExecutionChangedEvent): void => listener(value);
+      ipcRenderer.on(SKILL_EXECUTION_EVENTS.changed, handler);
+      return () => ipcRenderer.removeListener(SKILL_EXECUTION_EVENTS.changed, handler);
+    },
+  },
   browser: {
     get: input => ipcRenderer.invoke(BROWSER_CHANNELS.get, input),
     start: input => ipcRenderer.invoke(BROWSER_CHANNELS.start, input),
@@ -89,6 +104,7 @@ const api: AevorenBotApi = {
     onChanged: onEnvironmentChanged,
   },
   library: {
+    readFile: input => ipcRenderer.invoke(LIBRARY_CHANNELS.readFile, input),
     list: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.list, input),
     available: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.available, input),
     read: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.read, input),
@@ -194,6 +210,7 @@ const api: AevorenBotApi = {
     list: (input) => ipcRenderer.invoke(IPC.toolsList, input),
   },
   approvals: {
+    review: input => ipcRenderer.invoke(IPC.approvalsReview, input),
     listPending: (input) => ipcRenderer.invoke(IPC.approvalsListPending, input),
     resolve: (input) => ipcRenderer.invoke(IPC.approvalsResolve, input),
   },
@@ -231,6 +248,7 @@ const api: AevorenBotApi = {
     retry: (runId) => ipcRenderer.invoke(IPC.runtimeRetry, runId),
   },
   roomRuntime: {
+    cancelMember: runId => ipcRenderer.invoke(IPC.roomRuntimeCancelMember, runId),
     getSnapshot: (roomId) => ipcRenderer.invoke(IPC.roomRuntimeSnapshot, roomId),
     send: (command) => ipcRenderer.invoke(IPC.roomRuntimeSend, command),
     cancel: (batchId) => ipcRenderer.invoke(IPC.roomRuntimeCancel, batchId),

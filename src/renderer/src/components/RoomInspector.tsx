@@ -2,6 +2,7 @@ import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-v
 import { useEffectEvent, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { AppError, Bot, ProviderInstanceInfo, RoomDetail, RoomPatch } from "@shared/contracts";
 import type { ResourceReference } from "@shared/library-contracts";
+import type { EnvironmentScope } from "@shared/environment-contracts";
 import { eligibleRoomLeads } from "../room-leads";
 import { buildBotIdentityMap } from "../bot-identity";
 import { BotAvatarIcon } from "./BotAvatarIcon";
@@ -52,6 +53,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const [tab, setTab] = useState<InspectorTab>("details");
   const [environmentBotId, setEnvironmentBotId] = useState("");
   const [previewPageId, setPreviewPageId] = useState<string>();
+  const [scriptExecution, setScriptExecution] = useState<EnvironmentScope & { id: string }>();
   const [changingTab, setChangingTab] = useState(false);
   const tabChangeRef = useRef(false);
   const documentsRef = useRef<LibraryPanelHandle>(null);
@@ -319,11 +321,12 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
         <LibraryPanel ref={documentsRef} sessionId={detail.session.id} kind="document" active={tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} />
       </div>
       <div id={`room-${detail.room.id}-skill-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-skill-tab`} hidden={tab !== "skill"}>
-        <LibraryPanel ref={skillsRef} sessionId={detail.session.id} kind="skill" active={tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} />
+        <label className="field environment-member-selector"><span>Skill 脚本执行成员</span><select aria-label="Skill 脚本执行成员" value={environmentMember?.botId ?? ""} onChange={event => setEnvironmentBotId(event.target.value)}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>
+        <LibraryPanel ref={skillsRef} sessionId={detail.session.id} executorBotId={environmentMember?.botId} ownerName={`${detail.room.name} · ${environmentMember ? botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name : "未选择成员"}`} kind="skill" active={tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} onOpenExecution={execution => { if (execution.sessionId !== detail.session.id || execution.executorBotId !== environmentMember?.botId) return; setScriptExecution(execution); void changeTab("environment"); }} />
       </div>
       <div id={`room-${detail.room.id}-environment-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-environment-tab`} hidden={tab !== "environment"}>
         <label className="field environment-member-selector"><span>查看成员的执行环境</span><select aria-label="执行环境成员" value={environmentMember?.botId ?? ""} onChange={event => setEnvironmentBotId(event.target.value)}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>
-        {environmentMember ? <EnvironmentPanel sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "environment"} onOpenPreview={pageId => { setPreviewPageId(pageId); void changeTab("browser"); }} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
+        {environmentMember ? <EnvironmentPanel sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "environment"} initialExecutionId={scriptExecution?.sessionId === detail.session.id && scriptExecution.executorBotId === environmentMember.botId ? scriptExecution.id : undefined} onOpenPreview={pageId => { setPreviewPageId(pageId); void changeTab("browser"); }} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
       </div>
       {(["browser", "computer"] as const).map(mode => <div key={mode} id={`room-${detail.room.id}-${mode}-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-${mode}-tab`} hidden={tab !== mode}>
         <label className="field environment-member-selector"><span>查看成员的{mode === "browser" ? "浏览器" : "电脑"}</span><select aria-label={mode === "browser" ? "浏览器成员" : "电脑成员"} value={environmentMember?.botId ?? ""} onChange={event => setEnvironmentBotId(event.target.value)}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>

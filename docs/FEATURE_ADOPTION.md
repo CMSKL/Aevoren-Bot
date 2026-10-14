@@ -145,6 +145,8 @@ SQLite 保存资源、不可变版本和会话绑定，导入文件保存为应�
 
 ## 主要实现入口
 
+阶段 4 首个脚本 Skill 单元为 `v0.3.0-beta.30` 开发候选，仍在验收。新增六个脚本操作、固定版本／入口／镜像授权、不可变审批快照、源码确认与原执行状态查询。脚本只在配置的 Docker 环境内执行，未知结果不自动重跑，元信息不授予权限。第三方应用、示范草稿、外发与写 MCP／Apps 尚未交付；真实 Worker、界面与安装包证据继续记入[实施记录](IMPLEMENTATION_PLAN.md)。使用见[脚本 Skill](SCRIPT_SKILLS.md)。
+
 | Aevoren 模块 | 复用或扩展方向 |
 | --- | --- |
 | [Runtime 执行器](../src/main/runtime-executor.ts)、[Room 协调器](../src/main/room-coordinator.ts) | 新工具归属、并行、停止、成员重试与恢复 |

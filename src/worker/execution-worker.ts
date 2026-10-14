@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { chown, lstat, mkdir, readFile, readdir, realpath } from "node:fs/promises";
@@ -6,14 +6,17 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { WorkerExecution, WorkerExecutionRequest, WorkerLog, RegisteredPort as WorkerPort, WorkerPendingCancelAck } from "@shared/environment-contracts";
 import { ENV_HTTP_BODY_MAX_BYTES } from "@shared/environment-contracts";
+import { skillScriptCommand, type WorkerSkillInstallRequest, type WorkerSkillPackage, type WorkerSkillRunRequest } from "@shared/skill-execution-contracts";
+import { workerSkillRunSchema } from "@shared/skill-execution-schemas";
 import { WorkerError } from "./worker-error";
-import { WorkerStore } from "./worker-store";
+import { WorkerStore, type WorkerJobRequest } from "./worker-store";
+import { SkillPackages } from "./skill-packages";
 
 const JOB_UIDS = Array.from({ length: 32 }, (_, index) => 1_010 + index);
 const GID = 1_000;
 const ACTIVE = new Set(["running"]);
 type LiveJob = { child: ChildProcessWithoutNullStreams; uid: number; parentExit?: { code: number | null; signal: string | null };
-  finish?: Promise<void>; timer?: ReturnType<typeof setTimeout>; home: string };
+  finish?: Promise<void>; timer?: ReturnType<typeof setTimeout>; home: string; skill: boolean };
 export type WorkerOptions = { environmentId: string; stateDirectory: string; workspaceDirectory: string; helperPath: string };
 
 export async function processesByUid(): Promise<Map<number, number[]>> {
@@ -57,19 +60,23 @@ export class ExecutionWorker {
   readonly bootId = randomUUID();
   readonly events = new EventEmitter();
   readonly store: WorkerStore;
+  readonly skillPackages: SkillPackages;
   private readonly live = new Map<string, LiveJob>();
   private readonly reservedUids = new Set<number>();
   private monitor?: ReturnType<typeof setInterval>;
   private checking = false;
   private shuttingDown = false;
   private readonly closedSessions = new Set<string>();
+  private readonly admitting = new Map<string, { digest: string; promise: Promise<WorkerExecution> }>();
 
   constructor(readonly options: WorkerOptions) {
     this.store = new WorkerStore(join(options.stateDirectory, "worker.sqlite"), options.environmentId, this.bootId);
+    this.skillPackages = new SkillPackages(options.stateDirectory);
   }
 
   async initialize(): Promise<void> {
     if (process.platform !== "linux" || process.getuid?.() !== 0) throw new WorkerError("WORKER_SUPERVISOR_REQUIRED", 503);
+    await this.skillPackages.initialize();
     await mkdir(this.options.workspaceDirectory, { recursive: true });
     if ((await lstat(this.options.workspaceDirectory)).isSymbolicLink()) throw new WorkerError("WORKER_WORKSPACE_INVALID", 503);
     await chown(this.options.workspaceDirectory, 1_000, GID);
@@ -81,6 +88,7 @@ export class ExecutionWorker {
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     if ((await processesByUid()).size > 0) throw new WorkerError("WORKER_BOOT_CLEANUP_INCOMPLETE", 503);
+    await this.skillPackages.clearSnapshotsAfterBootCleanup();
     this.monitor = setInterval(() => { void this.inspectJobs(); }, 100);
     this.monitor.unref();
   }
@@ -103,12 +111,39 @@ export class ExecutionWorker {
   }
 
   async start(input: WorkerExecutionRequest): Promise<WorkerExecution> {
-    if (this.shuttingDown) throw new WorkerError("WORKER_STOPPING", 503);
     const request: WorkerExecutionRequest = { id: input.id, sessionId: input.sessionId, runtimeRunId: input.runtimeRunId,
       kind: input.kind, command: input.command, cwd: input.cwd,
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : input.kind === "foreground" ? { timeoutMs: 120_000 } : {}) };
+    return this.admit(request);
+  }
+
+  async installSkill(input: WorkerSkillInstallRequest): Promise<WorkerSkillPackage> {
+    if (this.shuttingDown) throw new WorkerError("WORKER_STOPPING", 503);
+    return this.skillPackages.install(input);
+  }
+
+  async runSkill(raw: WorkerSkillRunRequest): Promise<WorkerExecution> {
+    const input = workerSkillRunSchema.parse(raw);
+    return this.admit({ id: input.id, sessionId: input.sessionId, runtimeRunId: input.runtimeRunId, kind: "foreground",
+      command: skillScriptCommand(input), cwd: input.cwd, timeoutMs: input.timeoutMs, skill: input });
+  }
+
+  private async admit(request: WorkerJobRequest): Promise<WorkerExecution> {
+    if (this.shuttingDown) throw new WorkerError("WORKER_STOPPING", 503);
+    const digest = createHash("sha256").update(JSON.stringify(request)).digest("hex"), pending = this.admitting.get(request.id);
+    if (pending) {
+      if (pending.digest !== digest) throw new WorkerError("WORKER_IDEMPOTENCY_CONFLICT", 409);
+      return pending.promise;
+    }
     const existing = this.store.existing(request);
     if (existing) return existing;
+    const promise = this.launch(request);
+    this.admitting.set(request.id, { digest, promise });
+    try { return await promise; }
+    finally { this.admitting.delete(request.id); }
+  }
+
+  private async launch(request: WorkerJobRequest): Promise<WorkerExecution> {
     if (this.store.idCancelled(request.id)) throw new WorkerError("WORKER_JOB_CANCELLED", 409);
     if (this.closedSessions.has(request.sessionId) || this.store.sessionCancelled(request.sessionId)) throw new WorkerError("WORKER_SESSION_CANCELLED", 409);
     const uid = JOB_UIDS.find(candidate => !this.reservedUids.has(candidate));
@@ -122,15 +157,22 @@ export class ExecutionWorker {
       const home = join("/tmp", `aevoren-job-${request.id}`);
       await mkdir(home, { mode: 0o700 });
       await chown(home, uid, GID);
+      const entry = request.skill ? await this.skillPackages.snapshot(request.id, uid, request.skill.packageId, request.skill.packageDigest, request.skill.entryPath) : null;
       if (this.shuttingDown || this.closedSessions.has(request.sessionId) || this.store.sessionCancelled(request.sessionId)) throw new WorkerError("WORKER_SESSION_CANCELLED", 409);
       if (this.store.idCancelled(request.id)) throw new WorkerError("WORKER_JOB_CANCELLED", 409);
       this.store.create(request, uid);
-      const child = spawn("/usr/bin/setpriv", ["--reuid", String(uid), "--regid", String(GID), "--clear-groups", "--no-new-privs",
-        "/bin/bash", "--noprofile", "--norc", "-c", 'cd -- "/workspace/$1" || exit 125; umask 0007; exec /bin/bash --noprofile --norc -c "$2"', "aevoren-job", request.cwd, request.command],
+      const program = request.skill?.interpreter === "bash" ? ["/bin/bash", "--noprofile", "--norc", "--", entry!]
+        : request.skill?.interpreter === "python" ? ["/usr/bin/python3", "-E", "-s", "--", entry!]
+        : ["/usr/local/bin/node", "--", entry!];
+      const bootstrap = request.skill
+        ? ["/bin/bash", "--noprofile", "--norc", "-c", 'cd -- "/workspace/$1" || exit 125; umask 0007; shift; exec "$@"', "aevoren-skill", request.cwd, ...program, ...request.skill.args]
+        : ["/bin/bash", "--noprofile", "--norc", "-c", 'cd -- "/workspace/$1" || exit 125; umask 0007; exec /bin/bash --noprofile --norc -c "$2"', "aevoren-job", request.cwd, request.command];
+      const child = spawn("/usr/bin/setpriv", ["--reuid", String(uid), "--regid", String(request.skill ? uid : GID),
+        ...(request.skill ? ["--groups", String(GID)] : ["--clear-groups"]), "--no-new-privs", ...bootstrap],
         { cwd: "/", detached: true, stdio: ["pipe", "pipe", "pipe"],
         env: { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8", HOME: home, AEVOREN_EXECUTION_ID: request.id } });
       child.stdin.end();
-      const job: LiveJob = { child, uid, home };
+      const job: LiveJob = { child, uid, home, skill: Boolean(request.skill) };
       this.live.set(request.id, job);
       for (const stream of ["stdout", "stderr"] as const) {
         const decoder = new StringDecoder("utf8");
@@ -150,7 +192,10 @@ export class ExecutionWorker {
       if (request.timeoutMs) job.timer = setTimeout(() => { void this.finish(request.id, "failed", "WORKER_COMMAND_TIMEOUT"); }, request.timeoutMs);
       return this.store.get(request.id);
     } catch (error) {
-      if (!this.live.has(request.id)) this.reservedUids.delete(uid);
+      if (!this.live.has(request.id)) {
+        if (request.skill) await this.skillPackages.removeSnapshot(request.id);
+        this.reservedUids.delete(uid);
+      }
       throw error;
     }
   }
@@ -190,12 +235,17 @@ export class ExecutionWorker {
         await new Promise(resolve => setTimeout(resolve, 20));
       }
       const remained = ((await processesByUid()).get(job.uid)?.length ?? 0) > 0;
+      let snapshotFailed = false;
+      if (!remained && job.skill) {
+        try { await this.skillPackages.removeSnapshot(id); }
+        catch { snapshotFailed = true; }
+      }
       const detached = this.store.get(id).pid !== job.child.pid;
-      const current = this.store.finish(id, remained ? "interrupted" : state, detached ? null : job.parentExit?.code ?? null, detached ? null : job.parentExit?.signal ?? null,
-        remained ? "WORKER_CLEANUP_INCOMPLETE" : errorCode);
+      const current = this.store.finish(id, remained || snapshotFailed ? "interrupted" : state, detached ? null : job.parentExit?.code ?? null, detached ? null : job.parentExit?.signal ?? null,
+        remained ? "WORKER_CLEANUP_INCOMPLETE" : snapshotFailed ? "WORKER_SKILL_CLEANUP_INCOMPLETE" : errorCode);
       this.log(id, "state", current.state);
       this.live.delete(id);
-      if (!remained) this.reservedUids.delete(job.uid);
+      if (!remained && !snapshotFailed) this.reservedUids.delete(job.uid);
       this.events.emit(`end:${id}`, this.store.get(id));
     })();
     return job.finish;
@@ -265,6 +315,8 @@ export class ExecutionWorker {
     this.events.emit("closing");
     if (this.monitor) clearInterval(this.monitor);
     await Promise.all([...this.live.keys()].map(id => this.cancel(id, this.store.get(id).kind)));
+    await Promise.allSettled([...this.admitting.values()].map(entry => entry.promise));
+    await this.skillPackages.close();
     this.store.close();
   }
 }

@@ -10,6 +10,15 @@ type ErrorDescriptor = {
 
 export const ERROR_REGISTRY = {
   INVALID_REQUEST: { domain: "validation", retryable: false, safeMessage: "请求参数不符合要求。", allowedDetailKeys: [] },
+  SKILL_SCRIPT_NOT_FOUND: { domain: "tool", retryable: false, safeMessage: "这个 Skill 版本中没有找到指定脚本入口。", allowedDetailKeys: [] },
+  SKILL_SCRIPT_UNSUPPORTED: { domain: "tool", retryable: false, safeMessage: "脚本需要支持该能力的隔离环境，请明确重建环境后再授权。", allowedDetailKeys: [] },
+  SKILL_GRANT_NOT_FOUND: { domain: "security", retryable: false, safeMessage: "没有找到当前会话 Bot 的脚本授权。", allowedDetailKeys: [] },
+  SKILL_GRANT_REVOKED: { domain: "security", retryable: false, safeMessage: "这项脚本授权已撤销，请重新确认授权。", allowedDetailKeys: [] },
+  SKILL_GRANT_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "脚本授权已变化，请刷新后重新确认。", allowedDetailKeys: ["currentVersion"] },
+  SKILL_ENVIRONMENT_CHANGED: { domain: "security", retryable: false, safeMessage: "执行环境镜像已变化，请为当前环境重新授权。", allowedDetailKeys: [] },
+  SKILL_PACKAGE_INVALID: { domain: "security", retryable: false, safeMessage: "技能包内容或摘要未通过校验，脚本未执行。", allowedDetailKeys: [] },
+  SKILL_EXECUTION_CONFLICT: { domain: "validation", retryable: false, safeMessage: "相同执行标识不能用于不同脚本版本或参数。", allowedDetailKeys: [] },
+  APPROVAL_REVIEW_INVALID: { domain: "security", retryable: false, safeMessage: "本次操作的审批快照未通过校验，请重新准备操作。", allowedDetailKeys: [] },
   BROWSER_NOT_FOUND: { domain: "tool", retryable: false, safeMessage: "没有找到当前会话的浏览器，请先启动。", allowedDetailKeys: [] },
   BROWSER_SCOPE_INVALID: { domain: "security", retryable: false, safeMessage: "当前任务没有这个浏览器的访问权限。", allowedDetailKeys: [] },
   BROWSER_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "浏览器状态已变化，请刷新后重新确认。", allowedDetailKeys: ["currentVersion"] },

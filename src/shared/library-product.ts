@@ -24,6 +24,8 @@ export const LIBRARY_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "library.list": libraryListSchema.partial({ sessionId: true }),
   "library.available": libraryAvailableSchema.optional(),
   "library.read": libraryReadSchema.partial({ sessionId: true }).extend(pagination),
+  "library.readFile": z.object({ sessionId: z.string().uuid().optional(), id: z.string().uuid(),
+    revisionId: z.string().uuid(), path: resourceFileRefSchema.shape.relativePath, ...pagination }).strict(),
   "library.create": libraryCreateSchema.partial({ sessionId: true }),
   "library.importText": libraryCreateSchema.partial({ sessionId: true }),
   "library.update": aliasUpdate,
@@ -54,12 +56,12 @@ export const LIBRARY_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
 
 const generic: ProductOperationDefinition[] = Object.entries(LIBRARY_CHANNELS).map(([method, channel]) => ({
   name: `library.${method}`, channel,
-  description: ({ list: "列出本会话资料与 Skill", available: "列出可复用资源的元信息，不读取其他会话正文", read: "读取已授权资源的固定版本",
+  description: ({ list: "列出本会话资料与 Skill", available: "列出可复用资源的元信息，不读取其他会话正文", read: "读取已授权资源的固定版本", readFile: "读取已授权 Skill 固定版本的辅助文件；AI 文本分页，二进制只提供元信息",
     create: "创建并绑定资料或文本 Skill", importText: "保存文本到资料库", update: "按版本修改资源，保留旧版本",
     setEnabled: "启用或停用资源", delete: "软删除资源，保留历史", restore: "恢复已删除资源", versions: "列出固定版本的摘要",
     restoreVersion: "将历史内容恢复为新版本", bind: "将资源授权给当前会话", unbind: "撤销当前会话资源授权",
     pickImport: "由用户选择并导入文本或 Skill 目录", importPath: "从本会话授权工作区导入资源", export: "由用户选择位置导出固定版本" } as Record<string, string>)[method]!,
-  effectClass: ["list", "available", "read", "versions"].includes(method) ? "read-local" : "write-reversible",
+  effectClass: ["list", "available", "read", "readFile", "versions"].includes(method) ? "read-local" : "write-reversible",
   interaction: ["pickImport", "export"].includes(method) ? "native" : "none",
 }));
 

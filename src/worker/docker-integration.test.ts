@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 import type { ExecutionLogsPage, WorkerExecution, WorkerExecutionRequest, WorkerHealth, RegisteredPort, EnvironmentFileContent } from "@shared/environment-contracts";
 import { ENV_FILE_MAX_BYTES, ENV_HTTP_BODY_MAX_BYTES, ENV_WORKER_VERSION } from "@shared/environment-contracts";
 import { workerExecutionSchema, workerHealthSchema, workerLogsPageSchema, registeredPortSchema, workerPendingCancelAckSchema } from "@shared/environment-schemas";
+import type { WorkerSkillPackage, WorkerSkillRunRequest } from "@shared/skill-execution-contracts";
+import { workerSkillPackageSchema } from "@shared/skill-execution-schemas";
+import { skillFixtureFile, skillFixturePackage, maximumSkillPackage } from "./skill-package-fixture";
 
 const execute = promisify(execFile);
 const enabled = process.env.AEVOREN_WORKER_DOCKER_TEST === "1";
@@ -50,6 +53,83 @@ async function withContainer(callback: (fixture: { name: string; token: string; 
 
 const command = (script: string, kind: "foreground" | "background" = "foreground", sessionId = randomUUID()): WorkerExecutionRequest => ({
   id: randomUUID(), sessionId, runtimeRunId: kind === "foreground" ? randomUUID() : null, kind, command: script, cwd: ".",
+});
+
+const skillRun = (packageInfo: WorkerSkillPackage, interpreter: WorkerSkillRunRequest["interpreter"], entryPath: string, args: string[] = []): WorkerSkillRunRequest => ({
+  id: randomUUID(), sessionId: randomUUID(), runtimeRunId: randomUUID(), packageId: packageInfo.id, packageDigest: packageInfo.packageDigest,
+  interpreter, entryPath, args, cwd: ".", timeoutMs: 120_000,
+});
+
+describe.skipIf(!enabled)("real immutable Skill script execution", () => {
+  it("runs Bash, Python and Node with exact argv/resources, isolated UID groups and read-only private snapshots", async () => withContainer(async f => {
+    expect((await f.request<WorkerHealth>("/v1/health")).capabilities).toContain("skill-script");
+    const source = skillFixturePackage();
+    source.files.push(skillFixtureFile("scripts/main.sh", Buffer.from(`printf 'UID %s GID %s\\n' "$(id -u)" "$(id -g)"\nprintf '%s\\0' "$@" > bash-argv.bin\nod -An -tx1 "$(dirname "$0")/../assets/raw.bin" | tr -d ' \\n' > bash-asset.txt\nsleep .3\n`), "text/x-shellscript"));
+    source.files.push(skillFixtureFile("scripts/helper.py", Buffer.from("ANSWER='immutable helper'\n"), "text/x-python"));
+    source.files.push(skillFixtureFile("scripts/main.py", Buffer.from(`import os,sys,json,time\nfrom pathlib import Path\nimport helper\nprint('REPORT '+json.dumps({'uid':os.getuid(),'gid':os.getgid(),'groups':os.getgroups(),'args':sys.argv[1:],'asset':(Path(__file__).parent.parent/'assets/raw.bin').read_bytes().hex(),'helper':helper.ANSWER,'token':bool(os.environ.get('AEVOREN_WORKER_TOKEN'))}),flush=True)\nPath('python-args.json').write_text(json.dumps(sys.argv[1:],ensure_ascii=False),encoding='utf8')\ntime.sleep(.3)\n`), "text/x-python"));
+    source.files[1] = skillFixtureFile("scripts/main.js", Buffer.from(`const fs=require('fs'),path=require('path');const denied={};for(const [key,target,write] of [['self',__filename,true],['cache','/var/lib/aevoren/skill-packages',false],['rootEnv','/proc/1/environ',false]]){try{if(write)fs.writeFileSync(target,'mutation');else if(key==='cache')fs.readdirSync(target);else fs.readFileSync(target);denied[key]=false}catch(e){denied[key]=e.code==='EACCES'||e.code==='EPERM'}}console.log('REPORT '+JSON.stringify({uid:process.getuid(),gid:process.getgid(),groups:process.getgroups(),args:process.argv.slice(2),asset:fs.readFileSync(path.join(__dirname,'../assets/raw.bin')).toString('hex'),token:!!process.env.AEVOREN_WORKER_TOKEN,denied}));fs.writeFileSync('node-args.json',JSON.stringify(process.argv.slice(2)));setTimeout(()=>{},300);`), "text/javascript");
+    const installed = workerSkillPackageSchema.parse(await f.request("/v1/skill-packages", "POST", source));
+    const args = ["space and 'quotes'", "中文", "line\nbreak", "$(touch /workspace/must-not-exist)"];
+    const requests = [skillRun(installed, "bash", "scripts/main.sh", args), skillRun(installed, "python", "scripts/main.py", args), skillRun(installed, "node", "scripts/main.js", args)];
+    const jobs = await Promise.all(requests.map(input => f.request<WorkerExecution>("/v1/skill-runs", "POST", input)));
+    expect(jobs.every(job => workerExecutionSchema.parse(job).kind === "foreground")).toBe(true);
+    for (const job of jobs) await expect.poll(async () => (await f.request<WorkerExecution>(`/v1/executions/${job.id}`)).state, { timeout: 20_000 }).toBe("completed");
+    const output = await Promise.all(jobs.map(async job => (await f.request<ExecutionLogsPage>(`/v1/executions/${job.id}/logs?after=0`)).logs.filter(log => log.stream === "stdout").map(log => log.text).join("")));
+    const bash = /UID (\d+) GID (\d+)/u.exec(output[0]!)!, reports = output.slice(1).map(text => JSON.parse(text.split("REPORT ")[1]!.trim()) as {uid:number;gid:number;groups:number[];args:string[];asset:string;token:boolean;denied?:Record<string,boolean>;helper?:string});
+    expect(Number(bash[1])).toBe(Number(bash[2])); expect(new Set([Number(bash[1]), ...reports.map(report => report.uid)]).size).toBe(3);
+    for (const report of reports) expect(report).toMatchObject({ gid: report.uid, args, asset: "00ff0180", token: false, groups: expect.arrayContaining([1_000]) });
+    expect(reports[0]!.helper).toBe("immutable helper"); expect(reports[1]!.denied).toEqual({ self: true, cache: true, rootEnv: true });
+    const content = async (path: string) => { const file = await f.request<EnvironmentFileContent>(`/v1/files/content?path=${encodeURIComponent(path)}`); return Buffer.from(file.content, file.encoding === "base64" ? "base64" : "utf8"); };
+    expect(await content("bash-argv.bin")).toEqual(Buffer.from(args.join("\0") + "\0")); expect((await content("bash-asset.txt")).toString()).toBe("00ff0180");
+    expect(JSON.parse((await content("python-args.json")).toString())).toEqual(args); expect(JSON.parse((await content("node-args.json")).toString())).toEqual(args);
+    expect(await docker(["exec", f.name, "node", "-e", "console.log(require('fs').existsSync('/workspace/must-not-exist'))"])).toBe("false");
+    expect(await docker(["exec", f.name, "node", "-e", "console.log(require('fs').readdirSync('/tmp/aevoren-skill-snapshots').length)"])).toBe("0");
+    const reused = await f.request<WorkerExecution>("/v1/skill-runs", "POST", requests[2]); expect(reused).toMatchObject({ id: jobs[2]!.id, state: "completed", pid: jobs[2]!.pid });
+    await expect(f.request("/v1/skill-runs", "POST", { ...requests[2], args: ["changed"] })).rejects.toMatchObject({ message: "WORKER_IDEMPOTENCY_CONFLICT", status: 409 });
+  }), 90_000);
+
+  it("cancels detached script descendants and rejects early cancellation without killing sibling foreground/background jobs", async () => withContainer(async f => {
+    const source = skillFixturePackage(); source.files[1] = skillFixtureFile("scripts/main.js", Buffer.from("require('fs').writeFileSync('must-not-start','side effect');"), "text/javascript");
+    source.files.push(skillFixtureFile("scripts/escape.py", Buffer.from("import os,time\nprint('UID',os.getuid(),flush=True)\nif os.fork()==0:\n os.setsid()\n if os.fork()>0:os._exit(0)\n print('DETACHED',os.getpid(),flush=True)\nwhile True:time.sleep(1)\n"), "text/x-python"));
+    const installed = workerSkillPackageSchema.parse(await f.request("/v1/skill-packages", "POST", source));
+    const background = command("python3 -m http.server 3140 --bind 0.0.0.0", "background");
+    await f.request("/v1/processes", "POST", background);
+    const port = { id: randomUUID(), processId: background.id, port: 3_140, label: "owned script sibling" };
+    await expect.poll(async () => { try { return (await f.request<RegisteredPort>("/v1/ports", "POST", port)).state; } catch { return null; } }).toBe("listening");
+    const sibling = command("node -e 'setInterval(()=>{},1000)'"), running = skillRun(installed, "python", "scripts/escape.py");
+    await f.request("/v1/executions", "POST", sibling);
+    const concurrent = await Promise.all([f.request<WorkerExecution>("/v1/skill-runs", "POST", running), f.request<WorkerExecution>("/v1/skill-runs", "POST", { ...running })]);
+    expect(concurrent[0]!.pid).toBe(concurrent[1]!.pid);
+    await expect.poll(async () => (await f.request<ExecutionLogsPage>(`/v1/executions/${running.id}/logs?after=0`)).logs.some(log => log.text.includes("DETACHED"))).toBe(true);
+    const logs = await f.request<ExecutionLogsPage>(`/v1/executions/${running.id}/logs?after=0`), uid = Number(/UID (\d+)/u.exec(logs.logs.map(log => log.text).join(""))![1]);
+    expect((await f.request<WorkerExecution>(`/v1/executions/${running.id}/cancel`, "POST")).state).toBe("cancelled");
+    const remained = await docker(["exec", f.name, "node", "-e", `const fs=require('fs');console.log(fs.readdirSync('/proc').filter(p=>/^\\d+$/.test(p)).filter(p=>{try{const s=fs.readFileSync('/proc/'+p+'/status','utf8');return /^Uid:\\s+${uid}\\b/m.test(s)&&!/^State:\\s+Z/m.test(s)}catch{return false}}).length)`]);
+    expect(remained).toBe("0");
+    expect((await f.request<WorkerExecution>(`/v1/executions/${sibling.id}`)).state).toBe("running");
+    expect((await f.request<WorkerExecution>(`/v1/processes/${background.id}`)).state).toBe("running");
+    const pending = skillRun(installed, "node", "scripts/main.js");
+    expect(workerPendingCancelAckSchema.parse(await f.request(`/v1/executions/${pending.id}/cancel`, "POST"))).toMatchObject({ id: pending.id, pending: true });
+    await expect(f.request("/v1/skill-runs", "POST", pending)).rejects.toMatchObject({ message: "WORKER_JOB_CANCELLED", status: 409 });
+    const sealed = skillRun(installed, "node", "scripts/main.js"); await f.request(`/v1/execution-sessions/${sealed.sessionId}/cancel`, "POST");
+    await expect(f.request("/v1/skill-runs", "POST", sealed)).rejects.toMatchObject({ message: "WORKER_SESSION_CANCELLED", status: 409 });
+    expect(await docker(["exec", f.name, "node", "-e", "const fs=require('fs');console.log(fs.existsSync('/workspace/must-not-start')||fs.readdirSync('/tmp/aevoren-skill-snapshots').length>0)"])).toBe("false");
+    await f.request(`/v1/executions/${sibling.id}/cancel`, "POST"); await f.request(`/v1/processes/${background.id}/stop`, "POST");
+  }), 90_000);
+
+  it("installs the real maximum package within the existing HTTP limit and retains exact bytes across container restart", async () => withContainer(async f => {
+    const source = maximumSkillPackage(), encodedSize = Buffer.byteLength(JSON.stringify(source));
+    expect(encodedSize).toBeLessThan(ENV_HTTP_BODY_MAX_BYTES);
+    const [first, second] = await Promise.all([f.request<WorkerSkillPackage>("/v1/skill-packages", "POST", source), f.request<WorkerSkillPackage>("/v1/skill-packages", "POST", source)]);
+    expect(workerSkillPackageSchema.parse(first)).toMatchObject({ fileCount: 251, size: 4 * 1_048_576 }); expect(second).toEqual(first);
+    await docker(["stop", "--time", "5", f.name]); await docker(["start", f.name]); await f.reconnect();
+    await expect.poll(async () => { try { return (await f.request<WorkerHealth>("/v1/health")).environmentId; } catch { return null; } }, { timeout: 20_000 }).toBe(f.environmentId);
+    expect(await f.request("/v1/skill-packages", "POST", source)).toEqual(first);
+    const checked = await docker(["exec", f.name, "node", "-e", `const fs=require('fs'),c=require('crypto');const b=fs.readFileSync('/var/lib/aevoren/skill-packages/${first.packageDigest}/SKILL.md');console.log(c.createHash('sha256').update(b).digest('hex'))`]);
+    expect(checked).toBe(source.files[0]!.sha256);
+    const invalid = skillFixturePackage(); invalid.files[1]!.sha256 = "0".repeat(64);
+    await expect(f.request("/v1/skill-packages", "POST", invalid)).rejects.toMatchObject({ message: "WORKER_SKILL_PACKAGE_INVALID" });
+    await expect(f.request("/v1/skill-runs", "POST", skillRun({ ...first, id: invalid.id }, "node", "scripts/main.js"))).rejects.toMatchObject({ message: "WORKER_SKILL_PACKAGE_NOT_FOUND" });
+  }), 120_000);
 });
 
 describe.skipIf(!enabled)("real isolated Linux Worker", () => {

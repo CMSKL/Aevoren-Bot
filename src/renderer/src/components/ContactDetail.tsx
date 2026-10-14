@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { AppError, Bot, Room } from "@shared/contracts";
 import type { ResourceReference } from "@shared/library-contracts";
+import type { EnvironmentScope } from "@shared/environment-contracts";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { CheckIcon, ChevronDownIcon, MenuIcon, RoomIcon } from "./Icons";
 import { ProfileInspector, type ProfileInspectorHandle, type SaveStatus } from "./ProfileInspector";
@@ -46,6 +47,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
   const [tab, setTab] = useState<ProfileTab>("profile");
   const [editing, setEditing] = useState(false);
   const [previewPageId, setPreviewPageId] = useState<string>();
+  const [scriptExecution, setScriptExecution] = useState<EnvironmentScope & { id: string }>();
   const [changingTab, setChangingTab] = useState(false);
   const tabChangeRef = useRef(false);
   const profileElementRef = useRef<HTMLElement>(null);
@@ -132,10 +134,10 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
         {librarySessionId ? <LibraryPanel ref={documentsRef} sessionId={librarySessionId} kind="document" active={tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊资料范围…</p>}
       </div>
       <div id={`contact-${bot.id}-skill-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-skill-tab`} hidden={tab !== "skill"} className="contact-tab-panel">
-        {librarySessionId ? <LibraryPanel ref={skillsRef} sessionId={librarySessionId} kind="skill" active={tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊 Skill 范围…</p>}
+        {librarySessionId ? <LibraryPanel ref={skillsRef} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} kind="skill" active={tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} onOpenExecution={execution => { if (execution.sessionId !== librarySessionId || execution.executorBotId !== bot.id) return; setScriptExecution(execution); void changeTab("environment"); }} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊 Skill 范围…</p>}
       </div>
       <div id={`contact-${bot.id}-environment-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-environment-tab`} hidden={tab !== "environment"} className="contact-tab-panel">
-        {librarySessionId ? <EnvironmentPanel sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={tab === "environment"} onOpenPreview={pageId => { setPreviewPageId(pageId); void changeTab("browser"); }} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊执行范围…</p>}
+        {librarySessionId ? <EnvironmentPanel sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={tab === "environment"} initialExecutionId={scriptExecution?.sessionId === librarySessionId && scriptExecution.executorBotId === bot.id ? scriptExecution.id : undefined} onOpenPreview={pageId => { setPreviewPageId(pageId); void changeTab("browser"); }} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊执行范围…</p>}
       </div>
       {(["browser", "computer"] as const).map(mode => <div key={mode} id={`contact-${bot.id}-${mode}-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-${mode}-tab`} hidden={tab !== mode} className="contact-tab-panel">
         {librarySessionId ? <ComputerPanel sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} mode={mode} initialPageId={previewPageId} active={tab === mode} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊浏览器范围…</p>}

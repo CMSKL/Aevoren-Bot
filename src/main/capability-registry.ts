@@ -15,6 +15,7 @@ import type {
 import type { AppRepository } from "./database";
 import type { ProviderService } from "./provider-service";
 import type { McpService } from "./mcp-service";
+import { SKILL_SCRIPT_WORKER_VERSION } from "@shared/skill-execution-contracts";
 
 export type CapabilityAppEnvironment = CapabilityPromptSnapshot["app"];
 
@@ -26,6 +27,7 @@ type SnapshotContext = {
   mcpTools: McpToolInfo[];
   routines: Routine[];
   executionReady: boolean;
+  scriptReady: boolean;
   browserReady: boolean;
   browserUserControlled: boolean;
 };
@@ -112,11 +114,18 @@ function capabilityDescriptors(
     },
     {
       id: "skills.text", name: "文本 Skill", category: "conversation",
-      description: "导入、管理并按需加载本会话授权的 SKILL.md 和辅助文本；保存脚本资源但本阶段不执行脚本。",
+      description: "导入、管理并按需加载本会话授权的 SKILL.md 和辅助文本；脚本执行另需固定版本与隔离环境授权。",
       effectClass: "read-local", adapterKind: "core",
       availability: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? "available" : "unavailable",
       reason: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? null : "当前模型来源不支持宿主产品工具。",
       permissionState: "not-required", toolNames: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "skills.scripts", name: "隔离脚本 Skill", category: "workspace",
+      description: "经精确版本授权和本次审批，在本会话 Bot 的隔离环境执行 Bash、Python、Node 脚本；元信息不会授予权限。",
+      effectClass: "irreversible", adapterKind: "core", availability: executionTools && context.scriptReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前模型来源不支持宿主产品工具。" : context.scriptReady ? null : "请启动支持脚本 Skill 的环境；旧镜像需要明确重建，每个入口另需授权。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
       id: "environment.execution", name: "隔离 Linux 执行环境", category: "workspace",
@@ -352,9 +361,10 @@ export class CapabilityRegistry {
     })();
     const mcpTools = this.mcp?.availableTools(botId) ?? [];
     const routines = this.routineList();
-    const executionReady = Boolean(botId && sessionId && this.repository.environments.get({ sessionId, executorBotId: botId })?.state === "running");
+    const environment = botId && sessionId ? this.repository.environments.get({ sessionId, executorBotId: botId }) : null;
+    const executionReady = environment?.state === "running";
     const browser = botId && sessionId ? this.repository.browsers.get({ sessionId, executorBotId: botId }) : null;
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines, executionReady,
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION,
       browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));
