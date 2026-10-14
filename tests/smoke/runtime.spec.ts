@@ -374,6 +374,10 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.getSnapshot("not-a-uuid"),
     );
     expect(roomResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    const cancelMemberResult = await launched.page.evaluate(() =>
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.cancelMember("not-a-uuid"),
+    );
+    expect(cancelMemberResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     const memoryResult = await launched.page.evaluate(() =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.memories.list({ botId: "not-a-uuid" }),
     );
@@ -387,8 +391,22 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "conversations", "environments", "events", "execution", "library", "mcp", "memories", "messages", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "conversations", "environments", "events", "execution", "library", "mcp", "memories", "messages", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
     ]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime,
+    ).toSorted())).toEqual(["cancel", "cancelMember", "continue", "getSnapshot", "retryTurn", "send"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.skillsExecution,
+    ).toSorted())).toEqual(["executionGrants", "grantExecution", "onChanged", "revokeExecution", "runScript", "scriptExecution", "scripts"]);
+    const skillsValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      return Promise.all([
+        api.skillsExecution.scripts({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", reference: { resourceId: "not-a-uuid", revisionId: "not-a-uuid", digest: "invalid" } }),
+        api.skillsExecution.executionGrants({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid" }),
+      ]);
+    });
+    for (const result of skillsValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser,
     ).toSorted())).toEqual(["click", "closeTab", "download", "downloads", "get", "key", "navigate", "newTab", "observe", "onChanged", "read", "scroll", "start", "stop", "tabs", "type"]);
@@ -421,7 +439,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     for (const result of environmentValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library,
-    ).toSorted())).toEqual(["available", "bind", "create", "delete", "export", "importPath", "importText", "list", "onChanged", "pickImport", "read", "restore", "restoreVersion", "setEnabled", "unbind", "update", "versions"]);
+    ).toSorted())).toEqual(["available", "bind", "create", "delete", "export", "importPath", "importText", "list", "onChanged", "pickImport", "read", "readFile", "restore", "restoreVersion", "setEnabled", "unbind", "update", "versions"]);
     const libraryResult = await launched.page.evaluate(() =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library.list({ sessionId: "not-a-uuid" }),
     );

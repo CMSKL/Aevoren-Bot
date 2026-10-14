@@ -4,6 +4,7 @@ import { request as httpRequest } from "node:http";
 import { promisify } from "node:util";
 import { WebSocket } from "ws";
 import { describe, expect, it } from "vitest";
+import { ENV_WORKER_VERSION } from "@shared/environment-contracts";
 import type { WorkerExecution, WorkerHealth } from "@shared/environment-contracts";
 import type { PreviewTicket } from "./preview-proxy";
 
@@ -24,7 +25,7 @@ async function fixture(callback: (f: ExecutionFixture) => Promise<void>): Promis
       const response = await fetch(`${url}${path}`, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) });
       const result = await response.json(); if (!response.ok) throw Object.assign(new Error((result as { error: { code: string } }).error.code), { status: response.status }); return result as T;
     };
-    await expect.poll(async () => { try { return (await request<WorkerHealth>("/v1/health")).workerVersion; } catch { return null; } }).toBe("1.1.0");
+    await expect.poll(async () => { try { return (await request<WorkerHealth>("/v1/health")).workerVersion; } catch { return null; } }).toBe(ENV_WORKER_VERSION);
     const processId = randomUUID(), registeredPortId = randomUUID();
     await request("/v1/processes", "POST", { id: processId, sessionId: randomUUID(), runtimeRunId: null, kind: "background", command: application("ORIGINAL_APP"), cwd: "." });
     await expect.poll(async () => { try { return (await request<{ state: string }>("/v1/ports", "POST", { id: registeredPortId, processId, port: 3_131, label: "actual original process" })).state; } catch { return null; } }).toBe("listening");
