@@ -4,6 +4,7 @@ import { z } from "zod";
 import { PRODUCT_OPERATIONS, productOperation } from "@shared/product-operations";
 import type { ProductToolRequest, RuntimeRun, ToolInvocation } from "@shared/contracts";
 import { resourceReferenceSchema } from "@shared/library-schemas";
+import { skillRunSchema } from "@shared/skill-execution-schemas";
 import { AevorenBotError } from "./errors";
 import { containsLikelySecret } from "./memory-safety";
 import { createProductHandlers, type ProductDependencies } from "./product-handlers";
@@ -11,16 +12,18 @@ import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import type { ModelImageAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
+  "approvals.review", "skills.scripts", "skills.executionGrants", "skills.scriptExecution",
   "browser.get", "browser.tabs", "browser.read", "browser.observe", "browser.downloads", "computer.view", "computer.screenshot", "preview.list",
   "environments.probe", "environments.list", "environments.get", "execution.list", "execution.get", "execution.logs", "execution.wait", "execution.listFiles", "execution.readFile", "processes.list", "processes.listPorts",
-  "library.list", "library.read", "library.versions", "documents.list", "documents.search", "documents.read", "documents.versions", "skills.list", "skills.read", "skills.load", "skills.readFile",
+  "library.list", "library.read", "library.readFile", "library.versions", "documents.list", "documents.search", "documents.read", "documents.versions", "skills.list", "skills.read", "skills.load", "skills.readFile",
   "userProfile.get", "settings.getGeneral", "providers.list", "bots.list", "rooms.list",
   "tasks.getResult", "tasks.waitResult", "tasks.getRoomResult", "tasks.waitRoomResult", "projects.list", "workspaces.list", "updates.getState", "sessions.getMain", "capabilities.getSnapshot",
 ]);
-const PINNED_LIBRARY_READS = new Set(["library.read", "documents.read", "skills.read", "skills.load", "skills.readFile", "library.export", "documents.export", "skills.export"]);
+const PINNED_LIBRARY_READS = new Set(["library.read", "library.readFile", "documents.read", "skills.read", "skills.load", "skills.readFile", "library.export", "documents.export", "skills.export"]);
 const environmentOperation = (operation: string): boolean => /^(environments|execution|processes)\./.test(operation);
 const browserOperation = (operation: string): boolean => /^(browser|computer|preview)\./.test(operation);
-const scopedOperation = (operation: string): boolean => environmentOperation(operation) || browserOperation(operation);
+const scriptOperation = (operation: string): boolean => ["skills.scripts", "skills.executionGrants", "skills.grantExecution", "skills.revokeExecution", "skills.runScript", "skills.scriptExecution", "approvals.review"].includes(operation);
+const scopedOperation = (operation: string): boolean => environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation);
 type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[] };
 
 /** Both transports use these handlers; only the host can supply execution identity. */
@@ -51,6 +54,10 @@ export class ProductOperationService {
     if (["execution.run", "processes.start"].includes(tool.operation) && typeof value.command === "string") {
       return `${label} · ${value.cwd ?? "."}\n${value.command}`.slice(0, 2_048);
     }
+    if (tool.operation === "roomRuntime.cancelMember" && typeof input === "string") {
+      const run = repository.getRuntimeRun(input);
+      return `${label} · ${repository.getBot(run.executorBotId).name} · ${run.id}`;
+    }
     if (tool.operation === "approvals.resolve" && typeof value.id === "string") {
       const approval = repository.getApprovalRequest(value.id);
       const target = repository.getToolInvocation(approval.toolInvocationId);
@@ -70,6 +77,14 @@ export class ProductOperationService {
     return tool.action === "execute" && !PUBLIC_READS.has(tool.operation);
   }
 
+  approvalReview(tool: ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined {
+    if (tool.action !== "execute" || tool.operation !== "skills.runScript") return undefined;
+    const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
+    if (!this.dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
+    const input = skillRunSchema.omit({ clientNonce: true }).parse(this.libraryInput(tool.operation, tool.input, runtime));
+    return this.dependencies.skillExecutionService.approvalReview(input, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId });
+  }
+
   validate(tool: ProductToolRequest, runtimeRunId: string): void {
     const { repository } = this.dependencies;
     const runtime = repository.getRuntimeRun(runtimeRunId);
@@ -80,6 +95,11 @@ export class ProductOperationService {
     if (!definition) throw new AevorenBotError("INVALID_REQUEST", "产品操作不存在，请先查询功能目录。");
     const schema = PRODUCT_OPERATION_SCHEMAS[tool.operation]!;
     const input = schema.parse(this.libraryInput(tool.operation, tool.input, runtime));
+    if (tool.operation === "skills.runScript") this.approvalReview({ ...tool, input }, runtimeRunId);
+    if (tool.operation === "roomRuntime.cancelMember") {
+      const target = repository.getRuntimeRun(input as string);
+      if (target.sessionId !== runtime.sessionId || !repository.getSession(target.sessionId).roomId || !target.promptManifest.sourceTurnId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    }
     if (tool.operation === "providers.saveOpenAiCompatible" && input && typeof input === "object" && "apiKey" in input) {
       throw new AevorenBotError("INVALID_REQUEST", "请在模型设置的可信入口填写密钥，AI 只能使用连接引用。");
     }
@@ -146,9 +166,23 @@ export class ProductOperationService {
       return this.result({ status: "completed", operation: tool.operation, result });
     }
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
+    if (tool.operation === "skills.runScript") {
+      const approval = this.dependencies.repository.getApprovalRequest(invocation.approvalRequestId);
+      const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
+      const review = this.dependencies.repository.getApprovalReview({ ...scope, id: approval.id, expectedVersion: approval.version });
+      if (!review.snapshot || !this.dependencies.skillExecutionService) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      this.dependencies.skillExecutionService.assertApprovalReview(review.snapshot, scope);
+    }
     if (!PUBLIC_READS.has(tool.operation)) {
       const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
       if (previous) {
+        if (tool.operation === "skills.runScript") {
+          const receipt = JSON.parse(previous) as { result?: import("@shared/skill-execution-contracts").SkillScriptExecution };
+          if (!receipt.result?.execution.id || !this.dependencies.skillExecutionService) throw new AevorenBotError("SKILL_EXECUTION_CONFLICT");
+          const result = await this.dependencies.skillExecutionService.scriptExecution({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, id: receipt.result.execution.id });
+          return this.result({ status: "previously_completed", operation: tool.operation, reused: true, result,
+            receiptNotice: "未再次执行脚本；已查询原任务的实际状态和固定版本来源。" });
+        }
         if (browserOperation(tool.operation)) {
           const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
           const supplied = tool.input as { expectedEpoch?: number } | undefined;

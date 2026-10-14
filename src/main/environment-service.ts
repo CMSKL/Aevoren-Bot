@@ -18,6 +18,8 @@ import type { SecretCodec } from "./settings";
 import { AevorenBotError } from "./errors";
 import { DockerCommandError, DockerDriver, EXECUTION_IMAGE_REF, type DockerImage } from "./docker-driver";
 import { ExecutionWorkerClient, ExecutionWorkerError } from "./execution-worker-client";
+import { SKILL_SCRIPT_CAPABILITY, skillScriptCommand, type WorkerSkillInstallRequest, type WorkerSkillRunRequest } from "@shared/skill-execution-contracts";
+import { workerSkillInstallSchema, workerSkillPackageSchema, workerSkillRunSchema } from "@shared/skill-execution-schemas";
 
 const executionPreviewSchema = z.object({ id: z.string().uuid(), registeredPortId: z.string().uuid(), processId: z.string().uuid(),
   port: z.number().int().min(1).max(65_535), host: z.string().min(1).max(256), expiresAt: z.string().datetime({ offset: true }) }).strict();
@@ -301,6 +303,60 @@ export class EnvironmentService {
   async run(input: ExecutionRunInput | ProcessStartInput, runtimeRunId: string | null = null, background = false, signal?: AbortSignal): Promise<Execution> {
     const parsed = (background ? processStartSchema : executionRunSchema).parse(input);
     return this.locked(parsed, () => this.runUnlocked(parsed, runtimeRunId, background, signal));
+  }
+
+  /** Host-only entry: script bytes and argv never pass through the generic shell runner. */
+  async assertSkillCapability(scope: EnvironmentScope, identity: { environmentId: string; imageDigest: string; workerVersion: string }, signal?: AbortSignal): Promise<void> {
+    this.assertActive(scope);
+    try {
+      const client = await this.client(scope), health = workerHealthSchema.parse(await client.health(signal));
+      this.assertActive(scope); signal?.throwIfAborted();
+      const current = this.repository.get(scope);
+      if (!current || current.id !== identity.environmentId || current.imageDigest !== identity.imageDigest || current.workerVersion !== identity.workerVersion) throw new AevorenBotError("SKILL_ENVIRONMENT_CHANGED");
+      if (current.state !== "running") throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
+      if (health.workerVersion !== current.workerVersion) throw new AevorenBotError("SKILL_ENVIRONMENT_CHANGED");
+      if (!health.capabilities.includes(SKILL_SCRIPT_CAPABILITY)) throw new AevorenBotError("SKILL_SCRIPT_UNSUPPORTED");
+    } catch (error) { signal?.throwIfAborted(); throw failure(error); }
+  }
+
+  async runSkill(scope: EnvironmentScope, input: {
+    clientNonce: string; install: WorkerSkillInstallRequest; packageDigest: string; environmentId: string; imageDigest: string; workerVersion: string;
+    interpreter: WorkerSkillRunRequest["interpreter"]; entryPath: string; args: string[]; cwd: string; timeoutMs: number;
+  }, options: { runtimeRunId: string | null; signal?: AbortSignal; assertAuthorized(): void; recordExecution(execution: Execution): void }): Promise<Execution> {
+    return this.locked(scope, async () => {
+      const check = (): void => { options.signal?.throwIfAborted(); this.assertActive(scope); options.assertAuthorized(); };
+      check();
+      const install = workerSkillInstallSchema.parse(input.install);
+      await this.assertSkillCapability(scope, input, options.signal); check();
+      const environment = this.repository.get(scope);
+      if (!environment || environment.state !== "running") throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
+      const command = skillScriptCommand({ packageId: install.id, packageDigest: input.packageDigest, interpreter: input.interpreter, entryPath: input.entryPath, args: input.args });
+      const prepared = this.repository.transaction(() => {
+        check();
+        const session = this.repository.createSession(scope, options.runtimeRunId);
+        const value = this.repository.createExecution(scope, { executionSessionId: session.id, clientNonce: input.clientNonce, kind: "foreground", command,
+          cwd: input.cwd, timeoutMs: input.timeoutMs });
+        options.recordExecution(value.execution); return value;
+      });
+      if (prepared.disposition === "existing") { const result = await this.getExecution({ ...scope, id: prepared.execution.id }); check(); return result; }
+      try {
+        const client = await this.client(scope); check();
+        const installed = workerSkillPackageSchema.parse(await client.request("/v1/skill-packages", "POST", install, options.signal)); check();
+        if (installed.id !== install.id || installed.packageDigest !== input.packageDigest || JSON.stringify(installed.reference) !== JSON.stringify(install.reference) ||
+            installed.fileCount !== install.files.length || installed.size !== install.files.reduce((size, file) => size + file.size, 0)) throw new AevorenBotError("SKILL_PACKAGE_INVALID");
+        const request = workerSkillRunSchema.parse({ id: prepared.execution.id, sessionId: prepared.execution.executionSessionId, runtimeRunId: options.runtimeRunId,
+          packageId: installed.id, packageDigest: installed.packageDigest, interpreter: input.interpreter, entryPath: input.entryPath,
+          args: input.args, cwd: input.cwd, timeoutMs: input.timeoutMs });
+        check();
+        const wire = await client.request("/v1/skill-runs", "POST", request, options.signal); check();
+        const execution = this.saveWire(scope, wire); this.watch(scope, execution); return execution;
+      } catch (error) {
+        const current = this.repository.getExecution(scope, prepared.execution.id);
+        if (["running", "unknown"].includes(current.state)) this.repository.updateExecution(scope, current.id, current.version, { state: "unknown", errorCode: "SKILL_START_UNCONFIRMED" });
+        try { check(); } catch { await this.cancel({ ...scope, id: current.id }).catch(() => undefined); }
+        options.signal?.throwIfAborted(); throw failure(error);
+      }
+    });
   }
 
   private async runUnlocked(parsed: ExecutionRunInput | ProcessStartInput, runtimeRunId: string | null, background: boolean, signal?: AbortSignal): Promise<Execution> {

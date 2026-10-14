@@ -1668,7 +1668,10 @@ export function App(): React.JSX.Element {
             if (!result.ok && run) reportDirectError(result.error, run.sessionId, run.clientNonce);
           });
         }}
-        onCancelRun={(runId) => void window.aevorenBot.runtime.cancel(runId).then((result) => { if (!result.ok) setError(result.error); })}
+        onCancelRun={(runId) => {
+          const stop = selectedRoom ? window.aevorenBot.roomRuntime.cancelMember(runId) : window.aevorenBot.runtime.cancel(runId);
+          void stop.then(result => { if (!result.ok) setError(result.error); });
+        }}
         onCancelRoomBatch={(batchId) => void window.aevorenBot.roomRuntime.cancel(batchId).then((result) => { if (!result.ok) setError(result.error); })}
         onRetryRoomTurn={async (turnId) => {
           const result = await window.aevorenBot.roomRuntime.retryTurn(turnId);

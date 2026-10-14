@@ -134,6 +134,9 @@ export class WorkspaceToolExecutor {
   productRequestPreview(tool: import("@shared/contracts").ProductToolRequest): string { return this.productOperations?.preview(tool) ?? "产品操作"; }
 
   productRequestRequiresApproval(tool: import("@shared/contracts").ProductToolRequest): boolean { return this.productOperations?.requiresApproval(tool) ?? true; }
+  productRequestApprovalReview(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined {
+    return this.productOperations?.approvalReview(tool, runtimeRunId);
+  }
 
   validateProductRequest(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): void {
     if (!this.productOperations) throw new AevorenBotError("TOOL_STATE_INVALID");

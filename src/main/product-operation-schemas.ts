@@ -2,6 +2,8 @@ import { z } from "zod";
 import { LIBRARY_OPERATION_SCHEMAS } from "@shared/library-product";
 import { ENVIRONMENT_OPERATION_SCHEMAS } from "@shared/environment-product";
 import { BROWSER_OPERATION_SCHEMAS } from "@shared/browser-product";
+import { SKILL_EXECUTION_OPERATION_SCHEMAS } from "@shared/skill-execution-product";
+import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 import { resourceReferencesSchema } from "@shared/library-schemas";
 import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema, mcpServerMutationSchema, mcpServerEnabledSchema, mcpServerIdSchema, mcpServerMutationIdSchema, routineIdSchema, routineCreateSchema, routineUpdateSchema, routineEnabledSchema, routineMutationSchema, conversationPinnedSchema, conversationUnreadSchema, conversationHiddenSchema, sessionIdSchema, conversationProjectSchema, conversationBatchDeleteSchema, projectContextSchema, projectCreateSchema, briefApprovalReadSchema, briefApprovalCommandSchema, botUpdateSchema, botPinnedSchema, botUnreadSchema, botHiddenSchema, botIdSchema, memoryListSchema, memoryCreateSchema, memoryUpdateSchema, memoryMutationSchema, memoryProposalListSchema, memoryProposalAcceptSchema, workspacePermissionsSchema, workspaceRevealSchema, workspaceMutationSchema, toolSessionScopeSchema, approvalResolutionSchema, roomListSchema, roomCreateSchema, roomIdSchema, roomUpdateSchema, roomArchiveSchema, roomPinnedSchema, roomUnreadSchema, roomHiddenSchema, roomMembershipSchema, sendCommandSchema, nonceSchema, runIdSchema, roomSendCommandSchema, batchIdSchema, turnIdSchema, generalSettingsSchema, saveOpenAiCompatibleProviderSchema, saveCliProviderSchema, providerInstanceIdInputSchema } from "@shared/schemas";
 
@@ -9,6 +11,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...LIBRARY_OPERATION_SCHEMAS,
   ...ENVIRONMENT_OPERATION_SCHEMAS,
   ...BROWSER_OPERATION_SCHEMAS,
+  ...SKILL_EXECUTION_OPERATION_SCHEMAS,
   "userProfile.get": z.undefined(),
   "userProfile.update": z.object({ name: z.string().min(1).max(80).optional(), avatarUrl: z.string().max(524_288).nullable().optional() }).strict(),
   "attachments.pick": z.undefined(),
@@ -64,6 +67,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "projects.create": projectCreateSchema,
   "tools.list": toolSessionScopeSchema,
   "approvals.listPending": toolSessionScopeSchema,
+  "approvals.review": approvalReviewInputSchema,
   "approvals.resolve": approvalResolutionSchema,
   "rooms.getBriefApproval": briefApprovalReadSchema,
   "rooms.approveBrief": briefApprovalCommandSchema,
@@ -91,6 +95,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "roomRuntime.getSnapshot": roomIdSchema,
   "roomRuntime.send": z.object(Object.fromEntries(Object.entries(roomSendCommandSchema.shape).filter(([name]) => name !== "clientNonce"))).strict(),
   "roomRuntime.cancel": batchIdSchema,
+  "roomRuntime.cancelMember": runIdSchema,
   "roomRuntime.continue": batchIdSchema,
   "roomRuntime.retryTurn": turnIdSchema,
   "settings.getGeneral": z.undefined(),

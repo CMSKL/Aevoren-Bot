@@ -1,6 +1,6 @@
 # User guide
 
-This guide covers documents, text Skills, local Docker execution and browser/computer integration in the v0.3.0-beta.29 development candidate. Docker execution passed local and development CI checks; the browser source/package checks and signing/release are tracked separately in the [implementation record](IMPLEMENTATION_PLAN.md). Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). The app applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build; real Windows Docker execution remains unverified.
+This guide covers documents, text Skills, local Docker execution, browser/computer integration and the script-Skill delivery in the v0.3.0-beta.30 development candidate. Validation and signing/release are tracked separately in the [implementation record](IMPLEMENTATION_PLAN.md). Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). The app applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build; real Windows Docker execution remains unverified.
 
 ## First run
 
@@ -48,7 +48,7 @@ The message pins `resourceId`, `revisionId` and `digest`. Editing the resource l
 
 Connected models discover the 38 new `library.*`, `documents.*` and `skills.*` operations through `product_catalog`, `product_describe` and `product_execute`. `skills.load` returns an authorized text Skill to the current Runtime; `skills.readFile` reads accepted auxiliary text, with paging and truncation information. Binary assets return metadata only. File imports from AI must use the current conversation's authorized Workspace; selecting arbitrary native import/export locations requires the user's file dialog interaction. Mutations and sharing continue through the existing permission and approval rules.
 
-Text Skill metadata, including declared tool names, does not grant tool permissions. Scripts are preserved and may be read as text, but the Skill system does not execute them. The development branch provides the separate approved Docker command workflow below and isolated [browser/computer tools](BROWSER_COMPUTER.md). Native Gmail/Drive/Notion connectors, executable Skill grants, media interpretation and voice remain later stages in the [implementation record](IMPLEMENTATION_PLAN.md).
+Text Skill metadata, including declared tool names, does not grant tool permissions. The current development candidate adds [script Skills](SCRIPT_SKILLS.md): review a fixed entry, grant it access to the selected environment image, then confirm each run's arguments. Scripts use Bash, Python or Node inside that environment, with real execution output and cancellation. The separate approved Docker command workflow below and isolated [browser/computer tools](BROWSER_COMPUTER.md) remain available. Demonstration drafts, native Gmail/Drive/Notion, media interpretation and voice remain later deliveries in the [implementation record](IMPLEMENTATION_PLAN.md).
 
 ## Docker execution environments (development)
 

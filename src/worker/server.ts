@@ -11,6 +11,8 @@ import {
 import type { ExecutionWorker } from "./execution-worker";
 import { WorkerError } from "./worker-error";
 import { PreviewProxy } from "./preview-proxy";
+import { SKILL_SCRIPT_CAPABILITY } from "@shared/skill-execution-contracts";
+import { workerSkillInstallSchema, workerSkillRunSchema } from "@shared/skill-execution-schemas";
 
 async function jsonBody(request: IncomingMessage): Promise<unknown> {
   const declared = Number(request.headers["content-length"] ?? "0");
@@ -84,7 +86,13 @@ export function createWorkerServer(worker: ExecutionWorker, token: string): Serv
       if (parts[0] !== "v1") throw new WorkerError("WORKER_ROUTE_NOT_FOUND", 404);
       if (request.method === "GET" && url.pathname === "/v1/health") {
         respond(response, { environmentId: worker.options.environmentId, bootId: worker.bootId, protocolVersion: ENV_PROTOCOL_VERSION,
-          workerVersion: ENV_WORKER_VERSION, capabilities: ["execution", "processes", "files", "ports", "sse", "uid-isolation", "preview"] }); return;
+          workerVersion: ENV_WORKER_VERSION, capabilities: ["execution", "processes", "files", "ports", "sse", "uid-isolation", "preview", SKILL_SCRIPT_CAPABILITY] }); return;
+      }
+      if (url.pathname === "/v1/skill-packages" && request.method === "POST") {
+        respond(response, await worker.installSkill(workerSkillInstallSchema.parse(await jsonBody(request)))); return;
+      }
+      if (url.pathname === "/v1/skill-runs" && request.method === "POST") {
+        respond(response, await worker.runSkill(workerSkillRunSchema.parse(await jsonBody(request))), 202); return;
       }
       if (url.pathname === "/v1/previews" && request.method === "POST") { respond(response, await previews.open(await jsonBody(request))); return; }
       if (parts[1] === "previews" && parts.length === 3 && request.method === "GET") { respond(response, await previews.get(uuid.parse(parts[2]))); return; }

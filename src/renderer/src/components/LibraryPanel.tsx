@@ -1,7 +1,9 @@
 import { forwardRef, useCallback, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from "react";
 import type { ApiResult } from "@shared/contracts";
 import type { LibraryContent, LibraryResource, LibraryResourceKind, ResourceReference, ResourceRevisionSummary } from "@shared/library-contracts";
+import type { EnvironmentScope } from "@shared/environment-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
+import { SkillScriptsSection } from "./SkillScriptsSection";
 import "../styles/library.css";
 
 type Draft = { name: string; description: string; body: string };
@@ -12,6 +14,9 @@ export type LibraryPanelProps = {
   kind: LibraryResourceKind;
   active?: boolean;
   busy?: boolean;
+  executorBotId?: string;
+  ownerName?: string;
+  onOpenExecution?(input: EnvironmentScope & { id: string }): void;
   onUse(reference: ResourceReference, text?: string): void;
 };
 
@@ -26,7 +31,7 @@ function differs(draft: Draft | null, content: LibraryContent | null, creating: 
 }
 
 export const LibraryPanel = forwardRef<LibraryPanelHandle, LibraryPanelProps>(function LibraryPanel(
-  { sessionId, kind, active = true, busy = false, onUse }, ref,
+  { sessionId, kind, active = true, busy = false, executorBotId, ownerName, onOpenExecution, onUse }, ref,
 ) {
   const scope = `${sessionId}:${kind}`;
   const [editorScope, setEditorScope] = useState(scope);
@@ -309,7 +314,7 @@ export const LibraryPanel = forwardRef<LibraryPanelHandle, LibraryPanelProps>(fu
         {preview ? <div className="library-preview" aria-label={`${label}预览`}><AssistantMarkdown body={draft.body} /></div> : <label className="field"><span>{kind === "skill" ? "Skill 指令（Markdown）" : "正文（Markdown）"}</span><textarea className="library-body" rows={12} maxLength={1048576} value={draft.body} aria-label={`${label}正文`} disabled={!editable || pending} onChange={event => replaceEditor({ content, draft: { ...draft, body: event.target.value }, creating })} /></label>}
         {dirty && content ? <details className="library-files"><summary>当前保存内容 · v{content.resource.version}</summary><strong>{content.revision.name}</strong><p>{content.revision.description}</p><div className="library-preview"><AssistantMarkdown body={content.revision.body} /></div></details> : null}
         {content?.revision.files.length ? <details className="library-files"><summary>包含 {content.revision.files.length} 个已保存的资源文件</summary><ul>{content.revision.files.map(file => <li key={file.relativePath}>{file.relativePath}<small>{file.size} bytes · {file.mimeType}</small></li>)}</ul></details> : null}
-        {kind === "skill" ? <p className="library-scope-note">添加到消息后，点击发送才会启动任务。文本指令按需加载；导入的 scripts/assets 会保留，本阶段不会执行脚本，也不会自动授予工具权限。</p> : null}
+        {kind === "skill" ? <p className="library-scope-note">添加到消息后，点击发送才会启动任务。文本指令按需加载；脚本需为当前聊天与执行成员单独授权，只在指定 Linux 环境运行。元信息不会授予工具权限。</p> : null}
         <div className="library-actions"><button type="button" className="primary-button" disabled={pending || !editable || !dirty || !draft.name.trim()} onClick={() => void save()}>保存{label}</button><button type="button" className="secondary-button" disabled={busy || pending || deleted || !draft.name.trim() || content?.resource.enabled === false} onClick={() => void referenceResource()}>{kind === "skill" ? "添加 Skill 到消息" : "引用到消息"}</button>
           {dirty ? <button type="button" className="text-button" disabled={pending} onClick={() => setConfirmation({ message: "丢弃当前未保存的草稿？", action: async () => { replaceEditor({ content, draft: content ? toDraft(content) : null, creating: false }); setError(null); } })}>丢弃草稿</button> : null}
         </div>
@@ -320,6 +325,7 @@ export const LibraryPanel = forwardRef<LibraryPanelHandle, LibraryPanelProps>(fu
           <button type="button" className="text-button" disabled={pending} onClick={() => askMutation("仅从当前会话移出；其他会话的绑定和资源本身会保留。", async () => perform(() => window.aevorenBot.library.unbind({ sessionId, id: content.resource.id }), () => { replaceEditor({ content: null, draft: null, creating: false }); setNotice("已从当前会话移出。"); }))}>移出当前会话</button>
           {deleted ? <button type="button" className="text-button" disabled={pending} onClick={() => void perform(() => window.aevorenBot.library.restore({ sessionId, id: content.resource.id, expectedVersion: content.resource.version }), () => void readSelection(content.resource.id))}>恢复资源</button> : <button type="button" className="text-button danger-text-button" disabled={pending} onClick={() => askMutation("删除资源会影响所有已绑定会话。内容和版本保留，可在“显示已删除”中恢复；只移出当前会话请使用“移出当前会话”按钮。", async () => perform(() => window.aevorenBot.library.delete({ sessionId, id: content.resource.id, expectedVersion: editorRef.current.content?.resource.version ?? content.resource.version }), () => void readSelection(content.resource.id)))}>删除资源</button>}
         </div> : null}
+        {kind === "skill" && content && executorBotId ? <SkillScriptsSection sessionId={sessionId} executorBotId={executorBotId} reference={content.reference} resourceName={content.revision.name} revisionNumber={content.revision.number} ownerName={ownerName} active={active} disabled={dirty || pending || deleted || !content.resource.enabled} onOpenExecution={onOpenExecution} /> : null}
         {versions && content ? <section className="library-versions" aria-label="资源版本记录"><header><strong>版本记录</strong><button className="text-button" type="button" onClick={() => setVersions(null)}>收起</button></header>{versions.map(version => <div key={version.id}><span>v{version.number} · {version.name}<small>{new Date(version.createdAt).toLocaleString()} · {version.fileCount} 个文件</small></span><button type="button" className="text-button" disabled={pending || deleted || version.id === content.revision.id} onClick={() => askMutation(`将 v${version.number} 的内容恢复为一个新版本？`, async () => perform(() => window.aevorenBot.library.restoreVersion({ sessionId, id: content.resource.id, expectedVersion: editorRef.current.content?.resource.version ?? content.resource.version, revisionId: version.id }), data => { replaceEditor({ content: data, draft: toDraft(data), creating: false }); setVersions(null); setNotice("已恢复为新版本。"); }))}>恢复此版本</button></div>)}</section> : null}
       </article> : null}
     </section>

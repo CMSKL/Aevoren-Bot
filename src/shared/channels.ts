@@ -1,5 +1,6 @@
 export const IPC = {
   libraryEvent: "events:library",
+  approvalsReview: "approvals:review",
   productViewEvent: "events:product-view",
   productViewReply: "product-view:reply",
   userProfileGet: "user-profile:get",
@@ -84,6 +85,7 @@ export const IPC = {
   roomRuntimeSnapshot: "room-runtime:snapshot",
   roomRuntimeSend: "room-runtime:send",
   roomRuntimeCancel: "room-runtime:cancel",
+  roomRuntimeCancelMember: "room-runtime:cancel-member",
   roomRuntimeContinue: "room-runtime:continue",
   roomRuntimeRetryTurn: "room-runtime:retry-turn",
   providersList: "providers:list",

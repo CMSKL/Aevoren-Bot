@@ -68,6 +68,7 @@ describe("library surfaces", () => {
     expect(html).toContain('id="room-room-one-skill-panel"');
     expect(html).toContain('aria-label="群聊资料"');
     expect(html).toContain('aria-label="Skill库"');
+    expect(html).toContain('aria-label="Skill 脚本执行成员"');
     expect(html).not.toContain("autofocus");
   });
 });

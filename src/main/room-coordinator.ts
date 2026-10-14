@@ -8,6 +8,7 @@ import type {
   RoomSendCommand,
   RoomSendResult,
   RoomTurn,
+  RuntimeRun,
   RoomTurnState,
   RoomRoutingMode,
   ModelSelection,
@@ -254,6 +255,18 @@ export class RoomCoordinator {
     this.clearDeadline(batchId);
     this.emit(cancelled);
     return cancelled;
+  }
+
+  cancelMember(runId: string): RuntimeRun {
+    const run = this.repository.getRuntimeRun(runId);
+    const session = this.repository.getSession(run.sessionId);
+    const turnId = run.promptManifest.sourceTurnId;
+    if (!session.roomId || !turnId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    const turn = this.repository.getRoomTurn(turnId);
+    const batch = this.repository.getRoomBatch(turn.batchId);
+    if (turn.runtimeRunId !== run.id || turn.memberBotId !== run.executorBotId || batch.sessionId !== run.sessionId ||
+        batch.roomId !== session.roomId || batch.clientNonce !== run.clientNonce) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    return this.executor.cancelRun(run.id);
   }
 
   retryTurn(turnId: string): RoomTurn {

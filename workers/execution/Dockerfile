@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chown 1000:1000 /workspace && chmod 2770 /workspace && chmod 700 /var/lib/aevoren \
     && find /usr /bin /sbin -xdev -type f -perm /6000 -exec chmod a-s {} +
 
-LABEL io.aevoren.role="execution-worker" io.aevoren.worker-version="1.1.0"
+LABEL io.aevoren.role="execution-worker" io.aevoren.worker-version="1.2.0"
 COPY . /opt/aevoren-worker/
 WORKDIR /opt/aevoren-worker
 USER root

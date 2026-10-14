@@ -50,9 +50,9 @@ export function DockerStatusCard({ active = true }: { active?: boolean }): React
   </section>;
 }
 
-export type EnvironmentPanelProps = { sessionId: string; executorBotId: string; ownerName?: string; active?: boolean; onOpenPreview?(pageId?: string): void };
+export type EnvironmentPanelProps = { sessionId: string; executorBotId: string; ownerName?: string; active?: boolean; initialExecutionId?: string; onOpenPreview?(pageId?: string): void };
 
-export function EnvironmentPanel({ sessionId, executorBotId, ownerName, active = true, onOpenPreview }: EnvironmentPanelProps): React.JSX.Element {
+export function EnvironmentPanel({ sessionId, executorBotId, ownerName, active = true, initialExecutionId, onOpenPreview }: EnvironmentPanelProps): React.JSX.Element {
   const scopeKey = `${sessionId}:${executorBotId}`;
   const [visibleScope, setVisibleScope] = useState(scopeKey);
   const [draft, setDraft] = useState<EnvironmentDraft>(() => scopeDrafts.get(scopeKey) ?? { ...emptyDraft });
@@ -145,6 +145,12 @@ export function EnvironmentPanel({ sessionId, executorBotId, ownerName, active =
   function viewExecution(id: string): void {
     selectedExecutionRef.current = id; setSelectedExecutionId(id); setSelectedExecution(null); setLogs(null); void loadLogs(id);
   }
+  const openInitialExecution = useEffectEvent((): void => { if (active && initialExecutionId) viewExecution(initialExecutionId); });
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) openInitialExecution(); });
+    return () => { cancelled = true; };
+  }, [active, scopeKey, initialExecutionId]);
 
   const resetScope = useEffectEvent((): void => {
     setVisibleScope(scopeKey); replaceDraft(scopeDrafts.get(scopeKey) ?? { ...emptyDraft });
