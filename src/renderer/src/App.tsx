@@ -1258,6 +1258,7 @@ export function App(): React.JSX.Element {
       const opened = "bot" in target ? await openBot(target.bot, false, true) : (await openRoom(target.room, false, true)).status === "opened";
       if (!opened || request !== resourceUseRequestRef.current) return;
     }
+    if ("bot" in target ? selectedContactIdRef.current !== target.bot.id : selectedRoomIdRef.current !== target.room.id) return;
     if (sessionIdRef.current !== expectedSessionId) return;
     setResourceInsertion({ id: crypto.randomUUID(), sessionId: expectedSessionId, reference, ...(text ? { text } : {}) });
     setSettingsOpen(false); setSidebarTab("chats"); setMobilePanel(null); setCloseNotice(null);

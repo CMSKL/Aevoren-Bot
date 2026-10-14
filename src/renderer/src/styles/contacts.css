@@ -89,7 +89,8 @@
 }
 @media (max-width: 320px) {
   .contact-detail .contact-detail-header { flex-wrap: wrap; flex-basis: auto; height: auto; min-height: 88px; padding: 10px 12px; }
-  .contact-detail .contact-header-actions { flex-basis: 100%; justify-content: space-between; }
+  .contact-detail .contact-header-actions { flex-basis: 100%; min-width: 0; justify-content: space-between; gap: 6px; }
+  .contact-detail .contact-header-actions .save-status { flex: 1 1 0; min-width: 0; white-space: normal; }
   .contact-detail .contact-profile-tabs { gap: 4px; }
   .contact-detail .contact-profile-tabs > button { padding-inline: 4px; }
 }

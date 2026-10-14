@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -158,20 +158,45 @@ describe("create-only library exports on real filesystems", () => {
     expect(readdirSync(directory)).toEqual([]);
   });
 
-  it("refuses to remove a destination replaced by another owner during rollback", async () => {
+  it.each(["document", "skill"] as const)("refuses to remove a replaced %s destination during rollback", async (kind) => {
     const directory = root();
     const target = join(directory, "replaced");
     let replaced = false;
-    await expect(writeLibraryExport(skill(), target, undefined, () => {
-      if (!replaced && existsSync(join(target, "SKILL.md"))) {
+    await expect(writeLibraryExport(kind === "document" ? document() : skill(), target, undefined, () => {
+      const ready = kind === "document"
+        ? existsSync(target) && !readdirSync(directory).some((name) => name.startsWith(".aevoren-export-"))
+        : existsSync(join(target, "SKILL.md"));
+      if (!replaced && ready) {
         replaced = true;
         rmSync(target, { recursive: true });
-        mkdirSync(target);
-        writeFileSync(join(target, "sentinel.txt"), "ANOTHER OWNER");
+        if (kind === "skill") mkdirSync(target);
+        writeFileSync(kind === "skill" ? join(target, "sentinel.txt") : target, "ANOTHER OWNER");
         throw new AevorenBotError("LIBRARY_NOT_BOUND");
       }
     })).rejects.toThrow();
-    expect(readFileSync(join(target, "sentinel.txt"), "utf8")).toBe("ANOTHER OWNER");
+    expect(replaced).toBe(true);
+    expect(readFileSync(kind === "skill" ? join(target, "sentinel.txt") : target, "utf8")).toBe("ANOTHER OWNER");
     noStaging(directory);
+  });
+
+  it.each(["document", "skill"] as const)("preserves a replaced %s staging object instead of deleting its new owner", async (kind) => {
+    const directory = root();
+    const target = join(directory, "not-published");
+    let replacementPath = "";
+    await expect(writeLibraryExport(kind === "document" ? document() : skill(), target, undefined, () => {
+      const name = readdirSync(directory).find((entry) => entry.startsWith(".aevoren-export-"));
+      if (!name || replacementPath) return;
+      const stage = join(directory, name);
+      if (kind === "document" && statSync(stage).size === 0) return;
+      rmSync(stage, { recursive: true });
+      if (kind === "skill") mkdirSync(stage);
+      replacementPath = kind === "skill" ? join(stage, "sentinel.txt") : stage;
+      writeFileSync(replacementPath, "STAGING NEW OWNER");
+      throw new AevorenBotError("LIBRARY_NOT_BOUND");
+    })).rejects.toThrow();
+    expect(replacementPath).not.toBe("");
+    expect(readFileSync(replacementPath, "utf8")).toBe("STAGING NEW OWNER");
+    expect(existsSync(target)).toBe(false);
+    expect(readdirSync(directory)).toHaveLength(1);
   });
 });

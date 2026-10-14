@@ -9,6 +9,8 @@ import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { openInspector } from "./navigation";
 import { removeTestDirectory } from "./test-cleanup";
+import { IPC } from "../../src/shared/channels";
+import { LIBRARY_CHANNELS } from "../../src/shared/library-channels";
 
 type LibraryMethod = Exclude<keyof LibraryApi, "onChanged">;
 type WireMessage = { role: string; content: unknown; tool_call_id?: string };
@@ -27,6 +29,37 @@ type LibraryFixture = {
   respond: (callback: (capture: Capture) => void) => void;
   restart: () => Promise<void>;
 };
+type DelayedLibraryMain = { libraryDelay?: { entered: boolean; returned: boolean; release?: () => void } };
+
+// Hold the real host handler at a deterministic barrier; do not replace its result.
+async function holdLibraryIpc(application: ElectronApplication, channel: string, id: string): Promise<void> {
+  await application.evaluate(({ ipcMain }, input) => {
+    const globals = globalThis as DelayedLibraryMain;
+    const original = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => unknown> })._invokeHandlers.get(input.channel);
+    if (!original) throw new Error("Missing production IPC handler");
+    globals.libraryDelay = { entered: false, returned: false };
+    ipcMain.removeHandler(input.channel);
+    ipcMain.handle(input.channel, async (...args: unknown[]) => {
+      const request = args[1];
+      const requestId = typeof request === "string" ? request : (request as { id?: string } | null)?.id;
+      if (requestId !== input.id || globals.libraryDelay!.entered) return original(...args);
+      globals.libraryDelay!.entered = true;
+      await new Promise<void>(resolve => { globals.libraryDelay!.release = resolve; });
+      const result = await original(...args);
+      globals.libraryDelay!.returned = true;
+      return result;
+    });
+  }, { channel, id });
+}
+
+async function releaseLibraryIpc(application: ElectronApplication): Promise<void> {
+  await application.evaluate(() => (globalThis as DelayedLibraryMain).libraryDelay?.release?.());
+}
+
+async function settleLibraryView(page: Page): Promise<void> {
+  // Flush both the IPC promise reaction and React's resulting visual commit.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+}
 
 function value<T>(result: ApiResult<T>): T {
   if (!result.ok) throw new Error(result.error.code);
@@ -164,6 +197,69 @@ async function captureEvidence(page: Page, name: string): Promise<void> {
   mkdirSync(evidence, { recursive: true });
   await page.screenshot({ path: join(evidence, name), animations: "disabled" });
 }
+
+test("delayed resource opening preserves the later contact selection and existing chat draft", async () => {
+  test.setTimeout(90_000);
+  await withLibrary(async f => {
+    const source = f.bots[0]!;
+    const later = f.bots[1]!;
+    const existing = f.bots[2]!;
+    value(await libraryCall<LibraryContent>(f.page, "create", { sessionId: source.sessionId, kind: "document", name: "迟到引用资料", body: "DELAYED_RESOURCE_BODY" }));
+    await selectBot(f.page, existing);
+    await f.page.getByLabel("消息", { exact: true }).fill("EXISTING_CHAT_DRAFT_MUST_REMAIN");
+    await f.page.getByRole("tab", { name: "联系人", exact: true }).click();
+    await f.page.getByRole("listitem", { name: source.name, exact: true }).click();
+    const contact = f.page.getByRole("main", { name: "联系人资料", exact: true });
+    await contact.getByRole("tab", { name: "资料库", exact: true }).click();
+    const panel = contact.getByRole("region", { name: "资料库", exact: true });
+    await panel.getByRole("button", { name: "迟到引用资料", exact: false }).click();
+    await holdLibraryIpc(f.application, IPC.runtimeGetSessionSnapshot, source.sessionId);
+    try {
+      await panel.getByRole("button", { name: "引用到消息", exact: true }).click();
+      await expect.poll(() => f.application.evaluate(() => Boolean((globalThis as DelayedLibraryMain).libraryDelay?.entered))).toBe(true);
+      await f.page.getByRole("listitem", { name: later.name, exact: true }).click();
+      await expect(contact.getByRole("heading", { name: later.name, exact: true })).toBeVisible();
+      await releaseLibraryIpc(f.application);
+      await expect.poll(() => f.application.evaluate(() => Boolean((globalThis as DelayedLibraryMain).libraryDelay?.returned))).toBe(true);
+      await expect.poll(() => f.page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).toBe(`bot:${source.id}`);
+      await settleLibraryView(f.page);
+      await expect(contact.getByRole("heading", { name: later.name, exact: true })).toBeVisible();
+      await f.page.getByRole("tab", { name: "聊天", exact: true }).click();
+      await selectBot(f.page, existing);
+      await expect(f.page.getByLabel("消息", { exact: true })).toHaveValue("EXISTING_CHAT_DRAFT_MUST_REMAIN");
+      await expect(f.page.getByLabel("已引用的资源", { exact: true })).toHaveCount(0);
+    } finally { await releaseLibraryIpc(f.application); }
+  });
+});
+
+test("cancelled resource navigation stays cancelled after its real save completes", async () => {
+  test.setTimeout(90_000);
+  await withLibrary(async f => {
+    const bot = f.bots[0]!;
+    const first = value(await libraryCall<LibraryContent>(f.page, "create", { sessionId: bot.sessionId, kind: "document", name: "保存中的资料 A", body: "NAVIGATION_SAVED_A" }));
+    value(await libraryCall<LibraryContent>(f.page, "create", { sessionId: bot.sessionId, kind: "document", name: "另一份资料 B", body: "NAVIGATION_UNTOUCHED_B" }));
+    await selectBot(f.page, bot);
+    await openInspector(f.page);
+    await f.page.getByRole("main", { name: "联系人资料", exact: true }).getByRole("tab", { name: "资料库", exact: true }).click();
+    const panel = f.page.getByRole("region", { name: "资料库", exact: true });
+    await panel.getByRole("button", { name: "保存中的资料 A", exact: false }).click();
+    await panel.getByLabel("资料正文", { exact: true }).fill("NAVIGATION_USER_SAVED_A");
+    await panel.getByRole("button", { name: "另一份资料 B", exact: false }).click();
+    await holdLibraryIpc(f.application, LIBRARY_CHANNELS.update, first.resource.id);
+    try {
+      await panel.getByRole("button", { name: "保存并继续", exact: true }).click();
+      await expect.poll(() => f.application.evaluate(() => Boolean((globalThis as DelayedLibraryMain).libraryDelay?.entered))).toBe(true);
+      await panel.getByRole("button", { name: "继续编辑", exact: true }).click();
+      await releaseLibraryIpc(f.application);
+      await expect.poll(() => f.application.evaluate(() => Boolean((globalThis as DelayedLibraryMain).libraryDelay?.returned))).toBe(true);
+      await settleLibraryView(f.page);
+      await expect(panel.getByLabel("资料正文", { exact: true })).toHaveValue("NAVIGATION_USER_SAVED_A");
+      const saved = value(await libraryCall<LibraryContent>(f.page, "read", { sessionId: bot.sessionId, id: first.resource.id }));
+      expect(saved.revision.body).toBe("NAVIGATION_USER_SAVED_A");
+      expect(saved.resource.version).toBe(2);
+    } finally { await releaseLibraryIpc(f.application); }
+  });
+});
 
 test("edits documents through the UI, preserves conflicting drafts and restores a saved version", async () => {
   test.setTimeout(90_000);

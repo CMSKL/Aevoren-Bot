@@ -45,6 +45,11 @@ export const LibraryPanel = forwardRef<LibraryPanelHandle, LibraryPanelProps>(fu
   const [available, setAvailable] = useState<LibraryResource[] | null>(null);
   const [confirmation, setConfirmation] = useState<{ message: string; action: () => Promise<void> } | null>(null);
   const [navigation, setNavigation] = useState<(() => void) | null>(null);
+  const navigationActionRef = useRef<(() => void) | null>(null);
+  const replaceNavigation = useCallback((action: (() => void) | null): void => {
+    navigationActionRef.current = action;
+    setNavigation(() => action);
+  }, []);
   const cacheRef = useRef(new Map<string, CachedEditor>());
   const scopeRef = useRef(scope);
   const mountedRef = useRef(true);
@@ -124,7 +129,7 @@ export const LibraryPanel = forwardRef<LibraryPanelHandle, LibraryPanelProps>(fu
     setVersions(null);
     setAvailable(null);
     setConfirmation(null);
-    setNavigation(null);
+    replaceNavigation(null);
     leaveRef.current?.resolve(false);
     leaveRef.current = null;
     setError(null);
@@ -132,7 +137,7 @@ export const LibraryPanel = forwardRef<LibraryPanelHandle, LibraryPanelProps>(fu
     setPending(false);
     pendingCountRef.current = 0;
     setPreview(false);
-  }, [scope, replaceEditor]);
+  }, [scope, replaceEditor, replaceNavigation]);
 
   useEffect(() => { void loadList(); }, [loadList]);
 
@@ -195,7 +200,7 @@ export const LibraryPanel = forwardRef<LibraryPanelHandle, LibraryPanelProps>(fu
     let resolveLeave!: (saved: boolean) => void;
     const promise = new Promise<boolean>(resolve => { resolveLeave = resolve; });
     leaveRef.current = { promise, resolve: resolveLeave };
-    setNavigation(() => () => {
+    replaceNavigation(() => {
       leaveRef.current?.resolve(true);
       leaveRef.current = null;
     });
@@ -205,7 +210,7 @@ export const LibraryPanel = forwardRef<LibraryPanelHandle, LibraryPanelProps>(fu
 
   function navigate(action: () => void): void {
     if (leaveRef.current) return;
-    if (differs(editorRef.current.draft, editorRef.current.content, editorRef.current.creating)) setNavigation(() => action);
+    if (differs(editorRef.current.draft, editorRef.current.content, editorRef.current.creating)) replaceNavigation(action);
     else action();
   }
 
@@ -281,9 +286,9 @@ export const LibraryPanel = forwardRef<LibraryPanelHandle, LibraryPanelProps>(fu
       })}>读取最新版本，保留草稿</button> : null}</div> : null}
       {notice ? <p className="library-notice" role="status">{notice}</p> : null}
       {navigation ? <div className="library-confirm" role="alert"><p>当前草稿尚未保存。</p><div className="library-actions">
-        <button className="primary-button" type="button" disabled={pending} onClick={() => { const action = navigation; void save().then(saved => { if (saved) { setNavigation(null); action(); } }); }}>保存并继续</button>
-        <button className="text-button danger-text-button" type="button" disabled={pending} onClick={() => { const action = navigation; replaceEditor({ content, draft: content ? toDraft(content) : null, creating: false }); setNavigation(null); action(); }}>丢弃草稿并继续</button>
-        <button className="text-button" type="button" onClick={() => { setNavigation(null); leaveRef.current?.resolve(false); leaveRef.current = null; }}>继续编辑</button>
+        <button className="primary-button" type="button" disabled={pending} onClick={() => { const action = navigation; void save().then(saved => { if (saved && navigationActionRef.current === action) { replaceNavigation(null); action(); } }); }}>保存并继续</button>
+        <button className="text-button danger-text-button" type="button" disabled={pending} onClick={() => { const action = navigation; replaceEditor({ content, draft: content ? toDraft(content) : null, creating: false }); replaceNavigation(null); action(); }}>丢弃草稿并继续</button>
+        <button className="text-button" type="button" onClick={() => { replaceNavigation(null); leaveRef.current?.resolve(false); leaveRef.current = null; }}>继续编辑</button>
       </div></div> : null}
       {confirmation ? <div className="library-confirm" role="alert"><p>{confirmation.message}</p><div className="library-actions"><button type="button" className="secondary-button" disabled={pending} onClick={() => { const action = confirmation.action; setConfirmation(null); void action(); }}>确认</button><button className="text-button" type="button" onClick={() => setConfirmation(null)}>取消</button></div></div> : null}
       {available ? <div className="library-available" aria-label={`添加已有${label}`}><header><strong>选择要绑定到当前会话的{label}</strong><button className="text-button" type="button" onClick={() => setAvailable(null)}>关闭</button></header>
