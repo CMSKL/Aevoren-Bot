@@ -1,5 +1,5 @@
 import { createServer, type ServerResponse } from "node:http";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
@@ -62,14 +62,20 @@ async function withNative(callback: (fixture: Fixture) => Promise<void>): Promis
   let application: ElectronApplication | undefined;
   try {
     const environment = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !key.startsWith("AEVOREN_BOT_")));
-    const executablePath = process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE;
+    const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH ?? process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE;
     application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: {
       ...environment, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_USER_DATA_DIR: data, AEVOREN_BOT_FAKE_PROVIDER: "1", AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_NATIVE_TEST_ORIGIN: `http://127.0.0.1:${address.port}`,
     } });
     const page = await application.firstWindow();
     page.on("pageerror", error => errors.push(error.message));
     await expect(page.locator(".app-shell")).toBeVisible();
-    if (executablePath) expect(await application.evaluate(({ app }) => app.isPackaged)).toBe(true);
+    if (executablePath) {
+      const runtime = await application.evaluate(({ app }) => ({ isPackaged: app.isPackaged, version: app.getVersion(), resourcesPath: process.resourcesPath }));
+      expect(runtime.isPackaged).toBe(true);
+      expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
+      expect(existsSync(join(runtime.resourcesPath, "docs", "NATIVE_CONNECTORS.md"))).toBe(true);
+      await test.info().attach("actual-native-connection-package", { body: JSON.stringify(runtime), contentType: "application/json" });
+    }
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1182, 804));
     await callback({ application, page, data, bots, room: { id: room.room.id, name: room.room.name, sessionId: room.session.id }, requests,
       delayNextRead(marker) {

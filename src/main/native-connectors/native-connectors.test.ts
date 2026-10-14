@@ -225,12 +225,51 @@ describe("Gmail read adapter (controlled HTTP)", () => {
 });
 
 describe("Drive read adapter (controlled HTTP)", () => {
-  it("filters search to explicit targets and rejects reads outside the same allow-list", async () => {
-    const fn = vi.fn<NativeFetch>(async url => { expect(url.searchParams.get("q")).toBe("trashed = false and name contains 'a\\'b'");
-      return json({ files: [{ id: "selected", name: "Chosen", mimeType: "text/plain" }, { id: "other", name: "Other", mimeType: "text/plain" }], nextPageToken: "more" }); });
+  it("requests metadata only for explicit binding targets and rejects reads outside the same allow-list", async () => {
+    const fn = vi.fn<NativeFetch>(async url => {
+      expect(url.pathname).toBe("/drive/v3/files/selected");
+      expect(url.searchParams.get("fields")).toBe("id,name,mimeType,size,modifiedTime,trashed");
+      expect(url.searchParams.has("q")).toBe(false);
+      return json({ id: "selected", name: "Chosen a'b", mimeType: "text/plain", modifiedTime: "2026-10-14T00:00:00Z" }); });
     const adapter = new DriveNativeAdapter(new NativeHttpClient(fn));
-    const result = await adapter.search(authorization("drive"), "a'b", ["selected"]); expect(result.items.map(item => item.id)).toEqual(["selected"]); expect(result.nextCursor).toBe("more");
+    const result = await adapter.search(authorization("drive"), "a'b", ["selected"]);
+    expect(result.items).toEqual([{ id: "selected", title: "Chosen a'b", kind: "text/plain", modifiedAt: "2026-10-14T00:00:00Z" }]); expect(result.nextCursor).toBeNull();
     await expect(adapter.read(authorization("drive"), "other", ["selected"])).rejects.toMatchObject({ code: "RESOURCE_NOT_ALLOWED" }); expect(fn).toHaveBeenCalledOnce();
+  });
+
+  it("paginates only allowed IDs, preserves empty-page continuation and binds cursors to query and ID set", async () => {
+    const requested: string[] = [];
+    const fn = vi.fn<NativeFetch>(async url => {
+      const id = url.pathname.split("/").at(-1)!; requested.push(id);
+      expect(url.pathname).not.toBe("/drive/v3/files"); expect(["a", "b", "c"]).toContain(id);
+      return json({ id, name: id === "c" ? "Match title" : "different", mimeType: "text/plain" });
+    });
+    const adapter = new DriveNativeAdapter(new NativeHttpClient(fn)), auth = authorization("drive");
+    const first = await adapter.search(auth, "MATCH", ["c", "a", "b", "a"], undefined, 2);
+    expect(first.items).toEqual([]); expect(first.nextCursor).toBeTruthy(); expect(requested).toEqual(["a", "b"]);
+    await expect(adapter.search(auth, "changed", ["a", "b", "c"], first.nextCursor!, 2)).rejects.toMatchObject({ code: "RESOURCE_NOT_ALLOWED" });
+    await expect(adapter.search(auth, "MATCH", ["a", "c"], first.nextCursor!, 2)).rejects.toMatchObject({ code: "RESOURCE_NOT_ALLOWED" });
+    expect(requested).toEqual(["a", "b"]);
+    const last = await adapter.search(auth, "MATCH", ["a", "b", "c"], first.nextCursor!, 2);
+    expect(last.items.map(item => item.id)).toEqual(["c"]); expect(last.nextCursor).toBeNull(); expect(requested).toEqual(["a", "b", "c"]);
+  });
+
+  it("does no HTTP with an empty binding and skips only inaccessible selected metadata", async () => {
+    const fn = vi.fn<NativeFetch>(async url => url.pathname.endsWith("/a") ? json({}, 404) : json({ id: "b", name: "Visible", mimeType: "text/plain" }));
+    const adapter = new DriveNativeAdapter(new NativeHttpClient(fn));
+    expect((await adapter.search(authorization("drive"), "", [])).items).toEqual([]); expect(fn).not.toHaveBeenCalled();
+    expect((await adapter.search(authorization("drive"), "", ["a", "b"])).items.map(item => item.id)).toEqual(["b"]);
+    expect(fn.mock.calls.map(([url]) => url.pathname)).toEqual(["/drive/v3/files/a", "/drive/v3/files/b"]);
+  });
+
+  it("rejects a mismatched metadata identity and stops before the next target after revocation", async () => {
+    const wrong = new DriveNativeAdapter(new NativeHttpClient(async () => json({ id: "other", name: "Forbidden", mimeType: "text/plain" })));
+    await expect(wrong.search(authorization("drive"), "", ["selected"])).rejects.toMatchObject({ code: "RESPONSE_INVALID" });
+    let revoked = false;
+    const scope = authorization("drive"); scope.assertCurrent = () => { if (revoked) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED"); };
+    const fn = vi.fn<NativeFetch>(async () => { revoked = true; return json({ id: "a", name: "Must not escape", mimeType: "text/plain" }); });
+    await expect(new DriveNativeAdapter(new NativeHttpClient(fn)).search(scope, "", ["a", "b"])).rejects.toMatchObject({ code: "RESOURCE_NOT_ALLOWED" });
+    expect(fn).toHaveBeenCalledOnce();
   });
 
   it("exports a selected Google document as text and returns owned binary bytes only to the host", async () => {
