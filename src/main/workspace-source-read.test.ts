@@ -10,12 +10,13 @@ import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 
-const cleanup: Array<{ repository: AppRepository; root: string }> = [];
+const cleanup: Array<{ repository: AppRepository; root: string; worker?: SendWorker }> = [];
 
 async function fixture(provider: ModelProvider) {
   const repository = new AppRepository(":memory:");
   const root = mkdtempSync(join(tmpdir(), "aevoren-source-read-"));
-  cleanup.push({ repository, root });
+  const item: (typeof cleanup)[number] = { repository, root };
+  cleanup.push(item);
   writeFileSync(join(root, "license-note.md"), "LICENSE_SOURCE: Apache-2.0");
   writeFileSync(join(root, "USER_GUIDE.md"), "GUIDE_SOURCE: persistent assistants and shared conversations");
   const service = new WorkspaceService(repository);
@@ -24,11 +25,13 @@ async function fixture(provider: ModelProvider) {
   const created = repository.createBot(registered.project.id);
   const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
   const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+  item.worker = worker;
   return { repository, root, created, worker };
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const item of cleanup.splice(0)) {
+    await item.worker?.shutdown();
     item.repository.close();
     rmSync(item.root, { recursive: true, force: true });
   }
@@ -78,7 +81,7 @@ describe("source reads before workspace writes", () => {
     };
     const f = await fixture(provider);
     const sent = f.worker.send({ sessionId: f.created.session.id, clientNonce: crypto.randomUUID(), text: `请新建文件 \`${path}\` 并写入一段原创说明。` });
-    await vi.waitFor(() => expect(f.repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    await expect.poll(() => f.repository.getRuntimeRun(sent.runId).state, { timeout: 4_000 }).toBe("completed");
     expect(readFileSync(join(f.root, path), "utf8")).toBe("Correctly named output.");
     expect(existsSync(join(f.root, "\n   .md"))).toBe(false);
     expect(existsSync(join(f.root, "other.md"))).toBe(false);
@@ -100,7 +103,7 @@ describe("source reads before workspace writes", () => {
     };
     const f = await fixture(provider);
     const sent = f.worker.send({ sessionId: f.created.session.id, clientNonce: crypto.randomUUID(), text: "请新建文件 required.md 并写入一段说明。" });
-    await vi.waitFor(() => expect(f.repository.getRuntimeRun(sent.runId).state).toBe("failed"));
+    await expect.poll(() => f.repository.getRuntimeRun(sent.runId).state, { timeout: 4_000 }).toBe("failed");
     expect(f.repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TASK_REQUIREMENTS_UNMET");
     expect(f.repository.listToolInvocations(f.created.session.id)).toEqual([]);
     expect(existsSync(join(f.root, "wrong.md"))).toBe(false);
@@ -153,7 +156,7 @@ describe("source reads before workspace writes", () => {
     const f = await fixture(provider);
     const sent = f.worker.send({ sessionId: f.created.session.id, clientNonce: crypto.randomUUID(),
       text: "请读取license-note.md和USER_GUIDE.md→guide-note.md，将两段来源内容写入guide-note.md。" });
-    await vi.waitFor(() => expect(f.repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    await expect.poll(() => f.repository.getRuntimeRun(sent.runId).state, { timeout: 4_000 }).toBe("completed");
     expect(rejections.map((sources) => sources.map((source) => source.path))).toEqual([
       ["license-note.md", "USER_GUIDE.md"], ["USER_GUIDE.md"],
     ]);
@@ -163,7 +166,7 @@ describe("source reads before workspace writes", () => {
     ]);
   });
 
-  it("still permits an original creative write that has no requested source files", async () => {
+  it.each([0, 1_200])("still permits an original creative write without requested source files after %dms provider latency", async (delayMs) => {
     const provider: ModelProvider = {
       async *run(messages, _signal, context) {
         yield { type: "started", requestId: "original-story" };
@@ -172,6 +175,7 @@ describe("source reads before workspace writes", () => {
           yield { type: "completed", finishReason: "tool_calls" };
           return;
         }
+        if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
         yield { type: "delta", text: "原创故事已写入 story.md。" };
         yield { type: "completed", finishReason: "stop" };
       },
@@ -179,7 +183,7 @@ describe("source reads before workspace writes", () => {
     };
     const f = await fixture(provider);
     const sent = f.worker.send({ sessionId: f.created.session.id, clientNonce: crypto.randomUUID(), text: "不要读取 secret.md。请原创一个简短故事，保存为 story.md，无需读取任何资料。" });
-    await vi.waitFor(() => expect(f.repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    await expect.poll(() => f.repository.getRuntimeRun(sent.runId).state, { timeout: 4_000 }).toBe("completed");
     expect(readFileSync(join(f.root, "story.md"), "utf8")).toBe("An original short story.");
     expect(f.repository.listToolInvocations(f.created.session.id)).toMatchObject([{ toolKind: "workspace-write", state: "succeeded" }]);
   });
