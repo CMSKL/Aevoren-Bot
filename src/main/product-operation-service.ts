@@ -8,8 +8,10 @@ import { AevorenBotError } from "./errors";
 import { containsLikelySecret } from "./memory-safety";
 import { createProductHandlers, type ProductDependencies } from "./product-handlers";
 import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
+import type { ModelImageAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
+  "browser.get", "browser.tabs", "browser.read", "browser.observe", "browser.downloads", "computer.view", "computer.screenshot", "preview.list",
   "environments.probe", "environments.list", "environments.get", "execution.list", "execution.get", "execution.logs", "execution.wait", "execution.listFiles", "execution.readFile", "processes.list", "processes.listPorts",
   "library.list", "library.read", "library.versions", "documents.list", "documents.search", "documents.read", "documents.versions", "skills.list", "skills.read", "skills.load", "skills.readFile",
   "userProfile.get", "settings.getGeneral", "providers.list", "bots.list", "rooms.list",
@@ -17,10 +19,13 @@ const PUBLIC_READS = new Set([
 ]);
 const PINNED_LIBRARY_READS = new Set(["library.read", "documents.read", "skills.read", "skills.load", "skills.readFile", "library.export", "documents.export", "skills.export"]);
 const environmentOperation = (operation: string): boolean => /^(environments|execution|processes)\./.test(operation);
+const browserOperation = (operation: string): boolean => /^(browser|computer|preview)\./.test(operation);
+const scopedOperation = (operation: string): boolean => environmentOperation(operation) || browserOperation(operation);
+type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[] };
 
 /** Both transports use these handlers; only the host can supply execution identity. */
 export class ProductOperationService {
-  private readonly inFlight = new Map<string, Promise<{ content: string; metadata: Record<string, string | number | boolean | null> }>>();
+  private readonly inFlight = new Map<string, Promise<ProductExecutionResult>>();
   readonly handlers: ReturnType<typeof createProductHandlers>;
 
   constructor(private readonly dependencies: ProductDependencies) {
@@ -102,12 +107,12 @@ export class ProductOperationService {
     }
   }
 
-  execute(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal = new AbortController().signal): Promise<{ content: string; metadata: Record<string, string | number | boolean | null> }> {
+  execute(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal = new AbortController().signal): Promise<ProductExecutionResult> {
     tool = normalizeProductRequest(tool);
     const mutating = tool.action === "execute" && !["read-local", "read-remote", "pure"].includes(productOperation(tool.operation)?.effectClass ?? "irreversible");
     if (!mutating) return this.executeOnce(tool, invocation, signal);
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
-    const key = `${runtime.clientNonce}:${tool.action === "execute" && environmentOperation(tool.operation) ? runtime.executorBotId : "shared"}:${JSON.stringify(tool)}`;
+    const key = `${runtime.clientNonce}:${tool.action === "execute" && scopedOperation(tool.operation) ? runtime.executorBotId : "shared"}:${JSON.stringify(tool)}`;
     const existing = this.inFlight.get(key);
     if (existing) return existing;
     const promise = this.executeOnce(tool, invocation, signal).finally(() => this.inFlight.delete(key));
@@ -115,7 +120,7 @@ export class ProductOperationService {
     return promise;
   }
 
-  private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<{ content: string; metadata: Record<string, string | number | boolean | null> }> {
+  private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<ProductExecutionResult> {
     this.validate(tool, invocation.runtimeRunId);
     if (tool.action === "catalog") {
       const query = tool.query?.trim().toLocaleLowerCase() ?? "";
@@ -130,7 +135,7 @@ export class ProductOperationService {
       return this.result({ status: "completed", ...description, inputSchema: z.toJSONSchema(schema, { unrepresentable: "any", io: "input" }), approvalRequired: this.requiresApproval({ kind: "product-call", action: "execute", operation: tool.operation }) });
     }
     const definition = productOperation(tool.operation)!;
-    if (definition.interaction === "human-decision") {
+    if (tool.operation === "approvals.resolve") {
       const current = this.dependencies.repository.getApprovalRequest(invocation.approvalRequestId);
       const requested = tool.input as { id: string };
       const target = this.dependencies.repository.getApprovalRequest(requested.id);
@@ -142,8 +147,17 @@ export class ProductOperationService {
     }
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
     if (!PUBLIC_READS.has(tool.operation)) {
-      const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, environmentOperation(tool.operation) ? runtime.executorBotId : undefined);
+      const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
       if (previous) {
+        if (browserOperation(tool.operation)) {
+          const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
+          const supplied = tool.input as { expectedEpoch?: number } | undefined;
+          if (supplied?.expectedEpoch !== undefined) this.dependencies.repository.browsers.assertAccess(scope, supplied.expectedEpoch, "ai");
+          else this.dependencies.repository.assertSessionExecutor(scope.sessionId, scope.executorBotId);
+          const receipt = JSON.parse(previous) as { status?: string; result?: unknown };
+          return this.result({ ...receipt, status: ["cancelled", "waiting_user"].includes(receipt.status ?? "") ? receipt.status : "previously_completed",
+            reused: true, receiptNotice: "原操作未重复执行；返回首次回执，请查询页面、控制状态或原输出位置确认当前结果。" });
+        }
         if (environmentOperation(tool.operation)) {
           if (!this.dependencies.environmentService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
           const receipt = JSON.parse(previous) as { status?: string; result?: { id?: string } };
@@ -214,7 +228,7 @@ export class ProductOperationService {
       const result = this.handlers.get(wait.batchId ? "product:room-task-result" : "product:task-result")!(wait.batchId ? { batchId: wait.batchId } : { runId: wait.runId });
       return this.result({ status: ["completed", "partial", "failed", "cancelled", "interrupted"].includes((result as { state: string }).state) ? "completed" : "running", result });
     }
-    this.dependencies.repository.assertProductReplaySafe(runtime.clientNonce, tool, environmentOperation(tool.operation) ? runtime.executorBotId : undefined);
+    this.dependencies.repository.assertProductReplaySafe(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
     const rootNonce = this.dependencies.repository.getUserMessage(runtime.clientNonce).origin?.rootClientNonce ?? runtime.clientNonce;
     const resourceCount = { "bots.create": 1, "bots.duplicate": 1, "rooms.create": 1, "teams.createContentTeam": 6, "library.create": 1, "library.importText": 1, "documents.create": 1, "skills.create": 1 }[tool.operation] ?? 0;
     let createdCount = resourceCount;
@@ -253,14 +267,27 @@ export class ProductOperationService {
       metadata: { operation: tool.operation, resourceCount: createdCount },
     })), memorySourceEntryId, { runtimeRunId: runtime.id, executorBotId: runtime.executorBotId, sessionId: runtime.sessionId, signal });
     let result = await scopedHandlers.get(definition.channel)!(input);
+    let images: ModelImageAttachment[] | undefined;
+    if (tool.operation === "computer.screenshot") {
+      const shot = result as import("@shared/browser-contracts").ComputerScreenshot;
+      const supported = runtime.route !== "fake" && this.dependencies.providers.getCapabilities({ providerInstanceId: runtime.providerInstanceId, modelId: runtime.providerModelId }).toolImageInput === true;
+      result = { media: shot.media, imageTransfer: supported ? "prepared_real_pixels" : "adapter_unsupported", ...(supported ? {} : { reason: "当前模型来源未接入工具图片传输；DOM 操作仍可用，不能声称已理解这张画面。" }) };
+      if (supported) {
+        const attachment = await this.dependencies.browserService!.imageAttachment({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, shot.media.id, shot.media.controlEpoch);
+        const allowed = attachment.isAuthorized;
+        attachment.isAuthorized = () => allowed() && ["running", "streaming"].includes(this.dependencies.repository.getRuntimeRun(runtime.id).state);
+        images = [attachment];
+      }
+    }
     if (tool.operation === "view.request") return this.result(result);
     if (["userProfile.get", "userProfile.update"].includes(tool.operation)) result = { name: (result as import("@shared/contracts").UserProfile).name, hasAvatar: Boolean((result as import("@shared/contracts").UserProfile).avatarUrl) };
     if (tool.operation === "bots.list") result = (result as import("@shared/contracts").Bot[]).map(({ id, name, label, description, version, modelSelection }) => ({ id, name, label, description, version, modelSelection }));
     if (tool.operation === "rooms.list") result = (result as import("@shared/contracts").Room[]).map(({ id, name, description, version, membershipVersion, leadBotId, archivedAt }) => ({ id, name, description, version, membershipVersion, leadBotId, archivedAt }));
     if (tool.operation === "workspaces.list") result = this.dependencies.repository.listSessionWorkspaces(runtime.sessionId, runtime.executorBotId).map(({ id, name, writeEnabled, automationEnabled, version }) => ({ id, name, writeEnabled, automationEnabled, version }));
     if (definition.effectClass === "write-reversible" || definition.effectClass === "irreversible") this.dependencies.productChanged?.();
-    return this.result({ status: result === null && definition.interaction === "native" ? "cancelled" :
+    const output = this.result({ status: result && typeof result === "object" && "status" in result && result.status === "waiting_user" ? "waiting_user" : result === null && definition.interaction === "native" ? "cancelled" :
       ["execution.run", "processes.start"].includes(tool.operation) && (result as { state?: string } | null)?.state === "running" ? "running" : "completed", operation: tool.operation, result: result ?? null });
+    return { ...output, ...(images ? { images } : {}) };
   }
 
   private result(value: unknown) {
@@ -271,7 +298,7 @@ export class ProductOperationService {
 
   private libraryInput(operation: string, value: unknown, runtime: Pick<RuntimeRun, "sessionId" | "clientNonce" | "executorBotId">): unknown {
     const input = value === null ? undefined : value;
-    if (environmentOperation(operation) && !["environments.probe", "environments.initialize"].includes(operation)) {
+    if (scopedOperation(operation) && !["environments.probe", "environments.initialize"].includes(operation)) {
       if (input !== undefined && (typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");
       const supplied = (input ?? {}) as { sessionId?: string; executorBotId?: string };
       if (supplied.sessionId !== undefined && supplied.sessionId !== runtime.sessionId || supplied.executorBotId !== undefined && supplied.executorBotId !== runtime.executorBotId) throw new AevorenBotError("ENVIRONMENT_SCOPE_INVALID");

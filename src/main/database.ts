@@ -87,6 +87,7 @@ import { messageAttachmentsSchema, toolInvocationCommandSchema } from "@shared/s
 import { AevorenBotError } from "./errors";
 import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
 import { EnvironmentRepository, ENVIRONMENT_MIGRATION } from "./environment-repository";
+import { BrowserRepository, BROWSER_MIGRATION } from "./browser-repository";
 import { resourceReferencesSchema } from "@shared/library-schemas";
 import type { ResourceReference } from "@shared/library-contracts";
 import { containsLikelySecret } from "./memory-safety";
@@ -2064,6 +2065,7 @@ export const MIGRATIONS = [
   },
   RESOURCE_LIBRARY_MIGRATION,
   ENVIRONMENT_MIGRATION,
+  BROWSER_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3233,6 +3235,7 @@ export class AppRepository {
   private readonly database: DatabaseSync;
   readonly library: LibraryRepository;
   readonly environments: EnvironmentRepository;
+  readonly browsers: BrowserRepository;
 
   constructor(private readonly filename: string, private readonly options: AppRepositoryOptions = {}) {
     this.database = new DatabaseSync(filename);
@@ -3247,6 +3250,7 @@ export class AppRepository {
         else if (session.roomId) this.getRoom(session.roomId);
       });
       this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.browsers = new BrowserRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
     } catch (error) {
       this.database.close();
       throw error;

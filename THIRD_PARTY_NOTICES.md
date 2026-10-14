@@ -8,6 +8,7 @@ The license identifiers below are informational; the corresponding license texts
 | --- | --- | --- | --- |
 | @hono/node-server | 2.1.1 | MIT | [link](https://github.com/honojs/node-server) |
 | @modelcontextprotocol/sdk | 1.31.0 | MIT | [link](https://modelcontextprotocol.io) |
+| @novnc/novnc | 1.7.0 | MPL-2.0 | [link](https://github.com/novnc/noVNC) |
 | @phosphor-icons/react | 2.1.10 | MIT | [link](https://phosphoricons.com) |
 | @types/debug | 4.1.13 | MIT | [link](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/debug) |
 | @types/estree | 1.0.9 | MIT | [link](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree) |
@@ -218,6 +219,7 @@ The license identifiers below are informational; the corresponding license texts
 | vfile-message | 4.0.3 | MIT | [link](https://github.com/vfile/vfile-message#readme) |
 | which | 2.0.2 | ISC | [link](https://github.com/isaacs/node-which#readme) |
 | wrappy | 1.0.2 | ISC | [link](https://github.com/npm/wrappy) |
+| ws | 8.22.0 | MIT | [link](https://github.com/websockets/ws) |
 | yaml | 2.9.1 | ISC | [link](https://eemeli.org/yaml/) |
 | zod | 4.6.1 | MIT | [link](https://zod.dev) |
 | zod-to-json-schema | 3.25.2 | ISC | [link](https://github.com/StefanTerdell/zod-to-json-schema#readme) |
@@ -226,3 +228,4 @@ The license identifiers below are informational; the corresponding license texts
 ## Separately built execution image
 
 The optional local Docker execution image includes independently licensed Linux tools outside this npm inventory. See [execution image versions, base digest and license notices](docs/EXECUTION_ENVIRONMENT.md#images-and-third-party-licenses). Docker is user-provided; the app does not bundle its distribution.
+The separately built browser companion also includes Chromium, Playwright, Xvfb, Openbox, x11vnc, xdotool and FFmpeg. See [browser image versions and isolation](docs/BROWSER_COMPUTER.md#isolation-and-lifecycle); these distributions retain their own notices in the image.

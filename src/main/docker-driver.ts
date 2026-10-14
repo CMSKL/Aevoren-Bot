@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { ENV_WORKER_VERSION } from "@shared/environment-contracts";
 
 export type DockerPlatform = "linux/arm64" | "linux/amd64";
 export type DockerProbe = { status: "missing" | "stopped" | "ready" | "unsupported" | "error"; version: string | null; platform: DockerPlatform | null; reason: string | null };
@@ -12,7 +13,7 @@ export class DockerCommandError extends Error {
   constructor(readonly code: string, readonly stderr: string) { super(code); }
 }
 
-export const EXECUTION_IMAGE_REF = "aevoren-execution-worker:1.0.0";
+export const EXECUTION_IMAGE_REF = `aevoren-execution-worker:${ENV_WORKER_VERSION}`;
 const ROLE_LABEL = "io.aevoren.role";
 const ENVIRONMENT_LABEL = "io.aevoren.environment";
 const VERSION_LABEL = "io.aevoren.worker-version";
@@ -73,7 +74,7 @@ export class DockerDriver {
     return current;
   }
 
-  private async command(args: string[], options: CommandOptions = {}): Promise<CommandResult> {
+  protected async command(args: string[], options: CommandOptions = {}): Promise<CommandResult> {
     const context = await this.localContext(options.signal);
     return this.runner(["--context", context, ...args], options);
   }
@@ -111,9 +112,9 @@ export class DockerDriver {
     if (!/^[a-f0-9]{64}$/.test(bundleSha256)) throw new DockerCommandError("DOCKER_IMAGE_INVALID", "");
     const probe = await this.probe(signal);
     if (probe.status !== "ready" || !probe.platform) throw new DockerCommandError("DOCKER_NOT_READY", "");
-    await this.command(["build", "--platform", probe.platform, "--label", `${ROLE_LABEL}=execution-worker`, "--label", `${VERSION_LABEL}=1.0.0`, "--label", `${BUNDLE_LABEL}=${bundleSha256}`, "--tag", EXECUTION_IMAGE_REF, contextPath], { signal, timeoutMs: 600_000, output });
+    await this.command(["build", "--platform", probe.platform, "--label", `${ROLE_LABEL}=execution-worker`, "--label", `${VERSION_LABEL}=${ENV_WORKER_VERSION}`, "--label", `${BUNDLE_LABEL}=${bundleSha256}`, "--tag", EXECUTION_IMAGE_REF, contextPath], { signal, timeoutMs: 600_000, output });
     const image = await this.inspectImage(EXECUTION_IMAGE_REF, signal);
-    if (!image || image.bundleSha256 !== bundleSha256 || image.workerVersion !== "1.0.0" || image.platform !== probe.platform) throw new DockerCommandError("DOCKER_IMAGE_INVALID", "");
+    if (!image || image.bundleSha256 !== bundleSha256 || image.workerVersion !== ENV_WORKER_VERSION || image.platform !== probe.platform) throw new DockerCommandError("DOCKER_IMAGE_INVALID", "");
     return image;
   }
 

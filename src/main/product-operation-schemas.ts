@@ -1,12 +1,14 @@
 import { z } from "zod";
 import { LIBRARY_OPERATION_SCHEMAS } from "@shared/library-product";
 import { ENVIRONMENT_OPERATION_SCHEMAS } from "@shared/environment-product";
+import { BROWSER_OPERATION_SCHEMAS } from "@shared/browser-product";
 import { resourceReferencesSchema } from "@shared/library-schemas";
 import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema, mcpServerMutationSchema, mcpServerEnabledSchema, mcpServerIdSchema, mcpServerMutationIdSchema, routineIdSchema, routineCreateSchema, routineUpdateSchema, routineEnabledSchema, routineMutationSchema, conversationPinnedSchema, conversationUnreadSchema, conversationHiddenSchema, sessionIdSchema, conversationProjectSchema, conversationBatchDeleteSchema, projectContextSchema, projectCreateSchema, briefApprovalReadSchema, briefApprovalCommandSchema, botUpdateSchema, botPinnedSchema, botUnreadSchema, botHiddenSchema, botIdSchema, memoryListSchema, memoryCreateSchema, memoryUpdateSchema, memoryMutationSchema, memoryProposalListSchema, memoryProposalAcceptSchema, workspacePermissionsSchema, workspaceRevealSchema, workspaceMutationSchema, toolSessionScopeSchema, approvalResolutionSchema, roomListSchema, roomCreateSchema, roomIdSchema, roomUpdateSchema, roomArchiveSchema, roomPinnedSchema, roomUnreadSchema, roomHiddenSchema, roomMembershipSchema, sendCommandSchema, nonceSchema, runIdSchema, roomSendCommandSchema, batchIdSchema, turnIdSchema, generalSettingsSchema, saveOpenAiCompatibleProviderSchema, saveCliProviderSchema, providerInstanceIdInputSchema } from "@shared/schemas";
 
 export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...LIBRARY_OPERATION_SCHEMAS,
   ...ENVIRONMENT_OPERATION_SCHEMAS,
+  ...BROWSER_OPERATION_SCHEMAS,
   "userProfile.get": z.undefined(),
   "userProfile.update": z.object({ name: z.string().min(1).max(80).optional(), avatarUrl: z.string().max(524_288).nullable().optional() }).strict(),
   "attachments.pick": z.undefined(),

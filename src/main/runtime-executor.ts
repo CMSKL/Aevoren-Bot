@@ -1137,7 +1137,7 @@ export class RuntimeExecutor {
             active.forceCompleteAfterToolRound = true;
           }
           if (event.respond) {
-            await event.respond(providerOutcomeContent);
+            await event.respond(providerOutcomeContent, outcome.images);
             if (event.toolSignal) {
               const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind" && !(event.tool.kind === "product-call" && key === "action")));
               active.messages.push({ role: "assistant", content: "", tool_calls: [{ id: event.toolCallId, type: "function", function: { name: event.providerToolName ?? event.tool.kind.replaceAll("-", "_"), arguments: JSON.stringify(argumentsValue) } }] }, { role: "tool", tool_call_id: outcome.toolCallId, content: providerOutcomeContent });
@@ -1156,7 +1156,7 @@ export class RuntimeExecutor {
               type: "function",
               function: { name: functionName, arguments: JSON.stringify(argumentsValue) },
             },
-            result: { role: "tool", tool_call_id: outcome.toolCallId, content: providerOutcomeContent },
+            result: { role: "tool", tool_call_id: outcome.toolCallId, content: providerOutcomeContent, ...(outcome.images ? { images: outcome.images } : {}) },
           });
           run = this.repository.touchRuntimeRun(runId);
           this.emitRuntime(run);

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.0-beta.29 (development candidate)
+
+- Add isolated persistent Chromium and Linux desktops beside each conversation/executor's local Docker environment, with 27 shared browser/computer/preview actions.
+- Transfer actual screenshot pixels through API, Claude MCP and supported Codex app-server adapters, with scope, Runtime and control-epoch checks before transmission.
+- Add explicit user takeover/return, expiring noVNC connections, verified downloads and previews bound to the original registered background process.
+- Preserve user ownership on disconnect/restart and require fresh observations after return; cancellation seals only the selected operation.
+- Execution Worker 1.1.0 adds a fixed-target HTTP/WebSocket preview proxy; running older environments require an explicit rebuild to use it.
+- Close Codex RPC input before disposal, stop its known live Windows process tree when necessary, and reject late tool responses after closure.
+- Local source checks and 13 final unsigned macOS package scenarios passed; cross-platform CI and signing/release remain separate gates. This entry does not imply a published installer, real cloud image understanding or completed Windows Docker validation.
+
 All notable changes to Aevoren Bot will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).

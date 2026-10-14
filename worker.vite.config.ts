@@ -1,6 +1,7 @@
 import { builtinModules } from "node:module";
 import { resolve } from "node:path";
 import { build, defineConfig } from "vite";
+import { ENV_WORKER_VERSION } from "./src/shared/environment-contracts";
 
 export default defineConfig({
   resolve: { alias: { "@shared": resolve("src/shared") } },
@@ -21,6 +22,6 @@ export default defineConfig({
         output: { format: "es", entryFileNames: "file-helper.mjs", inlineDynamicImports: true } },
     } });
     await copyFile(resolve("workers/execution/Dockerfile"), resolve("out/worker/Dockerfile"));
-    await writeFile(resolve("out/worker/package.json"), JSON.stringify({ name: "aevoren-execution-worker", version: "1.0.0", type: "module", license: "Apache-2.0" }));
+    await writeFile(resolve("out/worker/package.json"), JSON.stringify({ name: "aevoren-execution-worker", version: ENV_WORKER_VERSION, type: "module", license: "Apache-2.0" }));
   } }],
 });

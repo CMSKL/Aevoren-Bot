@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
 import { LIBRARY_CHANNELS } from "@shared/library-channels";
 import { ENVIRONMENT_CHANNELS, EXECUTION_CHANNELS, PROCESS_CHANNELS, ENVIRONMENT_EVENTS } from "@shared/environment-channels";
+import { BROWSER_CHANNELS, COMPUTER_CHANNELS, PREVIEW_CHANNELS, BROWSER_EVENTS } from "@shared/browser-channels";
+import type { BrowserChangedEvent } from "@shared/browser-contracts";
 import type { EnvironmentChangedEvent } from "@shared/environment-contracts";
 import type { LibraryChangedEvent } from "@shared/library-contracts";
 import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
@@ -12,7 +14,49 @@ function onEnvironmentChanged(listener: (event: EnvironmentChangedEvent) => void
   return () => ipcRenderer.removeListener(ENVIRONMENT_EVENTS.changed, handler);
 }
 
+function onBrowserChanged(listener: (event: BrowserChangedEvent) => void): () => void {
+  const handler = (_event: Electron.IpcRendererEvent, data: BrowserChangedEvent): void => listener(data);
+  ipcRenderer.on(BROWSER_EVENTS.changed, handler);
+  return () => ipcRenderer.removeListener(BROWSER_EVENTS.changed, handler);
+}
+
 const api: AevorenBotApi = {
+  browser: {
+    get: input => ipcRenderer.invoke(BROWSER_CHANNELS.get, input),
+    start: input => ipcRenderer.invoke(BROWSER_CHANNELS.start, input),
+    stop: input => ipcRenderer.invoke(BROWSER_CHANNELS.stop, input),
+    tabs: input => ipcRenderer.invoke(BROWSER_CHANNELS.tabs, input),
+    newTab: input => ipcRenderer.invoke(BROWSER_CHANNELS.newTab, input),
+    closeTab: input => ipcRenderer.invoke(BROWSER_CHANNELS.closeTab, input),
+    navigate: input => ipcRenderer.invoke(BROWSER_CHANNELS.navigate, input),
+    read: input => ipcRenderer.invoke(BROWSER_CHANNELS.read, input),
+    observe: input => ipcRenderer.invoke(BROWSER_CHANNELS.observe, input),
+    click: input => ipcRenderer.invoke(BROWSER_CHANNELS.click, input),
+    type: input => ipcRenderer.invoke(BROWSER_CHANNELS.type, input),
+    key: input => ipcRenderer.invoke(BROWSER_CHANNELS.key, input),
+    scroll: input => ipcRenderer.invoke(BROWSER_CHANNELS.scroll, input),
+    downloads: input => ipcRenderer.invoke(BROWSER_CHANNELS.downloads, input),
+    download: input => ipcRenderer.invoke(BROWSER_CHANNELS.download, input),
+    onChanged: onBrowserChanged,
+  },
+  computer: {
+    view: input => ipcRenderer.invoke(COMPUTER_CHANNELS.view, input),
+    screenshot: input => ipcRenderer.invoke(COMPUTER_CHANNELS.screenshot, input),
+    click: input => ipcRenderer.invoke(COMPUTER_CHANNELS.click, input),
+    type: input => ipcRenderer.invoke(COMPUTER_CHANNELS.type, input),
+    key: input => ipcRenderer.invoke(COMPUTER_CHANNELS.key, input),
+    scroll: input => ipcRenderer.invoke(COMPUTER_CHANNELS.scroll, input),
+    takeover: input => ipcRenderer.invoke(COMPUTER_CHANNELS.takeover, input),
+    returnControl: input => ipcRenderer.invoke(COMPUTER_CHANNELS.returnControl, input),
+    vncTicket: input => ipcRenderer.invoke(COMPUTER_CHANNELS.vncTicket, input),
+    onChanged: onBrowserChanged,
+  },
+  preview: {
+    list: input => ipcRenderer.invoke(PREVIEW_CHANNELS.list, input),
+    open: input => ipcRenderer.invoke(PREVIEW_CHANNELS.open, input),
+    close: input => ipcRenderer.invoke(PREVIEW_CHANNELS.close, input),
+    onChanged: onBrowserChanged,
+  },
   environments: {
     probe: () => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.probe),
     initialize: () => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.initialize),

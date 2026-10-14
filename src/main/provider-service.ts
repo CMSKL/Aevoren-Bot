@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { coerce, gte } from "semver";
 import type {
   ModelSelection,
   ProviderCapabilities,
@@ -25,6 +26,7 @@ const FIRST_PHASE_PROVIDER_ORDER = [CODEX_INSTANCE_ID, OPENAI_INSTANCE_ID, CLAUD
 const FIRST_PHASE_PROVIDER_IDS = new Set<string>(FIRST_PHASE_PROVIDER_ORDER);
 
 const OPENAI_CAPABILITIES: ProviderCapabilities = {
+  toolImageInput: true,
   roomOwnerSelection: true,
   handoff: true,
   workspaceTools: true,
@@ -189,7 +191,10 @@ class OpenAiCompatibleRuntime implements RuntimeProviderInstance {
 
 class CodexCliRuntime implements RuntimeProviderInstance {
   readonly driverKind = "codex-cli" as const;
-  readonly capabilities = CODEX_CAPABILITIES;
+  get capabilities(): ProviderCapabilities {
+    const version = this.inspection ? coerce(this.inspection.version) : null;
+    return { ...CODEX_CAPABILITIES, toolImageInput: Boolean(version && gte(version, "0.162.1")) };
+  }
   readonly route = "codex-cli" as const;
   private inspection: CodexCliInspection | null = null;
   private inspectionError: string | null = null;
@@ -309,7 +314,7 @@ class ClaudeCliRuntime implements RuntimeProviderInstance {
   readonly driverKind = "claude-cli" as const;
   get capabilities(): ProviderCapabilities {
     return this.configuration.enabled && this.inspection?.authenticated && this.connectionError === null
-      ? { ...CLAUDE_CAPABILITIES, workspaceTools: true, networkTools: true }
+      ? { ...CLAUDE_CAPABILITIES, workspaceTools: true, networkTools: true, toolImageInput: true }
       : CLAUDE_CAPABILITIES;
   }
   readonly route = "claude-cli" as const;

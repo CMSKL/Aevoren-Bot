@@ -387,8 +387,23 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "capabilities", "conversations", "environments", "events", "execution", "library", "mcp", "memories", "messages", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "conversations", "environments", "events", "execution", "library", "mcp", "memories", "messages", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
     ]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser,
+    ).toSorted())).toEqual(["click", "closeTab", "download", "downloads", "get", "key", "navigate", "newTab", "observe", "onChanged", "read", "scroll", "start", "stop", "tabs", "type"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computer,
+    ).toSorted())).toEqual(["click", "key", "onChanged", "returnControl", "screenshot", "scroll", "takeover", "type", "view", "vncTicket"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.preview,
+    ).toSorted())).toEqual(["close", "list", "onChanged", "open"]);
+    const browserValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      const invalidScope = { sessionId: "not-a-uuid", executorBotId: "not-a-uuid" };
+      return Promise.all([api.browser.get(invalidScope), api.computer.view(invalidScope), api.preview.list({ ...invalidScope, expectedEpoch: -1 })]);
+    });
+    for (const result of browserValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.environments,
     ).toSorted())).toEqual(["get", "initialize", "list", "onChanged", "probe", "rebuild", "start", "stop"]);

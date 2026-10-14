@@ -251,8 +251,18 @@ export class ExecutionWorker {
     return this.store.ports();
   }
 
+  async previewTarget(registeredPortId: string): Promise<{ registeredPortId: string; processId: string; port: number; uid: number }> {
+    const port = this.store.ports().find(value => value.id === registeredPortId);
+    if (this.shuttingDown || !port || port.port === 8_080) throw new WorkerError("WORKER_PREVIEW_UNAVAILABLE", 503);
+    const job = this.store.get(port.processId), uid = this.store.uid(job.id);
+    if (job.kind !== "background" || job.state !== "running" || !this.live.has(job.id) || !await uidOwnsListeningPort(uid, port.port)
+      || this.store.get(job.id).state !== "running" || !this.live.has(job.id)) throw new WorkerError("WORKER_PREVIEW_UNAVAILABLE", 503);
+    return { registeredPortId: port.id, processId: job.id, port: port.port, uid };
+  }
+
   async close(): Promise<void> {
     this.shuttingDown = true;
+    this.events.emit("closing");
     if (this.monitor) clearInterval(this.monitor);
     await Promise.all([...this.live.keys()].map(id => this.cancel(id, this.store.get(id).kind)));
     this.store.close();

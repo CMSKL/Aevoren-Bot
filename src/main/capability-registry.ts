@@ -26,6 +26,8 @@ type SnapshotContext = {
   mcpTools: McpToolInfo[];
   routines: Routine[];
   executionReady: boolean;
+  browserReady: boolean;
+  browserUserControlled: boolean;
 };
 
 const unsupported: Array<Pick<CapabilityDescriptor, "id" | "name" | "category" | "description" | "effectClass" | "adapterKind">> = [
@@ -33,7 +35,6 @@ const unsupported: Array<Pick<CapabilityDescriptor, "id" | "name" | "category" |
   { id: "device.personal-data", name: "设备个人数据", category: "device", description: "访问相册、日历或通讯录。", effectClass: "read-local", adapterKind: "none" },
   { id: "external.actions", name: "外部操作", category: "external", description: "发送消息、邮件、订票、下单或控制其他服务。", effectClass: "write-external", adapterKind: "none" },
   { id: "multimodal.input", name: "多模态输入", category: "multimodal", description: "理解图片、音频、视频或屏幕内容。", effectClass: "read-local", adapterKind: "none" },
-  { id: "computer.control", name: "屏幕与电脑操作", category: "external", description: "观察并操作网页或桌面应用。", effectClass: "computer-control", adapterKind: "none" },
 ];
 
 function localTime(now: Date): Pick<CapabilityPromptSnapshot, "generatedAt" | "timezone" | "utcOffsetMinutes"> {
@@ -122,6 +123,20 @@ function capabilityDescriptors(
       description: "在本会话与 Bot 独立的 Docker 环境运行 Node/Python 命令、传输文件和登记后台服务；每次写操作需审批，取消仅终止所属任务。",
       effectClass: "irreversible", adapterKind: "core", availability: executionTools && context.executionReady ? "available" : "unavailable",
       reason: !executionTools ? "当前模型来源不支持宿主产品工具。" : context.executionReady ? null : "当前会话的隔离环境尚未运行，请先检测 Docker、初始化镜像并启动环境。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "computer.control", name: "隔离浏览器与电脑", category: "external", effectClass: "computer-control", adapterKind: "core",
+      description: "在同一隔离浏览器与屏幕观察、导航和输入；用户接管会暂停 AI，归还后必须重新观察。宿主电脑与现有浏览器 Cookie 不在范围内。",
+      availability: executionTools && context.browserReady && !context.browserUserControlled ? "available" : "unavailable",
+      reason: context.browserUserControlled ? "用户正在接管，AI 输入与观察已暂停。" : !executionTools ? "当前来源未接入宿主工具。" : context.browserReady ? null : "当前浏览器伴随环境尚未运行。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "browser.tool-images", name: "真实工具图片传递", category: "multimodal", effectClass: "read-local", adapterKind: "core",
+      description: "将已授权画面的真实像素传入当前模型协议。传递验证不代表模型一定支持视觉理解；不支持时保留 DOM 操作。",
+      availability: context.providerCapabilities?.toolImageInput && context.browserReady && !context.browserUserControlled ? "available" : "unavailable",
+      reason: !context.providerCapabilities?.toolImageInput ? "当前来源未验证工具图片传递，不能声称已理解画面。" : context.browserUserControlled ? "接管期间画面上传已暂停。" : context.browserReady ? null : "当前浏览器伴随环境尚未运行。",
       permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
@@ -338,7 +353,9 @@ export class CapabilityRegistry {
     const mcpTools = this.mcp?.availableTools(botId) ?? [];
     const routines = this.routineList();
     const executionReady = Boolean(botId && sessionId && this.repository.environments.get({ sessionId, executorBotId: botId })?.state === "running");
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines, executionReady }).map((capability) => {
+    const browser = botId && sessionId ? this.repository.browsers.get({ sessionId, executorBotId: botId }) : null;
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines, executionReady,
+      browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));
       return toolNames.length > 0 ? { ...capability, toolNames } : {
