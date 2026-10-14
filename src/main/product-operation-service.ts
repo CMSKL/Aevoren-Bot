@@ -2,16 +2,19 @@ import { normalizeProductRequest } from "./product-request";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { PRODUCT_OPERATIONS, productOperation } from "@shared/product-operations";
-import type { ProductToolRequest, ToolInvocation } from "@shared/contracts";
+import type { ProductToolRequest, RuntimeRun, ToolInvocation } from "@shared/contracts";
+import { resourceReferenceSchema } from "@shared/library-schemas";
 import { AevorenBotError } from "./errors";
 import { containsLikelySecret } from "./memory-safety";
 import { createProductHandlers, type ProductDependencies } from "./product-handlers";
 import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 
 const PUBLIC_READS = new Set([
+  "library.list", "library.read", "library.versions", "documents.list", "documents.search", "documents.read", "documents.versions", "skills.list", "skills.read", "skills.load", "skills.readFile",
   "userProfile.get", "settings.getGeneral", "providers.list", "bots.list", "rooms.list",
   "tasks.getResult", "tasks.waitResult", "tasks.getRoomResult", "tasks.waitRoomResult", "projects.list", "workspaces.list", "updates.getState", "sessions.getMain", "capabilities.getSnapshot",
 ]);
+const PINNED_LIBRARY_READS = new Set(["library.read", "documents.read", "skills.read", "skills.load", "skills.readFile", "library.export", "documents.export", "skills.export"]);
 
 /** Both transports use these handlers; only the host can supply execution identity. */
 export class ProductOperationService {
@@ -66,7 +69,7 @@ export class ProductOperationService {
     const definition = productOperation(tool.operation);
     if (!definition) throw new AevorenBotError("INVALID_REQUEST", "产品操作不存在，请先查询功能目录。");
     const schema = PRODUCT_OPERATION_SCHEMAS[tool.operation]!;
-    const input = schema.parse(tool.input === null ? undefined : tool.input);
+    const input = schema.parse(this.libraryInput(tool.operation, tool.input, runtime));
     if (tool.operation === "providers.saveOpenAiCompatible" && input && typeof input === "object" && "apiKey" in input) {
       throw new AevorenBotError("INVALID_REQUEST", "请在模型设置的可信入口填写密钥，AI 只能使用连接引用。");
     }
@@ -135,9 +138,22 @@ export class ProductOperationService {
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
     if (!PUBLIC_READS.has(tool.operation)) {
       const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool);
-      if (previous) return { content: previous, metadata: { operation: tool.operation, reused: true } };
+      if (previous) {
+        this.assertLibraryReplayAccess(tool.operation, previous, runtime);
+        if (/^(library|documents|skills)\./.test(tool.operation)) {
+          const receipt = JSON.parse(previous) as { status?: string; result?: unknown };
+          const previousExport = tool.operation.endsWith(".export") && receipt.status === "completed" && receipt.result !== null;
+          const result = this.result({ ...receipt, reused: true,
+            ...(previousExport ? { status: "previously_completed", outputVerification: "not_rechecked",
+              receiptNotice: "返回首次导出成功回执；当前输出位置尚未重新校验。" }
+              : { receiptNotice: "返回首次操作回执；当前资源状态请重新查询。" }),
+          });
+          return { ...result, metadata: { ...result.metadata, reused: true, ...(previousExport ? { outputVerification: "not_rechecked" } : {}) } };
+        }
+        return { content: previous, metadata: { operation: tool.operation, reused: true } };
+      }
     }
-    let input = PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(tool.input === null ? undefined : tool.input);
+    let input = PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(this.libraryInput(tool.operation, tool.input, runtime));
     if (tool.operation === "userProfile.update") input = { ...(this.handlers.get(productOperation("userProfile.get")!.channel)!() as object), ...(input as object) };
     if (tool.operation === "capabilities.getSnapshot") input = { botId: runtime.executorBotId, sessionId: runtime.sessionId };
     if (["messages.send", "roomRuntime.send"].includes(tool.operation)) {
@@ -185,7 +201,7 @@ export class ProductOperationService {
     }
     this.dependencies.repository.assertProductReplaySafe(runtime.clientNonce, tool);
     const rootNonce = this.dependencies.repository.getUserMessage(runtime.clientNonce).origin?.rootClientNonce ?? runtime.clientNonce;
-    const resourceCount = { "bots.create": 1, "bots.duplicate": 1, "rooms.create": 1, "teams.createContentTeam": 6 }[tool.operation] ?? 0;
+    const resourceCount = { "bots.create": 1, "bots.duplicate": 1, "rooms.create": 1, "teams.createContentTeam": 6, "library.create": 1, "library.importText": 1, "documents.create": 1, "skills.create": 1 }[tool.operation] ?? 0;
     let createdCount = resourceCount;
     let memorySourceEntryId: string | undefined;
     if (tool.operation === "memories.create") {
@@ -200,6 +216,7 @@ export class ProductOperationService {
       signal.throwIfAborted();
       this.validate(tool, invocation.runtimeRunId);
       const value = operation();
+      if (["library.importPath", "library.pickImport", "documents.import", "skills.import"].includes(tool.operation)) createdCount = (value as { imported: unknown[] }).imported.length;
       if (tool.operation === "teams.createContentTeam" && (value as { disposition?: string }).disposition === "existing") createdCount = 0;
       if (createdCount && this.dependencies.repository.productResourceCount(rootNonce) + createdCount > 8) throw new AevorenBotError("PROJECT_CREATION_LIMIT");
       const creator = this.dependencies.repository.getBot(runtime.executorBotId);
@@ -218,7 +235,7 @@ export class ProductOperationService {
     }, (result) => ({
       ...this.result({ status: "completed", operation: tool.operation, result: tool.operation === "userProfile.update" ? { name: (result as import("@shared/contracts").UserProfile).name, hasAvatar: Boolean((result as import("@shared/contracts").UserProfile).avatarUrl) } : result ?? null }),
       metadata: { operation: tool.operation, resourceCount: createdCount },
-    })), memorySourceEntryId);
+    })), memorySourceEntryId, { runtimeRunId: runtime.id, executorBotId: runtime.executorBotId, sessionId: runtime.sessionId, signal });
     let result = await scopedHandlers.get(definition.channel)!(input);
     if (tool.operation === "view.request") return this.result(result);
     if (["userProfile.get", "userProfile.update"].includes(tool.operation)) result = { name: (result as import("@shared/contracts").UserProfile).name, hasAvatar: Boolean((result as import("@shared/contracts").UserProfile).avatarUrl) };
@@ -233,5 +250,30 @@ export class ProductOperationService {
     const content = JSON.stringify({ ok: true, ...(value as object) });
     const receipt = value as { status?: string; operation?: string; result?: { runId?: string; state?: string } };
     return { content, metadata: { status: receipt.status ?? "completed", ...(receipt.operation ? { operation: receipt.operation } : {}), ...(receipt.result?.runId ? { targetRunId: receipt.result.runId } : {}), ...(receipt.result?.state ? { taskState: receipt.result.state } : {}) } };
+  }
+
+  private libraryInput(operation: string, value: unknown, runtime: Pick<RuntimeRun, "sessionId" | "clientNonce" | "executorBotId">): unknown {
+    const input = value === null ? undefined : value;
+    if (!/^(library|documents|skills)\./.test(operation) || operation === "library.available") return input;
+    if (input !== undefined && (typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");
+    const scoped = input as { sessionId?: string; id?: string; revisionId?: string } | undefined;
+    if (scoped?.sessionId !== undefined && scoped.sessionId !== runtime.sessionId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    const reference = PINNED_LIBRARY_READS.has(operation) && scoped?.revisionId === undefined
+      ? this.dependencies.repository.getUserMessage(runtime.clientNonce).resourceRefs?.find((item) => item.resourceId === scoped?.id)
+      : undefined;
+    if (reference) this.dependencies.repository.library.assertReferences(runtime.sessionId, [reference], runtime.executorBotId);
+    return { ...scoped, sessionId: runtime.sessionId, ...(reference ? { revisionId: reference.revisionId } : {}) };
+  }
+
+  private assertLibraryReplayAccess(operation: string, content: string, runtime: RuntimeRun): void {
+    if (!/^(library|documents|skills)\./.test(operation)) return;
+    const receipt = JSON.parse(content) as { result?: { revision?: { body?: unknown }; reference?: unknown; imported?: unknown[] } };
+    const results = [receipt.result, ...(receipt.result?.imported ?? [])];
+    const references = results.flatMap((result) => {
+      if (!result || typeof result !== "object") return [];
+      const value = result as { revision?: { body?: unknown }; reference?: unknown };
+      return typeof value.revision?.body === "string" ? [resourceReferenceSchema.parse(value.reference)] : [];
+    });
+    if (references.length) this.dependencies.repository.library.assertReferences(runtime.sessionId, references, runtime.executorBotId);
   }
 }

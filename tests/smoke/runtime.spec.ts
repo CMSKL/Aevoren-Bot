@@ -387,8 +387,15 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "capabilities", "conversations", "events", "library", "mcp", "memories", "messages", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
     ]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library,
+    ).toSorted())).toEqual(["available", "bind", "create", "delete", "export", "importPath", "importText", "list", "onChanged", "pickImport", "read", "restore", "restoreVersion", "setEnabled", "unbind", "update", "versions"]);
+    const libraryResult = await launched.page.evaluate(() =>
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library.list({ sessionId: "not-a-uuid" }),
+    );
+    expect(libraryResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations,
     ).toSorted())).toEqual(["clear", "deleteBatch", "list", "setHidden", "setPinned", "setProject", "setUnread"]);

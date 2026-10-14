@@ -12,7 +12,7 @@ Start with the [project portal](docs/PORTAL.md), [installation guide](docs/INSTA
 
 Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bounded multi-Agent collaboration. Chats and Contacts organize conversations and reusable Bots; conversation-scoped workspaces provide access to local project files. Conversations, reviewed Memory, tool approvals and runtime recovery stay on the user's computer, with API, Claude Code or Codex CLI as the model source.
 
-> **Current Beta: [v0.3.0-beta.26](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.26).** Signed and notarized macOS Apple silicon installers are available on the release page. Existing official Beta installations can check for updates in **Settings → Version updates**. A signed public Windows installer is pending signing configuration. The source instructions below use the `beta` branch; local unsigned builds are not official releases. See the [changelog](CHANGELOG.md) for version history.
+> **Next Beta: v0.3.0-beta.27 — release validation in progress.** This source update adds persistent documents and text Skills. The latest published installer remains [v0.3.0-beta.26](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.26) until the new release passes its gates. Signed and notarized macOS Apple silicon installers use **Settings → Version updates**; a signed public Windows installer is pending signing configuration. Source instructions use the `beta` branch after promotion; local unsigned packages are not official releases. See the [changelog](CHANGELOG.md).
 
 > **Maintainer and project records:** Allen and GitHub CMSKL are the same person. Allen leads Aevoren Bot; AI performs development. The [personal project record](https://www.minimalstudio.cn/allen/projects/aevoren.html) documents this role statement, its fixed Beta version and the boundaries of the available evidence.
 
@@ -20,6 +20,8 @@ Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bo
 
 - Reliable streamed conversations backed by SQLite Transcript, Send Journal, stable nonces, idempotent retry, cancellation, and crash recovery.
 - Bounded text/code attachments, validated ingestion, and real Markdown/CSV deliverables collected in task details.
+- Persistent documents and text Skills with immutable revisions, scoped conversation bindings, Markdown editing and preview, search, import/export, version recovery and explicit enable/disable controls.
+- `/Skill` and `@` resource selection pin real resource IDs, revisions and digests. Adding a Skill prepares the current composer; sending starts the ordinary Runtime. Connected AI can use 38 new document/library/Skill operations, including `skills.load` and auxiliary text reads.
 - Independent chat state and Agent identities: recent conversations, global contacts, unread replies, and separate remove-chat, clear-history and delete-contact actions.
 - Discoverable product operations for settings, Bot/Room management, conversations, delegated tasks, Memory, MCP, Routines, providers, projects and updates through a shared validated host service.
 - Direct Bot chats and 2–6 member Rooms with explicit `@Bot`, automatic owner selection, bounded handoff, speaker identity, and loop suppression.
@@ -80,11 +82,17 @@ Open **Chats** to resume direct or group conversations and **Contacts** to messa
 
 ## Connected AI capabilities
 
-Connected models can discover product actions with `product_catalog`, inspect their inputs with `product_describe`, and invoke them with `product_execute`. Actions cover settings, Bot and group creation and management, messages to other Bots, task results, Memory, Routines, workspace permissions, MCP configuration, model connections and updates. Scoped view actions also support navigation, search, drafts and task details. See [AI product operations](docs/AI_PRODUCT_OPERATIONS.md) for scope, provider validation and limitations.
+Connected models can discover product actions with `product_catalog`, inspect their inputs with `product_describe`, and invoke them with `product_execute`. Actions cover settings, Bot and group creation and management, messages to other Bots, task results, Memory, Routines, workspace permissions, MCP configuration, model connections, updates, persistent documents and text Skills. Scoped view actions also support navigation, search, drafts and task details. See [AI product operations](docs/AI_PRODUCT_OPERATIONS.md) for scope, provider validation and limitations.
 
 AI actions use the same host validation and permission rules as the interface. Bot and group creation can continue after a clarification reply and still require real user approval. Results report actual execution or waiting states; model text alone does not prove success.
 
-The current Beta does not provide Skill discovery, installation or execution, browser tab/login/click control, or general desktop control. Public web search and page reading return text; scoped view actions operate Aevoren's own interface.
+Text Skills can now be created, imported, discovered and loaded into authorized conversations. Imported `SKILL.md`, references, scripts and assets remain application-owned after their source directory moves; scripts are stored but never executed. `skills.readFile` reads allowed auxiliary text and reports binary metadata without granting tools or providing image understanding. Docker environments, browser tab/login/click control, general desktop control, native Gmail/Drive/Notion connectors and voice remain later implementation stages. Public web search and page reading return text; scoped view actions operate Aevoren's own interface.
+
+## Documents and text Skills
+
+Open **Contacts → Library / Skill** for a Bot's private MAIN conversation, or **Group settings → Library / Skill** for that group's session. Create or import a resource, then use **Add to current conversation** when sharing an existing resource. Joining a group does not share a Bot's private library. **Remove from current conversation** revokes only that binding; **Delete resource** affects all bound conversations and retains recoverable versions.
+
+Choose `/Skill` or the `@` **Documents / Skill** group in the composer. The selected revision remains fixed in the message, idempotency journal and member retry; editing the shared resource creates a new revision for later use. Unsaved edits require save, discard or continued editing before leaving. Version conflicts retain the local draft and offer a latest-version review. See the [user guide](docs/USER_GUIDE.md#documents-and-text-skills) for imports, limits and AI loading.
 
 ## Security model
 
@@ -122,7 +130,7 @@ For Windows x64 source validation, use `pnpm package:win`. This creates an unsig
 
 ## Data and privacy
 
-Application data is stored locally in Electron's user-data directory. Aevoren Bot stores Bots, Rooms, transcripts, explicit Memory, settings, Tool Journal metadata, and Routine history in SQLite. Secret values are stored separately through `safeStorage`.
+Application data is stored locally in Electron's user-data directory. Aevoren Bot stores Bots, Rooms, transcripts, explicit Memory, settings, Tool Journal metadata, Routine history, document/Skill revisions and conversation bindings in SQLite. Imported resource bytes live in application-owned content-addressed storage with verified digests. Secret values are stored separately through `safeStorage`.
 
 Models and enabled external services receive only the context and tool inputs required for the user's request. Aevoren Bot does not provide cloud sync, multi-user accounts, billing, remote desktop, unrestricted shell, arbitrary file overwrite/delete, unreviewed automatic Memory writes, or write-capable MCP tools in the current release line. Workspace writes are limited to new UTF-8 Markdown/CSV files in explicitly writable roots. Users can also export a completed reply through the system save dialog.
 

@@ -68,6 +68,15 @@ jobs:
           if ((git diff --name-only -- THIRD_PARTY_NOTICES.md).Length -ne 0) { throw "THIRD_PARTY_NOTICES.md is stale" }
       - name: Build signed Windows installer
         run: pnpm release:win
+      - name: Validate library and Skills in the signed Windows app
+        shell: pwsh
+        env:
+          AEVOREN_BOT_TEST_HIDDEN: "1"
+        run: |
+          $env:AEVOREN_PACKAGED_APP_PATH = Join-Path $PWD "dist/win-unpacked/Aevoren Bot.exe"
+          if (!(Test-Path $env:AEVOREN_PACKAGED_APP_PATH)) { throw "Missing signed Windows app" }
+          pnpm exec playwright test tests/smoke/library.spec.ts
+          if ($LASTEXITCODE -ne 0) { throw "Signed Windows library acceptance failed" }
       - name: Verify Windows release assets and generate checksums
         run: pnpm release:prepare:win
       - run: pnpm sbom:generate

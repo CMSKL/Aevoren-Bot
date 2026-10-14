@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "./bot-avatar";
+import { resourceReferencesSchema } from "./library-schemas";
 
 const nonEmptyText = z.string().trim().min(1).max(20_000);
 const providerInstanceIdSchema = z.string().trim().min(1).max(120).regex(/^[a-z0-9][a-z0-9._-]*$/i);
@@ -281,6 +282,7 @@ export const sendCommandSchema = z.object({
   clientNonce: nonceSchema,
   text: nonEmptyText,
   attachments: messageAttachmentsSchema.optional(),
+  resourceRefs: resourceReferencesSchema.optional(),
 });
 
 const roomMemberIdsSchema = z.array(botIdSchema).min(2).max(6).refine(

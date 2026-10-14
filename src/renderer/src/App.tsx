@@ -34,7 +34,8 @@ import type {
   UserProfile,
   Workspace,
 } from "@shared/contracts";
-import { Conversation } from "./components/Conversation";
+import { Conversation, type ConversationComposerDraft, type ConversationResourceInsertion } from "./components/Conversation";
+import type { ResourceReference } from "@shared/library-contracts";
 import { ContactDetail, type ContactDetailHandle } from "./components/ContactDetail";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NewBotChooser } from "./components/NewBotChooser";
@@ -82,6 +83,23 @@ export function App(): React.JSX.Element {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [sidebarTab, setSidebarTab] = useState<"chats" | "contacts" | "workspace">("chats");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  const [contactLibraryScope, setContactLibraryScope] = useState<{ botId: string; sessionId: string } | null>(null);
+  const [resourceInsertion, setResourceInsertion] = useState<ConversationResourceInsertion | null>(null);
+  const composerDraftsRef = useRef(new Map<string, ConversationComposerDraft>());
+  const resourceUseRequestRef = useRef(0);
+  const selectedContactIdRef = useRef(selectedContactId);
+  useEffect(() => { selectedContactIdRef.current = selectedContactId; }, [selectedContactId]);
+  useEffect(() => {
+    let cancelled = false;
+    if (selectedContactId) void window.aevorenBot.sessions.getMain(selectedContactId).then(result => {
+      if (cancelled) return;
+      if (result.ok) setContactLibraryScope({ botId: selectedContactId, sessionId: result.data.id });
+      else setCloseNotice(result.error.safeMessage);
+    }).catch(() => { if (!cancelled) setCloseNotice("暂时无法读取当前 Bot 的私聊资源范围，请重新选择联系人。"); });
+    return () => { cancelled = true; };
+  }, [selectedContactId]);
+  const rememberComposerDraft = useCallback((sessionId: string, draft: ConversationComposerDraft): void => { composerDraftsRef.current.set(sessionId, draft); }, []);
+  const resourceInsertionHandled = useCallback((id: string): void => { setResourceInsertion(current => current?.id === id ? null : current); }, []);
   const [contactEditingRequested, setContactEditingRequested] = useState(0);
   const [clearTarget, setClearTarget] = useState<ConversationSummary | null>(null);
   const [clearingConversation, setClearingConversation] = useState(false);
@@ -1196,12 +1214,13 @@ export function App(): React.JSX.Element {
     return true;
   }
 
-  async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone", attachments: AttachmentDraft[] = []): Promise<boolean> {
+  async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone", attachments: AttachmentDraft[] = [], resourceRefs: ResourceReference[] = []): Promise<boolean> {
     if (!session || submitting) return false;
     setSubmitting(true);
     setError(null);
     setCloseNotice(null);
     const clientNonce = crypto.randomUUID();
+    const submittedDraft = composerDraftsRef.current.get(session.id);
     const result = selectedRoom
       ? await window.aevorenBot.roomRuntime.send({
           roomId: selectedRoom.room.id,
@@ -1209,17 +1228,40 @@ export function App(): React.JSX.Element {
           clientNonce,
           text,
           attachments,
+          resourceRefs,
           targetBotIds: targetBotIds ?? [],
           routingMode: routingMode ?? "automatic",
         })
-      : await window.aevorenBot.messages.send({ sessionId: session.id, clientNonce, text, attachments });
+      : await window.aevorenBot.messages.send({ sessionId: session.id, clientNonce, text, attachments, resourceRefs });
     setSubmitting(false);
     if (!result.ok) {
       if (selectedRoom) setError(result.error);
       else reportDirectError(result.error, session.id, clientNonce);
       return false;
     }
+    if (composerDraftsRef.current.get(session.id) === submittedDraft) composerDraftsRef.current.delete(session.id);
     return true;
+  }
+
+  async function prepareLibraryResource(reference: ResourceReference, text: string | undefined, expectedSessionId: string, target: { bot: Bot } | { room: Room }): Promise<void> {
+    const request = ++resourceUseRequestRef.current;
+    const originalOpenRequest = openRequestRef.current;
+    try {
+    if (!(await flushActive())) return;
+    const stillCurrent = (): boolean => request === resourceUseRequestRef.current && originalOpenRequest === openRequestRef.current
+      && ("bot" in target ? selectedContactIdRef.current === target.bot.id : selectedRoomIdRef.current === target.room.id);
+    if (!stillCurrent()) return;
+    const result = await window.aevorenBot.library.read({ sessionId: expectedSessionId, id: reference.resourceId, revisionId: reference.revisionId });
+    if (!stillCurrent()) return;
+    if (!result.ok || result.data.reference.digest !== reference.digest) { setCloseNotice(result.ok ? "引用的固定版本不匹配，请重新选择资源。" : result.error.safeMessage); return; }
+    if (sessionIdRef.current !== expectedSessionId) {
+      const opened = "bot" in target ? await openBot(target.bot, false, true) : (await openRoom(target.room, false, true)).status === "opened";
+      if (!opened || request !== resourceUseRequestRef.current) return;
+    }
+    if (sessionIdRef.current !== expectedSessionId) return;
+    setResourceInsertion({ id: crypto.randomUUID(), sessionId: expectedSessionId, reference, ...(text ? { text } : {}) });
+    setSettingsOpen(false); setSidebarTab("chats"); setMobilePanel(null); setCloseNotice(null);
+    } catch { if (request === resourceUseRequestRef.current) setCloseNotice("无法准备资源引用，草稿仍然保留，请重试。"); }
   }
 
   async function hideConversations(input: ConversationBatchDeleteInput): Promise<boolean> {
@@ -1537,6 +1579,8 @@ export function App(): React.JSX.Element {
         busy={loading || creatingBot}
         workspaceIds={conversations.find((conversation) => conversation.botId === selectedContact?.id)?.workspaceIds ?? []}
         editingRequested={contactEditingRequested}
+        librarySessionId={selectedContact && contactLibraryScope?.botId === selectedContact.id ? contactLibraryScope.sessionId : undefined}
+        onUseResource={(reference, text) => { if (selectedContact && contactLibraryScope?.botId === selectedContact.id) void prepareLibraryResource(reference, text, contactLibraryScope.sessionId, { bot: selectedContact }); }}
         onBotUpdated={updateBot}
         onOpenBots={() => setMobilePanel("bots")}
         onSend={async (bot) => {
@@ -1552,7 +1596,11 @@ export function App(): React.JSX.Element {
       <Conversation
         sessionId={session?.id}
         userProfile={userProfile}
-        key={selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
+        key={session?.id ?? selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
+        initialDraft={session ? composerDraftsRef.current.get(session.id) : undefined}
+        onDraftChange={rememberComposerDraft}
+        resourceInsertion={resourceInsertion}
+        onResourceInsertionHandled={resourceInsertionHandled}
         bot={selectedBot}
         room={selectedRoom}
         roomBatches={roomBatches}
@@ -1681,6 +1729,7 @@ export function App(): React.JSX.Element {
           onError={setRoomSettingsError}
           onOpenBot={(bot) => void editBot(bot)}
           onMobileClose={() => void closeInspector()}
+          onUseResource={(reference, text) => { void prepareLibraryResource(reference, text, selectedRoom.session.id, { room: selectedRoom.room }); }}
         />
         </div>
       ) : null}

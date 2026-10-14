@@ -85,6 +85,9 @@ import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "@shared/bot-avatar";
 import { normalizeBotAvatarColor, normalizeBotAvatarShape } from "@shared/bot-avatar";
 import { messageAttachmentsSchema, toolInvocationCommandSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
+import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
+import { resourceReferencesSchema } from "@shared/library-schemas";
+import type { ResourceReference } from "@shared/library-contracts";
 import { containsLikelySecret } from "./memory-safety";
 
 const ACTIVE_RUNTIME_STATES: readonly RuntimeState[] = [
@@ -2058,6 +2061,7 @@ export const MIGRATIONS = [
         WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested');
     `,
   },
+  RESOURCE_LIBRARY_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -2203,6 +2207,7 @@ type TranscriptRow = {
   role: TranscriptRole;
   body: string;
   attachments_json?: string;
+  resource_references_json?: string;
   origin_json?: string | null;
   status: TranscriptStatus;
   send_state?: SendState | null;
@@ -2651,6 +2656,8 @@ function toSession(row: SessionRow): Session {
 
 function toTranscript(row: TranscriptRow): TranscriptEntry {
   return {
+    ...(row.resource_references_json && row.resource_references_json !== "[]"
+      ? { resourceRefs: resourceReferencesSchema.parse(JSON.parse(row.resource_references_json)) } : {}),
     ...(row.origin_json ? { origin: JSON.parse(row.origin_json) as import("@shared/contracts").DelegationOrigin } : {}),
     id: row.id,
     sessionId: row.session_id,
@@ -3010,12 +3017,13 @@ function toRuntime(row: RuntimeRow): RuntimeRun {
   };
 }
 
-export function digestMessage(text: string, attachments: readonly MessageAttachment[] = []): string {
-  if (attachments.length === 0) return createHash("sha256").update(text, "utf8").digest("hex");
+export function digestMessage(text: string, attachments: readonly MessageAttachment[] = [], resourceRefs: readonly ResourceReference[] = []): string {
+  if (attachments.length === 0 && resourceRefs.length === 0) return createHash("sha256").update(text, "utf8").digest("hex");
   return createHash("sha256")
     .update(JSON.stringify({
       text,
       attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
+      ...(resourceRefs.length ? { resourceRefs } : {}),
     }), "utf8")
     .digest("hex");
 }
@@ -3150,6 +3158,7 @@ export function digestRoomCommand(
   targetBotIds: string[],
   routingMode: RoomRoutingMode = "legacy",
   attachments: readonly MessageAttachment[] = [],
+  resourceRefs: readonly ResourceReference[] = [],
 ): string {
   const command = attachments.length === 0
     ? { roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() }
@@ -3160,7 +3169,8 @@ export function digestRoomCommand(
         targetBotIds: targetBotIds.toSorted(),
         attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
       };
-  return digestMessage(JSON.stringify(routingMode === "legacy" ? command : { ...command, routingMode }));
+  const scopedCommand = resourceRefs.length ? { ...command, resourceRefs } : command;
+  return digestMessage(JSON.stringify(routingMode === "legacy" ? scopedCommand : { ...scopedCommand, routingMode }));
 }
 
 export function digestHandoff(task: string, contextRefs: string[]): string {
@@ -3219,6 +3229,7 @@ const ROOM_SELECT = `SELECT rooms.*, ${CONVERSATION_SIDEBAR_COLUMNS} FROM rooms
 
 export class AppRepository {
   private readonly database: DatabaseSync;
+  readonly library: LibraryRepository;
 
   constructor(private readonly filename: string, private readonly options: AppRepositoryOptions = {}) {
     this.database = new DatabaseSync(filename);
@@ -3226,6 +3237,12 @@ export class AppRepository {
       this.database.exec("PRAGMA foreign_keys = ON;");
       if (filename !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL;");
       this.migrate();
+      this.library = new LibraryRepository(this.database, (sessionId, executorBotId) => {
+        const session = this.getSession(sessionId);
+        if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
+        else if (session.botId) this.getBot(session.botId);
+        else if (session.roomId) this.getRoom(session.roomId);
+      });
     } catch (error) {
       this.database.close();
       throw error;
@@ -5561,7 +5578,8 @@ export class AppRepository {
   prepareMessage(command: SendCommand, origin?: import("@shared/contracts").DelegationOrigin): { disposition: "prepared" | "duplicate"; journal: SendJournalEntry } {
     const attachments = normalizeAttachmentDrafts(command.attachments);
     const attachmentMetadata = attachments.map(({ content: _content, ...attachment }) => attachment);
-    const digest = digestMessage(command.text, attachmentMetadata);
+    const resourceRefs = resourceReferencesSchema.parse(command.resourceRefs ?? []);
+    const digest = digestMessage(command.text, attachmentMetadata, resourceRefs);
     const existing = this.getSend(command.clientNonce);
     if (existing) {
       if (existing.bodyDigest !== digest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
@@ -5569,6 +5587,7 @@ export class AppRepository {
     }
     if (this.getActiveRuntimeRun(command.sessionId)) throw new AevorenBotError("SESSION_BUSY");
     const session = this.getSession(command.sessionId);
+    this.library.assertReferences(session.id, resourceRefs, session.botId ?? undefined);
     const timestamp = now();
     const userEntryId = randomUUID();
     this.transaction(() => {
@@ -5590,6 +5609,7 @@ export class AppRepository {
         )
         .run(userEntryId, session.id, session.generation, sequence, command.clientNonce, command.text, JSON.stringify(attachmentMetadata), updatedSeq, timestamp, timestamp);
       this.insertMessageAttachments(userEntryId, command.clientNonce, attachments);
+      if (resourceRefs.length) this.database.prepare("UPDATE transcript_entries SET resource_references_json = ? WHERE id = ?").run(JSON.stringify(resourceRefs), userEntryId);
       if (origin) this.recordDelegationOrigin(command.clientNonce, origin);
     });
     return { disposition: "prepared", journal: this.getSendOrThrow(command.clientNonce) };
@@ -5722,7 +5742,8 @@ export class AppRepository {
     ) {
       throw new AevorenBotError("INVALID_REQUEST");
     }
-    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode, attachmentMetadata);
+    const resourceRefs = resourceReferencesSchema.parse(input.resourceRefs ?? []);
+    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode, attachmentMetadata, resourceRefs);
     const targetDigest = digestMessage(JSON.stringify(canonicalTargetIds));
     const existingJournal = this.getSend(input.clientNonce);
     if (existingJournal) {
@@ -5760,6 +5781,7 @@ export class AppRepository {
     if (room.archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     const session = this.getSession(input.sessionId);
     if (session.roomId !== room.id) throw new AevorenBotError("SESSION_NOT_FOUND");
+    this.library.assertReferences(session.id, resourceRefs);
     if (input.membershipVersion !== undefined && room.membershipVersion !== input.membershipVersion) {
       throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
     }
@@ -5805,6 +5827,7 @@ export class AppRepository {
           timestamp,
         );
       this.insertMessageAttachments(triggerMessageId, input.clientNonce, attachments);
+      if (resourceRefs.length) this.database.prepare("UPDATE transcript_entries SET resource_references_json = ? WHERE id = ?").run(JSON.stringify(resourceRefs), triggerMessageId);
       if (input.origin) this.recordDelegationOrigin(input.clientNonce, input.origin);
       this.database
         .prepare(

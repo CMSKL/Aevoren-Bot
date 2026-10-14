@@ -2,7 +2,7 @@
 
 Aevoren 要补齐的主要能力是资料库与 Skill、可执行的电脑与浏览器、语音、可写应用连接，以及跨资源搜索和分享。现有 Bot、群聊、Memory、审批、执行记录、Routine 和自动更新可以继续复用。新增功能应同时提供界面入口和 AI 产品操作，进入现有任务取消、恢复和结果验证链。
 
-本次对照以 Grok Bot 0.68.1 的本机发行安装包和 Aevoren 0.3.0-beta.26 源码为基线，日期为 2026-10-13。按当前要求，产品登录、注册暂不实施。下文的借鉴项是实施规划，尚未交付的新能力不能显示为可用。
+本次对照以 Grok Bot 0.68.1 的本机发行安装包和 Aevoren 0.3.0-beta.26 源码为基线，日期为 2026-10-13。按当前要求，产品登录、注册暂不实施。静态逆向证据仍以该版本为准；下表 Aevoren 状态已补充 v0.3.0-beta.27 阶段 1 的实现进度，该候选版本正在验收、尚未发布。尚未交付的新能力不能显示为可用。
 
 ## 证据范围
 
@@ -33,10 +33,10 @@ REA 对安装包做了静态分析和只读提取。清单包含 595 个相关�
 
 | 功能 | Grok Bot 客户端证据 | Aevoren 当前状态 | 借鉴方式 |
 | --- | --- | --- | --- |
-| 统一资料库 | listLibraryDocs/listLibraryPages 和 document/canvas 索引 | 无独立持久资料对象 | 增加资料对象、归属、版本、索引状态及 Bot/群引用 |
-| 可编辑文档 | Tiptap 编辑器与 saveDocument 实际保存链 | 有 Markdown/CSV 成果；无持续编辑文档 | 增加文档编辑、版本校验、保存状态和真实内容读取 |
-| 群文档与 Canvas | 群文档/Canvas 读取及产物定位；完整协作画布未验证 | 有群任务成果，没有共享文档/画布对象 | 先共享文档与成果引用；画布单独实施和验收 |
-| 团队 Bot 的 Files 资料页 | 文件导入实际转成 Bot skill 文本条目 | 仅消息附件、Workspace 文本与 Memory | 将文本资料和 Skill 关联，但保持文档与记忆各自的语义 |
+| 统一资料库 | listLibraryDocs/listLibraryPages 和 document/canvas 索引 | 阶段 1 已实现持久文档、正文检索、不可变版本和显式会话绑定；v0.3.0-beta.27 待发布 | 复用已实现的资料对象；跨资源全文搜索和 Canvas 后续实施 |
+| 可编辑文档 | Tiptap 编辑器与 saveDocument 实际保存链 | 已实现 Markdown 编辑/安全预览、expectedVersion 冲突保留草稿、版本恢复与导出 | 富文本及多格式预览后续实施，不替代当前真实版本链 |
+| 群文档与 Canvas | 群文档/Canvas 读取及产物定位；完整协作画布未验证 | 已实现按群会话绑定文档和固定版本引用；没有 Canvas | 保留群资料边界与已有成果；画布单独实施和验收 |
+| 团队 Bot 的 Files 资料页 | 文件导入实际转成 Bot skill 文本条目 | 私聊/群资料库与文本 Skill 已分别实现，独立于 Memory 和消息附件 | 保持资料、Skill 和记忆语义；多媒体资料后续实施 |
 | 多类型附件、上传与下载 | staging、字节读取、分块上传、下载及丢弃链 | 仅 UTF-8 文本/代码，最多六份，单份 1 MiB、总计 4 MiB | 建立媒体引用、临时存储、大小/MIME 校验和上传状态 |
 | 文件预览 | PDF、DOCX、图片、视频、音频、Markdown、HTML、JSON、表格和下载兜底 | 文本附件及 Markdown/CSV 成果 | 按类型增加只读预览；客户端能预览不等于模型能理解 |
 | 长期记忆 | 用户/Bot 记忆和团队提升消费者；服务端检索策略未知 | user/Bot/Workspace Memory、候选审核与恢复已有 | 复用已审核 Memory；资料上传不自动变成长期记忆 |
@@ -46,11 +46,11 @@ REA 对安装包做了静态分析和只读提取。清单包含 595 个相关�
 
 | 功能 | Grok Bot 客户端证据 | Aevoren 当前状态 | 借鉴方式 |
 | --- | --- | --- | --- |
-| 文本 Skill 创建、编辑、删除 | workflow store 和团队 Bot Skill CRUD 实际调用 | 缺少 Skill 对象、目录与加载链 | 增加名称、用途、正文、归属、版本和启停状态 |
-| 文件、目录和文本/URL 导入 | UTF-8 筛选、frontmatter、名称去重和 addSkills 链 | 未实现 | 支持可预览的文本 Skill 导入，保留来源与导入失败原因 |
-| 导入格式与资源 | 团队路径仅 txt/md/markdown/csv/json/yaml/yml；单条最多 256000 个 UTF-16 单元、最多 250 条；辅助文本各成条目 | 未实现 | 自行定义合理限制；不把文件夹读取误报为可执行技能包安装 |
-| 输入框 `/`、`@` 发现与选择 | 按 Skill 名称与显示标签搜索，说明作为副标题；选择后插入结构化 ID/label | 只有 Bot 提及和响应模式 | 增加 Skill 搜索、结构化引用及按需加载正文 |
-| 运行、插件同步与发布 | runAgentWorkflowNow、syncPluginSkills 及失败重试消费者 | 未实现 | 文本 Skill 发起有 runId 的真实任务；脚本执行依赖执行环境 |
+| 文本 Skill 创建、编辑、删除 | workflow store 和团队 Bot Skill CRUD 实际调用 | 已实现创建/编辑/软删除/恢复、启停、不可变版本和会话目录 | 脚本执行与示范技能仍需阶段 4 |
+| 文件、目录和文本/URL 导入 | UTF-8 筛选、frontmatter、名称去重和 addSkills 链 | 已实现文本创建、UTF-8 文件和 SKILL.md 目录导入；没有 URL 安装 | 显示导入失败/跳过原因；URL 安装另行实施和验收 |
+| 导入格式与资源 | 团队路径仅 txt/md/markdown/csv/json/yaml/yml；单条最多 256000 个 UTF-16 单元、最多 250 条；辅助文本各成条目 | 已实现应用拥有的 SKILL.md、references/scripts/assets 字节保存、摘要校验和可再次导入的导出 | 1 MiB 单文件、4 MiB 总量、250 文件；二进制只保存/返回元信息，脚本不执行 |
+| 输入框 `/`、`@` 发现与选择 | 按 Skill 名称与显示标签搜索，说明作为副标题；选择后插入结构化 ID/label | 已实现 `/Skill` 与 `@` 的 Bot/资料/Skill 分组，固定 ID/版本/digest 引用；资源不产生 Bot 路由 | 沿用原 Send；仅准备草稿，点击发送后才启动 Runtime |
+| 运行、插件同步与发布 | runAgentWorkflowNow、syncPluginSkills 及失败重试消费者 | 文本 Skill 经原 Send 启动任务；AI `skills.load/readFile` 可实际读取；没有插件发布/同步 | 插件同步、脚本执行和市场发布后续实施 |
 | 脚本型技能包 | wrapper 的 files 字段被当前主进程和 protobuf 丢弃；未证实脚本兼容 | 未实现，原生 skill_search 禁用 | 后续独立实现 manifest、资源和脚本执行；不靠解除 CLI 限制补齐 |
 | 录制示范 | armed/recording、开始、保存、丢弃和失败校正链 | 未实现 | 在电脑能力可用后增加示范录制；自动生成可执行技能另验收 |
 
@@ -121,9 +121,17 @@ REA 对安装包做了静态分析和只读提取。清单包含 595 个相关�
 | 5 多模态与语音 | 图片/PDF/音视频引用和预览、STT、TTS，再实时 VoiceSession | 来源能力实际匹配；转写不覆盖并发草稿；取消停止采集/播放/任务；断线不伪造成功；不同 Bot 不串语音会话 |
 | 6 自动化与分享 | 全资源搜索、任务线程、事件/Webhook、群 Routine、模板与会话导出、可选自托管分享/渠道 | 搜索能定位原内容；事件幂等且可停；导出可独立打开且仅包含选择范围；远程分享可撤销；后台任务状态能核验 |
 
-资料与文本 Skill 可先完成，不依赖建立云账号。电脑能力需要实际运行环境，推荐采用用户可控制的隔离 Linux 环境或自托管服务；具体适配器应在开发前依据可用运行时确定。普通进程的工作目录不等于文件系统隔离。宿主本机命令、隔离环境命令和通用 OS GUI 操作应使用不同权限与适配器。
+资料与文本 Skill 已完成阶段 1 实现，正在进行隐藏 Electron、安装包与发布验收，不依赖建立云账号。电脑能力需要实际运行环境，推荐采用用户可控制的隔离 Linux 环境或自托管服务；具体适配器应在开发前依据可用运行时确定。普通进程的工作目录不等于文件系统隔离。宿主本机命令、隔离环境命令和通用 OS GUI 操作应使用不同权限与适配器。
 
 最小资源关系为 `Environment → ExecutionSession → BackgroundProcess / BrowserSession / ComputerView`，任务身份仍使用已有 `Runtime runId / Room batchId / member turnId`。共享环境不自动共享资料范围、浏览器 profile、连接器授权、进程或预览端口。新的业务操作接入 [产品操作服务](../src/main/product-operation-service.ts) 与 [产品目录](../src/shared/product-operations.ts)，继续由界面和 AI 共用处理函数。
+
+## 阶段 1 实施记录
+
+目标版本为 **v0.3.0-beta.27，待发布**。本次增加 38 个 `library.*`、`documents.*`、`skills.*` 操作，界面与接入 AI 共用宿主处理与权限校验；`skills.load` 和 `skills.readFile` 是实际读取工具。模型加载文本指令与辅助文件不等于脚本执行，也不扩大工具权限。
+
+SQLite 保存资源、不可变版本和会话绑定，导入文件保存为应用拥有的内容寻址字节。消息、幂等摘要、群路由和 PromptManifest 使用固定引用；修改资料产生新版本，成员重试保留原版。移出只撤销当前会话；删除影响所有已绑定会话且可恢复。私聊资料不会因 Bot 入群被共享。
+
+完整单元测试已通过 **1,195 项，跳过 3 项**。隐藏 Electron 验收在沙箱 Preload 通道修复后重跑，结果、安装包、CI 和签名发布证据待补充到 [实施记录](IMPLEMENTATION_PLAN.md)。该阶段没有实现 Docker、浏览器/电脑、脚本技能执行、Gmail/Drive/Notion 内置连接或语音。
 
 ## 主要实现入口
 

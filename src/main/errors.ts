@@ -10,6 +10,16 @@ type ErrorDescriptor = {
 
 export const ERROR_REGISTRY = {
   INVALID_REQUEST: { domain: "validation", retryable: false, safeMessage: "请求参数不符合要求。", allowedDetailKeys: [] },
+  LIBRARY_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这份资料或 Skill。", allowedDetailKeys: [] },
+  LIBRARY_NOT_BOUND: { domain: "security", retryable: false, safeMessage: "这份资源未授权给当前会话。", allowedDetailKeys: [] },
+  LIBRARY_DISABLED: { domain: "tool", retryable: false, safeMessage: "这份资料或 Skill 已停用，无法继续读取。", allowedDetailKeys: [] },
+  LIBRARY_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "资源已在别处更新，当前草稿未覆盖新版本。", allowedDetailKeys: ["currentVersion"] },
+  LIBRARY_REFERENCE_INVALID: { domain: "security", retryable: false, safeMessage: "资源引用与已保存的版本不一致。", allowedDetailKeys: [] },
+  LIBRARY_IMPORT_INVALID: { domain: "validation", retryable: false, safeMessage: "无法导入这份资源，请检查格式、编码和 Skill 元信息。", allowedDetailKeys: [] },
+  LIBRARY_IMPORT_TOO_LARGE: { domain: "validation", retryable: false, safeMessage: "导入资源超过容量限制，请减少文件或分批导入。", allowedDetailKeys: [] },
+  LIBRARY_FILE_INVALID: { domain: "security", retryable: false, safeMessage: "资源文件未通过路径或内容校验，读取已停止。", allowedDetailKeys: [] },
+  LIBRARY_FILE_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这个版本中的资源文件。", allowedDetailKeys: [] },
+  LIBRARY_EXPORT_CONFLICT: { domain: "storage", retryable: true, safeMessage: "导出目标已存在，请选择新文件或文件夹。", allowedDetailKeys: [] },
   BOT_NOT_FOUND: { domain: "bot", retryable: false, safeMessage: "没有找到这个 Bot。", allowedDetailKeys: [] },
   BOT_VERSION_CONFLICT: { domain: "bot", retryable: true, safeMessage: "Bot 已在别处更新，请重新确认后再保存。", allowedDetailKeys: ["currentVersion"] },
   BOT_BUSY: { domain: "bot", retryable: true, safeMessage: "该 Bot 正在运行，暂时不能删除。", allowedDetailKeys: [] },

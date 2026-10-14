@@ -373,6 +373,10 @@ export class RuntimeExecutor {
     if (input.room?.leadBotId && !toolsAllowed) this.assertLeadAvailable(input.room.leadBotId, modelSelection);
     this.repository.assertSessionExecutor(session.id, bot.id);
     const availableCapabilities = this.capabilitySnapshots?.forPrompt(bot.id, modelSelection, Boolean(input.room), session.id);
+    const resourceContents = turnPurpose === "summary" ? [] : this.repository.library.resolveReferences(session.id, user.resourceRefs ?? [], bot.id);
+    const promptEntries = this.repository.listPromptEntries(session.id, promptCutoffSeq)
+      .filter((entry) => user.origin?.kind !== "ai-delegation" || entry.clientNonce === input.clientNonce || entry.seq >= user.seq)
+      .map((entry) => entry.id === user.id && resourceContents.length ? { ...entry, resourceContents } : entry);
     const capabilitySnapshot = availableCapabilities && !toolsAllowed
       ? { ...availableCapabilities, availableTools: [], capabilities: availableCapabilities.capabilities.map((capability) => ({
           ...capability, availability: "unavailable" as const, reason: "当前回合仅协调或汇总，不执行工具。",
@@ -381,7 +385,7 @@ export class RuntimeExecutor {
     const prompt = buildPrompt(
       bot,
       session,
-      user.origin?.kind === "ai-delegation" ? this.repository.listPromptEntries(session.id, promptCutoffSeq).filter((entry) => entry.clientNonce === input.clientNonce || entry.seq >= user.seq) : this.repository.listPromptEntries(session.id, promptCutoffSeq),
+      promptEntries,
       inputSeq,
       input.room
           ? {

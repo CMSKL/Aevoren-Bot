@@ -1,8 +1,33 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
+import { LIBRARY_CHANNELS } from "@shared/library-channels";
+import type { LibraryChangedEvent } from "@shared/library-contracts";
 import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
 
 const api: AevorenBotApi = {
+  library: {
+    list: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.list, input),
+    available: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.available, input),
+    read: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.read, input),
+    create: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.create, input),
+    importText: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.importText, input),
+    update: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.update, input),
+    setEnabled: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.setEnabled, input),
+    delete: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.delete, input),
+    restore: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.restore, input),
+    versions: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.versions, input),
+    restoreVersion: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.restoreVersion, input),
+    bind: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.bind, input),
+    unbind: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.unbind, input),
+    pickImport: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.pickImport, input),
+    importPath: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.importPath, input),
+    export: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.export, input),
+    onChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: LibraryChangedEvent): void => listener(value);
+      ipcRenderer.on(IPC.libraryEvent, handler);
+      return () => ipcRenderer.removeListener(IPC.libraryEvent, handler);
+    },
+  },
   userProfile: {
     get: () => ipcRenderer.invoke(IPC.userProfileGet),
     update: (input) => ipcRenderer.invoke(IPC.userProfileUpdate, input),
