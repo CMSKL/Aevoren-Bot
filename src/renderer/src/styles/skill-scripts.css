@@ -1,0 +1,20 @@
+.skill-scripts { min-width: 0; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.skill-scripts > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.skill-scripts h4 { margin: 0; font-size: 14px; }
+.skill-script-code, .skill-script-grants { margin: 12px 0; font-size: 12px; }
+.skill-script-code summary, .skill-script-grants summary { cursor: pointer; }
+.skill-script-code pre { max-height: 320px; overflow: auto; padding: 12px; border-radius: 6px; background: var(--surface-soft); white-space: pre; }
+.skill-script-confirm pre, .skill-script-review pre { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.skill-script-run-fields { display: flex; flex-wrap: wrap; gap: 10px; }
+.skill-script-run-fields > label { min-width: 0; flex: 1 1 130px; }
+.skill-script-grant { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.skill-script-grant > span { flex: 1 1 150px; min-width: 0; overflow-wrap: anywhere; }
+.skill-script-grant small { display: block; margin-top: 4px; color: var(--text-muted); font-size: 11px; }
+.skill-script-result { margin-top: 12px; font-size: 13px; }
+.skill-script-review { min-width: 0; margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.skill-script-review h3 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.skill-script-review p { color: var(--text-muted); font-size: 12px; }
+.skill-script-review dl { display: grid; grid-template-columns: minmax(0, 76px) minmax(0, 1fr); gap: 8px; margin: 0; font-size: 12px; }
+.skill-script-review dt { color: var(--text-muted); }
+.skill-script-review dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.skill-script-review dd pre { margin: 0; }

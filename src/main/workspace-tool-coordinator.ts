@@ -28,6 +28,7 @@ type Waiter = {
 type ToolExecutor = {
   productRequestPreview?(tool: import("@shared/contracts").ProductToolRequest): string;
   productRequestRequiresApproval?(tool: import("@shared/contracts").ProductToolRequest): boolean;
+  productRequestApprovalReview?(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined;
   validateProductRequest?(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): void;
   execute(id: string, signal?: AbortSignal): Promise<{ invocation: ToolApprovalResult["invocation"]; content: string; images?: import("./model-image").ModelImageAttachment[] }>;
 };
@@ -60,7 +61,8 @@ export class WorkspaceToolCoordinator {
       toolCallId,
       idempotencyKey: randomUUID(),
       tool,
-    }, undefined, tool.kind === "product-call" ? this.executor.productRequestPreview?.(tool) : undefined);
+    }, undefined, tool.kind === "product-call" ? this.executor.productRequestPreview?.(tool) : undefined,
+    tool.kind === "product-call" ? this.executor.productRequestApprovalReview?.(tool, runtimeRunId) : undefined);
     if (["bot-create", "room-create"].includes(prepared.invocation.toolKind) && prepared.invocation.state === "succeeded") {
       return Promise.resolve({ toolCallId, tool, content: this.repository.projectCreationResult(prepared.invocation.id).content });
     }

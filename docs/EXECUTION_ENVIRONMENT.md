@@ -34,7 +34,7 @@ Deleting a Bot or group stops/removes its affected containers and removes associ
 
 Writes create a new file by default. To replace an existing file, first read it and provide that exact SHA-256 as `expectedSha256`; concurrent changes fail instead of being overwritten. This rule governs the file API. Approved shell commands can modify files inside their workspace and contact external services, so command side effects are not automatically reversible. Binary downloads retain actual bytes; AI file reads return binary metadata rather than interpreting base64 as text or images.
 
-To register a service port, select a running background process and enter its environment-local listening port. The Worker checks Linux listener ownership and actual connectivity before reporting `listening`; the record includes its check time. Ports are not automatically published to the host. Browser previews, HTTP service previews, screenshots, VNC and GUI control belong to Stage 3 and are not available here.
+To register a service port, select a running background process and enter its environment-local listening port. The Worker checks Linux listener ownership and actual connectivity before reporting `listening`; the record includes its check time. Ports are not automatically published to the host. Use [Browser and computer](BROWSER_COMPUTER.md) for previews tied to an actual registered service, screenshots and isolated desktop control.
 
 ## Connected AI operations
 
@@ -48,7 +48,7 @@ The same validated host service backs the interface and these 23 product operati
 
 Models discover them through `product_catalog → product_describe → product_execute`. The host supplies the current conversation and executing Bot and rejects a different scope. Mutations require genuine approval; tool declarations and loaded Skill instructions do not grant permission. Model-supplied Runtime identities or command nonces are rejected. The host derives stable command intent from the original message, executor and normalized arguments; retry reads an existing task rather than blindly launching it again.
 
-Saved text Skills still load instructions and auxiliary text. Stage 2 does not add a managed executable-Skill package runner. Browser sessions, screenshots/model image transport, desktop takeover, native Gmail/Drive/Notion and voice remain later stages.
+Saved text Skills load instructions and auxiliary text. The current development candidate adds the separate [script-Skill runner](SCRIPT_SKILLS.md), with exact revision/entry/image grants and approval of each run. Native Gmail/Drive/Notion and voice remain later deliveries.
 
 ## Storage and isolation
 
@@ -58,7 +58,7 @@ Host SQLite stores environment configuration, task state, logs and port registra
 
 ## Images and third-party licenses
 
-Worker and protocol versions are independent of the app version: Worker `1.0.0`, protocol `1`. The local image tag is `aevoren-execution-worker:1.0.0`. [The Dockerfile](../workers/execution/Dockerfile) pins the multi-architecture base:
+Worker and protocol versions are independent of the app version. The current script-Skill candidate builds Worker `1.2.0`, protocol `1`, with local image tag `aevoren-execution-worker:1.2.0`. Worker `1.1.0` introduced service previews; `1.0.0` provides the original execution interface. Existing environments retain their recorded version and require explicit rebuild for newer features. [The Dockerfile](../workers/execution/Dockerfile) pins the multi-architecture base:
 
 ```text
 node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20

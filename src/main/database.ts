@@ -88,6 +88,9 @@ import { AevorenBotError } from "./errors";
 import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
 import { EnvironmentRepository, ENVIRONMENT_MIGRATION } from "./environment-repository";
 import { BrowserRepository, BROWSER_MIGRATION } from "./browser-repository";
+import { SkillExecutionRepository, SKILL_EXECUTION_MIGRATION, approvalReviewDigest } from "./skill-execution-repository";
+import type { ApprovalReviewInput, ApprovalReviewResult, ApprovalReviewSnapshot } from "@shared/skill-execution-contracts";
+import { approvalReviewInputSchema, approvalReviewSnapshotSchema } from "@shared/skill-execution-schemas";
 import { resourceReferencesSchema } from "@shared/library-schemas";
 import type { ResourceReference } from "@shared/library-contracts";
 import { containsLikelySecret } from "./memory-safety";
@@ -2066,6 +2069,7 @@ export const MIGRATIONS = [
   RESOURCE_LIBRARY_MIGRATION,
   ENVIRONMENT_MIGRATION,
   BROWSER_MIGRATION,
+  SKILL_EXECUTION_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3236,6 +3240,7 @@ export class AppRepository {
   readonly library: LibraryRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
+  readonly skillExecutions: SkillExecutionRepository;
 
   constructor(private readonly filename: string, private readonly options: AppRepositoryOptions = {}) {
     this.database = new DatabaseSync(filename);
@@ -3251,6 +3256,8 @@ export class AppRepository {
       });
       this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.browsers = new BrowserRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.skillExecutions = new SkillExecutionRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId),
+        (scope, reference) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId)[0]!);
     } catch (error) {
       this.database.close();
       throw error;
@@ -4316,6 +4323,7 @@ export class AppRepository {
     input: ToolInvocationCommand,
     expiresAt = defaultApprovalExpiry(),
     displayTarget?: string,
+    reviewSnapshot?: ApprovalReviewSnapshot,
   ): ToolPrepareResult {
     const parsed = toolInvocationCommandSchema.parse(input) as ToolInvocationCommand;
     if (parsed.tool.kind === "product-call") parsed.tool = normalizeProductRequest(parsed.tool);
@@ -4325,6 +4333,18 @@ export class AppRepository {
       throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
     }
     const session = this.getSession(runtime.sessionId);
+    const review = reviewSnapshot === undefined ? undefined : approvalReviewSnapshotSchema.parse(reviewSnapshot);
+    if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "skills.runScript") {
+      if (!review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      const value = parsed.tool.input as { grantId: string; expectedGrantVersion: number; args: string[]; cwd: string; timeoutMs: number };
+      const { grant, content } = this.skillExecutions.assertGranted({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, value.grantId, value.expectedGrantVersion);
+      if (review.target.grantId !== grant.id || review.target.grantVersion !== grant.version || review.target.environmentId !== grant.environmentId ||
+          review.target.imageDigest !== grant.imageDigest || review.target.workerVersion !== grant.workerVersion ||
+          JSON.stringify(review.target.reference) !== JSON.stringify(grant.reference) || review.target.entryPath !== grant.entryPath ||
+          review.target.entrySha256 !== grant.entrySha256 || review.target.interpreter !== grant.interpreter ||
+          JSON.stringify(review.target.args) !== JSON.stringify(value.args) || review.target.cwd !== value.cwd || review.target.timeoutMs !== value.timeoutMs ||
+          review.resourceName !== content.revision.name || review.revisionNumber !== content.revision.number) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if (review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
     this.assertToolSessionScope({ sessionId: session.id, executorBotId: runtime.executorBotId,
       runtimeRunId: runtime.id, workspaceId: toolWorkspaceId(parsed.tool), toolKind: parsed.tool.kind });
     const commandDigest = digestMessage(canonicalToolCommand(parsed));
@@ -4355,7 +4375,7 @@ export class AppRepository {
     const approvalId = randomUUID();
     const timestamp = now();
     const argumentsJson = JSON.stringify(parsed.tool);
-    const targetDigest = toolTargetDigest(parsed.tool);
+    const targetDigest = review ? approvalReviewDigest(review) : toolTargetDigest(parsed.tool);
     const effectClass = toolEffectClass(parsed.tool);
     const workspaceId = toolWorkspaceId(parsed.tool);
     const targetPath = displayTarget?.slice(0, 2_048) ?? toolTargetPath(parsed.tool);
@@ -4412,12 +4432,34 @@ export class AppRepository {
           timestamp,
           timestamp,
         );
+      if (review) this.database.prepare("UPDATE approval_requests SET review_snapshot_json=? WHERE id=?").run(JSON.stringify(review), approvalId);
     });
     return {
       disposition: "prepared",
       invocation: this.getToolInvocation(invocationId),
       approval: this.getApprovalRequest(approvalId),
     };
+  }
+
+  getApprovalReview(input: ApprovalReviewInput): ApprovalReviewResult {
+    const parsed = approvalReviewInputSchema.parse(input);
+    this.assertSessionExecutor(parsed.sessionId, parsed.executorBotId);
+    const approval = this.getApprovalRequest(parsed.id);
+    if (approval.sessionId !== parsed.sessionId || approval.executorBotId !== parsed.executorBotId) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+    if (approval.version !== parsed.expectedVersion) throw new AevorenBotError("APPROVAL_VERSION_CONFLICT", undefined, undefined, { currentVersion: approval.version });
+    const row = this.database.prepare("SELECT review_snapshot_json FROM approval_requests WHERE id=?").get(approval.id) as { review_snapshot_json: string | null };
+    let snapshot: ApprovalReviewSnapshot | null = null;
+    try {
+      if (row.review_snapshot_json !== null) {
+        snapshot = approvalReviewSnapshotSchema.parse(JSON.parse(row.review_snapshot_json));
+        if (approvalReviewDigest(snapshot) !== approval.targetDigest) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      }
+    } catch { throw new AevorenBotError("APPROVAL_REVIEW_INVALID"); }
+    const invocation = this.getToolInvocation(approval.toolInvocationId), runtime = this.getRuntimeRun(approval.runtimeRunId);
+    const reason = approval.state !== "pending" || invocation.state !== "awaiting-approval" ? "这项审批已经处理。"
+      : Date.parse(approval.expiresAt) <= Date.now() ? "这项审批已经过期。"
+      : !["running", "streaming"].includes(runtime.state) ? "原任务已经结束，不能再批准执行。" : undefined;
+    return { snapshot, executable: !reason, ...(reason ? { reason } : {}) };
   }
 
   getToolInvocation(id: string): ToolInvocation {

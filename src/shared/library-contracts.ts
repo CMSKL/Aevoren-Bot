@@ -76,6 +76,7 @@ export type LibraryExportResult = { resourceId: string; revisionId: string; path
 export type LibraryChangedEvent = { sessionId: string; resourceId: string; action: "created" | "updated" | "enabled" | "deleted" | "restored" | "bound" | "unbound" };
 
 export type LibraryApi = {
+  readFile(input: { sessionId: string; id: string; revisionId: string; path: string }): Promise<ApiResult<ResourceFileRef & { encoding: "utf8" | "base64"; data: string }>>;
   list(input: LibraryListInput): Promise<ApiResult<LibraryResource[]>>;
   available(input?: LibraryAvailableInput): Promise<ApiResult<LibraryResource[]>>;
   read(input: LibraryReadInput): Promise<ApiResult<LibraryContent>>;

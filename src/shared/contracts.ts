@@ -3,6 +3,7 @@ import type { BotAvatarColor, BotAvatarShape } from "./bot-avatar";
 export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
 
 import type { LibraryApi, LibraryContent, ResourceReference } from "./library-contracts";
+import type { ApprovalReviewInput, ApprovalReviewResult, SkillExecutionApi } from "./skill-execution-contracts";
 export type { LibraryResource, LibraryContent, ResourceRevision, ResourceReference, MediaRef } from "./library-contracts";
 
 export type Bot = {
@@ -1248,6 +1249,7 @@ export interface AevorenBotApi {
   execution: import("./environment-contracts").ExecutionApi;
   processes: import("./environment-contracts").ProcessesApi;
   library: LibraryApi;
+  skillsExecution: SkillExecutionApi;
   userProfile: {
     get(): Promise<ApiResult<UserProfile>>;
     update(input: UserProfile): Promise<ApiResult<UserProfile>>;
@@ -1329,6 +1331,7 @@ export interface AevorenBotApi {
     list(input: { sessionId: string }): Promise<ApiResult<ToolInvocation[]>>;
   };
   approvals: {
+    review(input: ApprovalReviewInput): Promise<ApiResult<ApprovalReviewResult>>;
     listPending(input: { sessionId: string }): Promise<ApiResult<ApprovalRequest[]>>;
     resolve(input: {
       sessionId: string;
@@ -1371,6 +1374,7 @@ export interface AevorenBotApi {
     retry(runId: string): Promise<ApiResult<SendResult>>;
   };
   roomRuntime: {
+    cancelMember(runId: string): Promise<ApiResult<RuntimeRun>>;
     getSnapshot(roomId: string): Promise<ApiResult<RoomRuntimeSnapshot>>;
     send(command: RoomSendCommand): Promise<ApiResult<RoomSendResult>>;
     cancel(batchId: string): Promise<ApiResult<RoomBatch>>;

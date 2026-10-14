@@ -32,6 +32,8 @@ import { LibraryService } from "./library-service";
 import { writeLibraryExport } from "./library-export";
 import { EnvironmentService } from "./environment-service";
 import { BrowserService } from "./browser-service";
+import { SkillExecutionService } from "./skill-execution-service";
+import { SKILL_EXECUTION_EVENTS } from "@shared/skill-execution-channels";
 import { BROWSER_EVENTS } from "@shared/browser-channels";
 import { ENVIRONMENT_EVENTS } from "@shared/environment-channels";
 import { environmentDirectoryPathSchema, environmentFilePathSchema } from "@shared/environment-schemas";
@@ -57,6 +59,7 @@ let providerService: ProviderService | null = null;
 let mcpService: McpService | null = null;
 let environmentService: EnvironmentService | null = null;
 let browserService: BrowserService | null = null;
+let skillExecutionService: SkillExecutionService | null = null;
 let routineService: RoutineService | null = null;
 let allowClose = false;
 let closeRequested = false;
@@ -151,6 +154,7 @@ async function finishClose(): Promise<void> {
   }
   roomCoordinator?.beginShutdown();
   shutdownPromise ??= (async () => {
+    await skillExecutionService?.shutdown();
     await runtimeCoordinator?.shutdown();
     await roomCoordinator?.shutdown();
     await environmentService?.shutdown();
@@ -302,6 +306,10 @@ app.whenReady().then(async () => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ENVIRONMENT_EVENTS.changed, event);
     });
   void environmentService.recover().catch(() => undefined);
+  const productSkillExecutionService = new SkillExecutionService(repository, libraryService, environmentService, event => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(SKILL_EXECUTION_EVENTS.changed, event);
+  });
+  skillExecutionService = productSkillExecutionService;
   browserService = new BrowserService(repository, electronSecretCodec,
     app.isPackaged ? join(process.resourcesPath, "browser-worker") : join(app.getAppPath(), "out", "browser-worker"),
     join(app.getPath("userData"), "browser-media"), environmentService, event => {
@@ -391,6 +399,7 @@ app.whenReady().then(async () => {
     libraryService,
     environmentService,
     browserService,
+    skillExecutionService: productSkillExecutionService,
     async saveBrowserDownload(input, context) {
       const file = await browserService!.downloadData(input, context);
       let path = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_BROWSER_DOWNLOAD_TEST_PATH : undefined;
@@ -441,6 +450,7 @@ app.whenReady().then(async () => {
       return { path: output, name: basename(file.path), size: bytes.length };
     },
     libraryChanged(event) {
+      void productSkillExecutionService.libraryChanged(event).catch(() => undefined);
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.libraryEvent, event);
     },
     async pickLibraryPaths(input, signal) {

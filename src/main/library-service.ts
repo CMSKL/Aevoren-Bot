@@ -291,7 +291,7 @@ export class LibraryService {
     return this.commitImport(await this.prepareImportPath(input, signal, executorBotId), signal, executorBotId);
   }
 
-  async readResourceFile(input: { sessionId: string; id: string; revisionId: string; path: string }, signal?: AbortSignal, executorBotId?: string): Promise<LibraryResourceFileResult> {
+  async readResourceBytes(input: { sessionId: string; id: string; revisionId: string; path: string }, signal?: AbortSignal, executorBotId?: string): Promise<{ file: ResourceFileRef; bytes: Buffer }> {
     this.assertScope(input.sessionId, executorBotId, signal);
     const content = this.repository.library.read({ sessionId: input.sessionId, id: input.id, revisionId: input.revisionId }, executorBotId);
     let file: ResourceFileRef;
@@ -307,6 +307,11 @@ export class LibraryService {
     }
     this.assertScope(input.sessionId, executorBotId, signal);
     this.repository.library.read({ sessionId: input.sessionId, id: input.id, revisionId: input.revisionId }, executorBotId);
+    return { file, bytes };
+  }
+
+  async readResourceFile(input: { sessionId: string; id: string; revisionId: string; path: string }, signal?: AbortSignal, executorBotId?: string): Promise<LibraryResourceFileResult> {
+    const { file, bytes } = await this.readResourceBytes(input, signal, executorBotId);
     const text = TEXT_TYPES[extname(file.relativePath).toLowerCase()] ? decodeText(bytes) : null;
     return { ...file, encoding: text === null ? "base64" : "utf8", data: text ?? bytes.toString("base64") };
   }

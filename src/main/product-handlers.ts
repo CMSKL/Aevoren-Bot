@@ -77,8 +77,10 @@ import type { LibraryService } from "./library-service";
 import type { LibraryChangedEvent, LibraryExportResult, LibraryResourceKind } from "@shared/library-contracts";
 import { addEnvironmentProductHandlers, type EnvironmentProductDependencies } from "./environment-product-handlers";
 import { addBrowserProductHandlers, type BrowserProductDependencies } from "./browser-product-handlers";
+import { addSkillExecutionProductHandlers, type SkillExecutionProductDependencies } from "./skill-execution-product-handlers";
+import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 
-export type ProductDependencies = EnvironmentProductDependencies & BrowserProductDependencies & {
+export type ProductDependencies = EnvironmentProductDependencies & BrowserProductDependencies & SkillExecutionProductDependencies & {
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
   pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
@@ -134,7 +136,26 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
   addEnvironmentProductHandlers(handlers, dependencies, commit, libraryContext);
   addBrowserProductHandlers(handlers, dependencies, commit, libraryContext);
+  addSkillExecutionProductHandlers(handlers, dependencies, commit, libraryContext);
   const handle = (channel: string, operation: (input?: unknown) => unknown): void => { handlers.set(channel, operation); };
+  handle(IPC.roomRuntimeCancelMember, (input: unknown) => {
+    const runId = runIdSchema.parse(input);
+    if (libraryContext && repository.getRuntimeRun(runId).sessionId !== libraryContext.sessionId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    return roomCoordinator.cancelMember(runId);
+  });
+  handle(IPC.approvalsReview, (input: unknown) => {
+    const parsed = approvalReviewInputSchema.parse(input);
+    if (libraryContext && (parsed.sessionId !== libraryContext.sessionId || parsed.executorBotId !== libraryContext.executorBotId)) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+    const result = repository.getApprovalReview(parsed);
+    if (!result.snapshot || !result.executable) return result;
+    try {
+      if (!dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
+      dependencies.skillExecutionService.assertApprovalReview(result.snapshot, parsed);
+      return result;
+    } catch (error) {
+      return { ...result, executable: false, reason: error instanceof AevorenBotError ? error.message : "授权或环境已改变，请重新准备操作。" };
+    }
+  });
 
   handle(IPC.userProfileGet, () => userProfile.get());
   handle(IPC.userProfileUpdate, (input: unknown) => commit(() => userProfile.update(input)));

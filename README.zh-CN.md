@@ -12,7 +12,7 @@
 
 Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联系人组织长期使用的 Bot 与群协作，通过按会话授权的工作区访问本地项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
 
-> **源码版本：v0.3.0-beta.29（开发候选）。** 当前源码包含持久资料库、文本 Skill、本机 Docker 执行与验收中的隔离浏览器／电脑。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
+> **源码版本：v0.3.0-beta.30（开发候选）。** 当前源码包含持久资料库、文本 Skill、本机 Docker 执行与隔离浏览器／电脑，新增固定版本脚本 Skill 正在验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
 v0.3.0-beta.28 的 Docker 执行已通过本机检查、33 项 Worker／Docker／AI 工具链专项、3 项隐藏源码 Electron 和 3 项未签名 macOS 包场景，最终开发 CI 全绿。下一候选加入隔离 Chromium、电脑接管、截图图片传输与登记服务预览。浏览器源码／安装包验收与 Beta 签名发行分别推进。进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
 
@@ -90,7 +90,7 @@ Fake Provider 是确定性的，不需要账号或 API Key。源码构建、数�
 
 AI 操作与界面共用宿主校验和权限规则。创建 Bot 或群聊支持补充角色等多轮澄清，实际创建仍需要真实用户审批。工具回执区分实际执行与等待状态，模型文字本身不能证明操作成功。
 
-现在可创建、导入、发现并按需加载已授权文本 Skill。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用；Skill 系统只保存脚本，尚未接通技能包执行。`skills.readFile` 可读取辅助文本，二进制仅返回元信息，不自动授予工具或提供图像理解。隔离浏览器／电脑和服务预览正在开发验收；内置 Gmail/Drive/Notion、技能脚本授权与语音继续按后续阶段实施。公开网页搜索和读取返回文本；受限界面动作操作 Aevoren 自身界面。
+现在可创建、导入、发现并按需加载已授权文本 Skill。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用。当前开发候选新增 Bash、Python、Node 脚本执行，先授权固定版本、入口和环境镜像，再确认每次运行的参数；界面可查看源码、真实输出、退出状态和取消，AI 使用同一套宿主处理函数。验收进度与边界见[脚本 Skill](docs/SCRIPT_SKILLS.md)。内置 Gmail/Drive/Notion、示范草稿与语音继续分交付实施。公开网页搜索和读取返回文本；受限界面动作操作 Aevoren 自身界面。
 
 ## 资料库与文本 Skill
 

@@ -2,6 +2,7 @@ import { IPC } from "./channels";
 import { LIBRARY_PRODUCT_OPERATIONS } from "./library-product";
 import { ENVIRONMENT_PRODUCT_OPERATIONS } from "./environment-product";
 import { BROWSER_PRODUCT_OPERATIONS } from "./browser-product";
+import { SKILL_EXECUTION_PRODUCT_OPERATIONS } from "./skill-execution-product";
 import type { CapabilityEffectClass } from "./contracts";
 
 export type ProductOperationDefinition = { name: string; channel: string; description: string; effectClass: CapabilityEffectClass; interaction: 'none' | 'native' | 'human-decision' };
@@ -11,6 +12,7 @@ export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   ...LIBRARY_PRODUCT_OPERATIONS,
   ...ENVIRONMENT_PRODUCT_OPERATIONS,
   ...BROWSER_PRODUCT_OPERATIONS,
+  ...SKILL_EXECUTION_PRODUCT_OPERATIONS,
   { name: "userProfile.get", channel: IPC.userProfileGet, description: "查看 · 个人资料", effectClass: "read-local", interaction: "none" },
   { name: "userProfile.update", channel: IPC.userProfileUpdate, description: "修改 · 个人资料", effectClass: "write-reversible", interaction: "none" },
   { name: "attachments.pick", channel: IPC.attachmentsPick, description: "选择 · 附件", effectClass: "write-reversible", interaction: "native" },
@@ -66,6 +68,7 @@ export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   { name: "projects.create", channel: IPC.projectsCreate, description: "创建 · 项目", effectClass: "write-reversible", interaction: "none" },
   { name: "tools.list", channel: IPC.toolsList, description: "列出 · 执行记录", effectClass: "read-local", interaction: "none" },
   { name: "approvals.listPending", channel: IPC.approvalsListPending, description: "查看待审批项 · 审批", effectClass: "read-local", interaction: "none" },
+  { name: "approvals.review", channel: IPC.approvalsReview, description: "查看宿主保存的本次操作审批快照及当前可执行状态", effectClass: "read-local", interaction: "none" },
   { name: "approvals.resolve", channel: IPC.approvalsResolve, description: "提交用户审批决定 · 审批", effectClass: "write-reversible", interaction: "human-decision" },
   { name: "rooms.getBriefApproval", channel: IPC.roomsGetBriefApproval, description: "查看Brief候选 · 群聊", effectClass: "read-local", interaction: "none" },
   { name: "rooms.approveBrief", channel: IPC.roomsApproveBrief, description: "提交Brief批准 · 群聊", effectClass: "write-reversible", interaction: "none" },
@@ -93,6 +96,7 @@ export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   { name: "roomRuntime.getSnapshot", channel: IPC.roomRuntimeSnapshot, description: "查看状态 · 群任务", effectClass: "read-local", interaction: "none" },
   { name: "roomRuntime.send", channel: IPC.roomRuntimeSend, description: "发送任务 · 群任务", effectClass: "write-reversible", interaction: "none" },
   { name: "roomRuntime.cancel", channel: IPC.roomRuntimeCancel, description: "取消任务 · 群任务", effectClass: "write-reversible", interaction: "none" },
+  { name: "roomRuntime.cancelMember", channel: IPC.roomRuntimeCancelMember, description: "停止指定群成员的本次 Runtime，不停止其他独立成员", effectClass: "irreversible", interaction: "none" },
   { name: "roomRuntime.continue", channel: IPC.roomRuntimeContinue, description: "继续任务 · 群任务", effectClass: "write-reversible", interaction: "none" },
   { name: "roomRuntime.retryTurn", channel: IPC.roomRuntimeRetryTurn, description: "重试成员 · 群任务", effectClass: "write-reversible", interaction: "none" },
   { name: "settings.getGeneral", channel: IPC.settingsGetGeneral, description: "查看设置 · 通用设置", effectClass: "read-local", interaction: "none" },

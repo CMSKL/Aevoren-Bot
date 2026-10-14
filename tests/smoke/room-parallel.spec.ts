@@ -14,11 +14,12 @@ type RoomCase = {
   replies: Map<string, PendingReply>;
   snapshot: () => Promise<RoomRuntimeSnapshot>;
   release: (modelId: string, failed?: boolean) => void;
+  requestApproval: (modelId: string) => void;
 };
 
 // The local API holds every request until the test releases it. Reaching six
 // requests before any reply is sent proves concurrency without timing guesses.
-async function withRoom(callback: (room: RoomCase) => Promise<void>): Promise<void> {
+async function withRoom(callback: (room: RoomCase) => Promise<void>, task = "每位成员分别回复自己的验收结果。"): Promise<void> {
   const data = mkdtempSync(join(tmpdir(), "aevoren-room-parallel-"));
   const repository = new AppRepository(join(data, "aevoren-bot.sqlite"));
   const bots = Array.from({ length: 6 }, (_, index) => {
@@ -85,7 +86,7 @@ async function withRoom(callback: (room: RoomCase) => Promise<void>): Promise<vo
     await expect(page.getByRole("listbox", { name: "提及 Bot" })).toBeVisible();
     await page.getByRole("option").filter({ hasText: "所有人" }).click();
     await expect(page.getByRole("button", { name: "移除 @所有人" })).toBeVisible();
-    await input.fill("每位成员分别回复自己的验收结果。");
+    await input.fill(task);
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect.poll(() => replies.size, { timeout: 15_000 }).toBe(6);
     expect(requests.toSorted()).toEqual(bots.map((bot) => bot.modelId).toSorted());
@@ -116,7 +117,14 @@ async function withRoom(callback: (room: RoomCase) => Promise<void>): Promise<vo
         pending.response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: `${bot.name}独立回复` }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
       }
     };
-    await callback({ page, bots, replies, snapshot, release });
+    const requestApproval = (modelId: string): void => {
+      const pending = replies.get(modelId);
+      if (!pending || pending.released || pending.aborted) throw new Error("Fixture approval reply unavailable");
+      pending.released = true;
+      pending.response.writeHead(200, { "content-type": "text/event-stream" });
+      pending.response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "parallel-approval-create", type: "function", function: { name: "bot_create", arguments: JSON.stringify({ name: "并行审批测试 Bot", description: "本次审批停止后不应创建。" }) } }] }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`);
+    };
+    await callback({ page, bots, replies, snapshot, release, requestApproval });
     expect((await snapshot()).handoffs).toEqual([]);
     expect(requests).toHaveLength(6);
     expect(fixtureErrors).toEqual([]);
@@ -166,6 +174,34 @@ test("starts all six @everyone Bot replies together and displays a fast result b
     }
     if (process.platform !== "win32") await page.screenshot({ path: join(evidence, "room-parallel-completed.png"), animations: "disabled" });
   });
+});
+
+test("stops only the member awaiting tool approval and lets the other five replies finish", async () => {
+  test.setTimeout(90_000);
+  await withRoom(async ({ page, bots, replies, snapshot, release, requestApproval }) => {
+    requestApproval(bots[0]!.modelId);
+    const permission = page.getByTestId("tool-permission-dialog");
+    await expect(permission).toBeVisible();
+    await expect(permission).toContainText(bots[0]!.name);
+    const before = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.bots.list());
+    if (!before.ok) throw new Error("Actual Bot list unavailable");
+    await permission.getByRole("button", { name: "停止任务", exact: true }).click();
+    await expect(permission).toBeHidden();
+    await expect.poll(async () => (await snapshot()).turns.filter(turn => turn.state === "cancelled").length).toBe(1);
+    const partial = await snapshot();
+    expect(partial.turns.filter(turn => turn.state === "cancelled").map(turn => turn.memberBotId)).toEqual([bots[0]!.id]);
+    expect(partial.turns.filter(turn => turn.state === "running")).toHaveLength(5);
+    expect(partial.batches[0]?.state).toBe("running");
+    expect([...replies.values()].filter(reply => !reply.released && !reply.aborted)).toHaveLength(5);
+    for (const bot of bots.slice(1)) release(bot.modelId);
+    await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(5);
+    await expect.poll(async () => (await snapshot()).turns.filter(turn => turn.state === "completed").length).toBe(5);
+    const final = await snapshot();
+    expect(final.runs.filter(run => run.state === "cancelled")).toHaveLength(1);
+    expect(final.runs.filter(run => run.state === "completed")).toHaveLength(5);
+    const after = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.bots.list());
+    expect(after.ok && after.data.map(bot => bot.id).toSorted()).toEqual(before.data.map(bot => bot.id).toSorted());
+  }, "成员1请创建一个并行审批测试 Bot，其他成员分别回复自己的验收结果。");
 });
 
 test("stops all six parallel API requests when the user cancels the Room reply", async () => {

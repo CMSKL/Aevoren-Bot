@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.0-beta.30 (development candidate)
+
+- Add exact-revision Bash/Python/Node Skill grants tied to a conversation, executing Bot, entry checksum and environment image. Script metadata does not grant execution permission.
+- Preserve immutable host approval reviews for each AI script run, including interpreter, arguments, working directory and timeout; invalid or revoked targets cannot execute or reuse a cached result.
+- Add source review, explicit grant/run confirmation, execution provenance, real output/state queries and precise cancellation to the existing Library and execution panels.
+- Execution Worker 1.2.0 adds private package installation and immutable per-job script snapshots. Existing environments retain their image until explicit rebuild.
+- Keep an uncertain run's original intent and query its actual execution rather than repeating it. Stopping an approval in a group cancels that member's Runtime; the group footer retains batch stop.
+- This is the script-Skill delivery of Stage 4, under validation. Demonstration capture, native app connectors, writable MCP/Apps and subsequent stages are not yet delivered.
+
 ## v0.3.0-beta.29 (development candidate)
 
 - Add isolated persistent Chromium and Linux desktops beside each conversation/executor's local Docker environment, with 27 shared browser/computer/preview actions.

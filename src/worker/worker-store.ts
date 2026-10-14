@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { WorkerExecution, WorkerExecutionRequest, WorkerLog, RegisteredPort as WorkerPort } from "@shared/environment-contracts";
+import type { WorkerSkillRunRequest } from "@shared/skill-execution-contracts";
 import { WorkerError } from "./worker-error";
 
 export const MAX_JOB_LOG_BYTES = 1_048_576;
+export type WorkerJobRequest = WorkerExecutionRequest & { skill?: WorkerSkillRunRequest };
 type JobRow = { id: string; request_json: string; digest: string; uid: number; state: WorkerExecution["state"] | "queued"; pid: number | null;
   exit_code: number | null; signal: string | null; error_code: string | null; created_at: string; started_at: string | null; ended_at: string | null; last_seq: number; truncated: number; boot_id: string };
 
@@ -57,7 +59,7 @@ export class WorkerStore {
       .map(row => this.get(row.id)).filter(job => !kind || job.kind === kind);
   }
 
-  existing(request: WorkerExecutionRequest): WorkerExecution | null {
+  existing(request: WorkerJobRequest): WorkerExecution | null {
     const row = this.database.prepare("SELECT * FROM jobs WHERE id=?").get(request.id) as JobRow | undefined;
     if (!row) return null;
     const digest = createHash("sha256").update(JSON.stringify(request)).digest("hex");
@@ -65,7 +67,7 @@ export class WorkerStore {
     return this.get(request.id);
   }
 
-  create(request: WorkerExecutionRequest, uid: number): WorkerExecution {
+  create(request: WorkerJobRequest, uid: number): WorkerExecution {
     if (this.idCancelled(request.id)) throw new WorkerError("WORKER_JOB_CANCELLED", 409);
     const session = this.database.prepare("SELECT * FROM execution_sessions WHERE id=?").get(request.sessionId) as { runtime_run_id: string | null; cancelled: number } | undefined;
     if (session?.cancelled) throw new WorkerError("WORKER_SESSION_CANCELLED", 409);

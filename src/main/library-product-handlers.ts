@@ -96,13 +96,15 @@ export function addLibraryProductHandlers(
         const content = library.read(readInput, actor);
         if (kind && content.resource.kind !== kind) throw new AevorenBotError("INVALID_REQUEST", "资源类型与操作不一致。");
         const result = contentResult(content, { offset: offset as number | undefined, maxCharacters: maxCharacters as number | undefined }, Boolean(kind));
-        return action === "load" ? { ...(result as object), loaded: true, scriptsExecutable: false } : result;
+        return action === "load" ? { ...(result as object), loaded: true, scriptsExecutable: false,
+          scriptExecution: "requires-exact-grant-and-per-run-approval" } : result;
       }
       if (action === "readFile") {
         const readInput = libraryReadSchema.parse({ sessionId, id: parsed.id, revisionId: parsed.revisionId });
         const content = library.read(readInput, actor);
         if (content.resource.kind !== "skill") throw new AevorenBotError("INVALID_REQUEST");
         const file = await service().readResourceFile({ sessionId, id: content.resource.id, revisionId: content.revision.id, path: parsed.path as string }, signal, actor);
+        if (!context) return file;
         if (file.encoding === "base64") {
           const { relativePath, size, mimeType, sha256 } = file;
           const metadata = { relativePath, size, mimeType, sha256 };
