@@ -70,7 +70,8 @@ test("boots Main, Preload and Renderer and completes Windows core IPC flows", as
     await page.evaluate(() => document.querySelector<HTMLButtonElement>(".sidebar-settings-button")?.click());
     await expect.poll(() => page.locator(".settings-dialog").count()).toBe(1);
     await expect(page.getByRole("region", { name: "设置", exact: true })).toBeVisible();
-    expect(await page.locator(".settings-dialog .settings-nav button").count()).toBe(6);
+    await expect(page.locator(".settings-dialog .settings-nav button")).toHaveCount(7);
+    await expect(page.locator(".settings-dialog .settings-nav").getByRole("button", { name: "应用连接", exact: true })).toBeVisible();
     await expect(page.locator(".settings-dialog").getByRole("button", { name: "模型与 CLI", exact: true })).toHaveCount(0);
     await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: "暗黑", exact: true }).click();
     await expect.poll(() => page.locator("html").getAttribute("data-theme")).toBe("dark");
