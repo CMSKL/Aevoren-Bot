@@ -38,6 +38,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify bounded macOS stapler network retry
+        run: node --test scripts/finalize-notarized-macos-release.test.mjs
       - run: pnpm open-source:check
       - run: pnpm verify
       - name: Verify actual Linux Docker execution and host tools
