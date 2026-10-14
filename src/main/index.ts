@@ -1,7 +1,7 @@
 import "./identity";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { app, BrowserWindow, clipboard, dialog, nativeTheme, Notification, safeStorage, shell } from "electron";
 import { valid } from "semver";
 import { IPC } from "@shared/channels";
@@ -30,6 +30,10 @@ import { createConfiguredJevProvider, DecisionService } from "./decision-service
 import { MemoryCaptureService } from "./memory-capture-service";
 import { LibraryService } from "./library-service";
 import { writeLibraryExport } from "./library-export";
+import { EnvironmentService } from "./environment-service";
+import { ENVIRONMENT_EVENTS } from "@shared/environment-channels";
+import { environmentDirectoryPathSchema, environmentFilePathSchema } from "@shared/environment-schemas";
+import { readEnvironmentUpload, writeEnvironmentDownload } from "./environment-file-transfer";
 
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
@@ -49,6 +53,7 @@ let roomCoordinator: RoomCoordinator | null = null;
 let updateService: UpdateService | null = null;
 let providerService: ProviderService | null = null;
 let mcpService: McpService | null = null;
+let environmentService: EnvironmentService | null = null;
 let routineService: RoutineService | null = null;
 let allowClose = false;
 let closeRequested = false;
@@ -84,6 +89,7 @@ function emitSendState(event: SendStateEvent): void {
 }
 
 function emitRuntime(event: RuntimeEvent): void {
+  if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void environmentService?.cancelRuntime(event.run.id).catch(() => undefined);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.runtimeEvent, event);
 }
 
@@ -143,6 +149,7 @@ async function finishClose(): Promise<void> {
   shutdownPromise ??= (async () => {
     await runtimeCoordinator?.shutdown();
     await roomCoordinator?.shutdown();
+    await environmentService?.shutdown();
     await providerService?.dispose();
     await mcpService?.dispose();
     routineService?.stop();
@@ -285,6 +292,11 @@ app.whenReady().then(async () => {
   })();
   const workspaceService = new WorkspaceService(repository);
   const libraryService = new LibraryService(repository, join(app.getPath("userData"), "library-blobs"), { workspaceService });
+  environmentService = new EnvironmentService(repository.environments, electronSecretCodec,
+    app.isPackaged ? join(process.resourcesPath, "environment-worker") : join(app.getAppPath(), "out", "worker"), (event) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ENVIRONMENT_EVENTS.changed, event);
+    });
+  void environmentService.recover().catch(() => undefined);
   mcpService = new McpService(repository, electronSecretCodec, app.getVersion(), (url) => shell.openExternal(url));
   await mcpService.initialize();
   const workspaceToolExecutor = new WorkspaceToolExecutor(repository, workspaceService, new NetworkToolExecutor(), mcpService, new DeviceToolExecutor(() => clipboard.readText()));
@@ -365,6 +377,41 @@ app.whenReady().then(async () => {
     window: mainWindow,
     repository,
     libraryService,
+    environmentService,
+    async pickEnvironmentUpload(input, signal) {
+      const directory = environmentDirectoryPathSchema.parse(input.directory ?? ".");
+      const testPath = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_ENVIRONMENT_UPLOAD_TEST_PATH : undefined;
+      let paths: string[];
+      if (testPath) paths = [testPath];
+      else {
+        if (!mainWindow || mainWindow.isDestroyed()) return null;
+        const selected = await dialog.showOpenDialog(mainWindow, { title: "上传文件到隔离环境", properties: ["openFile"] });
+        if (selected.canceled) return null;
+        paths = selected.filePaths;
+      }
+      const output: import("@shared/environment-contracts").EnvironmentFileWriteResult[] = [];
+      for (const path of paths) {
+        const content = await readEnvironmentUpload(path, signal);
+        const target = environmentFilePathSchema.parse(directory === "." ? basename(path) : `${directory}/${basename(path)}`);
+        output.push(await environmentService!.writeFile({ sessionId: input.sessionId, executorBotId: input.executorBotId, path: target, content: content.toString("base64"), encoding: "base64" }, signal));
+      }
+      return output;
+    },
+    async downloadEnvironmentFile(input, signal) {
+      const file = await environmentService!.readFile(input);
+      let path = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_ENVIRONMENT_DOWNLOAD_TEST_PATH : undefined;
+      if (!path) {
+        if (!mainWindow || mainWindow.isDestroyed()) return null;
+        const selected = await dialog.showSaveDialog(mainWindow, { title: "下载隔离环境文件", defaultPath: basename(file.path) });
+        if (selected.canceled || !selected.filePath) return null;
+        path = selected.filePath;
+      }
+      const bytes = Buffer.from(file.content, file.encoding === "base64" ? "base64" : "utf8");
+      const output = await writeEnvironmentDownload(path, bytes, () => {
+        if (!repository!.environments.get(input)) throw new AevorenBotError("ENVIRONMENT_NOT_FOUND");
+      }, signal);
+      return { path: output, name: basename(file.path), size: bytes.length };
+    },
     libraryChanged(event) {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.libraryEvent, event);
     },

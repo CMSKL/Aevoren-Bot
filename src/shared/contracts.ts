@@ -1239,6 +1239,9 @@ export type UserProfile = {
 };
 
 export interface AevorenBotApi {
+  environments: import("./environment-contracts").EnvironmentsApi;
+  execution: import("./environment-contracts").ExecutionApi;
+  processes: import("./environment-contracts").ProcessesApi;
   library: LibraryApi;
   userProfile: {
     get(): Promise<ApiResult<UserProfile>>;

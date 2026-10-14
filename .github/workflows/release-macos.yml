@@ -112,14 +112,38 @@ jobs:
           git diff --exit-code -- THIRD_PARTY_NOTICES.md
       - name: Build, sign and notarize update artifacts
         run: pnpm release:mac
+      - name: Verify fixture Keychain setup and recovery
+        run: node --test scripts/fixture-keychain.test.mjs
       - name: Validate library and Skills in the signed macOS app
         shell: bash
         env:
           AEVOREN_BOT_TEST_HIDDEN: "1"
         run: |
+          signed_fixture_snapshot="$RUNNER_TEMP/aevoren-signed-fixture-keychain-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          signed_fixture_cleanup() {
+            signed_fixture_status=$?
+            trap - EXIT INT TERM
+            if ! node scripts/fixture-keychain.mjs restore "$signed_fixture_snapshot"; then
+              echo 'Failed to restore the signed fixture Keychain settings' >&2
+              if [[ "$signed_fixture_status" -eq 0 ]]; then signed_fixture_status=1; fi
+            fi
+            exit "$signed_fixture_status"
+          }
+          trap signed_fixture_cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          node scripts/fixture-keychain.mjs create "$signed_fixture_snapshot"
           export AEVOREN_PACKAGED_APP_PATH="$PWD/dist/mac-arm64/Aevoren Bot.app/Contents/MacOS/Aevoren Bot"
           test -f "$AEVOREN_PACKAGED_APP_PATH"
           pnpm exec playwright test tests/smoke/library.spec.ts
+      - name: Preserve failed signed app diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signed-macos-smoke-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Notarize signed disk image
         shell: bash
         env:

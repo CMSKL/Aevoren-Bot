@@ -40,6 +40,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm open-source:check
       - run: pnpm verify
+      - name: Verify actual Linux Docker execution and host tools
+        timeout-minutes: 15
+        env:
+          AEVOREN_DOCKER_INTEGRATION: "1"
+          AEVOREN_WORKER_DOCKER_TEST: "1"
+        run: |
+          docker build --tag aevoren-worker-fixture:stage2 out/worker
+          pnpm exec vitest run src/worker/docker-integration.test.ts src/main/environment-service.integration.test.ts src/main/environment-product.integration.test.ts --maxWorkers=1
       - run: pnpm security:audit
       - name: Verify third-party notice is current
         run: |
@@ -93,6 +101,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Bound worker contention so filesystem-backed Runtime checks can settle
       # on hosted Windows runners without weakening their completion assertions.
+      - name: Verify isolated fixture teardown
+        run: node --test scripts/fixture-close.test.mjs
       - run: pnpm exec vitest run --maxWorkers=2
       - run: pnpm build
       - name: Prepare Electron test runtime

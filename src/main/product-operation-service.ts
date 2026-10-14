@@ -10,11 +10,13 @@ import { createProductHandlers, type ProductDependencies } from "./product-handl
 import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 
 const PUBLIC_READS = new Set([
+  "environments.probe", "environments.list", "environments.get", "execution.list", "execution.get", "execution.logs", "execution.wait", "execution.listFiles", "execution.readFile", "processes.list", "processes.listPorts",
   "library.list", "library.read", "library.versions", "documents.list", "documents.search", "documents.read", "documents.versions", "skills.list", "skills.read", "skills.load", "skills.readFile",
   "userProfile.get", "settings.getGeneral", "providers.list", "bots.list", "rooms.list",
   "tasks.getResult", "tasks.waitResult", "tasks.getRoomResult", "tasks.waitRoomResult", "projects.list", "workspaces.list", "updates.getState", "sessions.getMain", "capabilities.getSnapshot",
 ]);
 const PINNED_LIBRARY_READS = new Set(["library.read", "documents.read", "skills.read", "skills.load", "skills.readFile", "library.export", "documents.export", "skills.export"]);
+const environmentOperation = (operation: string): boolean => /^(environments|execution|processes)\./.test(operation);
 
 /** Both transports use these handlers; only the host can supply execution identity. */
 export class ProductOperationService {
@@ -41,6 +43,9 @@ export class ProductOperationService {
     if (tool.operation === "view.request" && typeof value.action === "string") return `界面操作 · ${value.action}`;
     const id = typeof input === "string" ? input : typeof value.id === "string" ? value.id : undefined;
     const label = productOperation(tool.operation)?.description ?? tool.operation;
+    if (["execution.run", "processes.start"].includes(tool.operation) && typeof value.command === "string") {
+      return `${label} · ${value.cwd ?? "."}\n${value.command}`.slice(0, 2_048);
+    }
     if (tool.operation === "approvals.resolve" && typeof value.id === "string") {
       const approval = repository.getApprovalRequest(value.id);
       const target = repository.getToolInvocation(approval.toolInvocationId);
@@ -101,8 +106,8 @@ export class ProductOperationService {
     tool = normalizeProductRequest(tool);
     const mutating = tool.action === "execute" && !["read-local", "read-remote", "pure"].includes(productOperation(tool.operation)?.effectClass ?? "irreversible");
     if (!mutating) return this.executeOnce(tool, invocation, signal);
-    const root = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId).clientNonce;
-    const key = `${root}:${JSON.stringify(tool)}`;
+    const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
+    const key = `${runtime.clientNonce}:${tool.action === "execute" && environmentOperation(tool.operation) ? runtime.executorBotId : "shared"}:${JSON.stringify(tool)}`;
     const existing = this.inFlight.get(key);
     if (existing) return existing;
     const promise = this.executeOnce(tool, invocation, signal).finally(() => this.inFlight.delete(key));
@@ -137,8 +142,18 @@ export class ProductOperationService {
     }
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
     if (!PUBLIC_READS.has(tool.operation)) {
-      const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool);
+      const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, environmentOperation(tool.operation) ? runtime.executorBotId : undefined);
       if (previous) {
+        if (environmentOperation(tool.operation)) {
+          if (!this.dependencies.environmentService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
+          const receipt = JSON.parse(previous) as { status?: string; result?: { id?: string } };
+          const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
+          let result: unknown = receipt.result;
+          if (["execution.run", "execution.cancel", "processes.start", "processes.stop"].includes(tool.operation) && receipt.result?.id) result = await this.dependencies.environmentService?.getExecution({ ...scope, id: receipt.result.id });
+          else if (["environments.start", "environments.stop", "environments.rebuild"].includes(tool.operation)) result = await this.dependencies.environmentService?.get(scope);
+          return this.result({ status: receipt.status === "cancelled" ? "cancelled" : "previously_completed", operation: tool.operation, reused: true, result,
+            receiptNotice: "原操作未重复执行；任务或环境结果已重新查询，文件传输回执仅记录首次结果。" });
+        }
         this.assertLibraryReplayAccess(tool.operation, previous, runtime);
         if (/^(library|documents|skills)\./.test(tool.operation)) {
           const receipt = JSON.parse(previous) as { status?: string; result?: unknown };
@@ -199,7 +214,7 @@ export class ProductOperationService {
       const result = this.handlers.get(wait.batchId ? "product:room-task-result" : "product:task-result")!(wait.batchId ? { batchId: wait.batchId } : { runId: wait.runId });
       return this.result({ status: ["completed", "partial", "failed", "cancelled", "interrupted"].includes((result as { state: string }).state) ? "completed" : "running", result });
     }
-    this.dependencies.repository.assertProductReplaySafe(runtime.clientNonce, tool);
+    this.dependencies.repository.assertProductReplaySafe(runtime.clientNonce, tool, environmentOperation(tool.operation) ? runtime.executorBotId : undefined);
     const rootNonce = this.dependencies.repository.getUserMessage(runtime.clientNonce).origin?.rootClientNonce ?? runtime.clientNonce;
     const resourceCount = { "bots.create": 1, "bots.duplicate": 1, "rooms.create": 1, "teams.createContentTeam": 6, "library.create": 1, "library.importText": 1, "documents.create": 1, "skills.create": 1 }[tool.operation] ?? 0;
     let createdCount = resourceCount;
@@ -233,7 +248,8 @@ export class ProductOperationService {
       }
       return value;
     }, (result) => ({
-      ...this.result({ status: "completed", operation: tool.operation, result: tool.operation === "userProfile.update" ? { name: (result as import("@shared/contracts").UserProfile).name, hasAvatar: Boolean((result as import("@shared/contracts").UserProfile).avatarUrl) } : result ?? null }),
+      ...this.result({ status: result === null && definition.interaction === "native" ? "cancelled" :
+        ["execution.run", "processes.start"].includes(tool.operation) && (result as { state?: string } | null)?.state === "running" ? "running" : "completed", operation: tool.operation, result: tool.operation === "userProfile.update" ? { name: (result as import("@shared/contracts").UserProfile).name, hasAvatar: Boolean((result as import("@shared/contracts").UserProfile).avatarUrl) } : result ?? null }),
       metadata: { operation: tool.operation, resourceCount: createdCount },
     })), memorySourceEntryId, { runtimeRunId: runtime.id, executorBotId: runtime.executorBotId, sessionId: runtime.sessionId, signal });
     let result = await scopedHandlers.get(definition.channel)!(input);
@@ -243,7 +259,8 @@ export class ProductOperationService {
     if (tool.operation === "rooms.list") result = (result as import("@shared/contracts").Room[]).map(({ id, name, description, version, membershipVersion, leadBotId, archivedAt }) => ({ id, name, description, version, membershipVersion, leadBotId, archivedAt }));
     if (tool.operation === "workspaces.list") result = this.dependencies.repository.listSessionWorkspaces(runtime.sessionId, runtime.executorBotId).map(({ id, name, writeEnabled, automationEnabled, version }) => ({ id, name, writeEnabled, automationEnabled, version }));
     if (definition.effectClass === "write-reversible" || definition.effectClass === "irreversible") this.dependencies.productChanged?.();
-    return this.result({ status: result === null && definition.interaction === "native" ? "cancelled" : "completed", operation: tool.operation, result: result ?? null });
+    return this.result({ status: result === null && definition.interaction === "native" ? "cancelled" :
+      ["execution.run", "processes.start"].includes(tool.operation) && (result as { state?: string } | null)?.state === "running" ? "running" : "completed", operation: tool.operation, result: result ?? null });
   }
 
   private result(value: unknown) {
@@ -254,6 +271,12 @@ export class ProductOperationService {
 
   private libraryInput(operation: string, value: unknown, runtime: Pick<RuntimeRun, "sessionId" | "clientNonce" | "executorBotId">): unknown {
     const input = value === null ? undefined : value;
+    if (environmentOperation(operation) && !["environments.probe", "environments.initialize"].includes(operation)) {
+      if (input !== undefined && (typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");
+      const supplied = (input ?? {}) as { sessionId?: string; executorBotId?: string };
+      if (supplied.sessionId !== undefined && supplied.sessionId !== runtime.sessionId || supplied.executorBotId !== undefined && supplied.executorBotId !== runtime.executorBotId) throw new AevorenBotError("ENVIRONMENT_SCOPE_INVALID");
+      return { ...supplied, sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
+    }
     if (!/^(library|documents|skills)\./.test(operation) || operation === "library.available") return input;
     if (input !== undefined && (typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");
     const scoped = input as { sessionId?: string; id?: string; revisionId?: string } | undefined;

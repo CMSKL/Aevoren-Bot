@@ -1,5 +1,6 @@
 import { IPC } from "./channels";
 import { LIBRARY_PRODUCT_OPERATIONS } from "./library-product";
+import { ENVIRONMENT_PRODUCT_OPERATIONS } from "./environment-product";
 import type { CapabilityEffectClass } from "./contracts";
 
 export type ProductOperationDefinition = { name: string; channel: string; description: string; effectClass: CapabilityEffectClass; interaction: 'none' | 'native' | 'human-decision' };
@@ -7,6 +8,7 @@ export type ProductOperationDefinition = { name: string; channel: string; descri
 /** User-facing host operations; lifecycle acknowledgements are intentionally excluded. */
 export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   ...LIBRARY_PRODUCT_OPERATIONS,
+  ...ENVIRONMENT_PRODUCT_OPERATIONS,
   { name: "userProfile.get", channel: IPC.userProfileGet, description: "查看 · 个人资料", effectClass: "read-local", interaction: "none" },
   { name: "userProfile.update", channel: IPC.userProfileUpdate, description: "修改 · 个人资料", effectClass: "write-reversible", interaction: "none" },
   { name: "attachments.pick", channel: IPC.attachmentsPick, description: "选择 · 附件", effectClass: "write-reversible", interaction: "native" },

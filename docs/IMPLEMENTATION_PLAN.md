@@ -25,8 +25,8 @@
 
 | 阶段 | 交付范围 | 当前状态 | 验收证据 |
 | --- | --- | --- | --- |
-| 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 功能与跨平台安装包验证通过；签名发布待完成 | [最终开发 CI](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38498022367) 四项通过；PR #19 已合入 dev；目标 v0.3.0-beta.27 |
-| 2 执行环境 | Docker 探测、镜像、Worker、生命周期；终端、文件、后台进程、日志与端口 | 未开始 | 待补充 |
+| 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 功能与跨平台安装包验证通过；Beta 迁移 CI／签名发布待完成 | 原[开发 CI](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38498022367) 四项通过；升级修复 PR #21 的[真实 CI](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38503875180) 全绿并合入 dev `3e63340`；Beta PR #20 CI 进行中 |
+| 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | beta.28 开发候选；本机／源码 UI／最终未签名 macOS 包通过，签名发布待完成 | 33 项专项无跳过通过，含 18 项真实 Docker／AI 工具链；源码隐藏 Electron 3 项、最终未签名包 3 项通过；Windows 真 Docker 待验证 |
 | 3 浏览器与电脑 | Playwright、独立登录态、操作/下载、真实截图与模型传输、VNC、接管、服务预览 | 未开始 | 待补充 |
 | 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 未开始 | 待补充 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
@@ -51,11 +51,42 @@
 | 隐藏 Electron | 最终 macOS CI 完整源码冒烟 121 通过、33 跳过；两项迟到导航先复现失败、修复后通过；200% 缩放页头回归通过 |
 | 导出归属回归 | Linux 旧实现 100/100 误删替换对象；持有原句柄后 400 次替换保护与 100 次正常导出通过，无句柄泄漏；本机 24 项文件系统回归、联合业务测试 68 项通过 |
 | macOS / Windows 安装包 | 最终 CI：macOS arm64 包八项资料库场景通过；Windows x64 NSIS 安装、启动、语言包和 24 项安装后场景通过（包含八项资料库验收）；Windows 源码冒烟 26 项通过 |
-| 分支与签名发布 | 待 dev 验证 → beta 晋级 → `v0.3.0-beta.27`；不得把未签名包列为官方安装包 |
+| 分支与签名发布 | 升级修复 [PR #21](https://github.com/CMSKL/Aevoren-Bot/pull/21) 真实 CI 全绿并合入 dev `3e63340`；[Beta PR #20](https://github.com/CMSKL/Aevoren-Bot/pull/20) 的[迁移 CI](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38506333269) 进行中，签名发行待完成；不得把未签名包列为官方安装包 |
 
 验收采用临时数据与受控 localhost HTTP，未调用真实云模型或用户聊天数据库。Windows 符号链接相关用例受运行器权限限制而跳过；未将这些边界标为实际验证。
 
-阶段 2–6 仍未实施。本阶段只完成文本资料与 Skill 能力，不据此报告 Docker 执行、浏览器/电脑控制、脚本执行、原生应用连接、多模态理解或语音已可用。
+阶段 1 只完成文本资料与 Skill 能力。阶段 2 的开发实现与待验证范围见下节；阶段 3–6 尚未实施，不能据此报告浏览器／电脑控制、技能包脚本执行、原生应用连接、多模态理解或语音已可用。
+
+## 阶段 2 交付记录：v0.3.0-beta.28 开发候选
+
+开发分支为 `codex/docker-execution`，从已验收的 `dev` 创建；源码版本为 `v0.3.0-beta.28` 开发候选。当前未晋级 beta、未正式发布，master 不晋级。
+
+- 23 个共用 `environments.*`、`execution.*`、`processes.*` 操作，联系人／群成员执行页和设置 Docker 状态卡；AI 由宿主补全会话与执行者，拒绝跨范围身份，变更进入真实审批。
+- 本机 Docker Linux 探测、镜像准备、创建／唤醒／休眠／重建；Worker 1.0.0、协议 1、版本／能力健康检查、认证 loopback 控制与实际镜像摘要。应用升级不自动替换已运行环境。
+- 真实 Node／Python／Bash 命令、stdout／stderr 字节、退出码、前台取消、独立后台进程和日志；每环境 32 个活跃任务 UID 槽位，六成员环境并行，无全局执行锁。
+- 发送意图 nonce、Runtime provenance、同命令重试查询原任务；省略与显式默认 `cwd=.`／前台 120s 规范化一致。接收未确认用 unknown 保存，不把未知副作用当成可自动重放。
+- 环境工作区文件列表、读取、写入、原生上传／下载，单文件解码后最多 1 MiB；默认仅新建，覆盖核验 expectedSha256，拒绝越界、符号链接与特殊文件。
+- 后台服务端口核验 Linux listener 的任务 UID 归属和实际连通性；停止后更新真实端口状态。端口登记尚不提供浏览器或服务预览。
+- 迁移 35 使用现有 SQLite 连接保存环境／执行／日志／端口，并可嵌入本地回执事务；远端执行不伪装为可原子回滚。历史 Runtime 删除后保留后台记录与 provenance，创建新任务仍核验真实 Runtime 同范围。
+- 关闭应用／清空聊天记录保留运行中的后台服务；休眠中断该环境所有任务并保留卷，唤醒不重放。删除 Bot／群释放相关容器后清理应用记录，保留命名 Docker 卷。
+- 群成员移出只清理该群／成员 tuple 的环境，不影响私聊、同群其他成员或其他群。删除期间首次启动在提交环境前再次检查 admission；旧撤销范围记录不阻塞兄弟环境恢复和退出清理。
+- Runtime 取消封闭尚在准备的前台 ExecutionSession；单任务取消只登记该任务，阻止迟到启动并保留兄弟任务与独立后台服务。1 MiB 合法文件的 JSON 最大转义膨胀仍可真实读取；同值 Worker 观察不递增版本、不反复触发 UI 刷新。
+
+| 验证项 | 当前状态与证据 |
+| --- | --- |
+| 完整本机单元 | 1,285 项通过、20 项跳过；Docker opt-in 场景由下面独立启用的专项验收补齐，不把跳过计为实际执行 |
+| SQLite／共享合同 | 22 项真实回归通过，覆盖六成员范围、版本冲突、同 nonce 默认规范化、未知结果、日志滚动、端口、清空历史及成员精确清理 |
+| admission／旧撤销范围 | 2 项确定性回归通过；使用真实 SQLite 与真实磁盘 context 字节摘要、延迟 IO 屏障核验首次启动拒绝，Docker 动作仅用于边界单测、未当作真实执行成功 |
+| Worker／真实 Docker／AI 工具链 | 专项 33／33 通过、无跳过：Worker 单元 15 项、真实 Linux Worker Docker 9 项、宿主服务 Docker 5 项、AI gateway Docker 4 项；包含启动取消、独立后台服务、真实文件字节及端口归属 |
+| TypeScript／质量门禁 | 最终 Node／Web／Worker TypeScript、ESLint、open-source readiness、文档、npm 许可和 security 检查通过 |
+| 隐藏源码 Electron | 3 项执行环境场景通过，使用临时数据与受控环境 |
+| 最终 macOS 安装包 | 未签名 beta.28 包的 3／3 执行环境场景通过，实查 `appVersion=0.3.0-beta.28`／`isPackaged=true`、Worker 与许可指南来自 Resources；未签名包不作为官方发行或签名验收证据 |
+| Windows Linux 容器 | 未验证；CI 无 Docker daemon，不将其声明为真实环境支持验收通过 |
+| 分支与发布 | 待 dev 验证 → beta 晋级 → 安装包及签名发行；不得把候选文档当已发布版本 |
+
+镜像 base manifest 固定为 `node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20`，实际构建 digest／平台保存在环境记录。Docker 由用户提供，首期保持同一个本机 context，不挂宿主 HOME、Docker socket 或浏览器 profile。Worker 保留对外网络，审批过的命令仍可能产生外部副作用；执行目录不代替容器隔离。镜像内 Node／Python／Debian 工具各自保留许可，见[执行环境与镜像说明](EXECUTION_ENVIRONMENT.md)。
+
+本阶段没有交付 BrowserSession、桌面／截图／图像传输、接管、服务预览、可执行 Skill 包、应用连接或语音；这些继续按阶段 3–6 实施。首期命令界面不提供交互式 PTY。
 
 ## 阶段固定实现与完成条件
 

@@ -25,6 +25,7 @@ type SnapshotContext = {
   room: boolean;
   mcpTools: McpToolInfo[];
   routines: Routine[];
+  executionReady: boolean;
 };
 
 const unsupported: Array<Pick<CapabilityDescriptor, "id" | "name" | "category" | "description" | "effectClass" | "adapterKind">> = [
@@ -66,6 +67,7 @@ function capabilityDescriptors(
   const networkReason = networkAvailable ? null : "当前模型来源未声明结构化联网工具能力。";
   const handoffAvailable = context.providerCapabilities?.handoff === true;
   const mcpAvailable = networkAvailable && context.mcpTools.length > 0;
+  const executionTools = context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true;
   return [
     {
       id: "product.operations", name: "产品操作", category: "conversation",
@@ -114,6 +116,13 @@ function capabilityDescriptors(
       availability: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? "available" : "unavailable",
       reason: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? null : "当前模型来源不支持宿主产品工具。",
       permissionState: "not-required", toolNames: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "environment.execution", name: "隔离 Linux 执行环境", category: "workspace",
+      description: "在本会话与 Bot 独立的 Docker 环境运行 Node/Python 命令、传输文件和登记后台服务；每次写操作需审批，取消仅终止所属任务。",
+      effectClass: "irreversible", adapterKind: "core", availability: executionTools && context.executionReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前模型来源不支持宿主产品工具。" : context.executionReady ? null : "当前会话的隔离环境尚未运行，请先检测 Docker、初始化镜像并启动环境。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
       id: "room.collaboration",
@@ -328,7 +337,8 @@ export class CapabilityRegistry {
     })();
     const mcpTools = this.mcp?.availableTools(botId) ?? [];
     const routines = this.routineList();
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines }).map((capability) => {
+    const executionReady = Boolean(botId && sessionId && this.repository.environments.get({ sessionId, executorBotId: botId })?.state === "running");
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines, executionReady }).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));
       return toolNames.length > 0 ? { ...capability, toolNames } : {
