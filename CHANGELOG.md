@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## Unreleased
 
+## [0.3.0-beta.27] - Unreleased
+
+### Added
+
+- Persistent documents and text Skills with SQLite-backed immutable revisions, searchable text, conversation-specific bindings, Markdown editing/preview, import/export, soft deletion and version restoration.
+- Contact and Room Library/Skill tabs, existing-resource binding, enable/disable controls and explicit save/discard/continue-editing choices. Revision conflicts preserve the local draft and allow reviewing the latest saved version.
+- `/Skill` and grouped `@` selections use real resource/revision IDs and digests. Adding a Skill prepares the current composer; ordinary Send starts its Runtime. Resource selection keeps existing text and remains separate from Bot routing.
+- Thirty-eight shared library/document/Skill product operations, including authorized `skills.load` and `skills.readFile`. Imported packages retain `SKILL.md`, auxiliary text, scripts and binary assets in application-owned storage; scripts are not executed and binary reads report metadata only.
+
+### Fixed
+
+- Message identity, Send Journal, group routing and PromptManifest include fixed resource references. Edits create new versions; member retries retain the original version. Revocation, deletion and disablement block later reads without silently broadening private or group access.
+- Import prepares and validates all accepted bytes before publishing revisions/bindings; invalid input and cancellation cannot publish a partial library. Export refuses existing targets and preserves original resource bytes for round-trip imports.
+- Composer resources follow the session, participate in draft digests and are verified before AI draft updates. Delayed reads and sends preserve concurrent user edits and unrelated chats. Historical references display an unavailable state after authorization is revoked.
+- Library IPC channel identifiers are isolated from main-process schemas so the sandboxed Preload does not load host validation dependencies.
+
+### Validation status
+
+- Complete unit suite: 1,195 passed, three skipped. Hidden Electron acceptance is being rerun after the Preload correction; installed-package, CI and signed Release evidence remain pending.
+- Target release title and tag are `v0.3.0-beta.27`. Docker execution, browser/computer control, executable Skill scripts, native app connectors and voice are not part of this stage.
+
 ## [0.3.0-beta.26] - 2026-10-13
 
 ### Added

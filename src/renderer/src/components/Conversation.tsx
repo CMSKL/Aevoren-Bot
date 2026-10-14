@@ -19,6 +19,7 @@ import type {
   UserRoomRoutingMode,
 } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
+import type { LibraryResource, LibraryResourceKind, ResourceReference } from "@shared/library-contracts";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
 import { shouldShowBriefApproval } from "../brief-approval-state";
 import { initialRoomRouteAgentIds, latestRoomTurnsByLogicalTurn, roomHandoffProgress } from "../room-runtime-state";
@@ -40,6 +41,7 @@ import { AssistantMarkdown } from "./AssistantMarkdown";
 import { AtIcon, AttachmentIcon, CheckIcon, CloseIcon, DocumentIcon, FolderIcon, MoreIcon, PanelIcon, StopIcon } from "./Icons";
 import { ExpandableTrace, type ExpandableTraceKind, type ExpandableTraceTone } from "./ExpandableTrace";
 import { ToolPermissionDialog } from "./ToolPermissionDialog";
+import { LibraryResourcePicker } from "./LibraryResourcePicker";
 import {
   ArtifactStatusBar,
   ArtifactCard,
@@ -52,6 +54,36 @@ import {
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" });
 const defaultUserProfile = { name: "你", avatarUrl: null };
+
+const ResourceReferenceBadge = memo(function ResourceReferenceBadge({ sessionId, reference, onRemove }: { sessionId: string; reference: ResourceReference; onRemove?: () => void }): React.JSX.Element {
+  const [metadata, setMetadata] = useState<{ key: string; label: string; unavailable: boolean } | null>(null);
+  const key = `${sessionId}:${reference.resourceId}:${reference.revisionId}:${reference.digest}`;
+  useEffect(() => {
+    let cancelled = false;
+    let sequence = 0;
+    const load = async (): Promise<void> => {
+      const request = ++sequence;
+      try {
+        const result = await window.aevorenBot.library.read({ sessionId, id: reference.resourceId, revisionId: reference.revisionId });
+        if (cancelled || request !== sequence) return;
+        const matches = result.ok && result.data.reference.digest === reference.digest;
+        setMetadata(matches ? { key, label: `${result.data.resource.kind === "skill" ? "Skill" : "资料"}：${result.data.revision.name} · v${result.data.revision.number}`, unavailable: false }
+          : { key, label: `资源 ${reference.resourceId.slice(0, 8)}… · 不可读取`, unavailable: true });
+      } catch {
+        if (!cancelled && request === sequence) setMetadata({ key, label: `资源 ${reference.resourceId.slice(0, 8)}… · 不可读取`, unavailable: true });
+      }
+    };
+    void load();
+    const unsubscribe = window.aevorenBot.library.onChanged(event => { if (event.resourceId === reference.resourceId) void load(); });
+    return () => { cancelled = true; unsubscribe(); };
+  }, [sessionId, reference.resourceId, reference.revisionId, reference.digest, key]);
+  const label = metadata?.key === key ? metadata.label : `资源 ${reference.resourceId.slice(0, 8)}… · 读取中`;
+  return onRemove ? <button className="attachment-chip" type="button" aria-label={`移除资源 ${label}`} onClick={onRemove}><DocumentIcon /><span>{label}</span><span aria-hidden="true">×</span></button>
+    : <span className="message-attachment" title={reference.revisionId}><DocumentIcon /><span>{label}</span></span>;
+});
+
+export type ConversationComposerDraft = { text: string; attachments: AttachmentDraft[]; roomMentions: RoomMention[]; routingMode: UserRoomRoutingMode; resourceRefs: ResourceReference[] };
+export type ConversationResourceInsertion = { id: string; sessionId: string; reference: ResourceReference; text?: string };
 
 function localDayKey(value: string | Date): string {
   const date = typeof value === "string" ? new Date(value) : value;
@@ -437,6 +469,7 @@ const TranscriptItem = memo(function TranscriptItem({
                 ))}
               </div>
             ) : null}
+            {entry.resourceRefs?.length ? <div className="message-attachments" aria-label="消息资源引用">{entry.resourceRefs.map(reference => <ResourceReferenceBadge key={`${reference.resourceId}:${reference.revisionId}`} sessionId={entry.sessionId} reference={reference} />)}</div> : null}
           </div> : null}
           {entry.role === "assistant"
             ? <ArtifactStatusBar
@@ -528,7 +561,11 @@ type ConversationProps = {
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
   onRememberPublicRead?(approval: ApprovalRequest): Promise<boolean>;
   onRevealWorkspaceArtifact(workspaceId: string, path: string): Promise<boolean>;
-  onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode, attachments?: AttachmentDraft[]): Promise<boolean>;
+  onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode, attachments?: AttachmentDraft[], resourceRefs?: ResourceReference[]): Promise<boolean>;
+  initialDraft?: ConversationComposerDraft;
+  onDraftChange?(sessionId: string, draft: ConversationComposerDraft): void;
+  resourceInsertion?: ConversationResourceInsertion | null;
+  onResourceInsertionHandled?(id: string): void;
   onApproveBrief?(input: { roomId: string; sourceRuntimeRunId: string; briefInvocationId: string; sha256: string; candidate: "A" | "B" | "C"; clientNonce: string }): Promise<boolean>;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
@@ -573,11 +610,19 @@ export function Conversation({
   onRetryRoomTurn,
   onContinueRoomBatch,
   onOpenSpeaker,
+  initialDraft,
+  onDraftChange,
+  resourceInsertion,
+  onResourceInsertionHandled,
 }: ConversationProps): React.JSX.Element {
-  const [draft, setDraft] = useState("");
-  const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
-  const [roomMentions, setRoomMentions] = useState<RoomMention[]>([]);
-  const [routingPreference, setRoutingPreference] = useState<UserRoomRoutingMode>("automatic");
+  const [draft, setDraft] = useState(initialDraft?.text ?? "");
+  const [attachments, setAttachments] = useState<AttachmentDraft[]>(initialDraft?.attachments ?? []);
+  const [roomMentions, setRoomMentions] = useState<RoomMention[]>(initialDraft?.roomMentions ?? []);
+  const [routingPreference, setRoutingPreference] = useState<UserRoomRoutingMode>(initialDraft?.routingMode ?? "automatic");
+  const [resourceRefs, setResourceRefs] = useState<ResourceReference[]>(initialDraft?.resourceRefs ?? []);
+  const [resourceGroup, setResourceGroup] = useState<"bot" | LibraryResourceKind>(room ? "bot" : "document");
+  const [skillQuery, setSkillQuery] = useState<ActiveMentionQuery | null>(null);
+  const [resourceError, setResourceError] = useState<string | null>(null);
   const [menuScopeId, setMenuScopeId] = useState<string | null>(null);
   const [artifactShelfScopeId, setArtifactShelfScopeId] = useState<string | null>(null);
   const [taskDetailsTab, setTaskDetailsTab] = useState<"artifacts" | "records">("artifacts");
@@ -593,6 +638,31 @@ export function Conversation({
   const dismissedMentionRef = useRef<{ start: number; text: string } | null>(null);
   const approvalNonceRef = useRef<{ key: string; nonce: string } | null>(null);
   const followTranscriptTailRef = useRef(true);
+  const composerSnapshotRef = useRef({ sessionId, draft, attachments, roomMentions, routingPreference, resourceRefs });
+  const consumedInsertionRef = useRef<string | null>(null);
+  const composerMountedRef = useRef(true);
+  useEffect(() => { composerMountedRef.current = true; return () => { composerMountedRef.current = false; }; }, []);
+  useLayoutEffect(() => {
+    composerSnapshotRef.current = { sessionId, draft, attachments, roomMentions, routingPreference, resourceRefs };
+    if (sessionId) onDraftChange?.(sessionId, { text: draft, attachments, roomMentions, routingMode: routingPreference, resourceRefs });
+  }, [sessionId, draft, attachments, roomMentions, routingPreference, resourceRefs, onDraftChange]);
+  const applyResourceInsertion = useEffectEvent((): void => {
+    if (!resourceInsertion || resourceInsertion.sessionId !== sessionId || resourceInsertion.id === consumedInsertionRef.current) return;
+    consumedInsertionRef.current = resourceInsertion.id;
+    if (resourceRefs.length >= 20 && !resourceRefs.some(reference => reference.resourceId === resourceInsertion.reference.resourceId)) {
+      setResourceError("一条消息最多引用 20 份资源，请先移除部分引用。");
+      onResourceInsertionHandled?.(resourceInsertion.id);
+      return;
+    }
+    setResourceRefs(current => [...current.filter(reference => reference.resourceId !== resourceInsertion.reference.resourceId), resourceInsertion.reference].slice(0, 20));
+    if (!draft.trim() && resourceInsertion.text) setDraft(resourceInsertion.text);
+    onResourceInsertionHandled?.(resourceInsertion.id);
+  });
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) applyResourceInsertion(); });
+    return () => { cancelled = true; };
+  }, [resourceInsertion, sessionId]);
   const activeRunId = liveState?.activeRunId ?? null;
   const activeBatch = roomBatches.toReversed().find((batch) => batch.state === "queued" || batch.state === "running") ?? null;
   const latestBatch = roomBatches.at(-1) ?? null;
@@ -857,19 +927,31 @@ export function Conversation({
         : routingPreference === "explicit"
           ? targetBotIds
           : [];
-    const accepted = await onSend(text, routedTargetIds, routingMode, attachments);
+    const sent = { draft, attachments, roomMentions, resourceRefs, routingPreference };
+    const accepted = await onSend(text, routedTargetIds, routingMode, attachments, resourceRefs);
     if (accepted) {
-      setDraft("");
-      setAttachments([]);
-      setRoomMentions([]);
-      setRoutingPreference("automatic");
+      setDraft(current => current === sent.draft ? "" : current);
+      setAttachments(current => current === sent.attachments ? [] : current);
+      setRoomMentions(current => current === sent.roomMentions ? [] : current);
+      setResourceRefs(current => current === sent.resourceRefs ? [] : current);
+      setRoutingPreference(current => current === sent.routingPreference ? "automatic" : current);
+      setSkillQuery(null);
       setMentionQuery(null);
       dismissedMentionRef.current = null;
     }
   }
 
   function refreshMentionQuery(text: string, caret: number): void {
-    if (!room) return;
+    const slash = /(?:^|\s)\/([^\s/]*)$/u.exec(text.slice(0, caret));
+    if (slash) {
+      const query = slash[1] ?? "";
+      const start = caret - query.length - 1;
+      if (dismissedMentionRef.current?.start === start && dismissedMentionRef.current.text === text) return;
+      setSkillQuery({ start, end: caret, query });
+      setMentionQuery(null);
+      return;
+    }
+    setSkillQuery(null);
     const next = findActiveMentionQuery(text, caret);
     if (!next) {
       dismissedMentionRef.current = null;
@@ -882,6 +964,7 @@ export function Conversation({
     }
     dismissedMentionRef.current = null;
     setActiveMentionIndex(0);
+    if (mentionQuery?.start !== next.start) setResourceGroup(room ? "bot" : "document");
     setMentionQuery(next);
   }
 
@@ -903,6 +986,18 @@ export function Conversation({
     dismissedMentionRef.current = null;
   }
 
+  function selectResource(reference: ResourceReference, resource: LibraryResource): void {
+    if (!composerMountedRef.current || composerSnapshotRef.current.sessionId !== sessionId) return;
+    if (resourceRefs.length >= 20 && !resourceRefs.some(item => item.resourceId === reference.resourceId)) { setResourceError("一条消息最多引用 20 份资源。"); return; }
+    setResourceRefs(current => [...current.filter(item => item.resourceId !== reference.resourceId), reference]);
+    const query = skillQuery ?? mentionQuery;
+    if (query && composerSnapshotRef.current.draft === draft) {
+      const text = removeMentionQuery(draft, query).text;
+      setDraft(!text.trim() && resource.kind === "skill" ? `请使用「${resource.name}」完成以下任务：` : text);
+    }
+    setSkillQuery(null); setMentionQuery(null); setResourceError(null);
+  }
+
   function openTaskDetails(tab: "artifacts" | "records"): void {
     setTaskDetailsTab(tab);
     setArtifactShelfScopeId(conversationScopeId);
@@ -910,7 +1005,7 @@ export function Conversation({
   }
 
   function openMentionPicker(): void {
-    if (!room || busy) return;
+    if (!sessionId) return;
     const textarea = composerInputRef.current;
     const caret = textarea?.selectionStart ?? draft.length;
     const nextDraft = `${draft.slice(0, caret)}@${draft.slice(caret)}`;
@@ -925,10 +1020,12 @@ export function Conversation({
     if (!["task_details", "draft_get", "draft_update", "draft_remove_attachment", "draft_add_attachments"].includes(input.action)) return;
     if (!sessionId || input.sessionId && input.sessionId !== sessionId) { respond({ status: "waiting_user", reason: "请先打开指定聊天。" }); return; }
     if (input.action === "task_details") { openTaskDetails(input.tab ?? "artifacts"); respond({ status: "completed" }); return; }
-    const value = JSON.stringify({ sessionId, text: draft, attachments: attachments.map((item) => item.id), routingPreference, targets: targetBotIds });
+    const base = composerSnapshotRef.current;
+    const value = JSON.stringify({ sessionId, text: draft, attachments: attachments.map((item) => item.id), routingPreference, targets: targetBotIds, resourceRefs });
     const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    if (input.action === "draft_get") { respond({ status: "completed", result: { sessionId, text: draft, attachments: attachments.map(({ content: _content, ...item }) => item), routingMode: routingPreference, targetBotIds, digest } }); return; }
-    if (input.expectedDigest !== digest || composerInputRef.current?.value !== draft) { respond({ status: "waiting_user", reason: "草稿已变化或聊天正忙，请重新读取草稿后操作。" }); return; }
+    if (!composerMountedRef.current || composerSnapshotRef.current !== base) { respond({ status: "waiting_user", reason: "草稿已变化，请重新读取。" }); return; }
+    if (input.action === "draft_get") { respond({ status: "completed", result: { sessionId, text: draft, attachments: attachments.map(({ content: _content, ...item }) => item), routingMode: routingPreference, targetBotIds, resourceRefs, digest } }); return; }
+    if (!composerMountedRef.current || composerSnapshotRef.current !== base || input.expectedDigest !== digest || composerInputRef.current?.value !== draft) { respond({ status: "waiting_user", reason: "草稿已变化或聊天正忙，请重新读取草稿后操作。" }); return; }
     if (input.targetBotIds?.some((id) => !memberBotIds.includes(id))) { respond({ status: "failed", reason: "提及对象不是当前群成员。" }); return; }
     if (input.action === "draft_remove_attachment") {
       if (!attachments.some((item) => item.id === input.attachmentId)) { respond({ status: "failed", reason: "附件不存在。" }); return; }
@@ -936,8 +1033,17 @@ export function Conversation({
     }
     if (input.action === "draft_add_attachments") {
       const picked = await onPickAttachments();
+      if (!composerMountedRef.current || composerSnapshotRef.current !== base) { respond({ status: "waiting_user", reason: "草稿或聊天已变化，未修改附件。" }); return; }
       setAttachments((current) => [...current, ...picked.filter((item) => !current.some((existing) => existing.sha256 === item.sha256))].slice(0, 6));
       respond({ status: picked.length ? "completed" : "cancelled", result: picked.map(({ content: _content, ...item }) => item) }); return;
+    }
+    if (input.resourceRefs) {
+      for (const reference of input.resourceRefs) {
+        const result = await window.aevorenBot.library.read({ sessionId, id: reference.resourceId, revisionId: reference.revisionId });
+        if (!result.ok || result.data.reference.digest !== reference.digest) { respond({ status: "failed", reason: "引用资源未授权或固定版本不匹配。" }); return; }
+      }
+      if (!composerMountedRef.current || composerSnapshotRef.current !== base || composerInputRef.current?.value !== draft) { respond({ status: "waiting_user", reason: "验证期间草稿或聊天已变化，请重新读取草稿。" }); return; }
+      setResourceRefs(input.resourceRefs);
     }
     if (input.text !== undefined) setDraft(input.text);
     if (input.routingMode) setRoutingPreference(input.routingMode);
@@ -1208,8 +1314,15 @@ export function Conversation({
           </div>
         ) : null}
         <div className="composer">
-          {room && mentionQuery ? (
-            <div className="mention-menu" role="listbox" aria-label="提及 Bot" id="room-mention-menu">
+          {sessionId && skillQuery ? <LibraryResourcePicker sessionId={sessionId} kind="skill" open query={skillQuery.query} onSelect={(reference, resource) => selectResource(reference, resource)} onClose={() => { dismissedMentionRef.current = { start: skillQuery.start, text: draft }; setSkillQuery(null); }} /> : null}
+          {sessionId && mentionQuery ? (
+            <div className="mention-menu composer-resource-groups" id="room-mention-menu">
+              <div className="library-tabs" role="group" aria-label="提及类型">
+                {room ? <button type="button" aria-pressed={resourceGroup === "bot"} onClick={() => setResourceGroup("bot")}>Bot</button> : null}
+                <button type="button" aria-pressed={resourceGroup === "document"} onClick={() => setResourceGroup("document")}>资料</button>
+                <button type="button" aria-pressed={resourceGroup === "skill"} onClick={() => setResourceGroup("skill")}>Skill</button>
+              </div>
+              {resourceGroup !== "bot" ? <LibraryResourcePicker sessionId={sessionId} kind={resourceGroup} open query={mentionQuery.query} onSelect={(reference, resource) => selectResource(reference, resource)} onClose={() => { dismissedMentionRef.current = { start: mentionQuery.start, text: draft }; setMentionQuery(null); }} /> : <div role="listbox" aria-label="提及 Bot">
               <div className="mention-menu-header">提及</div>
               {mentionCandidates.length === 0 ? (
                 <div className="mention-empty">未找到与“{mentionQuery.query}”匹配的 Bot <span>按 Esc 关闭</span></div>
@@ -1217,7 +1330,7 @@ export function Conversation({
                 const selected = effectiveRoomMentions.some((mention) => mention.id === item.id);
                 const mentionBot = item.id === EVERYONE_MENTION_ID
                   ? null
-                  : room.members.find((member) => member.botId === item.id)?.bot ?? null;
+                  : room?.members.find((member) => member.botId === item.id)?.bot ?? null;
                 return (
                   <button
                     className={`mention-option${index === activeMentionIndex ? " active" : ""}${selected ? " selected" : ""}`}
@@ -1238,6 +1351,7 @@ export function Conversation({
                   </button>
                 );
               })}
+              </div>}
             </div>
           ) : null}
           <div className="composer-toolbar">
@@ -1252,9 +1366,16 @@ export function Conversation({
                 setAttachments((current) => [...current, ...picked.filter((item) => !current.some((existing) => existing.sha256 === item.sha256))].slice(0, 6));
               })}
             ><AttachmentIcon /></button>
+            {sessionId ? <>
+              <button className="composer-mention-button" type="button" aria-label={room ? "提及 Bot" : "引用资料"} title="提及 Bot 或引用资料" onClick={openMentionPicker}><AtIcon /></button>
+              <button className="composer-mention-button" type="button" aria-label="选择 Skill" title="选择 Skill" onClick={() => {
+                const caret = composerInputRef.current?.selectionStart ?? draft.length;
+                const next = `${draft.slice(0, caret)}/${draft.slice(caret)}`;
+                setDraft(next); refreshMentionQuery(next, caret + 1);
+              }}>/</button>
+            </> : null}
             {room ? (
               <>
-                <button className="composer-mention-button" type="button" aria-label="提及 Bot" title="提及 Bot" disabled={busy} onClick={openMentionPicker}><AtIcon /></button>
                 <label className="composer-routing-control" title="群聊默认响应方式">
                   <select
                     aria-label="群聊默认响应方式"
@@ -1274,6 +1395,7 @@ export function Conversation({
                 </label>
               </>
             ) : null}
+            {sessionId && resourceRefs.length > 0 ? <div className="attachment-chips" aria-label="已引用的资源">{resourceRefs.map(reference => <ResourceReferenceBadge key={`${reference.resourceId}:${reference.revisionId}`} sessionId={sessionId} reference={reference} onRemove={() => setResourceRefs(current => current.filter(item => item.resourceId !== reference.resourceId))} />)}</div> : null}
             {attachments.length > 0 ? <div className="attachment-chips" aria-label="已添加的附件">
               {attachments.map((attachment) => (
                 <button
@@ -1315,14 +1437,15 @@ export function Conversation({
               })}
             </div> : null}
           </div>
+          {resourceError ? <p className="library-error" role="alert">{resourceError}</p> : null}
           <div className="composer-editor">
             <textarea
               ref={composerInputRef}
               aria-label="消息"
-              aria-autocomplete={room ? "list" : undefined}
+              aria-autocomplete={sessionId ? "list" : undefined}
               aria-controls={mentionQuery ? "room-mention-menu" : undefined}
-              aria-expanded={room ? Boolean(mentionQuery) : undefined}
-              aria-activedescendant={mentionQuery && mentionCandidates.length > 0 ? `room-mention-option-${activeMentionIndex}` : undefined}
+              aria-expanded={sessionId ? Boolean(mentionQuery || skillQuery) : undefined}
+              aria-activedescendant={mentionQuery && resourceGroup === "bot" && mentionCandidates.length > 0 ? `room-mention-option-${activeMentionIndex}` : undefined}
               placeholder={room ? `给 ${room.room.name} 发消息，输入 @ 指定 Bot…` : bot ? `给 ${bot.name} 发消息…` : "给 Bot 发消息…"}
               value={draft}
               onChange={(event) => {
@@ -1331,7 +1454,10 @@ export function Conversation({
               }}
               onClick={(event) => refreshMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart)}
               onFocus={(event) => refreshMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart)}
-              onBlur={() => setMentionQuery(null)}
+              onBlur={event => {
+                if (event.relatedTarget instanceof Element && event.relatedTarget.closest(".mention-menu,.library-resource-picker")) return;
+                setMentionQuery(null); setSkillQuery(null);
+              }}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) return;
                 if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
@@ -1343,7 +1469,18 @@ export function Conversation({
                   refreshMentionQuery(nextDraft, selectionStart + 1);
                   return;
                 }
-                if (mentionQuery) {
+                const resourceQuery = skillQuery ?? (resourceGroup !== "bot" ? mentionQuery : null);
+                if (resourceQuery) {
+                  if (["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
+                    event.preventDefault();
+                    const options = event.currentTarget.closest(".composer")?.querySelectorAll<HTMLButtonElement>("button[data-library-option]");
+                    const option = event.key === "ArrowUp" ? options?.item((options?.length ?? 1) - 1) : options?.item(0);
+                    if (event.key === "Enter") option?.click(); else option?.focus();
+                    return;
+                  }
+                  if (event.key === "Escape") { event.preventDefault(); dismissedMentionRef.current = { start: resourceQuery.start, text: draft }; setMentionQuery(null); setSkillQuery(null); return; }
+                }
+                if (mentionQuery && resourceGroup === "bot") {
                   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                     event.preventDefault();
                     if (mentionCandidates.length > 0) setActiveMentionIndex((current) => (

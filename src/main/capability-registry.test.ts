@@ -124,7 +124,7 @@ describe("CapabilityRegistry", () => {
     const snapshot = await registry.getSnapshot({ botId: created.bot.id });
     expect(snapshot.capabilities.find((item) => item.id === "room.collaboration")).toMatchObject({
       availability: "available",
-      reason: "当前模型来源仅支持顺序群聊和显式目标。",
+      reason: "当前模型来源支持固定成员独立回复，不支持内部 Handoff；所有人仍可并行。",
       toolNames: [],
     });
   });

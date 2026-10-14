@@ -1,5 +1,6 @@
 import "./identity";
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { app, BrowserWindow, clipboard, dialog, nativeTheme, Notification, safeStorage, shell } from "electron";
 import { valid } from "semver";
@@ -27,6 +28,8 @@ import { readAttachments } from "./attachments";
 import { saveArtifact as writeArtifact } from "./artifacts";
 import { createConfiguredJevProvider, DecisionService } from "./decision-service";
 import { MemoryCaptureService } from "./memory-capture-service";
+import { LibraryService } from "./library-service";
+import { writeLibraryExport } from "./library-export";
 
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
@@ -281,6 +284,7 @@ app.whenReady().then(async () => {
     }
   })();
   const workspaceService = new WorkspaceService(repository);
+  const libraryService = new LibraryService(repository, join(app.getPath("userData"), "library-blobs"), { workspaceService });
   mcpService = new McpService(repository, electronSecretCodec, app.getVersion(), (url) => shell.openExternal(url));
   await mcpService.initialize();
   const workspaceToolExecutor = new WorkspaceToolExecutor(repository, workspaceService, new NetworkToolExecutor(), mcpService, new DeviceToolExecutor(() => clipboard.readText()));
@@ -360,6 +364,43 @@ app.whenReady().then(async () => {
   const productOperations = registerIpc({
     window: mainWindow,
     repository,
+    libraryService,
+    libraryChanged(event) {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.libraryEvent, event);
+    },
+    async pickLibraryPaths(input, signal) {
+      signal?.throwIfAborted();
+      const testPaths = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_LIBRARY_IMPORT_TEST_PATHS?.split("\n").filter(Boolean) : undefined;
+      if (testPaths?.length) return testPaths;
+      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: input.kind === "skill" ? "导入 Skill" : "导入资料",
+        properties: input.directory ? ["openDirectory"] : ["openFile", "multiSelections"],
+      });
+      signal?.throwIfAborted();
+      return result.canceled ? null : result.filePaths;
+    },
+    async exportLibraryResource(input, signal) {
+      const snapshot = await libraryService.prepareExport(input, signal);
+      let path = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_LIBRARY_EXPORT_TEST_PATH : undefined;
+      const safeName = snapshot.name.replace(/[^\p{L}\p{N} _-]/gu, "-").slice(0, 80) || "resource";
+      if (!path) {
+        if (!mainWindow || mainWindow.isDestroyed()) return null;
+        if (snapshot.kind === "skill") {
+          const result = await dialog.showOpenDialog(mainWindow, { title: "选择 Skill 导出位置", buttonLabel: "导出到新文件夹", properties: ["openDirectory", "createDirectory"] });
+          if (result.canceled || !result.filePaths[0]) return null;
+          path = join(result.filePaths[0], `${safeName}-${randomUUID().slice(0, 8)}`);
+        } else {
+          const result = await dialog.showSaveDialog(mainWindow, { title: "导出资料固定版本", defaultPath: `${safeName}.md`, filters: [{ name: "Markdown", extensions: ["md"] }], properties: ["createDirectory"] });
+          if (result.canceled || !result.filePath) return null;
+          path = result.filePath;
+        }
+      }
+      const output = await writeLibraryExport(snapshot, path, signal, () => {
+        repository!.library.read({ ...input, revisionId: snapshot.revisionId });
+      });
+      return { resourceId: snapshot.resourceId, revisionId: snapshot.revisionId, path: output };
+    },
     providers: providerService,
     generalSettings,
     sendWorker,
