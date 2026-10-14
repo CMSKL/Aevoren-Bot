@@ -119,6 +119,10 @@
 
 后续 cookie 持久化通过真实浏览器协议关闭修复；本机剩余八个真实 Docker 场景与 21 个单元共 29 项通过。六环境场景未通过：六个均先到启动屏障，随后多个容器 OOM；截图子进程已实证仅一线程且 RSS 不超过约 12.5 MiB，Docker VM 总内存约 3.83 GiB。未修改 VM、容器内存限额或超时；六并行完整断言继续在原生 Linux CI 启用，并增加仅自有容器的 cgroup memory.events/peak 与进程名/RSS 诊断，以区分单容器限额和整机压力。此处不把本机失败算通过，也不声称更大 VM 必然解决。
 
+原生 Linux [CI 38534108904](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38534108904) 的 Validate 在 `68a1e76` 成功：真实 Docker 33／33、无跳过（浏览器 9、Host 4、代理 2，加既有执行环境 18），六 Scope 并行用例 7.569 秒通过，端口映射 32785→32786 等实际核验成功且 OOM=false。普通 Linux 单元 1,375 通过、37 跳过；本机完整 1,376 通过、36 跳过。由此补齐六环境原生 Linux 证据，仍保留本机低内存失败与真实 Windows Docker 未验证的边界。
+
+最终私有管道版本的隐藏源码 Browser 2／2、Host 4／4 通过；同一冻结 macOS beta.29 包完成 13／13（资料库 8、执行环境 3、Browser 2）。实查版本／isPackaged／两套 Worker Resources／随包说明；原生 F8 仅发送一次，随后等真实只读 DOM 回执再做界面断言。最新包已覆盖准确 B 页画面、旧 A 输入拒绝、下载字节与自动失败通知、预览及私聊／群登录隔离。初次无远端回执屏障的失败保留，不作为已通过记录。
+
 ## 阶段固定实现与完成条件
 
 1. 文本 Skill 兼容 SKILL.md YAML 与 references/scripts/assets；第一阶段保存整套资源而不执行脚本。用户运行 Skill 走现有 Send，AI 当前 Runtime 使用 skills.load。资源写入、共享和删除复用真实审批及原子结果回执。

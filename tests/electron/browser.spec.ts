@@ -166,6 +166,15 @@ test.describe("actual browser companion through hidden Electron", () => {
       }).toBe(true); } finally { await test.info().attach("native-rfb-actual-pages", { body: JSON.stringify({ observedUrls }), contentType: "application/json" }); const bytes = await canvas.evaluate(element => (element as HTMLCanvasElement).toDataURL("image/png").split(",")[1]); await test.info().attach("native-rfb-screen-after-navigation", { body: Buffer.from(bytes!, "base64"), contentType: "image/png" }); }
       await panel.getByRole("button", { name: "刷新状态", exact: true }).click(); await navigate(panel, f.url);
       await canvas.click(); await f.page.keyboard.press("F8");
+      let rfbReceipt = "";
+      try {
+        // The local key event and the remote DOM reply use different transports. Wait for the real native effect, without replaying input.
+        await expect.poll(async () => {
+          const view = (await control(f.page, scope))!;
+          rfbReceipt = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser.read(input), { ...scope, expectedEpoch: view.epoch, pageId: await panel.getByLabel("当前浏览器页面", { exact: true }).inputValue() })).text;
+          return rfbReceipt;
+        }).toContain("RFB_DOM_CHANGE_PROVEN");
+      } finally { await test.info().attach("native-rfb-actual-dom-receipt", { body: JSON.stringify({ text: rfbReceipt, keys: await canvas.evaluate(() => (window as unknown as { __aevorenBrowserFixtureKeys: unknown[] }).__aevorenBrowserFixtureKeys) }), contentType: "application/json" }); }
       await panel.getByRole("button", { name: "读取页面", exact: true }).click(); await expect(panel.locator(".computer-page-text")).toContainText("RFB_DOM_CHANGE_PROVEN");
       await panel.getByLabel("浏览器页面元素", { exact: true }).selectOption({ label: "input · 验收输入" });
       await panel.getByLabel("浏览器输入内容", { exact: true }).fill("DOM_HUMAN_ACTUAL_RECEIPT"); await panel.getByRole("button", { name: "填写元素", exact: true }).click();
