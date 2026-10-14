@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ENV_WORKER_VERSION } from "@shared/environment-contracts";
 import { DockerCommandError, DockerDriver, EXECUTION_IMAGE_REF, type DockerCommandRunner } from "./docker-driver";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -19,7 +20,7 @@ function fixture() {
     const command = args.slice(2);
     if (command[0] === "info") return { stdout: JSON.stringify({ OSType: os, Architecture: architecture, ServerVersion: "29.5.3" }), stderr: "" };
     if (command[0] === "image") return { stdout: JSON.stringify({ Id: digest, Os: "linux", Architecture: architecture === "aarch64" ? "arm64" : "amd64", Config: { Labels: {
-      "io.aevoren.role": "execution-worker", "io.aevoren.worker-version": "1.0.0", "io.aevoren.worker-bundle": bundle,
+      "io.aevoren.role": "execution-worker", "io.aevoren.worker-version": ENV_WORKER_VERSION, "io.aevoren.worker-bundle": bundle,
     } } }), stderr: "" };
     if (command[0] === "container") {
       if (!inspect) throw new DockerCommandError("DOCKER_COMMAND_FAILED", "No such container");

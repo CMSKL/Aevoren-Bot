@@ -1,6 +1,6 @@
 # User guide
 
-This guide covers documents, text Skills and local Docker execution in the v0.3.0-beta.28 development candidate. Local quality gates, real Linux Docker integration, three hidden source-Electron scenarios and all three final unsigned macOS package scenarios have passed; branch promotion and signing/release are pending. Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). The app applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build; real Windows Docker execution remains unverified.
+This guide covers documents, text Skills, local Docker execution and browser/computer integration in the v0.3.0-beta.29 development candidate. Docker execution passed local and development CI checks; the browser source/package checks and signing/release are tracked separately in the [implementation record](IMPLEMENTATION_PLAN.md). Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). The app applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build; real Windows Docker execution remains unverified.
 
 ## First run
 
@@ -48,7 +48,7 @@ The message pins `resourceId`, `revisionId` and `digest`. Editing the resource l
 
 Connected models discover the 38 new `library.*`, `documents.*` and `skills.*` operations through `product_catalog`, `product_describe` and `product_execute`. `skills.load` returns an authorized text Skill to the current Runtime; `skills.readFile` reads accepted auxiliary text, with paging and truncation information. Binary assets return metadata only. File imports from AI must use the current conversation's authorized Workspace; selecting arbitrary native import/export locations requires the user's file dialog interaction. Mutations and sharing continue through the existing permission and approval rules.
 
-Text Skill metadata, including declared tool names, does not grant tool permissions. Scripts are preserved and may be read as text, but the Skill system does not execute them. The development branch provides the separate approved Docker command workflow below. Browser sessions, desktop control, service previews, native Gmail/Drive/Notion connectors, media interpretation and voice remain later stages in the [implementation record](IMPLEMENTATION_PLAN.md).
+Text Skill metadata, including declared tool names, does not grant tool permissions. Scripts are preserved and may be read as text, but the Skill system does not execute them. The development branch provides the separate approved Docker command workflow below and isolated [browser/computer tools](BROWSER_COMPUTER.md). Native Gmail/Drive/Notion connectors, executable Skill grants, media interpretation and voice remain later stages in the [implementation record](IMPLEMENTATION_PLAN.md).
 
 ## Docker execution environments (development)
 
@@ -60,7 +60,7 @@ Enter a command and a workspace-relative directory (`.` means the workspace root
 
 Closing the application and clearing history retain background services while Docker remains running. **Sleep** interrupts the environment's tasks and retains its workspace. **Rebuild** replaces the execution container and retains the workspace. Neither wake nor rebuild replays old commands. Unknown acceptance/connectivity means check the existing task and logs before starting new work. Deleting a Bot or group releases its containers after the normal approval/busy checks and retains Docker volumes.
 
-For a running background service, register its listening port. The Worker verifies that the listener belongs to that process and reports its actual check time. This does not publish a browser/service preview. Setup, isolation, image versions, licenses and platform validation are documented in [Execution environments](EXECUTION_ENVIRONMENT.md).
+For a running background service, register its listening port. The Worker verifies that the listener belongs to that process and reports its actual check time. **Preview** opens that registered service in the isolated browser; the original process's exit invalidates it. Execution Worker 1.1.0 is required, and older environments need an explicit rebuild. Setup, isolation, image versions, licenses and platform validation are documented in [Execution environments](EXECUTION_ENVIRONMENT.md) and [Browser/computer](BROWSER_COMPUTER.md).
 
 ## Content-team workflow UI
 

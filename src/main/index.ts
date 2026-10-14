@@ -31,6 +31,8 @@ import { MemoryCaptureService } from "./memory-capture-service";
 import { LibraryService } from "./library-service";
 import { writeLibraryExport } from "./library-export";
 import { EnvironmentService } from "./environment-service";
+import { BrowserService } from "./browser-service";
+import { BROWSER_EVENTS } from "@shared/browser-channels";
 import { ENVIRONMENT_EVENTS } from "@shared/environment-channels";
 import { environmentDirectoryPathSchema, environmentFilePathSchema } from "@shared/environment-schemas";
 import { readEnvironmentUpload, writeEnvironmentDownload } from "./environment-file-transfer";
@@ -54,6 +56,7 @@ let updateService: UpdateService | null = null;
 let providerService: ProviderService | null = null;
 let mcpService: McpService | null = null;
 let environmentService: EnvironmentService | null = null;
+let browserService: BrowserService | null = null;
 let routineService: RoutineService | null = null;
 let allowClose = false;
 let closeRequested = false;
@@ -89,6 +92,7 @@ function emitSendState(event: SendStateEvent): void {
 }
 
 function emitRuntime(event: RuntimeEvent): void {
+  if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void browserService?.cancelRuntime(event.run.id).catch(() => undefined);
   if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void environmentService?.cancelRuntime(event.run.id).catch(() => undefined);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.runtimeEvent, event);
 }
@@ -150,6 +154,7 @@ async function finishClose(): Promise<void> {
     await runtimeCoordinator?.shutdown();
     await roomCoordinator?.shutdown();
     await environmentService?.shutdown();
+    await browserService?.shutdown();
     await providerService?.dispose();
     await mcpService?.dispose();
     routineService?.stop();
@@ -297,6 +302,13 @@ app.whenReady().then(async () => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ENVIRONMENT_EVENTS.changed, event);
     });
   void environmentService.recover().catch(() => undefined);
+  browserService = new BrowserService(repository, electronSecretCodec,
+    app.isPackaged ? join(process.resourcesPath, "browser-worker") : join(app.getAppPath(), "out", "browser-worker"),
+    join(app.getPath("userData"), "browser-media"), environmentService, event => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(BROWSER_EVENTS.changed, event);
+    });
+  environmentService.setCompanionLifecycle((scope, remove) => browserService!.release(scope, remove));
+  for (const saved of repository.browsers.listInternal()) void browserService.get(saved).catch(() => undefined);
   mcpService = new McpService(repository, electronSecretCodec, app.getVersion(), (url) => shell.openExternal(url));
   await mcpService.initialize();
   const workspaceToolExecutor = new WorkspaceToolExecutor(repository, workspaceService, new NetworkToolExecutor(), mcpService, new DeviceToolExecutor(() => clipboard.readText()));
@@ -378,6 +390,22 @@ app.whenReady().then(async () => {
     repository,
     libraryService,
     environmentService,
+    browserService,
+    async saveBrowserDownload(input, context) {
+      const file = await browserService!.downloadData(input, context);
+      let path = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_BROWSER_DOWNLOAD_TEST_PATH : undefined;
+      if (!path) {
+        if (!mainWindow || mainWindow.isDestroyed()) return null;
+        const selected = await dialog.showSaveDialog(mainWindow, { title: "保存浏览器下载", defaultPath: basename(file.download.name) });
+        if (selected.canceled || !selected.filePath) return null;
+        path = selected.filePath;
+      }
+      const bytes = file.bytes;
+      const output = await writeEnvironmentDownload(path, bytes, () => {
+        repository!.browsers.assertAccess(input, input.expectedEpoch, context.actor ?? "user");
+      }, context.signal);
+      return { path: output, name: basename(file.download.name), size: bytes.length };
+    },
     async pickEnvironmentUpload(input, signal) {
       const directory = environmentDirectoryPathSchema.parse(input.directory ?? ".");
       const testPath = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_ENVIRONMENT_UPLOAD_TEST_PATH : undefined;

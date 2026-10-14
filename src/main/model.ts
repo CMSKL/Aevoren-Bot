@@ -3,6 +3,7 @@ import { projectRoomSummary, type PromptMessage } from "./prompt";
 import type { ComputationToolRequest, DeviceToolRequest, ExecutionEvidenceReceipt, McpToolInfo, McpToolRequest, NetworkToolRequest, ProjectToolRequest, RoomRunSummary, WorkspaceToolRequest } from "@shared/contracts";
 import { computationToolRequestSchema, deviceToolRequestSchema, mcpToolRequestSchema, networkToolRequestSchema, projectToolRequestSchema, productToolRequestSchema, workspaceToolRequestSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
+import { imageAwareChatMessages, type ModelImageAttachment } from "./model-image";
 
 export type ChatMessage = PromptMessage | {
   role: "assistant";
@@ -16,6 +17,7 @@ export type ChatMessage = PromptMessage | {
   role: "tool";
   tool_call_id: string;
   content: string;
+  images?: ModelImageAttachment[];
 };
 
 export type RoomPeer = {
@@ -59,7 +61,7 @@ export type RoomContinuationDecision =
     };
 
 export type ModelToolResponder = {
-  respond?(content: string): Promise<void>;
+  respond?(content: string, images?: readonly ModelImageAttachment[]): Promise<void>;
   providerToolName?: string;
   /** Native MCP request cancellation, in addition to the owning Runtime's signal. */
   toolSignal?: AbortSignal;
@@ -1429,7 +1431,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
         },
         body: JSON.stringify({
           model: this.modelId,
-          messages: requestMessages,
+          messages: imageAwareChatMessages(requestMessages),
           stream: true,
           ...(tools.length > 0 ? {
             tools,
