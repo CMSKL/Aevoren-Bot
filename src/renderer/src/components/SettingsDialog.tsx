@@ -9,9 +9,10 @@ import { McpSettingsPanel } from "./McpSettingsPanel";
 import { ScopedMemorySettingsPanel } from "./ScopedMemorySettingsPanel";
 import { RoutinesSettingsPanel } from "./RoutinesSettingsPanel";
 import { DockerStatusCard } from "./EnvironmentPanel";
+import { ConnectorSettingsPanel } from "./ConnectorSettingsPanel";
 import type { UpdateAction } from "../update-actions";
 
-type SettingsSection = "general" | "capabilities" | "memory" | "mcp" | "routines" | "updates";
+type SettingsSection = "general" | "capabilities" | "memory" | "mcp" | "routines" | "updates" | "apps";
 
 type SettingsDialogProps = {
   open: boolean;
@@ -178,6 +179,7 @@ export function SettingsDialog({
             <button type="button" aria-label="通用" className={section === "general" ? "selected" : ""} aria-current={section === "general" ? "page" : undefined} onClick={() => setSection("general")}><SettingsIcon /><span>通用</span></button>
             <button type="button" aria-label="能力与权限" className={section === "capabilities" ? "selected" : ""} aria-current={section === "capabilities" ? "page" : undefined} onClick={() => setSection("capabilities")}><EyeIcon /><span>能力与权限</span></button>
             <button type="button" aria-label="长期记忆" className={section === "memory" ? "selected" : ""} aria-current={section === "memory" ? "page" : undefined} onClick={() => setSection("memory")}><BotIcon /><span>长期记忆</span></button>
+            <button type="button" aria-label="应用连接" className={section === "apps" ? "selected" : ""} aria-current={section === "apps" ? "page" : undefined} onClick={() => setSection("apps")}><PanelIcon /><span>应用连接</span></button>
             <button type="button" aria-label="MCP" className={section === "mcp" ? "selected" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => setSection("mcp")}><PanelIcon /><span>MCP</span></button>
             <button type="button" aria-label="主动服务" className={section === "routines" ? "selected" : ""} aria-current={section === "routines" ? "page" : undefined} onClick={() => setSection("routines")}><BellIcon /><span>主动服务</span></button>
             <button type="button" aria-label="版本更新" className={section === "updates" ? "selected" : ""} aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}><RefreshIcon /><span>版本更新</span></button>
@@ -260,6 +262,10 @@ export function SettingsDialog({
 
           {section === "memory" ? <section className="settings-panel" aria-label="长期记忆">
             <ScopedMemorySettingsPanel active={open && section === "memory"} />
+          </section> : null}
+
+          {section === "apps" ? <section className="settings-panel" aria-label="应用连接设置">
+            <ConnectorSettingsPanel active={open && section === "apps"} />
           </section> : null}
 
           {section === "mcp" ? <section className="settings-panel" aria-label="MCP">

@@ -5,7 +5,7 @@ import { join, posix } from "node:path";
 import type { Stats } from "node:fs";
 import type { ComputationToolRequest, DeviceToolRequest, NetworkToolRequest, ToolInvocation, ToolRequest, WorkspaceToolRequest } from "@shared/contracts";
 import type { AppRepository } from "./database";
-import { AevorenBotError } from "./errors";
+import { asAppError, AevorenBotError, type ErrorCode } from "./errors";
 import type { WorkspaceService } from "./workspace-service";
 import type { NetworkToolExecutor } from "./network-tool-executor";
 import type { McpService } from "./mcp-service";
@@ -79,7 +79,10 @@ function checkCancellation(signal: AbortSignal): void {
 }
 
 function stableError(error: unknown): AevorenBotError {
-  return error instanceof AevorenBotError ? error : new AevorenBotError("TOOL_EXECUTION_FAILED");
+  if (error instanceof AevorenBotError) return error;
+  const mapped = asAppError(error);
+  if (mapped.code.startsWith("CONNECTOR_") || mapped.code === "TOOL_EXECUTION_CANCELLED") return new AevorenBotError(mapped.code as ErrorCode, undefined, undefined, mapped.details);
+  return new AevorenBotError("TOOL_EXECUTION_FAILED");
 }
 
 function digestResult(content: string): string {

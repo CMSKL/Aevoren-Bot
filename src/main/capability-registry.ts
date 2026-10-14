@@ -28,6 +28,7 @@ type SnapshotContext = {
   routines: Routine[];
   executionReady: boolean;
   scriptReady: boolean;
+  nativeReadReady: boolean;
   browserReady: boolean;
   browserUserControlled: boolean;
 };
@@ -126,6 +127,13 @@ function capabilityDescriptors(
       effectClass: "irreversible", adapterKind: "core", availability: executionTools && context.scriptReady ? "available" : "unavailable",
       reason: !executionTools ? "当前模型来源不支持宿主产品工具。" : context.scriptReady ? null : "请启动支持脚本 Skill 的环境；旧镜像需要明确重建，每个入口另需授权。",
       permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "apps.read", name: "原生应用读取", category: "external",
+      description: "读取当前会话 Bot 明确授权的 Gmail、所选 Drive 文件和共享 Notion 页面；配置连接不授予会话权限，本地草稿尚未外发。",
+      effectClass: "read-remote", adapterKind: "core", availability: executionTools && context.nativeReadReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前来源未接入宿主工具。" : context.nativeReadReady ? null : "请先验证账号，并在当前会话为此 Bot 授予读取权限。",
+      permissionState: context.nativeReadReady ? "granted" : "not-granted", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
       id: "environment.execution", name: "隔离 Linux 执行环境", category: "workspace",
@@ -364,7 +372,11 @@ export class CapabilityRegistry {
     const environment = botId && sessionId ? this.repository.environments.get({ sessionId, executorBotId: botId }) : null;
     const executionReady = environment?.state === "running";
     const browser = botId && sessionId ? this.repository.browsers.get({ sessionId, executorBotId: botId }) : null;
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION,
+    const nativeReadReady = Boolean(botId && sessionId && this.repository.connectors.bindings({ sessionId, executorBotId: botId }).some(binding => {
+      const connection = this.repository.connectors.get(binding.connectionId);
+      return connection.state === "connected" && connection.authVersion === binding.authVersion && Boolean(connection.account);
+    }));
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady,
       browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));
