@@ -22,13 +22,15 @@ Transport support does not prove that the selected model accepts or understands 
 
 ## Isolation and lifecycle
 
-Each `(sessionId, executorBotId)` has its own execution container, browser companion, scoped Docker network and named volumes. Browser profile, download and private supervisor state volumes are not mounted in the execution container. Browser control credentials are not passed into the model Shell or renderer. Control endpoints bind to loopback; VNC is served through an expiring, epoch-bound host ticket. The desktop is Xvfb/Openbox/Chromium/x11vnc; the image runs an unprivileged browser engine and a separate supervisor.
+Each `(sessionId, executorBotId)` has its own execution container, browser companion, scoped Docker network and named volumes. Browser profile, download and private supervisor state volumes are not mounted in the execution container. Browser control credentials are not passed into the model Shell or renderer. Control endpoints bind to loopback; VNC is served through an expiring, epoch-bound host ticket. Chromium uses a private debugging pipe and one protected SDK WebSocket connection, with website Origins and all ordinary HTTP requests rejected. The public CDP connection preserves real focus; an isolated world checks page ownership before capture and physical input. The desktop is Xvfb/Openbox/Chromium/x11vnc; the image runs an unprivileged browser engine and a separate supervisor.
 
 Sleep stops containers and retains volumes. Wake checks actual health and preserves user ownership, and never replays a previous command or input. Explicit environment rebuild recreates the companion from the current image while retaining its profile and control ownership. App upgrades do not automatically replace running environments or their background services. New preview support requires an explicit rebuild of an older execution image.
 
 Execution Worker 1.1.0 adds the preview proxy; browser Worker 1.0.0 uses Playwright Core 1.63.0. Images record their actual platform and immutable digest separately from the application version. Both use the pinned base manifest `node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20`. See [third-party notices](../THIRD_PARTY_NOTICES.md) for host dependencies; Debian and Chromium distributions retain their own notices in the image.
 
 ## Current boundaries
+
+Six parallel browser scopes passed the native Linux CI. The local Docker VM with about 3.83 GiB experienced real OOM under that workload; provide sufficient resource headroom and inspect actual health rather than assuming that the container limit reserves memory.
 
 Only the application's local Docker environments are controlled. Host Shell/GUI control, copying existing browser cookies, remote Docker and remote deployment are outside this implementation. The browser has outbound network access and may encounter an account login; log in only inside the selected isolated profile. Application connectors, executable Skill grants, document interpretation and voice follow later stages.
 
