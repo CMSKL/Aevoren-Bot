@@ -7,11 +7,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRepository } from "./database";
 import { BrowserService } from "./browser-service";
 import { BrowserDockerDriver } from "./browser-docker-driver";
+import { DockerDriver } from "./docker-driver";
 import { EnvironmentService } from "./environment-service";
+import { ExecutionWorkerClient } from "./execution-worker-client";
 import type { BrowserPage, BrowserScope, BrowserSession, BrowserWorkerControl } from "@shared/browser-contracts";
 
 type Fixture = { repository: AppRepository; service: BrowserService; environments: EnvironmentService; driver: BrowserDockerDriver; scope: BrowserScope; browser: BrowserSession; page: BrowserPage; control: BrowserWorkerControl;
-  calls: Array<{ path: string; body: Record<string, unknown> }>; changed: ReturnType<typeof vi.fn>; root: string; server: Server; readonly inputCount: number; holdFrame(fn: () => Promise<void>): void };
+  calls: Array<{ path: string; body: Record<string, unknown> }>; changed: ReturnType<typeof vi.fn>; root: string; server: Server; executionServers?: Server[]; readonly inputCount: number; holdFrame(fn: () => Promise<void>): void };
 const fixtures: Fixture[] = [];
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6iFAAAAAASUVORK5CYII=", "base64");
 async function fixture(): Promise<Fixture> {
@@ -66,9 +68,42 @@ async function fixture(): Promise<Fixture> {
   fixtures.push(value); return value;
 }
 afterEach(async () => {
-  for (const f of fixtures.splice(0)) { await f.service.shutdown(); f.server.closeAllConnections(); await new Promise<void>(accept => f.server.close(() => accept())); f.repository.close(); rmSync(f.root, { recursive: true, force: true }); }
+  for (const f of fixtures.splice(0)) { await f.service.shutdown(); for (const server of [f.server, ...f.executionServers ?? []]) { server.closeAllConnections(); await new Promise<void>(accept => server.close(() => accept())); } f.repository.close(); rmSync(f.root, { recursive: true, force: true }); }
   vi.restoreAllMocks();
 });
+
+async function executionTransport(f: Fixture) {
+  const environment = f.repository.environments.get(f.scope)!, bootId = randomUUID(), token = "a".repeat(64);
+  let port = 0, state = "running", gate: (() => Promise<void>) | undefined;
+  const listen = async () => {
+    const server = createServer(async (request, response) => {
+      expect(request.headers.authorization).toBe(`Bearer ${token}`); response.setHeader("content-type", "application/json");
+      if (request.url === "/v1/health") { await gate?.(); response.end(JSON.stringify({ environmentId: environment.id, bootId, protocolVersion: 1, workerVersion: "1.0.0", capabilities: ["execution", "files"] })); return; }
+      const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const input = JSON.parse(Buffer.concat(chunks).toString()) as { path: string; content: string };
+      response.end(JSON.stringify({ path: input.path, size: Buffer.byteLength(input.content), sha256: createHash("sha256").update(input.content).digest("hex") }));
+    });
+    await new Promise<void>(accept => server.listen(0, "127.0.0.1", accept));
+    port = (server.address() as { port: number }).port; (f.executionServers ??= []).push(server); return server;
+  };
+  const server = await listen();
+  f.repository.environments.update(f.scope, environment.version, { containerId: "fixture-execution", encryptedToken: token, workerPort: port, bootId });
+  const runner = vi.fn(async (args: string[]) => {
+    if (args.join(" ") === "context show") return { stdout: "fixture-local", stderr: "" };
+    if (args[0] === "context") return { stdout: JSON.stringify("unix:///fixture-docker.sock"), stderr: "" };
+    if (args.includes("stop")) { state = "exited"; return { stdout: "", stderr: "" }; }
+    expect(args).toContain(`aevoren-execution-${environment.id}`);
+    return { stdout: JSON.stringify({ Id: "fixture-execution", Image: environment.imageDigest,
+      Config: { Labels: { "io.aevoren.role": "execution-environment", "io.aevoren.environment": environment.id } },
+      State: { Status: state, OOMKilled: false }, HostConfig: { ReadonlyRootfs: true, CapDrop: ["ALL"] },
+      Mounts: [{ Type: "volume", Name: `aevoren-work-${environment.id}`, Destination: "/workspace" }, { Type: "volume", Name: `aevoren-state-${environment.id}`, Destination: "/var/lib/aevoren" }],
+      NetworkSettings: { Ports: { "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: String(port) }] } } }), stderr: "" };
+  });
+  const codec = { isAvailable: () => true, encrypt: (value: string) => value, decrypt: (value: string) => value };
+  const environments = new EnvironmentService(f.repository.environments, codec, f.root, () => undefined, new DockerDriver(runner));
+  const service = new BrowserService(f.repository, codec, f.root, join(f.root, "media"), environments, () => undefined, f.driver);
+  return { environments, service, server, listen, runner, token, environmentId: environment.id, get port() { return port; }, holdHealth(fn: () => Promise<void>) { gate = fn; } };
+}
 
 describe("host browser permission and pixel transport boundaries (controlled HTTP, not Chromium execution)", () => {
   it("stores actual bytes, gates the ephemeral image immediately on takeover and requires fresh AI input after return", async () => {
@@ -112,6 +147,7 @@ describe("host browser permission and pixel transport boundaries (controlled HTT
   });
   it("returns already-running metadata to AI without disturbing human ownership or requesting private pages", async () => {
     const f = await fixture(); await f.service.takeover({ ...f.scope, clientNonce: randomUUID(), expectedEpoch: 1 });
+    vi.spyOn(f.environments, "reconcileBinding").mockResolvedValue(f.repository.environments.get(f.scope)!);
     const before = f.repository.browsers.get(f.scope), pages = f.calls.filter(call => call.path === "/v1/browser/pages").length;
     expect(await f.service.start({ ...f.scope, clientNonce: randomUUID() }, { actor: "ai" })).toEqual(before);
     expect(f.repository.browsers.view(f.scope)).toMatchObject({ owner: "user", epoch: 2 });
@@ -159,5 +195,45 @@ describe("host browser permission and pixel transport boundaries (controlled HTT
     await expect(f.service.takeover(previous)).rejects.toMatchObject({ code: "COMPUTER_CONTROL_CHANGED" });
     expect(f.calls.filter(call => call.path === "/v1/computer/takeover")).toHaveLength(count);
     expect(f.repository.browsers.view(f.scope)).toMatchObject({ owner: "ai", epoch: 3 });
+  });
+  it("reconciles a Docker-verified remapped execution port before browser start succeeds, preserving background records and nonce replay", async () => {
+    const f = await fixture(), transport = await executionTransport(f), oldPort = transport.port;
+    await new ExecutionWorkerClient(oldPort, transport.token, transport.environmentId).health();
+    const session = f.repository.environments.createSession(f.scope, null), nonce = randomUUID();
+    const job = f.repository.environments.createExecution(f.scope, { executionSessionId: session.id, clientNonce: nonce, kind: "background", command: "background metadata fixture" }).execution;
+    f.repository.environments.updateExecution(f.scope, job.id, job.version, { state: "running" });
+    f.repository.environments.appendLogs(f.scope, job.id, [{ seq: 1, executionId: job.id, stream: "stdout", text: "original background log", at: new Date().toISOString() }]);
+    const original = f.repository.environments.getExecution(f.scope, job.id), logs = f.repository.environments.logs(f.scope, job.id);
+    f.repository.browsers.update(f.scope, f.repository.browsers.get(f.scope)!.version, { state: "stopped" });
+    vi.mocked(f.driver.inspectBrowser).mockResolvedValueOnce(null);
+    vi.spyOn(f.driver, "inspectBrowserImage").mockResolvedValue({ id: `sha256:${"c".repeat(64)}`, ref: "fixture", workerVersion: "1.0.0", platform: "linux/arm64", bundleSha256: "d".repeat(64) });
+    const create = vi.spyOn(f.driver, "createBrowser").mockImplementation(async () => {
+      await transport.listen(); transport.server.closeAllConnections(); await new Promise<void>(accept => transport.server.close(() => accept()));
+      return (await f.driver.inspectBrowser(f.browser.id, transport.environmentId))!;
+    });
+    const input = { ...f.scope, clientNonce: randomUUID() };
+    expect((await transport.service.start(input)).state).toBe("running");
+    expect(transport.port).not.toBe(oldPort);
+    expect(f.repository.environments.getInternal(f.scope)?.workerPort).toBe(transport.port);
+    await expect(new ExecutionWorkerClient(oldPort, transport.token, transport.environmentId).health()).rejects.toMatchObject({ code: "WORKER_CONNECTION_FAILED" });
+    await expect(transport.environments.writeFile({ ...f.scope, path: "after-attachment.txt", content: "actual controlled HTTP bytes" })).resolves.toMatchObject({ path: "after-attachment.txt" });
+    const version = f.repository.environments.get(f.scope)!.version;
+    await transport.service.start(input); expect(create).toHaveBeenCalledTimes(1);
+    expect(f.repository.environments.get(f.scope)!.version).toBe(version);
+    expect(f.repository.environments.findExecutionByNonce(f.scope, nonce)).toEqual(original);
+    expect(f.repository.environments.logs(f.scope, job.id)).toEqual(logs);
+    expect(transport.runner.mock.calls.every(([args]) => !["run", "start", "stop", "rm"].some(operation => args.includes(operation)))).toBe(true);
+  });
+  it("does not restore a stopped environment when its older reconciliation health response arrives", async () => {
+    const f = await fixture(), transport = await executionTransport(f);
+    let entered!: () => void, release!: () => void;
+    const waiting = new Promise<void>(accept => { entered = accept; }), held = new Promise<void>(accept => { release = accept; });
+    transport.holdHealth(async () => { entered(); await held; });
+    const pending = transport.environments.reconcileBinding(f.scope).catch(error => error as Error);
+    await waiting;
+    try { await transport.environments.stop(f.scope); }
+    finally { release(); }
+    expect(await pending).toMatchObject({ code: "ENVIRONMENT_UNAVAILABLE" });
+    expect(f.repository.environments.getInternal(f.scope)).toMatchObject({ state: "stopped", workerPort: null });
   });
 });

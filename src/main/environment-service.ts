@@ -159,6 +159,27 @@ export class EnvironmentService {
     return this.repository.get(scope);
   }
 
+  /** Host-only: attaching a companion can reallocate a Linux Docker published port. */
+  async reconcileBinding(input: EnvironmentScope, signal?: AbortSignal): Promise<Environment> {
+    const scope = environmentScopeSchema.parse(input); this.assertActive(scope);
+    const before = this.repository.getInternal(scope);
+    if (!before || before.state !== "running" || !before.encryptedToken) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
+    try {
+      const container = await this.docker.inspect(before.id, signal); this.assertActive(scope);
+      if (!container || container.state !== "running" || !container.workerPort) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
+      if (container.imageId !== before.imageDigest || container.id !== before.containerId) throw new AevorenBotError("ENVIRONMENT_IMAGE_INVALID");
+      const connection = new ExecutionWorkerClient(container.workerPort, this.codec.decrypt(before.encryptedToken), before.id);
+      const health = workerHealthSchema.parse(await connection.health(signal)); this.assertActive(scope); signal?.throwIfAborted();
+      if (health.workerVersion !== before.workerVersion) throw new AevorenBotError("ENVIRONMENT_IMAGE_INVALID");
+      const current = this.repository.getInternal(scope)!;
+      if (current.id !== before.id || current.imageDigest !== before.imageDigest || current.containerId !== before.containerId || current.encryptedToken !== before.encryptedToken) throw new AevorenBotError("ENVIRONMENT_VERSION_CONFLICT");
+      if (current.state !== "running") throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
+      if (current.version !== before.version && (current.workerPort !== container.workerPort || current.bootId !== health.bootId)) throw new AevorenBotError("ENVIRONMENT_VERSION_CONFLICT");
+      if (current.workerPort !== container.workerPort || current.bootId !== health.bootId) this.repository.update(scope, current.version, { workerPort: container.workerPort, bootId: health.bootId });
+      return this.repository.get(scope)!;
+    } catch (error) { signal?.throwIfAborted(); throw failure(error); }
+  }
+
   start(input: EnvironmentMutationInput, signal?: AbortSignal): Promise<Environment> {
     const parsed = environmentMutationSchema.parse(input);
     return this.locked(parsed, () => this.startUnlocked(parsed, signal));

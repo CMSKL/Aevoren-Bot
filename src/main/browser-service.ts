@@ -117,7 +117,7 @@ export class BrowserService {
       if (record?.state === "running") {
         const existing = await this.docker.inspectBrowser(record.id, record.environmentId, context.signal);
         if (existing?.state === "running" && existing.imageId === record.imageDigest) {
-          const healthy = await this.health(parsed, context.signal); this.live(parsed, context);
+          const healthy = await this.health(parsed, context.signal); await this.environments.reconcileBinding(scope(parsed), context.signal); this.live(parsed, context);
           this.repository.browsers.syncControl(parsed, healthy.control, healthy.bootId);
           this.emit(parsed, "browser", current!.version); return this.repository.browsers.get(parsed)!;
         }
@@ -133,6 +133,7 @@ export class BrowserService {
         if (old && old.imageId !== image.id) throw new AevorenBotError("BROWSER_SCOPE_INVALID");
         const container = old?.state === "running" ? old : old ? await this.docker.startBrowser(record.id, environment.id, context.signal) : await this.docker.createBrowser(record.id, environment.id, image, token, context.signal);
         this.repository.browsers.updateConnection(parsed, { containerId: container.id, workerPort: container.workerPort });
+        await this.environments.reconcileBinding(scope(parsed), context.signal); this.live(parsed, context);
         const client = await this.client(parsed); await client.waitHealthy(context.signal, 50_000);
         const health = await this.health(parsed, context.signal); this.live(parsed, context);
         this.repository.browsers.syncControl(parsed, health.control, health.bootId);
