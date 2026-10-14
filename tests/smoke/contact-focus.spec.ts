@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
-import { removeTestDirectory } from "./test-cleanup";
+import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
 
 test("delayed contact autofocus preserves the user's chosen field and persisted profile", async () => {
   const directory = mkdtempSync(join(tmpdir(), "aevoren-contact-focus-"));
@@ -82,7 +82,10 @@ test("delayed contact autofocus preserves the user's chosen field and persisted 
     expect(errors).toEqual([]);
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(window => !window.isVisible()))).toBe(true);
   } finally {
-    await application.close().catch(() => application.process().kill("SIGKILL"));
+    // The business body retains its 30s deadline. Teardown gets its own bounded
+    // allowance after those focus, persistence and hidden-window checks finish.
+    test.setTimeout(test.info().timeout + 5_000);
+    await closeTestApplication(application);
     removeTestDirectory(directory);
   }
 });

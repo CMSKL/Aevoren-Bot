@@ -147,16 +147,20 @@ async function withLibrary(callback: (fixture: LibraryFixture) => Promise<void>)
   };
   let fixture: LibraryFixture | undefined;
   try {
-    const page = await launch();
-    await page.evaluate(async (baseUrl) => {
+    const page = await test.step("fixture: launch isolated Electron app", () => launch());
+    const apiProvider = await test.step("fixture: list API provider before credential encryption", () => page.evaluate(async () => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       const listed = await api.providers.list();
       if (!listed.ok) throw new Error(listed.error.code);
       const provider = listed.data.find(item => item.id === "openai-compatible.default");
       if (!provider) throw new Error("API source unavailable");
+      return { id: provider.id, version: provider.version };
+    }));
+    await test.step("fixture: encrypt and save localhost API credential", () => page.evaluate(async ({ baseUrl, provider }) => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       const saved = await api.providers.saveOpenAiCompatible({ instanceId: provider.id, expectedVersion: provider.version, baseUrl, apiKey: "library-fixture-token" });
       if (!saved.ok) throw new Error(saved.error.code);
-    }, `http://127.0.0.1:${address.port}/v1`);
+    }, { baseUrl: `http://127.0.0.1:${address.port}/v1`, provider: apiProvider }));
     fixture = { page, application: application!, data, workspace: { id: registration.workspace.id, path: source }, exportPath, bots,
       room: { id: room.room.id, name: room.room.name, sessionId: room.session.id }, captures,
       respond(callback) { onRequest = callback; },
