@@ -57,7 +57,7 @@
 .library-tabs { display: flex; gap: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
 .library-tabs > button { min-height: 40px; padding: 8px 4px; border: 0; border-bottom: 2px solid transparent; color: var(--text-muted); background: transparent; font-size: 14px; cursor: pointer; }
 .library-tabs > button[aria-selected="true"] { color: var(--accent-strong); border-bottom-color: var(--accent); }
-.contact-detail .contact-profile-tabs { gap: clamp(8px, 3vw, 32px); overflow-x: auto; }
+.contact-detail .contact-profile-tabs { flex-wrap: wrap; gap: clamp(8px, 3vw, 32px); }
 .composer-resource-groups .library-resource-picker { position: static; width: 100%; max-height: 240px; border: 0; box-shadow: none; padding: 0; }
 .composer-resource-groups .library-tabs { margin: 0 0 4px; gap: 12px; }
 .composer-resource-groups .library-tabs > button[aria-pressed="true"] { color: var(--accent-strong); border-bottom-color: var(--accent); }

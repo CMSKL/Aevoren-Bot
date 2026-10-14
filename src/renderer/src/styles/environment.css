@@ -39,6 +39,7 @@
 .environment-panel button:disabled { cursor: default; opacity: .55; }
 .docker-status-card { margin: 14px 0; }
 .docker-status-card .environment-heading { flex-wrap: wrap; }
+.docker-status-card .secondary-button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .docker-status-card p { color: var(--text-muted); font-size: 13px; line-height: 1.6; }
 .docker-status-card dl { display: grid; grid-template-columns: minmax(80px, auto) minmax(0, 1fr); gap: 8px 12px; margin: 12px 0; font-size: 13px; }
 .docker-status-card dt { color: var(--text-muted); }
