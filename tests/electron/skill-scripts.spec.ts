@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import type { AevorenBotApi, ApiResult } from "../../src/shared/contracts";
 import type { LibraryContent } from "../../src/shared/library-contracts";
-import type { EnvironmentScope } from "../../src/shared/environment-contracts";
+import { ENV_WORKER_VERSION, type EnvironmentScope } from "../../src/shared/environment-contracts";
 import type { ApprovalReviewResult, SkillExecutionGrant } from "../../src/shared/skill-execution-contracts";
 import { IPC } from "../../src/shared/channels";
 import { AppRepository } from "../../src/main/database";
@@ -47,7 +47,15 @@ async function withScripts(callback: (fixture: Fixture) => Promise<void>): Promi
     const environment = Object.fromEntries(Object.entries(process.env).filter(([key, data]) => data !== undefined && !key.startsWith("AEVOREN_BOT_")));
     const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
     application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: { ...environment, AEVOREN_BOT_USER_DATA_DIR: directory, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_FAKE_PROVIDER: "0" } });
-    if (executablePath) expect(await application.evaluate(({ app }) => app.isPackaged)).toBe(true);
+    if (executablePath) {
+      const runtime = await application.evaluate(({ app }) => ({ isPackaged: app.isPackaged, version: app.getVersion(), resourcesPath: process.resourcesPath }));
+      expect(runtime.isPackaged).toBe(true); expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
+      const worker = join(runtime.resourcesPath, "environment-worker");
+      for (const name of ["index.mjs", "file-helper.mjs", "Dockerfile", "package.json"]) expect(existsSync(join(worker, name))).toBe(true);
+      const workerVersion = JSON.parse(readFileSync(join(worker, "package.json"), "utf8")).version; expect(workerVersion).toBe(ENV_WORKER_VERSION);
+      expect(existsSync(join(runtime.resourcesPath, "docs", "SCRIPT_SKILLS.md"))).toBe(true);
+      await test.info().attach("actual-script-package-runtime", { body: JSON.stringify({ ...runtime, workerVersion }), contentType: "application/json" });
+    }
     const page = await application.firstWindow(); const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
     await expect(page.locator(".app-shell")).toBeVisible();
     await page.evaluate(async baseUrl => { const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot; const listed = await api.providers.list(); if (!listed.ok) throw new Error(listed.error.code); const provider = listed.data.find(item => item.id === "openai-compatible.default")!; const saved = await api.providers.saveOpenAiCompatible({ instanceId: provider.id, expectedVersion: provider.version, baseUrl, apiKey: "script-fixture-token" }); if (!saved.ok) throw new Error(saved.error.code); }, `http://127.0.0.1:${address.port}/v1`);
