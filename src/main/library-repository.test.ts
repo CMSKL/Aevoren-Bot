@@ -268,7 +268,7 @@ describe("persistent conversation resource library", () => {
     const verified = new DatabaseSync(filename);
     const after = createHash("sha256").update(snapshot(verified)).digest("hex");
     expect(after).toBe(before);
-    expect(verified.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 34 });
+    expect(verified.prepare("SELECT version FROM schema_migrations WHERE version = 34").get()).toEqual({ version: 34 });
     expect(verified.prepare("SELECT * FROM session_resource_bindings").all()).toEqual([]);
     expect((verified.prepare("PRAGMA table_info(transcript_entries)").all() as { name: string }[]).some((column) => column.name === "resource_references_json")).toBe(true);
     verified.close();

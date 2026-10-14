@@ -1,0 +1,46 @@
+.environment-panel { min-width: 0; padding: 16px 0; color: var(--text); }
+.environment-heading, .environment-task-heading, .environment-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.environment-heading h3, .environment-section-heading h4 { margin: 0; font-size: 16px; font-weight: 500; }
+.environment-scope, .environment-note { margin: 10px 0 14px; color: var(--text-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.environment-state { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.environment-state.state-running { color: var(--success); }
+.environment-state.state-error, .environment-error { color: var(--danger); }
+.environment-error, .environment-notice { margin: 10px 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.environment-notice { color: var(--text-muted); }
+.environment-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.environment-panel :is(.primary-button, .secondary-button) { min-height: 34px; padding: 6px 12px; font-size: 13px; }
+.environment-panel .text-button { font-size: 12px; }
+.environment-panel .field { margin: 10px 0; }
+.environment-panel .field :is(input, textarea, select) { width: 100%; min-width: 0; }
+.environment-command, .environment-file-editor { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; line-height: 1.6; resize: vertical; }
+.environment-command { min-height: 92px; max-height: 260px; }
+.environment-file-editor { min-height: 180px; max-height: 380px; }
+.environment-confirm { position: sticky; z-index: 4; top: 0; padding: 12px; margin: 12px 0; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface-soft); }
+.environment-confirm p { margin: 0; font-size: 13px; line-height: 1.6; }
+.environment-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.environment-task-list { display: grid; gap: 8px; max-height: 260px; margin: 10px 0; overflow-y: auto; }
+.environment-task { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-bg); }
+.environment-task.selected { border-color: var(--accent); }
+.environment-task-heading > span { min-width: 0; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.environment-task-command { max-width: 100%; margin: 8px 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; line-height: 1.5; }
+.environment-output { min-height: 60px; max-height: 320px; padding: 12px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--code-bg); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.environment-output [data-stream="stderr"] { color: var(--danger); }
+.environment-file-list { max-height: 230px; margin: 10px 0; overflow: auto; }
+.environment-file-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.environment-file-row > button { min-width: 0; overflow-wrap: anywhere; text-align: left; }
+.environment-file-row > span { flex: 0 0 auto; color: var(--text-muted); font-size: 11px; }
+.environment-port-list { margin: 10px 0; padding-left: 18px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+.environment-port-list li { margin: 6px 0; overflow-wrap: anywhere; }
+.environment-technical { color: var(--text-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.environment-technical summary { cursor: pointer; }
+.environment-member-selector { margin: 14px 0; }
+.inspector .library-tabs { max-width: 100%; overflow-x: auto; }
+.inspector .library-tabs > button { flex: 0 0 auto; white-space: nowrap; }
+.environment-panel button:disabled { cursor: default; opacity: .55; }
+.docker-status-card { margin: 14px 0; }
+.docker-status-card .environment-heading { flex-wrap: wrap; }
+.docker-status-card p { color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+.docker-status-card dl { display: grid; grid-template-columns: minmax(80px, auto) minmax(0, 1fr); gap: 8px 12px; margin: 12px 0; font-size: 13px; }
+.docker-status-card dt { color: var(--text-muted); }
+.docker-status-card dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 320px) { .environment-heading, .environment-task-heading { align-items: flex-start; flex-wrap: wrap; } }

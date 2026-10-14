@@ -4,7 +4,28 @@ All notable changes to Aevoren Bot will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## [0.3.0-beta.28] - 2026-10-13
+
+### Added
+
+- Local Docker Linux environments scoped to the conversation and executing Bot, with image preparation, start/sleep/rebuild, versioned Worker health and persistent workspace volumes. Six Room members can operate independent environments.
+- Twenty-three shared environment/execution/process operations and Contact/Room execution tabs plus a Docker status card. Commands produce real stdout/stderr, exit codes and cancellation; separately registered background services retain independent lifetimes.
+- Bounded environment file operations and native uploads/downloads, create-only writes and expected-SHA-256 replacement checks. Service-port registration verifies actual listener ownership and connectivity; browser/service previews remain a later stage.
+
+### Fixed
+
+- Execution intent nonces use normalized foreground defaults (`cwd=.` and 120-second timeout); retries query existing tasks instead of replaying unknown side effects. Background tasks have no default timeout. Model-supplied task nonces and cross-executor/session identities are rejected.
+- Clearing chat history preserves background ownership and historical Runtime provenance. Deleting a Bot or Room releases its containers and cleans only related application records while retaining Docker volumes. Sleeping an environment interrupts its active tasks without replay on wake.
+- Environment state, logs and port records share the existing SQLite database and scope validation. Host tokens/control addresses are absent from public DTOs; Worker containers do not mount host HOME, Docker sockets or browser profiles.
+- Removing a group member retires only that member's environment in the group. Delayed first starts are rejected during deletion, and legacy revoked scopes cannot block other environments' recovery or shutdown.
+- Foreground cancellation seals pending startup before a Worker can spawn the command. Legal 1 MiB decoded files remain readable despite JSON escaping overhead. Unchanged Worker observations no longer increment versions or drive a repeated UI refresh loop.
+
+### Validation status
+
+- This is the `v0.3.0-beta.28` development candidate; branch promotion and signing/release are pending. Existing environments keep their recorded image across app upgrades until explicit rebuild.
+- Full local unit suite: 1,285 passed, 20 skipped. The focused suite passed 33 cases without skips: 15 Worker unit, nine real Linux Worker Docker, five host-service Docker and four AI product-gateway cases. Repository/transport passed 22 cases and deterministic admission/recovery passed two cases.
+- Node/Web/Worker TypeScript, ESLint, open-source readiness, documentation, license and security gates passed. Three hidden source-Electron cases and all three final unsigned macOS package execution-environment cases passed. The packaged app reported v0.3.0-beta.28 and loaded Worker/license resources from its Resources directory. Actual Windows Linux-container execution, signing and formal publication remain unverified/pending.
+- Browser/desktop control, screenshots/model image transport, service previews, executable Skill-package integration, native app connectors and voice are outside this delivery. Image versions and separate operating-system license notices are recorded in [Execution environments](docs/EXECUTION_ENVIRONMENT.md).
 
 ## [0.3.0-beta.27] - 2026-10-13
 

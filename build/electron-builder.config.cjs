@@ -16,11 +16,13 @@ module.exports = {
     output: process.env.AEVOREN_DIST_DIR || "dist",
     buildResources: "resources",
   },
-  files: ["out/**/*", "package.json"],
+  files: ["out/**/*", "!out/worker/**/*", "package.json"],
   extraResources: [
     { from: "resources/icon.png", to: "icon.png" },
     { from: "THIRD_PARTY_NOTICES.md", to: "THIRD_PARTY_NOTICES.md" },
+    { from: "docs/EXECUTION_ENVIRONMENT.md", to: "docs/EXECUTION_ENVIRONMENT.md" },
     { from: "NOTICE", to: "NOTICE" },
+    { from: "out/worker", to: "environment-worker" },
   ],
   artifactName: "Aevoren-Bot-${version}-${arch}.${ext}",
   // Never let electron-builder infer a GitHub provider from package metadata

@@ -28,6 +28,10 @@ const lines = [
   "| Package | Version | License | Project |",
   "| --- | --- | --- | --- |",
   ...rows.map((row) => `| ${escapeCell(row.name)} | ${escapeCell(row.version)} | ${escapeCell(row.license)} | ${row.homepage ? `[link](${row.homepage})` : "—"} |`),
+  "",
+  "## Separately built execution image",
+  "",
+  "The optional local Docker execution image includes independently licensed Linux tools outside this npm inventory. See [execution image versions, base digest and license notices](docs/EXECUTION_ENVIRONMENT.md#images-and-third-party-licenses). Docker is user-provided; the app does not bundle its distribution.",
 ];
 const target = resolve("THIRD_PARTY_NOTICES.md");
 writeFileSync(target, `${lines.join("\n")}\n`, "utf8");

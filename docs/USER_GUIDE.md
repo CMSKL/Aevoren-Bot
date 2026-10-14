@@ -1,6 +1,6 @@
 # User guide
 
-This guide covers the v0.3.0-beta.27 document/text-Skill workflow. Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). It applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build.
+This guide covers documents, text Skills and local Docker execution in the v0.3.0-beta.28 development candidate. Local quality gates, real Linux Docker integration, three hidden source-Electron scenarios and all three final unsigned macOS package scenarios have passed; branch promotion and signing/release are pending. Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). The app applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build; real Windows Docker execution remains unverified.
 
 ## First run
 
@@ -48,7 +48,19 @@ The message pins `resourceId`, `revisionId` and `digest`. Editing the resource l
 
 Connected models discover the 38 new `library.*`, `documents.*` and `skills.*` operations through `product_catalog`, `product_describe` and `product_execute`. `skills.load` returns an authorized text Skill to the current Runtime; `skills.readFile` reads accepted auxiliary text, with paging and truncation information. Binary assets return metadata only. File imports from AI must use the current conversation's authorized Workspace; selecting arbitrary native import/export locations requires the user's file dialog interaction. Mutations and sharing continue through the existing permission and approval rules.
 
-Text Skill metadata, including declared tool names, does not grant tool permissions. Scripts are preserved and may be read as text, but do not execute. This stage does not provide Docker terminals, browser sessions, desktop control, native Gmail/Drive/Notion connectors, media interpretation or voice. Those capabilities remain later stages in the [implementation record](IMPLEMENTATION_PLAN.md).
+Text Skill metadata, including declared tool names, does not grant tool permissions. Scripts are preserved and may be read as text, but the Skill system does not execute them. The development branch provides the separate approved Docker command workflow below. Browser sessions, desktop control, service previews, native Gmail/Drive/Notion connectors, media interpretation and voice remain later stages in the [implementation record](IMPLEMENTATION_PLAN.md).
+
+## Docker execution environments (development)
+
+Use your own running local Docker Linux engine. Open **Contacts → select Bot → Execution environment (执行环境)**, or **Group settings → Execution environment → select member**. Check Docker, prepare the Linux image, then start or wake the environment. Settings → General also provides a Docker status card. The first image build needs network access; remote Docker contexts and Windows containers are not supported.
+
+Enter a command and a workspace-relative directory (`.` means the workspace root), then choose **Run command** or **Run in background**. The panel shows real task status, stdout/stderr, exit codes and cancellation controls. Foreground tasks default to 120 seconds; background services have separate lifetimes. Six group members use independent environments; cancelling one foreground task does not stop a sibling or registered background service.
+
+**Read directory**, **Read file**, **Upload file**, **Download file** and **Save text file** operate on that environment's files, with a 1 MiB decoded limit per file. Native transfers use file dialogs. Saving creates a new file unless an existing file was read first; a replacement must match the last-read SHA-256. Paths cannot escape the workspace or traverse symlinks/special files. Binary files can be downloaded without pretending the model understands their contents.
+
+Closing the application and clearing history retain background services while Docker remains running. **Sleep** interrupts the environment's tasks and retains its workspace. **Rebuild** replaces the execution container and retains the workspace. Neither wake nor rebuild replays old commands. Unknown acceptance/connectivity means check the existing task and logs before starting new work. Deleting a Bot or group releases its containers after the normal approval/busy checks and retains Docker volumes.
+
+For a running background service, register its listening port. The Worker verifies that the listener belongs to that process and reports its actual check time. This does not publish a browser/service preview. Setup, isolation, image versions, licenses and platform validation are documented in [Execution environments](EXECUTION_ENVIRONMENT.md).
 
 ## Content-team workflow UI
 

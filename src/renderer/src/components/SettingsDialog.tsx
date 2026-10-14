@@ -8,6 +8,7 @@ import { CapabilitiesSettingsPanel } from "./CapabilitiesSettingsPanel";
 import { McpSettingsPanel } from "./McpSettingsPanel";
 import { ScopedMemorySettingsPanel } from "./ScopedMemorySettingsPanel";
 import { RoutinesSettingsPanel } from "./RoutinesSettingsPanel";
+import { DockerStatusCard } from "./EnvironmentPanel";
 import type { UpdateAction } from "../update-actions";
 
 type SettingsSection = "general" | "capabilities" | "memory" | "mcp" | "routines" | "updates";
@@ -226,6 +227,7 @@ export function SettingsDialog({
               </label>
             </div>
             {toolApprovalError ? <div className="dialog-error" role="alert">{toolApprovalError.safeMessage}</div> : null}
+            <DockerStatusCard active={open && section === "general"} />
             <h3>后台与启动</h3>
             <div className="settings-card settings-form-group">
               <label className="settings-row">

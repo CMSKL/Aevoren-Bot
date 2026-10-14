@@ -10,6 +10,18 @@ type ErrorDescriptor = {
 
 export const ERROR_REGISTRY = {
   INVALID_REQUEST: { domain: "validation", retryable: false, safeMessage: "请求参数不符合要求。", allowedDetailKeys: [] },
+  ENVIRONMENT_NOT_FOUND: { domain: "tool", retryable: false, safeMessage: "没有找到当前会话的执行环境，请先启动。", allowedDetailKeys: [] },
+  ENVIRONMENT_SCOPE_INVALID: { domain: "security", retryable: false, safeMessage: "当前任务没有这个环境的访问权限。", allowedDetailKeys: [] },
+  ENVIRONMENT_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "环境状态已变化，请刷新后重新确认。", allowedDetailKeys: ["currentVersion"] },
+  ENVIRONMENT_UNAVAILABLE: { domain: "tool", retryable: true, safeMessage: "Docker 或环境 Worker 未就绪，请查看执行环境状态。", allowedDetailKeys: ["reason"] },
+  ENVIRONMENT_IMAGE_INVALID: { domain: "security", retryable: false, safeMessage: "环境镜像未通过版本或归属校验，启动已停止。", allowedDetailKeys: [] },
+  ENVIRONMENT_EXECUTION_NOT_FOUND: { domain: "tool", retryable: false, safeMessage: "没有找到当前环境中的这项执行。", allowedDetailKeys: [] },
+  ENVIRONMENT_EXECUTION_CONFLICT: { domain: "validation", retryable: false, safeMessage: "同一执行标识不能用于不同命令，原执行未重复启动。", allowedDetailKeys: [] },
+  ENVIRONMENT_EXECUTION_STATE_INVALID: { domain: "runtime", retryable: false, safeMessage: "这项执行的状态不允许当前操作，请先核对实际结果。", allowedDetailKeys: [] },
+  ENVIRONMENT_EXECUTION_UNKNOWN: { domain: "runtime", retryable: true, safeMessage: "执行结果尚未确认，请查看状态和日志；系统没有重放命令。", allowedDetailKeys: [] },
+  ENVIRONMENT_LOG_CURSOR_EXPIRED: { domain: "tool", retryable: false, safeMessage: "早期日志已超出保留范围，当前内容明确标为截断。", allowedDetailKeys: ["firstSeq"] },
+  ENVIRONMENT_PORT_NOT_FOUND: { domain: "tool", retryable: false, safeMessage: "没有找到该后台服务的实际监听端口。", allowedDetailKeys: [] },
+  ENVIRONMENT_FILE_INVALID: { domain: "security", retryable: false, safeMessage: "环境文件路径或内容未通过校验，传输已停止。", allowedDetailKeys: [] },
   LIBRARY_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这份资料或 Skill。", allowedDetailKeys: [] },
   LIBRARY_NOT_BOUND: { domain: "security", retryable: false, safeMessage: "这份资源未授权给当前会话。", allowedDetailKeys: [] },
   LIBRARY_DISABLED: { domain: "tool", retryable: false, safeMessage: "这份资料或 Skill 已停用，无法继续读取。", allowedDetailKeys: [] },

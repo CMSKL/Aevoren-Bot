@@ -86,6 +86,7 @@ import { normalizeBotAvatarColor, normalizeBotAvatarShape } from "@shared/bot-av
 import { messageAttachmentsSchema, toolInvocationCommandSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
 import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
+import { EnvironmentRepository, ENVIRONMENT_MIGRATION } from "./environment-repository";
 import { resourceReferencesSchema } from "@shared/library-schemas";
 import type { ResourceReference } from "@shared/library-contracts";
 import { containsLikelySecret } from "./memory-safety";
@@ -2062,6 +2063,7 @@ export const MIGRATIONS = [
     `,
   },
   RESOURCE_LIBRARY_MIGRATION,
+  ENVIRONMENT_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3230,6 +3232,7 @@ const ROOM_SELECT = `SELECT rooms.*, ${CONVERSATION_SIDEBAR_COLUMNS} FROM rooms
 export class AppRepository {
   private readonly database: DatabaseSync;
   readonly library: LibraryRepository;
+  readonly environments: EnvironmentRepository;
 
   constructor(private readonly filename: string, private readonly options: AppRepositoryOptions = {}) {
     this.database = new DatabaseSync(filename);
@@ -3243,6 +3246,7 @@ export class AppRepository {
         else if (session.botId) this.getBot(session.botId);
         else if (session.roomId) this.getRoom(session.roomId);
       });
+      this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
     } catch (error) {
       this.database.close();
       throw error;
@@ -4280,8 +4284,8 @@ export class AppRepository {
     return row.count;
   }
 
-  assertProductReplaySafe(clientNonce: string, tool: import("@shared/contracts").ProductToolRequest): void {
-    if (this.database.prepare(`SELECT 1 FROM tool_invocations JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id WHERE runtime_runs.client_nonce = ? AND arguments_json = ? AND tool_invocations.state = 'interrupted-unknown'`).get(clientNonce, JSON.stringify(normalizeProductRequest(tool)))) {
+  assertProductReplaySafe(clientNonce: string, tool: import("@shared/contracts").ProductToolRequest, executorBotId?: string): void {
+    if (this.database.prepare(`SELECT 1 FROM tool_invocations JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id WHERE runtime_runs.client_nonce = ? AND arguments_json = ? AND (? IS NULL OR tool_invocations.executor_bot_id = ?) AND tool_invocations.state = 'interrupted-unknown'`).get(clientNonce, JSON.stringify(normalizeProductRequest(tool)), executorBotId ?? null, executorBotId ?? null)) {
       throw new AevorenBotError("TOOL_STATE_INVALID", "上次执行中断，结果尚未确认；请先查询实际状态，不能自动重发。");
     }
   }
@@ -4295,8 +4299,8 @@ export class AppRepository {
     });
   }
 
-  findProductOperationResult(clientNonce: string, tool: import("@shared/contracts").ProductToolRequest): string | null {
-    const rows = this.database.prepare(`SELECT product_result_content FROM tool_invocations JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id WHERE runtime_runs.client_nonce = ? AND tool_kind = 'product-call' AND arguments_json = ? AND tool_invocations.state = 'succeeded'`).all(clientNonce, JSON.stringify(normalizeProductRequest(tool))) as Array<{ product_result_content: string | null }>;
+  findProductOperationResult(clientNonce: string, tool: import("@shared/contracts").ProductToolRequest, executorBotId?: string): string | null {
+    const rows = this.database.prepare(`SELECT product_result_content FROM tool_invocations JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id WHERE runtime_runs.client_nonce = ? AND tool_kind = 'product-call' AND arguments_json = ? AND (? IS NULL OR tool_invocations.executor_bot_id = ?) AND tool_invocations.state = 'succeeded'`).all(clientNonce, JSON.stringify(normalizeProductRequest(tool)), executorBotId ?? null, executorBotId ?? null) as Array<{ product_result_content: string | null }>;
     for (const row of rows) {
       const content = row.product_result_content;
       if (typeof content === "string") return content;
@@ -4876,7 +4880,7 @@ export class AppRepository {
     return this.transaction(() => this.deleteBotRecord(id));
   }
 
-  private assertBotDeletable(id: string): void {
+  assertBotDeletable(id: string): void {
     this.getBot(id);
     const activeRuntime = this.database
       .prepare(
@@ -4905,6 +4909,8 @@ export class AppRepository {
     const archivedRoomIds: string[] = [];
 
     this.database.prepare("DELETE FROM memory_items WHERE bot_id = ?").run(id);
+    this.database.prepare("DELETE FROM session_resource_bindings WHERE session_id IN (SELECT id FROM sessions WHERE bot_id = ?)").run(id);
+    this.environments.deleteExecutor(id);
     this.database.prepare("DELETE FROM sessions WHERE bot_id = ?").run(id);
     this.database.prepare("DELETE FROM room_members WHERE bot_id = ?").run(id);
     this.database.prepare("UPDATE rooms SET lead_bot_id = NULL WHERE lead_bot_id = ?").run(id);
@@ -5172,6 +5178,14 @@ export class AppRepository {
   }
 
   deleteConversations(input: ConversationBatchDeleteInput): ConversationBatchDeleteResult {
+    this.assertConversationsDeletable(input);
+    return this.transaction(() => ({
+      rooms: input.roomIds.map((id) => this.deleteRoomRecord(id)),
+      bots: input.botIds.map((id) => this.deleteBotRecord(id)),
+    }));
+  }
+
+  assertConversationsDeletable(input: ConversationBatchDeleteInput): void {
     const count = input.botIds.length + input.roomIds.length;
     if (
       count < 2 || count > 200 ||
@@ -5182,13 +5196,9 @@ export class AppRepository {
     }
     input.roomIds.forEach((id) => this.assertRoomDeletable(id));
     input.botIds.forEach((id) => this.assertBotDeletable(id));
-    return this.transaction(() => ({
-      rooms: input.roomIds.map((id) => this.deleteRoomRecord(id)),
-      bots: input.botIds.map((id) => this.deleteBotRecord(id)),
-    }));
   }
 
-  private assertRoomDeletable(id: string): void {
+  assertRoomDeletable(id: string): void {
     const room = this.getRoom(id);
     const sessionId = this.getRoomMainSession(room.id).id;
     if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) {
@@ -5197,6 +5207,7 @@ export class AppRepository {
   }
 
   private deleteRoomRecord(id: string): RoomDeleteResult {
+    this.environments.deleteSession(this.getRoomMainSession(id).id);
     this.database
       .prepare(
         `UPDATE room_turns
@@ -5205,6 +5216,7 @@ export class AppRepository {
            AND parent_turn_id IS NOT NULL`,
       )
       .run(id);
+    this.database.prepare("DELETE FROM session_resource_bindings WHERE session_id IN (SELECT id FROM sessions WHERE room_id = ?)").run(id);
     const result = this.database.prepare("DELETE FROM rooms WHERE id = ?").run(id);
     if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
     return { id };
@@ -5231,15 +5243,9 @@ export class AppRepository {
 
   removeRoomMember(roomId: string, botId: string, expectedMembershipVersion: number): RoomDetail {
     this.transaction(() => {
-      const room = this.getRoom(roomId);
+      this.assertRoomMemberRemovable(roomId, botId, expectedMembershipVersion);
       const sessionId = this.getRoomMainSession(roomId).id;
-      this.assertConversationIdle(sessionId, "ROOM_BUSY");
-      if (room.membershipVersion !== expectedMembershipVersion) {
-        throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
-      }
-      const members = this.listRoomMembers(roomId);
-      if (members.length <= 2) throw new AevorenBotError("ROOM_MEMBER_INVALID");
-      if (!members.some((member) => member.botId === botId)) throw new AevorenBotError("ROOM_MEMBER_NOT_FOUND");
+      this.environments.deleteScope({ sessionId, executorBotId: botId });
       this.database.prepare("DELETE FROM room_members WHERE room_id = ? AND bot_id = ?").run(roomId, botId);
       this.database.prepare(
         "UPDATE rooms SET lead_bot_id = NULL, version = version + 1 WHERE id = ? AND lead_bot_id = ?",
@@ -5252,6 +5258,15 @@ export class AppRepository {
       this.bumpMembership(roomId, expectedMembershipVersion);
     });
     return this.getRoomDetail(roomId);
+  }
+
+  assertRoomMemberRemovable(roomId: string, botId: string, expectedMembershipVersion: number): void {
+    const room = this.getRoom(roomId), sessionId = this.getRoomMainSession(roomId).id;
+    this.assertConversationIdle(sessionId, "ROOM_BUSY");
+    if (room.membershipVersion !== expectedMembershipVersion) throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+    const members = this.listRoomMembers(roomId);
+    if (members.length <= 2) throw new AevorenBotError("ROOM_MEMBER_INVALID");
+    if (!members.some(member => member.botId === botId)) throw new AevorenBotError("ROOM_MEMBER_NOT_FOUND");
   }
 
   private bumpMembership(roomId: string, expectedVersion: number): void {
