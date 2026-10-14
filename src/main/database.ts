@@ -4905,6 +4905,7 @@ export class AppRepository {
     const archivedRoomIds: string[] = [];
 
     this.database.prepare("DELETE FROM memory_items WHERE bot_id = ?").run(id);
+    this.database.prepare("DELETE FROM session_resource_bindings WHERE session_id IN (SELECT id FROM sessions WHERE bot_id = ?)").run(id);
     this.database.prepare("DELETE FROM sessions WHERE bot_id = ?").run(id);
     this.database.prepare("DELETE FROM room_members WHERE bot_id = ?").run(id);
     this.database.prepare("UPDATE rooms SET lead_bot_id = NULL WHERE lead_bot_id = ?").run(id);
@@ -5205,6 +5206,7 @@ export class AppRepository {
            AND parent_turn_id IS NOT NULL`,
       )
       .run(id);
+    this.database.prepare("DELETE FROM session_resource_bindings WHERE session_id IN (SELECT id FROM sessions WHERE room_id = ?)").run(id);
     const result = this.database.prepare("DELETE FROM rooms WHERE id = ?").run(id);
     if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
     return { id };
