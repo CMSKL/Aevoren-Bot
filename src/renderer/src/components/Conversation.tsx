@@ -386,6 +386,7 @@ const TranscriptItem = memo(function TranscriptItem({
   return (
     <article
       className={`message message-${entry.role}${longAssistant ? " message-long" : ""}${groupedWithPrevious ? " message-group-continuation" : ""}${groupedWithNext ? " message-group-has-next" : ""}${isSuperseded ? " message-superseded" : ""}`}
+      data-transcript-entry={entry.id}
       data-status={entry.status}
       data-runtime-run-id={run?.id}
       data-turn-purpose={turnPurpose}
@@ -561,6 +562,7 @@ type ConversationProps = {
   sessionId?: string;
   sessionGeneration?: number;
   taskTitle?: string;
+  searchFocus?:{entryId:string;nonce:number};
   onCreateTask?(): void;
   onOpenTaskDetails?(): void;
   approvalVisible?: boolean;
@@ -608,6 +610,7 @@ export function Conversation({
   sessionId,
   sessionGeneration = 1,
   taskTitle,
+  searchFocus,
   onCreateTask,
   onOpenTaskDetails,
   approvalVisible = true,
@@ -650,6 +653,8 @@ export function Conversation({
   mediaInsertion,
   onMediaInsertionHandled,
 }: ConversationProps): React.JSX.Element {
+  useEffect(()=>{if(!searchFocus)return;const node=document.querySelector<HTMLElement>(`[data-transcript-entry="${searchFocus.entryId}"]`);if(!node)return;node.scrollIntoView({block:"center",behavior:"instant"});node.classList.add("search-result-focus");return()=>node.classList.remove("search-result-focus");},[searchFocus]);
+
   const [composer, setComposer] = useState<ConversationComposerDraft>(() => initialDraft ?? emptyComposerDraft());
   const { text: draft, attachments, roomMentions, routingMode: routingPreference, resourceRefs, mediaRefs, draftVersion } = composer;
   const composerStateRef = useRef(composer);

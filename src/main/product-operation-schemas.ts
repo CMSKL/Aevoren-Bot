@@ -1,3 +1,4 @@
+import { SEARCH_OPERATION_SCHEMAS } from "@shared/search-product";
 import { TASK_SESSION_OPERATION_SCHEMAS } from "@shared/task-session-product";
 import { REALTIME_OPERATION_SCHEMAS } from "@shared/realtime-product";
 import { VOICE_OPERATION_SCHEMAS } from "@shared/voice-product";
@@ -20,6 +21,7 @@ import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema
 export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...MEDIA_OPERATION_SCHEMAS,
   ...TASK_SESSION_OPERATION_SCHEMAS,
+  ...SEARCH_OPERATION_SCHEMAS,
   ...VOICE_OPERATION_SCHEMAS,
   ...REALTIME_OPERATION_SCHEMAS,
   ...LIBRARY_OPERATION_SCHEMAS,

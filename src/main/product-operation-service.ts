@@ -18,6 +18,7 @@ import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import type { ModelImageAttachment, ModelTextAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
+  "search.query","search.open",
   "sessions.taskOptions", "sessions.listTasks", "sessions.getTask", "voice.realtime.snapshot", "voice.configurations", "voice.get", "voice.list", "voice.audio",
   "media.list", "media.metadata", "media.read", "media.preview",
   "mcp.toolCatalog", "mcp.toolGrants", "mcp.toolResult", "mcp.listToolIntents",
@@ -239,6 +240,15 @@ export class ProductOperationService {
   private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<ProductExecutionResult> {
     this.validate(tool, invocation.runtimeRunId);
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
+    if(tool.action==="execute"&&["search.query","search.open"].includes(tool.operation)){
+      const service=this.dependencies.searchService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
+      const input=PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(tool.input),context={sessionId:runtime.sessionId,executorBotId:runtime.executorBotId,runtimeRunId:runtime.id};
+      const result=tool.operation==="search.query"?service.query(input as import("@shared/search-contracts").SearchQueryInput,context):service.open(input as import("@shared/search-contracts").SearchOpenInput,context);
+      this.validate(tool,runtime.id);
+      if(tool.operation==="search.open")return this.result({status:"completed",operation:tool.operation,result});
+      const page=result as import("@shared/search-contracts").SearchPage;
+      return {...this.result({status:"completed",operation:tool.operation,result:{count:page.items.length,nextCursor:page.nextCursor,queryDigest:page.queryDigest,sources:page.items.map(item=>item.source)}}),modelText:{text:JSON.stringify(page),isAuthorized:()=>{try{this.validate(tool,runtime.id);for(const item of page.items)service.open({source:item.source},context);return true;}catch{return false;}}}};
+    }
     if(tool.action==="execute"&&Object.hasOwn(TASK_SESSION_OPERATION_SCHEMAS,tool.operation)){
       const service=this.dependencies.taskSessionService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
       const input=PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(this.libraryInput(tool.operation,tool.input,runtime));

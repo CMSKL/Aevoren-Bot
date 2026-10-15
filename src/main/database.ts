@@ -1,3 +1,4 @@
+import { SearchRepository } from "./search-repository";
 import { McpWriteRepository, MCP_WRITE_MIGRATION } from "./mcp-write-repository";
 import { normalizeProductRequest } from "./product-request";
 import { productOperation } from "@shared/product-operations";
@@ -3272,6 +3273,7 @@ export class AppRepository {
   readonly voice: VoiceRepository;
   readonly realtime: RealtimeRepository;
   readonly tasks: TaskSessionRepository;
+  readonly search: SearchRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
   readonly demonstrations: DemonstrationRepository;
@@ -3315,6 +3317,7 @@ export class AppRepository {
       this.skillExecutions = new SkillExecutionRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId),
         (scope, reference, runtimeRunId) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId, runtimeRunId)[0]!);
       this.tasks = new TaskSessionRepository(this.database, this);
+      this.search = new SearchRepository(this.database);
       this.library.setTaskReferenceReader((sessionId, executor, runtimeId) => this.tasks.libraryReferences(sessionId, executor, runtimeId));
       this.media.setTaskRuntimeReferencesReader(runtimeId => this.tasks.runtimeTaskPolicy(runtimeId)?.selection.mediaRefs ?? null);
       this.media.setTaskSessionReferencesReader((sessionId, executor) => this.tasks.mediaReferences(sessionId, executor));
