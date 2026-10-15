@@ -34,7 +34,7 @@ export class TaskSessionService {
     return {session,scopeVersion:repo.tasks.scopeVersion(sessionId),executors,
       history:repo.listTranscript(sessionId).filter(entry=>entry.generation===session.generation&&entry.status==="completed").slice(-100)
         .map(entry=>({entryId:entry.id,generation:entry.generation,digest:digestMessage(entry.body),role:entry.role,body:entry.body})),
-      resources,media:repo.media.list({sessionId},actor).filter(item=>!visibleSelections||visibleSelections.some(selection=>selection.mediaRefs.some(ref=>ref.mediaId===item.reference.mediaId))),productOperations:PRODUCT_OPERATIONS.filter(item=>!visibleSelections||visibleSelections.some(selection=>selection.productOperations.includes(item.name))).map(({name,description})=>({name,description})),
+      resources,media:(runtimeRunId?repo.media.listRuntimeItems({sessionId,executorBotId:actor!,runtimeRunId}):repo.media.list({sessionId},actor)).filter(item=>!visibleSelections||visibleSelections.some(selection=>selection.mediaRefs.some(ref=>ref.mediaId===item.reference.mediaId))),productOperations:PRODUCT_OPERATIONS.filter(item=>!visibleSelections||visibleSelections.some(selection=>selection.productOperations.includes(item.name))).map(({name,description})=>({name,description})),
       currentSelections:selected?.filter(item=>!actor||item.executorBotId===actor)??null};
   }
   create(input:TaskCreateInput,actor?:string){const result=this.repository.tasks.create(taskCreateSchema.parse(input),actor);this.changed({sessionId:result.session.id,...(result.parentSessionId?{parentSessionId:result.parentSessionId}:{})});return result;}
