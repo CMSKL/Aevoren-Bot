@@ -19,6 +19,54 @@ function unwrap<T>(result: ApiResult<T>): T { if (!result.ok) throw new Error(re
 function json(response: ServerResponse, value: unknown, status = 200): void { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(value)); }
 type FixtureBot = { id: string; sessionId: string; name: string };
 type Fixture = { application: ElectronApplication; page: Page; bot: FixtureBot; bots: FixtureBot[]; room: { id: string; sessionId: string; name: string }; writes: Record<string, unknown>[]; mode(value: "confirmed" | "ambiguous"): void; restart(): Promise<void> };
+type CloseProbe = { record(phase: string): void; phases: Record<string, unknown>[]; detach(): void };
+const CLOSE_PHASE_PREFIX = "AEVOREN_CLOSE_PHASE ";
+
+/** Fixture-owned, bounded diagnostics only; no process arguments or application data. */
+async function installCloseProbe(application: ElectronApplication): Promise<CloseProbe> {
+  const owned = application.process(), started = performance.now(), phases: Record<string, unknown>[] = [];
+  let exitSeen = false, closeSeen = false, buffered = "";
+  const record = (phase: string): void => {
+    if (phases.length >= 120) return;
+    phases.push({ phase, elapsedMs: Math.round(performance.now() - started), pid: owned.pid ?? null, exitCode: owned.exitCode, signalCode: owned.signalCode,
+      killed: owned.killed, exitSeen, closeSeen, stdio: owned.stdio.map(stream => stream ? { destroyed: stream.destroyed } : null) });
+  };
+  const exited = (): void => { exitSeen = true; record("owned-exit"); };
+  const closed = (): void => { closeSeen = true; record("owned-close"); };
+  const streams = owned.stdio.flatMap((stream, index) => stream ? [{ stream, listener: () => record(`stdio-${index}-close`) }] : []);
+  const stderr = (chunk: Buffer): void => {
+    buffered += chunk.toString("utf8"); const lines = buffered.split("\n"); buffered = lines.pop() ?? "";
+    for (const line of lines) if (line.startsWith(CLOSE_PHASE_PREFIX) && phases.length < 120) {
+      try { phases.push({ source: "main", ...JSON.parse(line.slice(CLOSE_PHASE_PREFIX.length)) as Record<string, unknown> }); } catch { record("invalid-main-phase"); }
+    }
+    if (buffered.length > 4_096) buffered = "";
+  };
+  owned.once("exit", exited); owned.once("close", closed); owned.stderr?.on("data", stderr);
+  for (const { stream, listener } of streams) stream.once("close", listener);
+  record("probe-installed");
+  try {
+    await application.evaluate(({ app, BrowserWindow, ipcMain }) => {
+      const started = performance.now();
+      const record = (phase: string, state: Record<string, string | number | boolean> = {}): void => {
+        console.error("AEVOREN_CLOSE_PHASE " + JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started), ...state }));
+      };
+      app.on("before-quit", () => record("app-before-quit")); app.on("will-quit", () => record("app-will-quit")); app.on("quit", () => record("app-quit"));
+      for (const window of BrowserWindow.getAllWindows()) {
+        const contents = window.webContents, send = contents.send.bind(contents);
+        contents.send = (channel, ...args) => {
+          if (channel === "app:before-close" || channel === "app:close-blocked") record(channel, { loading: contents.isLoadingMainFrame(), destroyed: contents.isDestroyed() });
+          return send(channel, ...args);
+        };
+        window.on("close", () => record("window-close", { loading: contents.isLoadingMainFrame() })); window.on("closed", () => record("window-closed"));
+        contents.on("did-navigate", () => record("main-navigation-committed")); contents.on("did-stop-loading", () => record("loading-stopped"));
+        contents.on("render-process-gone", (_event, details) => record("renderer-gone", { reason: details.reason, exitCode: details.exitCode }));
+      }
+      ipcMain.on("app:renderer-ready", event => record("renderer-ready", { mainFrame: event.senderFrame === event.sender.mainFrame }));
+      ipcMain.on("app:confirm-close", (event, value: unknown) => record("flush-ack", { mainFrame: event.senderFrame === event.sender.mainFrame, canClose: value === true }));
+    });
+  } catch { record("main-probe-unavailable"); }
+  return { record, phases, detach() { owned.removeListener("exit", exited); owned.removeListener("close", closed); owned.stderr?.removeListener("data", stderr); for (const { stream, listener } of streams) stream.removeListener("close", listener); } };
+}
 
 async function withOutbound(callback: (fixture: Fixture) => Promise<void>): Promise<void> {
   const data = mkdtempSync(join(tmpdir(), "aevoren-native-outbound-"));
@@ -68,11 +116,13 @@ async function withOutbound(callback: (fixture: Fixture) => Promise<void>): Prom
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); const address = server.address(); if (!address || typeof address === "string") throw new Error("Fixture unavailable"); const fixturePort = address.port;
   let application: ElectronApplication | undefined; let page: Page;
+  const probes = new WeakMap<ElectronApplication, CloseProbe>(), installedProbes: CloseProbe[] = []; let closeAttempt = 0;
   const environment = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !key.startsWith("AEVOREN_BOT_")));
   const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH ?? process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE;
   async function launch(): Promise<void> {
     application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: { ...environment, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_USER_DATA_DIR: data, AEVOREN_BOT_FAKE_PROVIDER: "1", AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_NATIVE_TEST_ORIGIN: `http://127.0.0.1:${fixturePort}` } });
     page = await application.firstWindow(); page.on("pageerror", error => errors.push(error.message)); await expect(page.locator(".app-shell")).toBeVisible();
+    const probe = await installCloseProbe(application); probes.set(application, probe); installedProbes.push(probe);
     if (executablePath) {
       const runtime = await application.evaluate(({ app }) => ({ isPackaged: app.isPackaged, version: app.getVersion(), resourcesPath: process.resourcesPath }));
       expect(runtime.isPackaged).toBe(true);
@@ -82,11 +132,17 @@ async function withOutbound(callback: (fixture: Fixture) => Promise<void>): Prom
     }
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1182, 804));
   }
+  async function closeOwned(phase: "restart" | "cleanup"): Promise<void> {
+    const owned = application!, probe = probes.get(owned), attempt = ++closeAttempt; probe?.record(`${phase}-close-request`);
+    try { await closeTestApplication(owned); probe?.record(`${phase}-close-resolved`); }
+    catch (error) { probe?.record(`${phase}-close-rejected`); throw error; }
+    finally { if (probe) await test.info().attach(`native-outbound-close-${attempt}-${phase}`, { body: JSON.stringify({ phase, phases: probe.phases }), contentType: "application/json" }); }
+  }
   try {
     await launch();
-    const fixture: Fixture = { application: application!, page: page!, bot: bots[0]!, bots, room: { id: room.room.id, sessionId: room.session.id, name: room.room.name }, writes, mode(value) { mode = value; }, async restart() { await closeTestApplication(application!); await launch(); fixture.application = application!; fixture.page = page; } };
+    const fixture: Fixture = { application: application!, page: page!, bot: bots[0]!, bots, room: { id: room.room.id, sessionId: room.session.id, name: room.room.name }, writes, mode(value) { mode = value; }, async restart() { await closeOwned("restart"); await launch(); fixture.application = application!; fixture.page = page; } };
     await callback(fixture); expect(errors).toEqual([]); expect(await application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
-  } finally { server.closeAllConnections(); if (application) await closeTestApplication(application); await new Promise<void>(resolve => server.close(() => resolve())); removeTestDirectory(data); }
+  } finally { server.closeAllConnections(); try { if (application) await closeOwned("cleanup"); } finally { installedProbes.forEach(probe => probe.detach()); } await new Promise<void>(resolve => server.close(() => resolve())); removeTestDirectory(data); }
 }
 
 async function setup(f: Fixture): Promise<NativeConnection> {
