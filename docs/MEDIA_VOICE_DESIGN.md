@@ -81,6 +81,9 @@ macOS arm64 与 Windows x64 的实际安装包均验证资产、独立解析进�
 
 ### 5.1 集成核对点（代码修改前清单）
 
+- 固定内容引用与授权准入分开：公开引用为 `{ mediaId, sha256, extraction?: { id, digest } }`；宿主保存独立绑定 incarnation。原发送事务保存所选引用的原准入；Runtime 建立时快照会话内可用媒体，所选引用必须覆盖为原发送准入。重试不能换成重绑后的 incarnation。UI 读取另捕获当前租约，异步读及实际传输重验。
+- `runtime_media_admissions` 限定此用途，只有创建 Runtime 和批准导入的新记录可写入；不提供通用 upsert。已有媒体的绑定／重绑只供后续 Runtime，审批回执重放不刷新旧准入。批准导入可在同一事务将本次新建媒体 ID 准入当前仍有效的 Runtime；CAS 字节去重不把既存媒体记录变成新记录。
+- 导入先准备全部有效文件并收集明确失败项，再用一个 SAVEPOINT 发布有效集合及其解析、绑定和允许的新导入准入；提交前取消则该集合全部不发布。无静默正文截断。PDF spans 对应真实页；DOCX 对应文本分节，不承诺物理分页或版式还原。PDF 页预览按需生成有界派生图，使用独立图片 SHA，保留原文件引用不变。
 - `shared/contracts.ts` 的 `SendCommand`、`TranscriptEntry`、`CreateRoomRunInput` 与 `shared/product-view.ts` 的草稿操作一起增加固定媒体引用；公开 Transcript 只含引用，不能带解析正文、原始字节或主进程授权闭包。
 - `shared/schemas.ts` 当前 `sendCommandSchema.text` 为非空，且群 Schema 由其扩展。改为允许空文本并在对象级检查文本／附件／资料／媒体至少一项；保留 `.extend()` 的组合能力，分别验证私聊与群路由，不能仅修 UI 按钮。
 - `main/database.ts` 的 `digestMessage` 与 `digestRoomCommand` 在媒体为空时必须保持旧摘要字节一致；增加媒体引用后，同 nonce 的不同原图或解析版本应冲突。私聊及群的 prepare 路径都在同一事务写入引用。
