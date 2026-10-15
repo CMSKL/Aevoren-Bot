@@ -432,6 +432,16 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 
 定向八文件 43／43、Browser Worker TypeScript、目标 lint 和 Worker 构建通过；延迟焦点正例返回既有 JPEG fixture 的完整字节及摘要，不代替真实 X11 像素验收。协议及接口未变，Worker 仍为 1.1.0／协议 1，新 bundle 以独立字节摘要区分；本机证据为 `/tmp/aevoren-media36-focus-worker-evidence.json`。没有启动 Docker Desktop、重建用户环境、重新运行完整普通套件、Main 构建或安装包；此前冻结安装包属于修复前证据。新 CI 的真实六环境截图及跨平台门禁仍须全部通过。
 
+### beta.36 Linux 实际聚焦结果与 Windows ctime 单测前提
+
+准确提交 `da3263498c00aae73e72a35f342bad4416de20dd` 的 [CI 38714025139](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38714025139) 中，Linux 普通测试 1,639 通过／45 跳过，真实 Docker 浏览器七文件 41／41 全部通过；此前失败的六环境独立 cookie、profile 和真实画面场景在 7,397 ms 内通过。该结果验证聚焦修复的实际 Linux 路径，不代替其他平台或后续提交的门禁。
+
+同轮 Windows 普通测试为 1,621 通过／61 跳过／2 失败，尚未进入构建或安装包。显式 mtime 的来源覆写测试已通过；剩余两项都假定硬链接 unlink 后系统立即报告不同 ctime，其中正例的 changed 断言为 false，原始来源负例返回了未改变的文件字节。保留该失败，不声称操作系统报告了它没有报告的元数据变化。
+
+本次仅修改这两个单测及其窄 fixture：实际 fd 打开／读取、link／unlink 和返回字节不模拟，仅将目标 lstat／FileHandle.stat 的 ctimeNs 控制为原值及原值加一；外部断言确认 unlink 已发生、link 数 2→1，以及真实 dev／inode／mode／size／mtime 均未变化。已知 SHA 正例返回完整原字节，无 SHA 负例拒绝该受控 ctime 变化，实际摘要篡改负例保留；mock 在 finally 恢复。没有修改产品、来源校验、时限或跳过条件，也不据此扩张原始来源读取器对全部时间戳均保留的覆写检测保证。
+
+本机独占资源的最终七项 CAS 测试 7／7 通过（3.06 秒），Node TypeScript 与目标 lint 通过；此前与长场景同时运行时两个原有大文件 IO 测试触发五秒限制的日志独立保留，没有增加时限。本次没有完整套件、构建、Docker 或界面重跑；新的 Windows CI 仍须实际通过。日志分别为 `/tmp/aevoren-media36-ctime-fixture-tests.log` 与 `/tmp/aevoren-media36-ctime-fixture-final-tests.log`。
+
 ### beta.33 外发重启关闭诊断（未发布）
 
 PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38707578493) 在源码 35 项中通过 34 项；外发未知结果场景已确认一次提交和 unknown 状态，但首次重启的关闭夹具失败，第二次启动及只读核验尚未到达。原 trace 只有关闭调用和夹具错误，没有该进程的退出／管道状态或 Main 关闭阶段，不能确定是产品关闭、进程退出还是继承管道未释放。
