@@ -223,10 +223,13 @@ test("plays actual scoped WAV output through an explicit blocked-play action and
     await select(f, 1); await select(f, 0); await expect(f.page.getByLabel("自动朗读本会话新回复", { exact: true })).not.toBeChecked(); expect(f.speeches).toHaveLength(2);
     await f.page.getByRole("button", { name: `朗读 ${f.bots[0]!.name} 的回复`, exact: true }).click(); await expect.poll(() => f.speeches.length).toBe(3); f.completeSpeech(2);
     await expect.poll(() => f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.players.length)).toBe(2); await f.page.getByRole("button", { name: `朗读 ${f.bots[0]!.name} 的回复`, exact: true }).click();
-    await f.page.getByRole("listitem", { name: f.bots[0]!.name, exact: true }).click({ button: "right" }); await f.page.getByRole("menuitem", { name: "清空聊天记录", exact: true }).click();
+    await f.page.getByLabel("消息", { exact: true }).fill("清空时保留的草稿");
+    // Call the same committed mutation used by AI, without the UI clear dialog
+    // or an explicit reopen. The typed Session event must stop local playback.
+    unwrap(await f.page.evaluate(id => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations.clear(id), f.bots[0]!.sessionId));
     await expect.poll(() => f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.pauses)).toBe(2);
-    const clear = f.page.getByRole("alertdialog", { name: "清空聊天记录？", exact: true }); await clear.getByRole("button", { name: "清空记录", exact: true }).click(); await expect(clear).toBeHidden();
     await expect(f.page.getByRole("button", { name: "语音任务 · 0", exact: true })).toBeVisible(); expect(f.speeches).toHaveLength(3); await expect(f.page.getByRole("button", { name: "停止朗读", exact: true })).toHaveCount(0);
+    await expect(f.page.getByRole("heading", { name: f.bots[0]!.name, exact: true })).toBeVisible(); await expect(f.page.getByLabel("消息", { exact: true })).toHaveValue("清空时保留的草稿");
   });
 });
 

@@ -164,6 +164,7 @@ export function App(): React.JSX.Element {
   const contactRef = useRef<ContactDetailHandle>(null);
   const roomRef = useRef<RoomInspectorHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const sessionGenerationRef = useRef<number | null>(null);
   const selectedRoomIdRef = useRef<string | null>(null);
   const loadingSessionIdRef = useRef<string | null>(null);
   const bufferedTranscriptRef = useRef<TranscriptEvent[]>([]);
@@ -271,6 +272,7 @@ export function App(): React.JSX.Element {
     };
     window.addEventListener("focus", scheduleRefresh);
     const unsubscribeTranscript = window.aevorenBot.events.subscribeTranscript((event) => {
+      if (event.sessionId === sessionIdRef.current && event.entry.generation !== sessionGenerationRef.current) return;
       scheduleRefresh();
       if (event.sessionId === sessionIdRef.current && sidebarTabRef.current !== "contacts" && !settingsOpenRef.current
         && document.visibilityState === "visible" && event.entry.role === "assistant"
@@ -292,6 +294,7 @@ export function App(): React.JSX.Element {
       }
     });
     const unsubscribeRuntime = window.aevorenBot.events.subscribeRuntime((event) => {
+      if (event.sessionId === sessionIdRef.current && event.run.inputGeneration !== sessionGenerationRef.current) return;
       scheduleRefresh();
       if (event.sessionId === loadingSessionIdRef.current) {
         bufferedRuntimeRef.current.push(event);
@@ -316,6 +319,7 @@ export function App(): React.JSX.Element {
       }
     });
     const unsubscribeRoom = window.aevorenBot.events.subscribeRoomRuntime((event) => {
+      if (event.sessionId === sessionIdRef.current && event.turns.length && event.turns.every(turn => turn.inputGeneration !== sessionGenerationRef.current)) return;
       scheduleRefresh();
       if (event.sessionId === loadingSessionIdRef.current) {
         bufferedRoomRef.current.push(event);
@@ -420,6 +424,25 @@ export function App(): React.JSX.Element {
     };
   }, [flushActive, mergeConversation, refreshConversations, reportDirectError]);
 
+  const sessionChanged = useEffectEvent((next: Session): void => {
+    if (next.id !== sessionIdRef.current || next.generation <= (sessionGenerationRef.current ?? 0)) return;
+    sessionGenerationRef.current = next.generation;
+    const selection = openRequestRef.current;
+    setSession(current => current?.id === next.id && current.generation < next.generation ? next : current);
+    setEntries([]); setRuns([]); runtimeRunsRef.current = []; runtimeVersionsRef.current.clear();
+    setToolInvocations([]); setApprovalRequests([]); setRoomBatches([]); setRoomTurns([]); setRoomHandoffs([]); setRoomHandoffRejections([]); roomBatchVersionsRef.current.clear();
+    runtimeErrorRef.current = null; roomErrorRef.current = null; setError(null); setLiveState(null);
+    void window.aevorenBot.runtime.getSessionSnapshot(next.id).then(result => {
+      if (selection !== openRequestRef.current || sessionIdRef.current !== next.id || sessionGenerationRef.current !== next.generation) return;
+      if (!result.ok) { setError(result.error); return; }
+      if (result.data.generation !== next.generation) return;
+      setEntries(current => result.data.entries.reduce(mergeTranscriptEntry, current.filter(entry => entry.generation === next.generation)));
+      const merged = result.data.runs.reduce(mergeRuntimeRun, runtimeRunsRef.current.filter(run => run.inputGeneration === next.generation));
+      runtimeRunsRef.current = merged; runtimeVersionsRef.current = new Map(merged.map(run => [run.id, run.version])); setRuns(merged); setLiveState(result.data.liveState);
+    }).catch(() => { if (selection === openRequestRef.current && sessionIdRef.current === next.id && sessionGenerationRef.current === next.generation) setCloseNotice("聊天已清空，暂时无法重新读取任务状态。"); });
+  });
+  useEffect(() => window.aevorenBot.sessions.onChanged(event => sessionChanged(event.session)), []);
+
   useEffect(() => {
     let active = true;
     const refreshWorkspaces = (): void => {
@@ -517,17 +540,19 @@ export function App(): React.JSX.Element {
     const buffered = mergeBufferedEvents(
       snapshotResult.data.entries,
       snapshotResult.data.runs,
-      bufferedTranscriptRef.current,
-      bufferedRuntimeRef.current,
+      bufferedTranscriptRef.current.filter(event => event.entry.generation === snapshotResult.data.generation),
+      bufferedRuntimeRef.current.filter(event => event.run.inputGeneration === snapshotResult.data.generation),
     );
     const toolState = mergeToolEvents(toolsResult.data, approvalsResult.data, bufferedToolRef.current);
+    if (sessionIdRef.current === nextSession.id && (sessionGenerationRef.current ?? 0) > snapshotResult.data.generation) { loadingSessionIdRef.current = null; setLoading(false); return false; }
     sessionIdRef.current = nextSession.id;
+    sessionGenerationRef.current = snapshotResult.data.generation;
     selectedRoomIdRef.current = null;
     sessionStorage.setItem("aevoren-bot:selected", `bot:${bot.id}`);
     loadingSessionIdRef.current = null;
     setSelectedBot(bot);
     setSelectedRoom(null);
-    setSession(nextSession);
+    setSession({ ...nextSession, generation: snapshotResult.data.generation });
     setEntries(buffered.entries);
     runtimeRunsRef.current = buffered.runs;
     roomBatchVersionsRef.current.clear();
@@ -622,8 +647,8 @@ export function App(): React.JSX.Element {
     const buffered = mergeBufferedEvents(
       snapshotResult.data.entries,
       snapshotResult.data.runs,
-      bufferedTranscriptRef.current,
-      bufferedRuntimeRef.current,
+      bufferedTranscriptRef.current.filter(event => event.entry.generation === snapshotResult.data.detail.session.generation),
+      bufferedRuntimeRef.current.filter(event => event.run.inputGeneration === snapshotResult.data.detail.session.generation),
     );
     const roomState = mergeRoomRuntimeEvents(
       snapshotResult.data.batches,
@@ -633,13 +658,15 @@ export function App(): React.JSX.Element {
       bufferedRoomRef.current,
     );
     const toolState = mergeToolEvents(toolsResult.data, approvalsResult.data, bufferedToolRef.current);
+    if (sessionIdRef.current === nextSession.id && (sessionGenerationRef.current ?? 0) > snapshotResult.data.detail.session.generation) return superseded();
     sessionIdRef.current = nextSession.id;
+    sessionGenerationRef.current = snapshotResult.data.detail.session.generation;
     selectedRoomIdRef.current = room.id;
     sessionStorage.setItem("aevoren-bot:selected", `room:${room.id}`);
     loadingSessionIdRef.current = null;
     setSelectedBot(null);
     setSelectedRoom(snapshotResult.data.detail);
-    setSession(nextSession);
+    setSession(snapshotResult.data.detail.session);
     setEntries(buffered.entries);
     runtimeRunsRef.current = buffered.runs;
     roomBatchVersionsRef.current = new Map(roomState.batches.map(batch => [batch.id, batch.version]));
@@ -926,6 +953,7 @@ export function App(): React.JSX.Element {
   function clearSelection(): void {
     setResourceInsertion(null); setMediaInsertion(null);
     sessionIdRef.current = null;
+    sessionGenerationRef.current = null;
     selectedRoomIdRef.current = null;
     sessionStorage.removeItem("aevoren-bot:selected");
     setSelectedBot(null);
