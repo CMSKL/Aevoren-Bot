@@ -28,7 +28,7 @@
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 已纳入 v0.3.0-beta.29 签名发行 | 开发与跨平台安装包验证通过，之前签名 fixture 失败保留为历史记录 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
-| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本 Skill 单元本机验收通过（beta.30 候选），跨平台 CI 收尾；应用连接实施中 | Worker 12、Host 4、脚本包 2 与单成员停止 1 项通过；签名发行待完成，示范／外发／写 MCP 尚未开始 |
+| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本、读取／外发和示范本机验收通过，MCP／Apps 及 Notion 更新收尾，阶段尚未完成 | 各源码／包与真实适配器证据分开记录，跨平台 CI／签名发行仍为门禁 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
 
@@ -197,3 +197,35 @@ Notion API `2026-03-11` 的标题 PATCH 仅包含已观察的属性 ID。追加�
 Final Notion beta.35 source acceptance: one complete build passed all four TypeScript projects and main/preload/renderer/Worker bundles. Hidden Electron acceptance passed 10/10 in 23.2 seconds: two Notion updates, five existing outbound cases, two native-read cases and one typed-API case. Actual IPC/SQLite and controlled Notion HTTP exercised title-property-ID PATCH, disabled approval after a draft edit with zero writes, and append 503 unknown recovery after restart with exact child GET verification and a total of one PATCH. Existing six-member parallelism, single-member stop and group approval ownership assertions also passed. All windows stayed hidden. These are source checks, not installer or live-account verification.
 
 Frozen SHA-256: main `51d6738f71a2d1f164dd7b7ab46d16da6e5f9ca83a3d98055422406b54be32cf`, preload `bb83458a39161e01f8f16983d811513c1ca1cc2a0b6b4ff9b0e27c433737a6ab`, renderer `f9d7ac861455cf013e2214dd0ff5a72c363a06b2b863655d7839d63799a1838d`. The final focused Notion/SQLite/evidence-label suite passed 21 tests; documentation link checking passed for 32 files. No third-party credentials were available.
+
+### 阶段 4：示范录制与待审阅 Skill 草稿（独立开发单元）
+
+`codex/skill-demonstrations` 从已验证 dev 的 Script30 基线创建。Browser Worker 1.1.0 在真实接受的 WebSocket→VNC 输入转发之后解析有界分片 RFB，仅保存按钮/滚动坐标及白名单导航键；文字、Unicode 按键、修饰键和剪贴板以脱敏占位符替代，页面内容、截图和网址不进入录制。断线、epoch 变化、引擎停止、重启和 500 步上限会封存中断录制，不自动归还 AI。
+
+宿主迁移 40 保存独立会话/执行者草稿；停止不会创建、启用、绑定或执行资料库 Skill。用户审阅固定版本与摘要后才能发布，发布结果初始停用，无脚本授权。AI 开始/停止/丢弃录制仅返回 waiting_user；草稿读写共用宿主处理器，发布采用保存的全文审批快照并在提交前重新核验版本、摘要和 Scope。完整使用与边界见[示范 Skill](SKILL_DEMONSTRATIONS.md)。
+
+本机专项包含 13 项分片 RFB、真实鉴权 WebSocket→TCP 转发、Worker SQLite、宿主 SQLite 与请求关闭验收；合并脚本审批回归的 10 个核心文件 67 项通过，普通测试（排除等待真实 38/39 的旧连续迁移诊断命令）1,432 项通过、44 项跳过。隐藏 Electron 示范编辑／冲突／确认发布与完整 Typed API 共 2 项通过（5.4 秒），最终四配置类型检查、lint、build、文档链接、许可与安全审计通过。此开发工作树保留迁移 38/39 给原生连接与外发单元；独立完整单测中旧诊断命令要求连续迁移号，合入真实 38/39 后再验证。当前 Docker daemon 不可用，不将控制 RFB fixture 声称为 Docker/noVNC、Windows 或第三方网站实测。
+
+示范 beta.33 集成原生连接及外发基础后，真实迁移 38、39 先于示范迁移 40 执行，连续迁移诊断三项通过；脚本、外发和示范三类固定审批保留各自严格判别分支。专项 68 项与外发／脚本回归 49 项通过，四配置 TypeScript、lint、build、文档、215 包／7 类许可、开源和安全 32 项检查通过。隐藏源码界面 17／17 通过（示范 1、资料库 8、原生连接 2、外发 5、typed API 1）。普通完整检查遇到原有计时断言超时，保留原结果后对未改变的用例复核；不能据此宣布完整门禁已经通过。
+
+审查发现已发布示范的缓存回执可能在资料解绑／删除后仍带旧正文；修复为复核原资源、原版本及当前 Scope，拒绝已解绑／删除资源，原发布 Skill 不重复创建或自动启用。产品网关 37 项通过，含后续修改资料后仍返回原版本、解绑／删除后拒绝两项回归。修复源码重新通过四配置 TypeScript 与构建并冻结未签名 macOS beta.33 包；该包原生连接 2、外发 5、typed API 1 通过，示范 1 在纠正测试读取随包指南的方式后通过，实查 isPackaged、版本与指南正文。最初指南测试在 Electron evaluate 内动态 import 不被支持，改为查询实际 Resources 路径后读取；应用和包均未为此重建或修改。
+
+最终完整普通测试记录为 1,540 通过、45 跳过、6 失败：五项原有 5 秒超时（CDP 1 MiB、群聊 20 轮、FIFO 20 轮、工具混合指令循环、诊断参数循环），一项 lead-room 在轮询期限内仍为 running。对应未修改的六个文件单 Worker 复核 128／128 通过，未提高超时或减少断言；保留完整失败证据，远端完整 CI 仍须独立通过，不能把分次复核改记为一次完整全绿。
+
+真实 Linux Docker 集成测试已加入现有浏览器套件，走实际 x11vnc 的 RFB 握手、页面点击、文字／剪贴板脱敏、断线封存、容器重启、旧 epoch 拒绝和归还后重新观察。该测试将在 Linux CI 的真实容器门禁执行；本机 Docker daemon 未启动，本机结果为跳过，不算真实 Docker 已验收。示范单元不代表阶段 4 全部完成，可写 MCP／交互 Apps 以及阶段 5–6 仍待交付。
+
+## 阶段 4 MCP／Apps：v0.3.0-beta.34 候选
+
+迁移 41 接在真实 38／39／40 后，按 Scope 保存工具授权、固定参数／目标审批及持久调用账本。配置、凭据与格式变化使授权失效；移出再加入不能恢复旧参数。host-mcp Runtime 支持六成员先启动，单成员停止／撤权不影响兄弟任务；HTTP 写调用不自动重授权重放，已结束意图只查询回执。
+
+隔离 App 使用独立 loopback 外层及 opaque 内层。App-only 工具不进入模型和旧只读路径；协议 _meta 仅在宿主及已授权 App 之间传递，公共回执、模型和日志剥离顶层 _meta，保留同名嵌套用户数据。模型打开操作返回 waiting_user，不暴露视图 URL。一个活跃 Scope 的原生／MCP 审批由同一组件持有。支持范围见[MCP 工具与 Apps](MCP_APPS.md)。
+
+初次隐藏验收复现 Renderer CSP 阻止 loopback iframe，修正窄 frame-src 后 MCP 3 与 typed API 1 共 4 项通过，原生外发回归 5 项通过；含真实隔离 frame、父级／Preload 拒绝、实际 App 调用审批、撤权关闭、未知取消及原生→MCP 审批交接。后续私有 metadata／app-only 回归与能力检查 19 项、Node 类型及针对性 lint 通过。上述早期源码回执为 Source33；Source34 最终构建、完整普通测试及安装包验收单列，尚未完成。
+
+脚本 beta.30 的合并提交 93bd211 已全部验收并建立不可变标签。签名工作流 38591554270 在 Mac 普通文件系统测试发生只读目录 rename EACCES，未创建公开 Release。修复 39e12da 保持 staging0700 到 rename 后再固定0550；原代码确定性回归失败、修正后10项通过，不放宽最终只读权限。修复进入后续 Beta，旧标签不移动。
+
+MCP beta.34 最终源码包含 metadata 私有投影、App-only 路由、统一 Apps 审批持有者及快照发布修复。完整普通测试单 Worker 1,565 通过、45 跳过；四配置 TypeScript、lint、build、文档、215 包／7 类许可、开源及安全审计通过。隐藏源码 MCP3／示范1／typed1／外发5／读取2 的不同场景均通过；读取回归最初因新增 MCP 范围说明与原生说明文字重复而严格匹配失败，收窄到真实“聊天应用”区域后两项通过，未使用第 n 个元素或减少业务断言。最终安装包仍在验收。
+
+Combined Stage 4 beta.35 source acceptance after merging MCP beta.34 foundation `4c0834fa`: all four TypeScript projects, full ESLint, one full build and the ordinary single-worker suite passed (1,586 passed, 45 skipped; 130 passed and 8 skipped test files). The combined hidden Electron suite passed 14/14 in 46.7 seconds: demonstrations 1, MCP Apps 3, native reads 2, native outbound including Notion updates 7, typed API 1. The unified parent-owned Apps approval host remained intact; no child native approval portal was restored. Actual migrations 38/39/40/41, private MCP metadata, App-only visibility, demonstration privacy/replay protection and the Worker private staging rename fix were preserved. No new migration or dependency was introduced.
+
+Combined frozen SHA-256: main `b69062c51e85525ae838aaf8659119891d4c7af44bdd4351becb2b51536ab436`, preload `04360d5de6b69c317a2a4f4cbcc56a0a4a92d26e4ef6f1bd00716108cc49d05d`, renderer `a1e3f97f27cc288fe38cb5c3c70f3316696eb9778aea2ea56400cf804a16c301`. Documentation links passed for 34 files; license checks passed for 215 packages / 7 groups, open-source readiness and dependency/security audits passed with the verified existing backport. Package beta.35 and cross-platform CI are separate pending gates; real third-party credentials were unavailable. The earlier isolated Notion source receipts remain historical and are not substituted for this combined build.

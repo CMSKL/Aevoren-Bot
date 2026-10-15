@@ -12,6 +12,8 @@ import { LibraryPanel, type LibraryPanelHandle } from "./LibraryPanel";
 import { EnvironmentPanel } from "./EnvironmentPanel";
 import { ComputerPanel } from "./ComputerPanel";
 import { ConnectorPanel, type ConnectorPanelHandle } from "./ConnectorPanel";
+import { McpToolPanel } from "./McpToolPanel";
+import { ScopedAppsApprovalHost } from "./ScopedAppsApprovalHost";
 
 type Draft = Pick<RoomDetail["room"], "name" | "description"> & { leadBotId: string | null };
 type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
@@ -334,6 +336,8 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
       <div id={`room-${detail.room.id}-apps-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-apps-tab`} hidden={tab !== "apps"}>
         <label className="field environment-member-selector"><span>应用执行成员</span><select aria-label="应用执行成员" value={environmentMember?.botId ?? ""} disabled={changingTab} onChange={event => { const botId = event.target.value; void appsRef.current?.flush().then(saved => { if (saved) setEnvironmentBotId(botId); }); }}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>
         {environmentMember ? <ConnectorPanel ref={appsRef} sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "apps"} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
+        {environmentMember ? <McpToolPanel key={`mcp:${detail.session.id}:${environmentMember.botId}`} sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "apps"} /> : null}
+        {environmentMember ? <ScopedAppsApprovalHost key={`approvals:${detail.session.id}:${environmentMember.botId}`} sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "apps"} /> : null}
       </div>
       {(["browser", "computer"] as const).map(mode => <div key={mode} id={`room-${detail.room.id}-${mode}-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-${mode}-tab`} hidden={tab !== mode}>
         <label className="field environment-member-selector"><span>查看成员的{mode === "browser" ? "浏览器" : "电脑"}</span><select aria-label={mode === "browser" ? "浏览器成员" : "电脑成员"} value={environmentMember?.botId ?? ""} onChange={event => setEnvironmentBotId(event.target.value)}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>

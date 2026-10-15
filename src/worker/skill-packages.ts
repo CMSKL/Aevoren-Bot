@@ -154,6 +154,7 @@ export class SkillPackages {
     if (!files.some(file => file.relativePath === entryPath)) throw new WorkerError("WORKER_SKILL_ENTRY_NOT_FOUND", 404);
     const temporary = join(this.snapshotBase, `.prepare-${randomUUID()}`), destination = join(this.snapshotBase, jobId);
     const directories = new Set([temporary]);
+    let renamed = false;
     try {
       await mkdir(temporary, { mode: 0o700 });
       for (const file of files) {
@@ -169,11 +170,18 @@ export class SkillPackages {
         finally { await handle.close(); }
         await chown(path, this.owner, uid); await chmod(path, 0o440);
       }
-      for (const path of [...directories].sort((a, b) => b.length - a.length)) {
+      for (const path of [...directories].filter(path => path !== temporary).sort((a, b) => b.length - a.length)) {
         await chown(path, this.owner, uid); await chmod(path, 0o550);
       }
+      // Keep staging private until rename succeeds; some POSIX filesystems
+      // require write permission on a directory being renamed.
       await rename(temporary, destination);
+      renamed = true;
+      await chown(destination, this.owner, uid); await chmod(destination, 0o550);
       return join(destination, entryPath);
+    } catch (error) {
+      if (renamed) await this.removeOwnedTree(destination);
+      throw error;
     } finally { await this.removeOwnedTree(temporary); }
   }
 

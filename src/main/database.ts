@@ -1,3 +1,4 @@
+import { McpWriteRepository, MCP_WRITE_MIGRATION } from "./mcp-write-repository";
 import { normalizeProductRequest } from "./product-request";
 import { productOperation } from "@shared/product-operations";
 import { createHash, randomInt, randomUUID } from "node:crypto";
@@ -88,6 +89,7 @@ import { AevorenBotError } from "./errors";
 import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
 import { EnvironmentRepository, ENVIRONMENT_MIGRATION } from "./environment-repository";
 import { BrowserRepository, BROWSER_MIGRATION } from "./browser-repository";
+import { DemonstrationRepository, DEMONSTRATION_MIGRATION } from "./demonstration-repository";
 import { SkillExecutionRepository, SKILL_EXECUTION_MIGRATION, approvalReviewDigest } from "./skill-execution-repository";
 import type { ApprovalReviewInput, ApprovalReviewResult, ApprovalReviewSnapshot } from "@shared/skill-execution-contracts";
 import { approvalReviewInputSchema, approvalReviewSnapshotSchema } from "@shared/skill-execution-schemas";
@@ -2074,6 +2076,8 @@ export const MIGRATIONS = [
   SKILL_EXECUTION_MIGRATION,
   NATIVE_CONNECTOR_MIGRATION,
   NATIVE_OUTBOUND_MIGRATION,
+  DEMONSTRATION_MIGRATION,
+  MCP_WRITE_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3244,9 +3248,12 @@ export class AppRepository {
   readonly library: LibraryRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
+  readonly demonstrations: DemonstrationRepository;
+  demonstrationsTransaction<T>(work: () => T): T { return this.transaction(work); }
   readonly skillExecutions: SkillExecutionRepository;
   readonly connectors: NativeConnectorRepository;
   readonly outbound: NativeOutboundRepository;
+  readonly mcpWrites: McpWriteRepository;
 
   constructor(private readonly filename: string, private readonly options: AppRepositoryOptions = {}) {
     this.database = new DatabaseSync(filename);
@@ -3261,8 +3268,10 @@ export class AppRepository {
         else if (session.roomId) this.getRoom(session.roomId);
       });
       this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.demonstrations = new DemonstrationRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.browsers = new BrowserRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.connectors = new NativeConnectorRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.mcpWrites = new McpWriteRepository(this.database, scope => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.outbound = new NativeOutboundRepository(this.database, this.connectors, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.skillExecutions = new SkillExecutionRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId),
         (scope, reference) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId)[0]!);
@@ -4343,7 +4352,7 @@ export class AppRepository {
     const session = this.getSession(runtime.sessionId);
     const review = reviewSnapshot === undefined ? undefined : approvalReviewSnapshotSchema.parse(reviewSnapshot);
     if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "skills.runScript") {
-      if (!review || review.kind !== "skill-script") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      if (review?.kind !== "skill-script") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
       const value = parsed.tool.input as { grantId: string; expectedGrantVersion: number; args: string[]; cwd: string; timeoutMs: number };
       const { grant, content } = this.skillExecutions.assertGranted({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, value.grantId, value.expectedGrantVersion);
       if (review.target.grantId !== grant.id || review.target.grantVersion !== grant.version || review.target.environmentId !== grant.environmentId ||
@@ -4352,6 +4361,19 @@ export class AppRepository {
           review.target.entrySha256 !== grant.entrySha256 || review.target.interpreter !== grant.interpreter ||
           JSON.stringify(review.target.args) !== JSON.stringify(value.args) || review.target.cwd !== value.cwd || review.target.timeoutMs !== value.timeoutMs ||
           review.resourceName !== content.revision.name || review.revisionNumber !== content.revision.number) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "demonstrations.publish") {
+      if (review?.kind !== "demonstration-skill") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      const input = { ...(parsed.tool.input as object), sessionId: runtime.sessionId, executorBotId: runtime.executorBotId } as import("@shared/demonstration-contracts").DemonstrationPublishInput;
+      const snapshot = this.demonstrations.approvalReview(input);
+      if (approvalReviewDigest(snapshot) !== approvalReviewDigest(review)) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "mcp.executeTool") {
+      const value = parsed.tool.input as { id: string; expectedVersion: number };
+      const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, intent = this.mcpWrites.current(scope, value.id);
+      if (intent.state === "prepared") {
+        if (review?.kind !== "mcp-write") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+        this.mcpWrites.assertReview(scope, review);
+        if (value.id !== intent.id || value.expectedVersion !== review.expectedIntentVersion || intent.version !== value.expectedVersion) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      } else if (review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
     } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "outbound.send") {
       const value = parsed.tool.input as { id: string; expectedVersion: number };
       const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, intent = this.outbound.current(scope, value.id);
@@ -5677,7 +5699,7 @@ export class AppRepository {
       return { disposition: "duplicate", journal: existing };
     }
     const active=(this.database.prepare("SELECT * FROM runtime_runs WHERE session_id=? AND state IN ('created','dispatching','running','streaming','cancel-requested')").all(command.sessionId) as RuntimeRow[]).map(toRuntime);
-    const independentHost=hostExecutorBotId!==undefined&&Boolean(this.getSession(command.sessionId).roomId)&&active.every(run=>run.route==="host-outbound"&&run.executorBotId!==hostExecutorBotId);
+    const independentHost=hostExecutorBotId!==undefined&&Boolean(this.getSession(command.sessionId).roomId)&&active.every(run=>["host-outbound","host-mcp"].includes(run.route)&&run.executorBotId!==hostExecutorBotId);
     if(active.length&&!independentHost)throw new AevorenBotError("SESSION_BUSY");
     const session = this.getSession(command.sessionId);
     this.library.assertReferences(session.id, resourceRefs, session.botId ?? undefined);
@@ -7529,8 +7551,8 @@ export class AppRepository {
     const executorBotId = options.executorBotId ?? this.getBotForSession(journal.sessionId).id;
     this.assertSessionExecutor(journal.sessionId, executorBotId);
     const executorBot = this.getBot(executorBotId);
-    const providerInstanceId = options.providerInstanceId ?? (route === "host-outbound" ? "host-outbound" : route === "fake" ? "fake" : executorBot.modelSelection.providerInstanceId);
-    const providerModelId = options.providerModelId ?? (route === "fake" || route === "host-outbound" ? "" : executorBot.modelSelection.modelId);
+    const providerInstanceId = options.providerInstanceId ?? (["host-outbound", "host-mcp"].includes(route) ? route : route === "fake" ? "fake" : executorBot.modelSelection.providerInstanceId);
+    const providerModelId = options.providerModelId ?? (["fake", "host-outbound", "host-mcp"].includes(route) ? "" : executorBot.modelSelection.modelId);
     const executionKey = options.executionKey ?? clientNonce;
     const batch = this.getRoomBatchByNonce(clientNonce);
     const everyone = batch?.routingMode === "everyone" && !batch.orchestrationEnabled ? batch : null;
@@ -7538,7 +7560,7 @@ export class AppRepository {
     const activeRuns = (this.database
       .prepare(`SELECT * FROM runtime_runs WHERE session_id = ? AND state IN (${placeholders})`)
       .all(journal.sessionId, ...ACTIVE_RUNTIME_STATES) as RuntimeRow[]).map(toRuntime);
-    const independentHost = route === "host-outbound" && Boolean(this.getSession(journal.sessionId).roomId) && activeRuns.every(runtime => runtime.route === "host-outbound");
+    const independentHost = ["host-outbound", "host-mcp"].includes(route) && Boolean(this.getSession(journal.sessionId).roomId) && activeRuns.every(runtime => ["host-outbound", "host-mcp"].includes(runtime.route));
     if (activeRuns.some((runtime) => (!everyone && !independentHost) || runtime.executorBotId === executorBotId || runtime.executionKey === executionKey)) {
       throw new AevorenBotError("SESSION_BUSY");
     }

@@ -197,6 +197,7 @@ export const RunFailureCard = memo(function RunFailureCard({
   canRetry,
   onRetry,
   hostOutbound = false,
+  hostMcp = false,
 }: {
   step: string;
   errorCode?: string | null;
@@ -204,6 +205,7 @@ export const RunFailureCard = memo(function RunFailureCard({
   canRetry: boolean;
   onRetry(): void;
   hostOutbound?: boolean;
+  hostMcp?: boolean;
 }): React.JSX.Element {
   const succeeded = invocations.filter((item) => item.state === "succeeded");
   const saved = succeeded.filter((item) => item.toolKind === "workspace-write");
@@ -212,11 +214,11 @@ export const RunFailureCard = memo(function RunFailureCard({
       <span className="run-status-icon" aria-hidden="true"><WarningIcon /></span>
       <div>
         <header><strong>{step}失败</strong><span>需要处理</span></header>
-        <p>{hostOutbound ? "应用外发任务未完成，请在应用页核对原外发记录。系统不会自动重发。" : errorSummary(errorCode)}</p>
+        <p>{hostMcp ? "MCP 工具任务未完成，请在应用页核对原操作记录。系统不会自动重新调用。" : hostOutbound ? "应用外发任务未完成，请在应用页核对原外发记录。系统不会自动重发。" : errorSummary(errorCode)}</p>
         <dl>
-          <div><dt>已完成到</dt><dd>{succeeded.length > 0 ? `${succeeded.length} 次真实工具执行` : hostOutbound ? "固定草稿审批或提交阶段" : "模型文字阶段"}</dd></div>
-          <div><dt>仍然有效</dt><dd>{hostOutbound ? "本地草稿与原外发记录" : saved.length > 0 ? `${saved.length} 个已保存文件及成功工具结果` : succeeded.length > 0 ? "已成功的工具结果" : "仅保留未验证文字"}</dd></div>
-          <div><dt>下一步</dt><dd>{hostOutbound ? "在应用页只读核对未知结果" : canRetry ? "重试此步骤，系统不会重复覆盖已有文件" : "查看技术详情后重新发起当前步骤"}</dd></div>
+          <div><dt>已完成到</dt><dd>{succeeded.length > 0 ? `${succeeded.length} 次真实工具执行` : hostMcp ? "固定 MCP 参数审批或派发阶段" : hostOutbound ? "固定草稿审批或提交阶段" : "模型文字阶段"}</dd></div>
+          <div><dt>仍然有效</dt><dd>{hostMcp ? "固定参数与原 MCP 操作记录" : hostOutbound ? "本地草稿与原外发记录" : saved.length > 0 ? `${saved.length} 个已保存文件及成功工具结果` : succeeded.length > 0 ? "已成功的工具结果" : "仅保留未验证文字"}</dd></div>
+          <div><dt>下一步</dt><dd>{hostOutbound || hostMcp ? "在应用页只读核对未知结果" : canRetry ? "重试此步骤，系统不会重复覆盖已有文件" : "查看技术详情后重新发起当前步骤"}</dd></div>
         </dl>
         <div className="run-status-actions">
           {canRetry ? <button type="button" className="primary-button" onClick={onRetry}>重试此步骤</button> : null}

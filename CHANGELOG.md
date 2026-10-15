@@ -7,6 +7,20 @@
 - Verify appended blocks by returned or committed child IDs, parent and text; ambiguous attempts remain unknown and cannot resend. Label title reconciliation based only on current state without claiming the original request caused that state.
 - Real SQLite, controlled HTTP and Renderer unit checks pass. The source build and ten hidden Electron IPC scenarios passed; installation-package and cross-platform checks remain separate gates. Real Notion credentials are unavailable and unverified.
 
+## v0.3.0-beta.34 (development candidate)
+
+- Add conversation/executor-scoped MCP grants, fixed schema/configuration/credential approvals and durable send-once tool receipts. Unknown results do not replay; confirmation is explicitly server-reported.
+- Add opaque sandboxed MCP Apps with actual initialization, input/results and approved tool calls. App-only visibility is enforced and protocol metadata stays out of model and journal results.
+- Share one Apps approval owner across native and MCP actions, preserving six-member execution and exact Stop/revoke.
+- Retain read-only MCP compatibility, existing themes and icons. External App domains and device permissions are disabled; real accounts and final package acceptance remain separate verification gates.
+
+## v0.3.0-beta.33 (development candidate)
+
+- Added explicit isolated-computer demonstration recording and scoped editable text Skill drafts; publication reviews a fixed saved version and creates a disabled Skill.
+- Browser Worker 1.1.0 redacts printable keys and clipboard input, and seals captures on disconnect or control change.
+- Native connector and outbound features from beta.31/beta.32 are retained. Real Docker and cross-platform candidate checks are pending.
+
+
 ## v0.3.0-beta.32 (development candidate)
 
 - Add separate account/operation/target write grants and fixed saved-draft approvals for Gmail sending, ordinary Drive text-file creation/replacement and Notion page creation. Gmail sending requires explicit full-scope reauthorization.

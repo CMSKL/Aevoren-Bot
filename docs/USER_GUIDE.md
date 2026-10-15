@@ -119,3 +119,16 @@ AEVOREN_BOT_FAKE_PROVIDER=1 pnpm dev
 ```
 
 Never paste real API keys, private transcripts, account data, or personal paths into public Issues, screenshots, fixtures, or pull requests. See [Troubleshooting](TROUBLESHOOTING.md) when a normal flow does not work.
+
+
+## Demonstration Skill drafts
+
+In a member's **Computer** panel, take over and connect the isolated computer, then explicitly start a demonstration. The counter records only accepted pointer/button transitions and selected navigation keys. Text, typed URLs and clipboard contents become placeholders; page content and screenshots are not captured. Closing the viewer interrupts recording and preserves human control.
+
+Stop to create an editable `SKILL.md` draft. Save changes before publishing; a conflict preserves the local editor. Publish the saved fixed version only after reviewing placeholders and coordinates. The result is initially disabled in this conversation's Library / Skill; enable it explicitly when ready. This creates no execution grant and starts no task. AI publication uses the saved full-body approval snapshot, and edits invalidate the old approval.
+
+This development unit requires Browser Worker 1.1.0. Older environments continue running; explicitly stop and rebuild when ready. See [Skill demonstrations](SKILL_DEMONSTRATIONS.md) for limits, scope and pending Docker/cross-platform validation.
+
+## Scoped MCP tools and Apps
+
+The v0.3.0-beta.34 candidate adds [scoped MCP tools and isolated Apps](MCP_APPS.md) to the existing Contact/Room Applications sections. Grant specific tools, approve fixed JSON arguments and targets, and query unknown results without resending. Server-reported results and real third-party verification remain distinct.
