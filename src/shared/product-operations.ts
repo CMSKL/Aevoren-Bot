@@ -1,3 +1,4 @@
+import { ORGANIZATION_PRODUCT_OPERATIONS } from "./organization-product";
 import { SEARCH_PRODUCT_OPERATIONS } from "./search-product";
 import { TASK_SESSION_PRODUCT_OPERATIONS } from "./task-session-product";
 import { REALTIME_PRODUCT_OPERATIONS } from "./realtime-product";
@@ -20,6 +21,7 @@ export type ProductOperationDefinition = { name: string; channel: string; descri
 export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   ...TASK_SESSION_PRODUCT_OPERATIONS,
   ...SEARCH_PRODUCT_OPERATIONS,
+  ...ORGANIZATION_PRODUCT_OPERATIONS,
   ...LIBRARY_PRODUCT_OPERATIONS,
   ...MEDIA_PRODUCT_OPERATIONS,
   ...VOICE_PRODUCT_OPERATIONS,

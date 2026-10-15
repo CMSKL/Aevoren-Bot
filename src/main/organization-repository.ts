@@ -18,7 +18,7 @@ export const ORGANIZATION_MIGRATION = { version: 46, sql: `
     notify_approvals INTEGER NOT NULL CHECK(notify_approvals IN(0,1)),notify_completion INTEGER NOT NULL CHECK(notify_completion IN(0,1)),
     notify_failure INTEGER NOT NULL CHECK(notify_failure IN(0,1)),notify_routines INTEGER NOT NULL CHECK(notify_routines IN(0,1)),sound INTEGER NOT NULL CHECK(sound IN(0,1))
   );
-  INSERT INTO organization_preferences VALUES(1,1,NULL,1,1,1,1,0);
+  INSERT INTO organization_preferences VALUES(1,1,NULL,1,0,0,1,1);
   CREATE TRIGGER organization_deleted_session AFTER DELETE ON organization_assignments BEGIN
     UPDATE organization_preferences SET version=version+1 WHERE id=1;
   END;

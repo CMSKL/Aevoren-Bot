@@ -6,14 +6,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { AppRepository } from "./database";
 import { AevorenBotError } from "./errors";
-import { ORGANIZATION_MIGRATION, OrganizationRepository } from "./organization-repository";
+import { OrganizationRepository } from "./organization-repository";
 import { OrganizationService } from "./organization-service";
 import { taskExecutorSelectionSchema } from "@shared/task-session-schemas";
 
 const repositories:AppRepository[]=[],directories:string[]=[];
-function open(filename=":memory:",initialize=true){
+function open(filename=":memory:"){
   const app=new AppRepository(filename);repositories.push(app);const database=Reflect.get(app,"database") as DatabaseSync;
-  if(initialize){database.exec(ORGANIZATION_MIGRATION.sql);database.prepare("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)").run(46,new Date().toISOString());}
   const repository=new OrganizationRepository(database,{assertSession:id=>{app.getSession(id);},assertBot:id=>{app.getBot(id);},assertContext:context=>{
     app.assertSessionExecutor(context.sessionId,context.executorBotId);
     if(context.runtimeRunId){const run=app.getRuntimeRun(context.runtimeRunId);if(run.sessionId!==context.sessionId||run.executorBotId!==context.executorBotId||!["created","dispatching","running","streaming"].includes(run.state))throw new AevorenBotError("APPROVAL_SCOPE_INVALID");}
@@ -24,7 +23,7 @@ function directory(){const value=mkdtempSync(join(tmpdir(),"aevoren-organization
 afterEach(()=>{for(const app of repositories.splice(0))app.close();for(const value of directories.splice(0))rmSync(value,{recursive:true,force:true});});
 describe("personal organization uses real scoped sessions without changing authority",()=>{
   it("creates, renames and reorders the full bounded section set with global version CAS",()=>{
-    const f=open(),initial=f.service.snapshot();expect(initial).toEqual({version:1,sections:[],assignments:[],preferences:{defaultAssistantBotId:null,notifications:{approvals:true,taskCompletion:true,taskFailure:true,routines:true},sound:false}});
+    const f=open(),initial=f.service.snapshot();expect(initial).toEqual({version:1,sections:[],assignments:[],preferences:{defaultAssistantBotId:null,notifications:{approvals:true,taskCompletion:false,taskFailure:false,routines:true},sound:true}});
     const first=f.service.createSection({expectedVersion:1,name:"  Research  "});expect(first.sections[0]!.name).toBe("Research");expect(first.version).toBe(2);
     const second=f.service.createSection({expectedVersion:first.version,name:"Writing"});const ids=second.sections.map(item=>item.id);
     const ordered=f.service.reorderSections({expectedVersion:second.version,sectionIds:ids.toReversed()});expect(ordered.sections.map(item=>item.id)).toEqual(ids.toReversed());
@@ -72,7 +71,7 @@ describe("personal organization uses real scoped sessions without changing autho
   it("persists independent notification categories and a valid optional default assistant without changing Bot settings",()=>{
     const f=open(),owner=f.app.createBot(),original=f.app.getBot(owner.bot.id);
     let state=f.service.savePreferences({expectedVersion:1,patch:{defaultAssistantBotId:owner.bot.id,notifications:{approvals:false,taskFailure:false},sound:true}});
-    expect(state.preferences).toEqual({defaultAssistantBotId:owner.bot.id,notifications:{approvals:false,taskCompletion:true,taskFailure:false,routines:true},sound:true});
+    expect(state.preferences).toEqual({defaultAssistantBotId:owner.bot.id,notifications:{approvals:false,taskCompletion:false,taskFailure:false,routines:true},sound:true});
     state=f.service.savePreferences({expectedVersion:state.version,patch:{notifications:{routines:false}}});expect(state.preferences.notifications.approvals).toBe(false);expect(state.preferences.sound).toBe(true);
     expect(()=>f.service.savePreferences({expectedVersion:state.version,patch:{defaultAssistantBotId:randomUUID()}})).toThrowError();expect(f.service.snapshot()).toEqual(state);expect(f.app.getBot(owner.bot.id)).toEqual(original);
     expect(f.service.savePreferences({expectedVersion:state.version,patch:{defaultAssistantBotId:null}}).preferences.defaultAssistantBotId).toBeNull();
@@ -86,11 +85,11 @@ describe("personal organization uses real scoped sessions without changing autho
   it("persists actual SQLite state across close/reopen and detects two-connection stale writes",()=>{
     const filename=join(directory(),"app.sqlite"),first=open(filename),owner=first.app.createBot();let state=first.service.createSection({expectedVersion:1,name:"Persistent"});
     state=first.service.moveSession({expectedVersion:state.version,sessionId:owner.session.id,sectionId:state.sections[0]!.id});
-    const second=open(filename,false),observed=second.service.snapshot();expect(observed).toEqual(state);
+    const second=open(filename),observed=second.service.snapshot();expect(observed).toEqual(state);
     const updated=first.service.savePreferences({expectedVersion:state.version,patch:{sound:true}});
     expect(()=>second.service.renameSection({expectedVersion:observed.version,id:observed.sections[0]!.id,name:"Stale peer"})).toThrowError(expect.objectContaining({code:"ORG_VERSION_CONFLICT"}));
     second.app.close();repositories.splice(repositories.indexOf(second.app),1);first.app.close();repositories.splice(repositories.indexOf(first.app),1);
-    expect(open(filename,false).service.snapshot()).toEqual(updated);
+    expect(open(filename).service.snapshot()).toEqual(updated);
   });
   it("does not publish partial mutations when an outer product receipt transaction rolls back",()=>{
     const f=open();expect(()=>f.app.demonstrationsTransaction(()=>{f.service.createSection({expectedVersion:1,name:"Must roll back"});throw new Error("Receipt rejected");})).toThrow("Receipt rejected");

@@ -18,7 +18,7 @@ import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import type { ModelImageAttachment, ModelTextAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
-  "search.query","search.open",
+  "search.query","search.open","organization.snapshot",
   "sessions.taskOptions", "sessions.listTasks", "sessions.getTask", "voice.realtime.snapshot", "voice.configurations", "voice.get", "voice.list", "voice.audio",
   "media.list", "media.metadata", "media.read", "media.preview",
   "mcp.toolCatalog", "mcp.toolGrants", "mcp.toolResult", "mcp.listToolIntents",

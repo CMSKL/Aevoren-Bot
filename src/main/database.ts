@@ -1,3 +1,4 @@
+import { OrganizationRepository,ORGANIZATION_MIGRATION } from "./organization-repository";
 import { SearchRepository } from "./search-repository";
 import { McpWriteRepository, MCP_WRITE_MIGRATION } from "./mcp-write-repository";
 import { normalizeProductRequest } from "./product-request";
@@ -2090,6 +2091,7 @@ export const MIGRATIONS = [
   VOICE_MIGRATION,
   REALTIME_MIGRATION,
   TASK_SESSION_MIGRATION,
+  ORGANIZATION_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3274,6 +3276,7 @@ export class AppRepository {
   readonly realtime: RealtimeRepository;
   readonly tasks: TaskSessionRepository;
   readonly search: SearchRepository;
+  readonly organization:OrganizationRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
   readonly demonstrations: DemonstrationRepository;
@@ -3318,6 +3321,7 @@ export class AppRepository {
         (scope, reference, runtimeRunId) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId, runtimeRunId)[0]!);
       this.tasks = new TaskSessionRepository(this.database, this);
       this.search = new SearchRepository(this.database);
+      this.organization=new OrganizationRepository(this.database,{assertSession:id=>{this.getSession(id);},assertBot:id=>{this.getBot(id);},assertContext:context=>{this.assertSessionExecutor(context.sessionId,context.executorBotId);if(context.runtimeRunId){const run=this.getRuntimeRun(context.runtimeRunId);if(run.sessionId!==context.sessionId||run.executorBotId!==context.executorBotId||!["running","streaming"].includes(run.state))throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");this.tasks.assertTaskRuntime(run.id);}}});
       this.library.setTaskReferenceReader((sessionId, executor, runtimeId) => this.tasks.libraryReferences(sessionId, executor, runtimeId));
       this.media.setTaskRuntimeReferencesReader(runtimeId => this.tasks.runtimeTaskPolicy(runtimeId)?.selection.mediaRefs ?? null);
       this.media.setTaskSessionReferencesReader((sessionId, executor) => this.tasks.mediaReferences(sessionId, executor));

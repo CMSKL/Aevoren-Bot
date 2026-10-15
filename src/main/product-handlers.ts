@@ -1,3 +1,6 @@
+import { ORGANIZATION_PRODUCT_OPERATIONS } from "@shared/organization-product";
+import type { OrganizationChanged } from "@shared/organization-contracts";
+import type { OrganizationService } from "./organization-service";
 import type { SearchService } from "./search-service";
 import { SEARCH_CHANNELS } from "@shared/search-channels";
 import { searchOpenSchema, searchQuerySchema } from "@shared/search-schemas";
@@ -105,6 +108,8 @@ export type ProductDependencies = VoiceProductDependencies & MediaProductDepende
   realtimeService?: RealtimeService;
   taskSessionService?: TaskSessionService;
   searchService?: SearchService;
+  organizationService?:OrganizationService;
+  organizationChanged?(event:OrganizationChanged):void;
   productChanged?(): void;
   sessionChanged?(session: import("@shared/contracts").Session): void;
   requestUpdateAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
@@ -154,6 +159,19 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   };
 
   const handlers = new Map<string, (input?: unknown) => unknown>();
+  for(const definition of ORGANIZATION_PRODUCT_OPERATIONS)handlers.set(definition.channel,input=>{
+    const service=dependencies.organizationService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
+    if(definition.name==="organization.snapshot")return service.snapshot(libraryContext);
+    const result=commit(()=>{switch(definition.name){
+      case "organization.createSection":return service.createSection(input as import("@shared/organization-contracts").OrganizationCreateSection,libraryContext);
+      case "organization.renameSection":return service.renameSection(input as import("@shared/organization-contracts").OrganizationRenameSection,libraryContext);
+      case "organization.deleteSection":return service.deleteSection(input as import("@shared/organization-contracts").OrganizationDeleteSection,libraryContext);
+      case "organization.reorderSections":return service.reorderSections(input as import("@shared/organization-contracts").OrganizationReorderSections,libraryContext);
+      case "organization.moveSession":return service.moveSession(input as import("@shared/organization-contracts").OrganizationMoveSession,libraryContext);
+      case "organization.savePreferences":return service.savePreferences(input as import("@shared/organization-contracts").OrganizationSavePreferences,libraryContext);
+      default:throw new AevorenBotError("INVALID_REQUEST");
+    }});dependencies.organizationChanged?.({version:result.version});return result;
+  });
   handlers.set(SEARCH_CHANNELS.query,input=>{if(!dependencies.searchService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.searchService.query(searchQuerySchema.parse(input),libraryContext);});
   handlers.set(SEARCH_CHANNELS.open,input=>{if(!dependencies.searchService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.searchService.open(searchOpenSchema.parse(input),libraryContext);});
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);

@@ -13,7 +13,9 @@ export type OrganizationDeleteSection = { expectedVersion: number; id: string };
 export type OrganizationReorderSections = { expectedVersion: number; sectionIds: string[] };
 export type OrganizationMoveSession = { expectedVersion: number; sessionId: string; sectionId: string | null; position?: number };
 export type OrganizationSavePreferences = { expectedVersion: number; patch: { defaultAssistantBotId?: string | null; notifications?: Partial<OrganizationNotifications>; sound?: boolean } };
+export type OrganizationChanged={version:number};
 export type OrganizationApi = {
+  onChanged(listener:(event:OrganizationChanged)=>void):()=>void;
   snapshot(): Promise<ApiResult<OrganizationSnapshot>>;
   createSection(input: OrganizationCreateSection): Promise<ApiResult<OrganizationSnapshot>>;
   renameSection(input: OrganizationRenameSection): Promise<ApiResult<OrganizationSnapshot>>;
