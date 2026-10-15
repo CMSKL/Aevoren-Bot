@@ -54,10 +54,10 @@ async function withTasks(work: (f: Fixture) => Promise<void>, mcp = false): Prom
   const bots = Array.from({ length: 6 }, (_, index) => {
     const made = repository.createBot(registration.project.id), model = `task-fixture-${index + 1}`;
     const bot = repository.updateBot(made.bot.id, made.bot.version, { name: `线程成员${index + 1}`, mcpServerIds: mcp ? null : [], modelSelection: { providerInstanceId: "openai-compatible.default", modelId: model } });
-    repository.createMemory(bot.id, `TASK_PARENT_BOT_MEMORY_${index + 1}`);
+    repository.createMemory(bot.id, `parent bot memory number ${index + 1} stays private`);
     return { id: bot.id, name: bot.name, sessionId: made.session.id, model };
   });
-  repository.createScopedMemory({ scope: "user", scopeKey: "user" }, "TASK_PARENT_GLOBAL_MEMORY");
+  repository.createScopedMemory({ scope: "user", scopeKey: "user" }, "parent global memory stays outside empty tasks");
   const room = repository.createRoom({ name: "线程并行群", memberBotIds: bots.map(bot => bot.id), leadBotId: null, projectId: registration.project.id });
   const document = repository.library.create({ sessionId: bots[0]!.sessionId, kind: "document", name: "父会话私有资料", body: "TASK_PARENT_DOCUMENT_PRIVATE" });
   repository.setSetting("memory.capture.enabled", "false", false); repository.close();
@@ -134,7 +134,7 @@ test("creates explicit empty task scopes through UI and keeps sibling drafts, hi
     await expect.poll(async () => (await snapshot(f.page, bot.sessionId)).runs.at(-1)?.state).toBe("completed");
     const imported = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media.importPath(input), { sessionId: bot.sessionId, workspaceId: f.workspaceId, path: "picture.png" })); expect(imported.imported).toHaveLength(1);
     const parent = await options(f.page, bot.sessionId);
-    expect(parent.executors[0]!.memories.map(item => item.content)).toContain("TASK_PARENT_BOT_MEMORY_1"); expect(parent.history.length).toBeGreaterThan(0);
+    expect(parent.executors[0]!.memories.map(item => item.content)).toContain("parent bot memory number 1 stays private"); expect(parent.history.length).toBeGreaterThan(0);
     expect(parent.resources).toHaveLength(1); expect(parent.media).toHaveLength(1); expect(parent.executors[0]!.workspaces).toHaveLength(1); expect(parent.executors[0]!.mcpTools).toHaveLength(1);
     await f.page.getByRole("button", { name: "新建任务", exact: true }).click();
     const dialog = f.page.getByRole("dialog", { name: "新建任务线程", exact: true });
@@ -151,7 +151,7 @@ test("creates explicit empty task scopes through UI and keeps sibling drafts, hi
     await f.page.getByLabel("消息", { exact: true }).fill("TASK_B_DRAFT"); await openTask(f, first); await expect(f.page.getByLabel("消息", { exact: true })).toHaveValue("TASK_A_DRAFT");
     const before = f.captures.length; await f.page.getByLabel("消息", { exact: true }).fill("TASK_A_ONLY_MESSAGE"); await f.page.getByRole("button", { name: "发送", exact: true }).click();
     await expect.poll(async () => (await snapshot(f.page, first.session.id)).runs.at(-1)?.state).toBe("completed"); expect(f.captures).toHaveLength(before + 1);
-    const wire = JSON.stringify(f.captures.at(-1)!.command); for (const privateText of ["TASK_PARENT_HISTORY_PRIVATE", "TASK_PARENT_BOT_MEMORY_1", "TASK_PARENT_GLOBAL_MEMORY", "TASK_PARENT_DOCUMENT_PRIVATE", "TASK_PARENT_WORKSPACE_PRIVATE", "read_fixture"]) expect(wire).not.toContain(privateText);
+    const wire = JSON.stringify(f.captures.at(-1)!.command); for (const privateText of ["TASK_PARENT_HISTORY_PRIVATE", "parent bot memory number 1 stays private", "parent global memory stays outside empty tasks", "TASK_PARENT_DOCUMENT_PRIVATE", "TASK_PARENT_WORKSPACE_PRIVATE", "read_fixture"]) expect(wire).not.toContain(privateText);
     expect((await snapshot(f.page, bot.sessionId)).entries.filter(item => item.role === "user").map(item => item.body)).toEqual(["TASK_PARENT_HISTORY_PRIVATE"]);
     await openTask(f, second); await expect(f.page.getByLabel("消息", { exact: true })).toHaveValue("TASK_B_DRAFT");
     await f.page.getByRole("button", { name: "任务详情", exact: true }).click(); const details = f.page.getByRole("dialog", { name: "任务线程详情", exact: true }); await details.getByLabel("修改任务名称", { exact: true }).fill("冲突后保留的任务名称");
