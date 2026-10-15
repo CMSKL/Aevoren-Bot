@@ -30,6 +30,15 @@ function assertForcedExit(exit) {
   } else assert.equal(exit[1], "SIGKILL");
 }
 
+test("an already closed application does not read its disposed process channel", async () => {
+  let processReads = 0;
+  await closeTestApplication({
+    close: async () => {},
+    process: () => { processReads++; throw new TypeError("Disposed Electron process channel"); },
+  });
+  assert.equal(processReads, 0);
+});
+
 test("a stalled Electron-shaped fixture closes its inherited pipes and owned descendant while preserving a sibling", async () => {
   const source = `const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore',1,2]});process.stdout.write(JSON.stringify({pid:child.pid})+'\\n');setInterval(()=>{},1000);`;
   // Playwright starts Electron in an isolated process group on POSIX.
