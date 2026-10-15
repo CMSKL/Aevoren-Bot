@@ -11,6 +11,20 @@ type ErrorDescriptor = {
 };
 
 export const ERROR_REGISTRY = {
+  VOICE_CONFIGURATION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "语音配置已改变，请刷新后保存。", allowedDetailKeys: [] },
+  VOICE_CONFIGURATION_REQUIRED: { domain: "provider", retryable: false, safeMessage: "请在语音设置中启用并配置这项独立服务。", allowedDetailKeys: [] },
+  VOICE_TASK_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这项语音任务。", allowedDetailKeys: [] },
+  VOICE_NOT_GRANTED: { domain: "security", retryable: false, safeMessage: "当前会话或任务没有这项语音内容的有效授权。", allowedDetailKeys: [] },
+  VOICE_NONCE_CONFLICT: { domain: "storage", retryable: false, safeMessage: "同一语音请求标识对应了不同内容或配置。", allowedDetailKeys: [] },
+  VOICE_RESPONSE_INVALID: { domain: "provider", retryable: false, safeMessage: "语音服务返回的文字或音频未通过校验。", allowedDetailKeys: [] },
+  VOICE_TOO_LARGE: { domain: "validation", retryable: false, safeMessage: "语音内容超过当前文件、文字或录制时长限制。", allowedDetailKeys: [] },
+  VOICE_REQUEST_FAILED: { domain: "provider", retryable: false, safeMessage: "语音请求失败，请检查配置与服务状态。", allowedDetailKeys: [] },
+  VOICE_REQUEST_UNKNOWN: { domain: "provider", retryable: false, safeMessage: "语音请求结果未知，系统不会自动再次发送。", allowedDetailKeys: [] },
+  VOICE_CAPTURE_INVALID: { domain: "security", retryable: false, safeMessage: "录音意图已失效，请重新点击开始录音。", allowedDetailKeys: [] },
+  VOICE_PERMISSION_DENIED: { domain: "security", retryable: false, safeMessage: "麦克风权限不可用，请在系统设置中允许后重新开始。", allowedDetailKeys: [] },
+  VOICE_SOURCE_CHANGED: { domain: "storage", retryable: false, safeMessage: "语音来源或会话状态已改变，请重新选择。", allowedDetailKeys: [] },
+  VOICE_UNSUPPORTED: { domain: "validation", retryable: false, safeMessage: "当前语音服务或录制格式尚不支持这项操作。", allowedDetailKeys: [] },
+
   MEDIA_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这份媒体。", allowedDetailKeys: [] },
   MEDIA_NOT_GRANTED: { domain: "security", retryable: false, safeMessage: "当前会话或任务没有这份媒体的有效授权，请重新选择并发送。", allowedDetailKeys: [] },
   MEDIA_REFERENCE_INVALID: { domain: "security", retryable: false, safeMessage: "媒体或解析版本引用未通过校验，请重新选择。", allowedDetailKeys: [] },

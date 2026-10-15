@@ -5,3 +5,5 @@ export const VOICE_CHANNELS = {
   transcribe: "voice:transcribe", speak: "voice:speak", get: "voice:get", list: "voice:list", stop: "voice:stop", audio: "voice:audio",
 } as const;
 export const VOICE_CHANGED_CHANNEL = "voice:changed";
+
+export const VOICE_CAPTURE_MAX_DURATION_MS = 120_000;

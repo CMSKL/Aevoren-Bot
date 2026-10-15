@@ -1,3 +1,4 @@
+import type { VoiceApi } from "./voice-contracts";
 import type { BotAvatarColor, BotAvatarShape } from "./bot-avatar";
 
 export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
@@ -1259,6 +1260,7 @@ export interface AevorenBotApi {
   processes: import("./environment-contracts").ProcessesApi;
   library: LibraryApi;
   media: MediaApi;
+  voice: VoiceApi;
   skillsExecution: SkillExecutionApi;
   outbound: NativeOutboundApi;
   connectors: NativeConnectorsApi;
