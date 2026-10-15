@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test, type Page } from "@playwright/test";
 import type { AevorenBotApi, ApiResult } from "../../src/shared/contracts";
-import type { MediaApi, MediaItem, MessageMediaReference } from "../../src/shared/media-contracts";
+import type { MediaApi, MediaImportResult, MediaItem, MessageMediaReference } from "../../src/shared/media-contracts";
+import { inspectAvHeader } from "../../src/shared/media-av-format";
 import { MEDIA_CHANNELS } from "../../src/shared/media-channels";
 import { PRODUCT_VIEW_DOM_EVENT, type ProductViewInput, type ProductViewResult } from "../../src/shared/product-view";
 import { AppRepository } from "../../src/main/database";
@@ -41,7 +42,16 @@ test("actual local audio/video controls decode owned bytes without autoplay and 
     const page = await application.firstWindow(); await expect(page.locator(".app-shell")).toBeVisible(); await page.getByRole("listitem", { name: "本地媒体验证", exact: true }).click();
     writeFileSync(join(source, "own.webm"), await recording(application, true));
     const imported: MediaItem[] = [];
-    for (const path of ["own.wav", "own.webm"]) imported.push(...(await call<{ imported: MediaItem[] }>(page, "importPath", { sessionId: created.session.id, workspaceId: workspace.workspace.id, path })).imported);
+    for (const path of ["own.wav", "own.webm"]) {
+      const result = await call<MediaImportResult>(page, "importPath", { sessionId: created.session.id, workspaceId: workspace.workspace.id, path });
+      if (result.failed.length) {
+        const bytes = readFileSync(join(source, path)); let header: ReturnType<typeof inspectAvHeader> | "invalid";
+        try { header = inspectAvHeader(bytes); } catch { header = "invalid"; }
+        await test.info().attach("controlled-av-import-failure", { body: JSON.stringify({ name: path, byteSize: bytes.length, header, failed: result.failed }), contentType: "application/json" });
+      }
+      expect(result.failed, `Import failures for controlled ${path}`).toEqual([]);
+      imported.push(...result.imported);
+    }
     expect(imported.map(item => item.asset.kind)).toEqual(["audio", "video"]); expect(imported.every(item => item.asset.durationMs! > 100)).toBe(true);
     const draft = (await view(page, { action: "draft_get" })).result as { digest: string; draftVersion: number };
     expect((await view(page, { action: "draft_update", expectedDigest: draft.digest, expectedDraftVersion: draft.draftVersion, mediaRefs: imported.map(item => item.reference) })).status).toBe("completed");
