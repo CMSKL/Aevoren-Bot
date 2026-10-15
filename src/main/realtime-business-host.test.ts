@@ -32,5 +32,6 @@ it("dispatches only frozen final human ASR through real Runtime and records dist
   expect(message.body).toBe("只总结这段话");expect(message.origin).toEqual({kind:"voice-input",voiceSessionId:record.session.id,turnId:turn.id,callId:"call_original",transcriptDigest:final.transcriptDigest});
   expect(message.origin).not.toHaveProperty("fromRuntimeRunId");expect(JSON.stringify(seen)).not.toContain(privateHint);
   expect(seen.find(message=>message.content.includes("HUMAN_VOICE_INPUT"))?.role).toBe("user");
+  expect(JSON.stringify(seen)).not.toContain("HOST_DELEGATED_TASK_CONTRACT");
   expect(host.lookup(request)).toEqual(link);
 });

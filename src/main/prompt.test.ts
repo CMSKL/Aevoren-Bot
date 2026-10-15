@@ -86,6 +86,8 @@ describe("buildPrompt", () => {
     expect(message?.role).toBe("user"); expect(message?.content).toContain("创建一个选题 Bot");
     expect(message?.content).not.toContain("AI_DELEGATED_TASK");
     expect(message?.content).not.toContain("fromRuntimeRunId");
+    expect(JSON.stringify(prompt)).not.toContain("app:delegated-task:v1");
+    expect(JSON.stringify(prompt)).not.toContain("HOST_DELEGATED_TASK_CONTRACT");
   });
 
   it("orders profile and valid transcript entries through the target user", () => {
