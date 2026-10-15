@@ -10,6 +10,8 @@ The first adapter uses OpenAI's file [Transcriptions API](https://developers.ope
 
 ## Record and transcribe
 
+Open **Voice** in the composer toolbar to show the controls; they stay collapsed during ordinary chat. Closing them stops their owned recording/playback and invalidates a pending transcript insertion. Already-dispatched transcription tasks keep their own status and history; reopen the controls to query or stop an individual task.
+
 Click **Record** yourself to request microphone permission. Only the current main document with a short user-initiated intent may request audio; camera, display capture, subframes and unrelated documents are denied. Recording negotiates a supported browser format and stops at two minutes or 16 MiB. Stop/cancel, navigation, application closure and conversation-generation changes release the owned tracks.
 
 The captured media is saved before cloud transcription. Partial text appears in its task card. A completed transcript is inserted only after an explicit click; the captured session, draft version and digest protect against A→B→A edits and late replies. A conflict keeps the result and offers an explicit insertion into the new current draft. Inserting text does not send a message or automatically attach the original audio. The saved recording can be selected separately from the media Library.
