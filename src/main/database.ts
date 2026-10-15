@@ -3313,9 +3313,11 @@ export class AppRepository {
       this.mcpWrites = new McpWriteRepository(this.database, scope => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.outbound = new NativeOutboundRepository(this.database, this.connectors, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.skillExecutions = new SkillExecutionRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId),
-        (scope, reference) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId)[0]!);
+        (scope, reference, runtimeRunId) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId, runtimeRunId)[0]!);
       this.tasks = new TaskSessionRepository(this.database, this);
+      this.library.setTaskReferenceReader((sessionId, executor, runtimeId) => this.tasks.libraryReferences(sessionId, executor, runtimeId));
       this.media.setTaskRuntimeReferencesReader(runtimeId => this.tasks.runtimeTaskPolicy(runtimeId)?.selection.mediaRefs ?? null);
+      this.media.setTaskSessionReferencesReader((sessionId, executor) => this.tasks.mediaReferences(sessionId, executor));
     } catch (error) {
       this.database.close();
       throw error;
@@ -4412,7 +4414,7 @@ export class AppRepository {
     if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "skills.runScript") {
       if (review?.kind !== "skill-script") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
       const value = parsed.tool.input as { grantId: string; expectedGrantVersion: number; args: string[]; cwd: string; timeoutMs: number };
-      const { grant, content } = this.skillExecutions.assertGranted({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, value.grantId, value.expectedGrantVersion);
+      const { grant, content } = this.skillExecutions.assertGranted({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, value.grantId, value.expectedGrantVersion, runtime.id);
       if (review.target.grantId !== grant.id || review.target.grantVersion !== grant.version || review.target.environmentId !== grant.environmentId ||
           review.target.imageDigest !== grant.imageDigest || review.target.workerVersion !== grant.workerVersion ||
           JSON.stringify(review.target.reference) !== JSON.stringify(grant.reference) || review.target.entryPath !== grant.entryPath ||

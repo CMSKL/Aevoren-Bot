@@ -106,6 +106,21 @@ export class MediaRepository {
   private sequence = 0;
   private readonly leases = new WeakSet<MediaReadLease>();
   private readonly executorIncarnations = new Map<string, string>();
+  private taskSessionReferencesReader: ((sessionId: string, executor: string) => MessageMediaReference[] | null) | null = null;
+  setTaskSessionReferencesReader(reader: NonNullable<MediaRepository["taskSessionReferencesReader"]>): void { this.taskSessionReferencesReader = reader; }
+  private taskReferences(sessionId: string, executor?: string): MessageMediaReference[] | null {
+    if (!executor) return null;
+    const references = this.taskSessionReferencesReader?.(sessionId, executor) ?? null;
+    if (references === null && (this.database.prepare("SELECT kind FROM sessions WHERE id=?").get(sessionId) as {kind: string} | undefined)?.kind === "TASK") throw new AevorenBotError("MEDIA_NOT_GRANTED");
+    return references;
+  }
+  private taskReference(sessionId: string, id: string, executor?: string): MessageMediaReference | undefined {
+    const references = this.taskReferences(sessionId, executor);
+    if (references === null) return undefined;
+    const reference = references.find(item => item.mediaId === id);
+    if (!reference) throw new AevorenBotError("MEDIA_NOT_GRANTED");
+    return reference;
+  }
   private taskRuntimeReferencesReader: ((runtimeId: string) => MessageMediaReference[] | null) | null = null;
   setTaskRuntimeReferencesReader(reader: (runtimeId: string) => MessageMediaReference[] | null): void { this.taskRuntimeReferencesReader = reader; }
   constructor(private readonly database: DatabaseSync, private readonly assertScope: (sessionId: string, executorBotId?: string) => void) {}
@@ -144,12 +159,16 @@ export class MediaRepository {
   }
   metadata(input: { sessionId: string; id: string }, executorBotId?: string): MediaItem {
     this.bound(input.sessionId, input.id, executorBotId);
-    return this.item(this.row(input.id));
+    return this.item(this.row(input.id), this.taskReference(input.sessionId, input.id, executorBotId));
   }
   list(input: MediaListInput, executorBotId?: string): MediaItem[] {
     const parsed = mediaListSchema.parse(input); this.assertScope(parsed.sessionId, executorBotId);
     const rows = this.database.prepare("SELECT a.* FROM media_assets a JOIN session_media_bindings b ON b.media_id=a.id WHERE b.session_id=? AND b.revoked_at IS NULL ORDER BY a.created_at DESC,a.id").all(parsed.sessionId) as AssetRow[];
-    return this.filter(rows, parsed).map(row => this.item(row));
+    const references = this.taskReferences(parsed.sessionId, executorBotId);
+    return this.filter(rows, parsed).flatMap(row => {
+      const selected = references?.find(item => item.mediaId === row.id);
+      return references !== null && !selected ? [] : [this.item(row, selected)];
+    });
   }
   available(input: MediaAvailableInput = {}): MediaItem[] {
     const parsed = mediaAvailableSchema.parse(input);
@@ -161,10 +180,12 @@ export class MediaRepository {
   }
   captureUiLease(input: { sessionId: string; id: string; reference?: MessageMediaReference }, executorBotId?: string): MediaReadLease {
     const bound = this.bound(input.sessionId, input.id, executorBotId), row = this.row(input.id); this.readable(row);
+    const selected = this.taskReference(input.sessionId, input.id, executorBotId);
+    if (selected && input.reference && (selected.sha256 !== input.reference.sha256 || selected.extraction?.id !== input.reference.extraction?.id || selected.extraction?.digest !== input.reference.extraction?.digest)) throw new AevorenBotError("MEDIA_REFERENCE_INVALID");
     const key = `${input.sessionId}:${executorBotId}`;
     if (executorBotId && !this.executorIncarnations.has(key)) this.executorIncarnations.set(key, randomUUID());
     const lease: MediaReadLease = Object.freeze({ sessionId: input.sessionId, mediaId: input.id, incarnation: bound.incarnation,
-      ...(executorBotId ? { executorBotId } : {}), ...(executorBotId ? { executorIncarnation: this.executorIncarnations.get(key)! } : {}), reference: structuredClone(this.item(row, input.reference).reference) });
+      ...(executorBotId ? { executorBotId } : {}), ...(executorBotId ? { executorIncarnation: this.executorIncarnations.get(key)! } : {}), reference: structuredClone(this.item(row, input.reference ?? selected).reference) });
     this.leases.add(lease); return lease;
   }
   resolveUiLease(lease: MediaReadLease): { item: MediaItem; extraction: MediaExtraction | null } {
@@ -173,6 +194,8 @@ export class MediaRepository {
     if (current.incarnation !== lease.incarnation) throw new AevorenBotError("MEDIA_NOT_GRANTED");
     if (lease.executorBotId && this.executorIncarnations.get(`${lease.sessionId}:${lease.executorBotId}`) !== lease.executorIncarnation)
       throw new AevorenBotError("MEDIA_NOT_GRANTED");
+    const selected = this.taskReference(lease.sessionId, lease.mediaId, lease.executorBotId);
+    if (selected && (selected.sha256 !== lease.reference.sha256 || selected.extraction?.id !== lease.reference.extraction?.id || selected.extraction?.digest !== lease.reference.extraction?.digest)) throw new AevorenBotError("MEDIA_NOT_GRANTED");
     return this.content(row, lease.reference);
   }
   private content(row: AssetRow, reference: MessageMediaReference): { item: MediaItem; extraction: MediaExtraction | null } {
@@ -213,8 +236,10 @@ export class MediaRepository {
   }
   listRuntimeItems(scope: MediaRuntimeScope, input: MediaAvailableInput = {}): MediaItem[] {
     this.assertRuntime(scope);
-    return this.list({ ...input, sessionId: scope.sessionId }, scope.executorBotId).flatMap(item => {
-      try { return [this.resolveRuntimeRead(scope, item.asset.reference.id).item]; } catch (error) { if (error instanceof AevorenBotError && error.code === "MEDIA_NOT_GRANTED") return []; throw error; }
+    const parsed = mediaAvailableSchema.parse(input);
+    const rows = this.database.prepare("SELECT a.* FROM media_assets a JOIN runtime_media_admissions r ON r.media_id=a.id WHERE r.runtime_run_id=? ORDER BY a.created_at DESC,a.id").all(scope.runtimeRunId) as AssetRow[];
+    return this.filter(rows, parsed).flatMap(item => {
+      try { return [this.resolveRuntimeRead(scope, item.id).item]; } catch (error) { if (error instanceof AevorenBotError && error.code === "MEDIA_NOT_GRANTED") return []; throw error; }
     });
   }
   publishImport(sessionId: string, values: StoredMediaImport[], executorBotId?: string, runtimeRunId?: string): MediaItem[] {
