@@ -1,3 +1,5 @@
+import { addNativeOutboundProductHandlers } from "./native-outbound-product-handlers";
+import type { NativeOutboundService } from "./native-outbound-service";
 import { clipboard } from "electron";
 import { IPC } from "@shared/channels";
 import {
@@ -82,6 +84,7 @@ import { addNativeConnectorProductHandlers, type NativeConnectorProductDependenc
 import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 
 export type ProductDependencies = EnvironmentProductDependencies & BrowserProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
+  nativeOutboundService?: NativeOutboundService;
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
   pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
@@ -139,6 +142,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   addBrowserProductHandlers(handlers, dependencies, commit, libraryContext);
   addSkillExecutionProductHandlers(handlers, dependencies, commit, libraryContext);
   addNativeConnectorProductHandlers(handlers, dependencies, commit, libraryContext);
+  addNativeOutboundProductHandlers(handlers, dependencies, libraryContext);
   const handle = (channel: string, operation: (input?: unknown) => unknown): void => { handlers.set(channel, operation); };
   handle(IPC.roomRuntimeCancelMember, (input: unknown) => {
     const runId = runIdSchema.parse(input);
@@ -151,8 +155,13 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const result = repository.getApprovalReview(parsed);
     if (!result.snapshot || !result.executable) return result;
     try {
-      if (!dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
-      dependencies.skillExecutionService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
+      if (result.snapshot.kind === "skill-script") {
+        if (!dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
+        dependencies.skillExecutionService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
+      } else {
+        if (!dependencies.nativeOutboundService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
+        dependencies.nativeOutboundService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
+      }
       return result;
     } catch (error) {
       return { ...result, executable: false, reason: error instanceof AevorenBotError ? error.message : "授权或环境已改变，请重新准备操作。" };
@@ -401,7 +410,15 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   handle(IPC.runtimeGetSessionSnapshot, (sessionId: unknown) =>
     sendWorker.getSessionSnapshot(sessionIdSchema.parse(sessionId)),
   );
-  handle(IPC.runtimeCancel, (runId: unknown) => sendWorker.cancelRun(runIdSchema.parse(runId)));
+  handle(IPC.runtimeCancel, (input: unknown) => {
+    const runId = runIdSchema.parse(input), run = repository.getRuntimeRun(runId);
+    if (libraryContext && run.sessionId !== libraryContext.sessionId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    if (run.route === "host-outbound") {
+      if (!dependencies.nativeOutboundService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
+      return dependencies.nativeOutboundService.cancelRuntime(runId);
+    }
+    return sendWorker.cancelRun(runId);
+  });
   handle(IPC.runtimeRetry, (runId: unknown) => sendWorker.retryRun(runIdSchema.parse(runId)));
   handle(IPC.roomRuntimeSnapshot, (roomId: unknown) => roomCoordinator.getSnapshot(roomIdSchema.parse(roomId)));
   handle(IPC.roomRuntimeSend, (command: unknown) => roomCoordinator.routeAndSend(roomSendCommandSchema.parse(command)));

@@ -94,6 +94,19 @@ function ActiveConnectorSettingsPanel(): React.JSX.Element {
     } catch { if (activeRef.current && current === lifecycle.current) { if (!(action === "authorize" && cancelledAuthorization.current === connection.id)) setError("应用连接操作未完成，请刷新查看真实状态。"); await load(); } }
     finally { if (current === lifecycle.current) { if (action === "authorize") setAuthorizingId(null); else setPending(false); } }
   }
+  async function enableSend(connection: NativeConnection): Promise<void> {
+    if (pending || authorizingId) return;
+    const current = lifecycle.current; setAuthorizingId(connection.id); cancelledAuthorization.current = null; setError(null); setNotice(null);
+    try {
+      const promise = window.aevorenBot.outbound.enableSend({ id: connection.id, expectedVersion: connection.version });
+      setConnections(items => items.map(item => item.id === connection.id ? { ...item, state: "authorizing" } : item)); void load();
+      const result = await promise;
+      if (!activeRef.current || current !== lifecycle.current || cancelledAuthorization.current === connection.id) return;
+      if (result.ok) setNotice("Gmail 读取与发送授权已重新验证。请重新授权聊天成员的读取与具体写入目标。"); else setError(result.error.safeMessage);
+      await load();
+    } catch { if (activeRef.current && current === lifecycle.current && cancelledAuthorization.current !== connection.id) { setError("Gmail 发送授权未完成，请刷新实际状态。"); await load(); } }
+    finally { if (current === lifecycle.current) setAuthorizingId(null); }
+  }
 
   return <section className="connector-panel" aria-label="应用连接">
     <div className="settings-section-heading"><h2>应用连接</h2><p>配置自己的 Gmail、Google Drive 或 Notion。账号连接与聊天成员的读取授权分别管理。</p></div>
@@ -103,11 +116,12 @@ function ActiveConnectorSettingsPanel(): React.JSX.Element {
     <div className="connector-connections">{connections.length ? connections.map(connection => <article className="connector-card" key={connection.id}>
       <div className="connector-heading"><strong>{connection.name} · {connectorLabels[connection.provider]}</strong><span>{connectorStateLabels[connection.state]}</span></div>
       <p className="connector-note">{connection.account ? `${connection.account.displayName}${connection.account.email ? ` · ${connection.account.email}` : ""}` : "账号尚未确认"}</p>
-      <p className="connector-note">{connection.provider === "gmail" ? "权限：读取邮件；本地草稿不会发送邮件。" : connection.provider === "drive" ? "权限：仅选择的文件与应用创建的文件（drive.file）。" : "权限：此内部连接已共享的页面。"}</p>
+      <p className="connector-note">{connection.provider === "gmail" ? `读取邮件：${connection.scopes.includes("https://www.googleapis.com/auth/gmail.readonly") && connection.state === "connected" ? "已授权" : "未授权"} · 发送邮件：${connection.scopes.includes("https://www.googleapis.com/auth/gmail.send") && connection.state === "connected" ? "已授权" : "未授权"}。本地草稿保存不会发送。` : connection.provider === "drive" ? "应用范围：仅选择的文件与应用创建的文件（drive.file）。写入目标仍需单独授权。" : "应用范围：此内部连接已共享的页面。写入具体父页面仍需单独授权。"}</p>
       {connection.scopes.length ? <details><summary>已授权范围</summary><ul>{connection.scopes.map(scope => <li key={scope}>{scope}</li>)}</ul></details> : null}
       {connection.provider === "drive" ? <details><summary>已选择 {connection.selectedFileIds.length} 个文件 · 应用创建 {connection.createdFileIds.length} 个文件</summary><ul>{[...connection.selectedFileIds, ...connection.createdFileIds].map(id => <li key={id}>{id}</li>)}</ul></details> : null}
       <div className="connector-actions">
         {connection.state !== "authorizing" ? <button className="secondary-button" type="button" disabled={pending || Boolean(authorizingId)} onClick={() => void act(connection, "authorize")}>{connection.provider === "notion" ? "验证连接" : connection.provider === "drive" ? "授权并选择文件" : "授权读取邮件"}</button> : <button className="secondary-button" type="button" disabled={pending} onClick={() => void act(connection, "cancelAuthorization")}>取消授权</button>}
+        {connection.provider === "gmail" && connection.state === "connected" ? <button className="secondary-button" type="button" disabled={pending || Boolean(authorizingId)} onClick={() => void enableSend(connection)}>启用发送并重新授权</button> : null}
         {connection.state !== "revoked" ? <button className="text-button danger" type="button" disabled={pending || Boolean(authorizingId)} onClick={() => setConfirmRevoke(connection)}>撤销连接</button> : null}
         <button className="text-button" type="button" disabled={pending || Boolean(authorizingId)} onClick={() => { setEditing(connection); setProvider(connection.provider); setName(connection.name); setClientId(""); setClientSecret(""); setToken(""); setNotice("请重新输入配置；保存将使原成员授权失效。已保存的凭据不会显示在界面中。"); }}>重新配置</button>
       </div>

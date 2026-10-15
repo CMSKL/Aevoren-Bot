@@ -36,6 +36,33 @@ export type NativeReadResult = {
   bytes?: Uint8Array;
 };
 
+export type NativeOutboundOperation = "gmail-send" | "drive-create-text" | "drive-update-text" | "notion-create-page";
+export type NativeDispatchIdentity = { intentId: string; dispatchAttemptId: string; messageId?: string; reservedResourceId?: string };
+export type NativeOutboundRequest = {
+  operation: NativeOutboundOperation;
+  draftDigest: string;
+  content:
+    | { kind: "gmail-message"; to: string[]; cc: string[]; subject: string; body: string }
+    | { kind: "drive-text"; targetFileId: string | null; title: string; text: string }
+    | { kind: "notion-page"; parentPageId: string; title: string; text: string };
+  identity: NativeDispatchIdentity;
+  observedDriveVersion?: string;
+};
+export type NativeDispatchProof = { operation: NativeOutboundOperation; draftDigest: string; targetDigest: string; wireDigest: string };
+export type NativeWriteAuthorization = NativeAuthorization & {
+  accountId: string;
+  accountEmail?: string;
+  authVersion: number;
+  writeGrantVersion: number;
+  allowedResourceIds: readonly string[];
+  dispatchBoundary(proof: NativeDispatchProof): Promise<void>;
+};
+export type NativeReconcileHint = { resourceId?: string; messageId?: string; childIds?: string[]; retryGuidance?: string };
+export type NativeWriteOutcome =
+  | { state: "confirmed"; resourceId: string; proofDigest: string }
+  | { state: "rejected"; code: string; status?: number }
+  | { state: "unknown"; reason: "transport" | "cancelled" | "timeout" | "response-invalid" | "provider-ambiguous" | "not-proven"; hint?: NativeReconcileHint };
+
 export type NativeConnectorErrorCode = "AUTH_REQUIRED" | "AUTH_INVALID" | "AUTH_CANCELLED" | "AUTH_TIMEOUT"
   | "REQUEST_FAILED" | "RESPONSE_INVALID" | "RESOURCE_NOT_ALLOWED" | "TOO_LARGE";
 export class NativeConnectorError extends Error {

@@ -15,7 +15,7 @@ import { NativeConnectorError, type NativeAuthorization, type NativeCredentials 
 type PrivateConfig = { clientId: string; clientSecret?: string } | { token: string };
 export type NativeConnectorDependencies = {
   openExternal(url: string): Promise<void>;
-  oauth?: Pick<GoogleNativeOAuth, "authorize" | "refresh" | "identity">;
+  oauth?: Pick<GoogleNativeOAuth, "authorize" | "refresh" | "identity"> & Partial<Pick<GoogleNativeOAuth, "authorizeSend">>;
   gmail?: Pick<GmailNativeAdapter, "search" | "read">;
   drive?: Pick<DriveNativeAdapter, "search" | "read">;
   notion?: Pick<NotionNativeAdapter, "identity" | "search" | "read">;
@@ -63,11 +63,13 @@ export class NativeConnectorService {
     if (context.signal?.aborted) abort();
     return { item, finish: () => { context.signal?.removeEventListener("abort", abort); this.inFlight.delete(item); complete(); } };
   }
-  async authorize(input: ConnectorIdInput, context: ConnectorExecutionContext = {}): Promise<NativeConnection> {
+  async authorize(input: ConnectorIdInput, context: ConnectorExecutionContext = {}, send = false): Promise<NativeConnection> {
     const parsed = connectorIdSchema.parse(input);
     if (this.closed) throw new NativeConnectorError("AUTH_CANCELLED");
     context.signal?.throwIfAborted(); context.assertCurrent?.();
     if (this.authorizations.has(parsed.id)) throw new ConnectorStateError("CONNECTOR_VERSION_CONFLICT", this.repository.connectors.get(parsed.id).version);
+    const original = this.repository.connectors.get(parsed.id);
+    if (send && (original.provider !== "gmail" || !original.account || !this.oauth.authorizeSend)) throw new NativeConnectorError("AUTH_REQUIRED");
     const value = this.repository.connectors.beginAuthorization(parsed); this.abortConnection(value.id);
     const flow = this.begin(value.id, context); this.authorizations.set(value.id, flow.item);
     const assertCurrent = (): void => {
@@ -84,7 +86,8 @@ export class NativeConnectorService {
         identity = await this.notion.identity({ credentials, assertCurrent, signal: flow.item.controller.signal }); scopes = ["shared-pages-read"]; selectedIds = [];
       } else {
         if (!("clientId" in config)) throw new NativeConnectorError("AUTH_INVALID");
-        const result = await this.oauth.authorize({ provider: value.provider, ...config, openExternal: this.dependencies.openExternal, signal: flow.item.controller.signal });
+        const result = send ? await this.oauth.authorizeSend!({ ...config, expectedAccountId: original.account!.accountId, openExternal: this.dependencies.openExternal, signal: flow.item.controller.signal })
+          : await this.oauth.authorize({ provider: value.provider, ...config, openExternal: this.dependencies.openExternal, signal: flow.item.controller.signal });
         assertCurrent(); credentials = result.credentials; identity = result.identity; scopes = result.credentials.scopes; selectedIds = result.selectedFileIds;
       }
       assertCurrent(); return this.repository.connectors.completeAuthorization(value.id, value.authVersion, identity, scopes, selectedIds, this.encrypt(credentials));
@@ -142,6 +145,28 @@ export class NativeConnectorService {
         metadata: { ...value.metadata, ...(value.bytes ? { binaryBytesRead: value.bytes.byteLength } : {}) },
         ...(value.attachments ? { attachments: value.attachments } : {}), binaryContentAvailable: false };
     });
+  }
+  /** Host-only access for a separately validated write grant or read-only result reconciliation. */
+  async withConnectionAuthorization<T>(input: EnvironmentScope & { connectionId: string; authVersion: number; accountId: string },
+    context: ConnectorExecutionContext, work: (auth: NativeAuthorization) => Promise<T>, preserveReceipt = false): Promise<T> {
+    const scope = { sessionId: input.sessionId, executorBotId: input.executorBotId }, flow = this.begin(input.connectionId, context, scope);
+    const assertCurrent = (): void => {
+      flow.item.controller.signal.throwIfAborted(); context.assertCurrent?.(); this.repository.assertSessionExecutor(scope.sessionId, scope.executorBotId);
+      const current = this.repository.connectors.get(input.connectionId);
+      if (current.state !== "connected" || current.authVersion !== input.authVersion || current.account?.accountId !== input.accountId) throw new ConnectorStateError("CONNECTOR_AUTH_CHANGED");
+    };
+    try {
+      assertCurrent(); const stored = this.repository.connectors.secrets(input.connectionId).credentials;
+      if (!stored) throw new NativeConnectorError("AUTH_REQUIRED"); let credentials = this.decrypt<NativeCredentials>(stored);
+      if (credentials.kind === "google" && credentials.expiresAt <= Date.now() + 30_000) {
+        const old = credentials, refreshed = await this.oauth.refresh(old, flow.item.controller.signal); assertCurrent();
+        if (refreshed.provider !== old.provider || JSON.stringify([...refreshed.scopes].sort()) !== JSON.stringify([...old.scopes].sort())) throw new NativeConnectorError("AUTH_INVALID");
+        const account = await this.oauth.identity(refreshed, flow.item.controller.signal, assertCurrent); assertCurrent();
+        if (account.accountId !== input.accountId) throw new NativeConnectorError("AUTH_INVALID");
+        this.repository.connectors.refreshCredentials(input.connectionId, input.authVersion, this.encrypt(refreshed)); credentials = refreshed;
+      }
+      const result = await work({ credentials, assertCurrent, signal: flow.item.controller.signal }); if (!preserveReceipt) assertCurrent(); return result;
+    } finally { flow.finish(); }
   }
   listDrafts(input: EnvironmentScope) { return this.repository.connectors.listDrafts(input); }
   createDraft(input: ConnectorDraftCreateInput) { return this.repository.connectors.createDraft(input); }

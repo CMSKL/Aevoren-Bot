@@ -3,6 +3,7 @@ import type { EnvironmentScope } from "@shared/environment-contracts";
 import type { ConnectorBinding, ConnectorDraft, ConnectorDraftContent, ConnectorDraftResult, ConnectorReadResult, ConnectorSearchResult, NativeConnection } from "@shared/native-connector-contracts";
 import { ConnectorRequestGate, connectorDraftDirty, connectorDraftTitle, connectorEditorContent, connectorLabels, connectorStateLabels, emptyConnectorDraft, type ConnectorEditor } from "../connector-ui-state";
 import "../styles/connectors.css";
+import { ConnectorOutboundSection } from "./ConnectorOutboundSection";
 
 export type ConnectorPanelHandle = { flush(): Promise<boolean> };
 type Props = EnvironmentScope & { active?: boolean; ownerName?: string };
@@ -260,8 +261,8 @@ export const ConnectorPanel = forwardRef<ConnectorPanelHandle, Props>(function C
   return <section className="connector-panel" aria-label="聊天应用">
     <div className="connector-heading"><h3>应用</h3><span>{loading ? "正在读取授权…" : authorized ? "当前成员已授权" : "尚未授权读取"}</span></div>
     <p className="connector-note">{ownerName ?? "当前成员"} · 连接授权仅属于当前聊天与执行成员。加入群聊不会带入私聊授权。</p>
-    <p className="connector-note">授权后，此成员可读取范围内的内容，并将读取内容交给其当前配置的模型处理。其他成员仍需单独授权；此阶段不授予外发权限。</p>
-    <p className="connector-note">请先在设置中的「应用连接」配置账号。此处只读取已授权内容、保存本地草稿。</p>
+    <p className="connector-note">授权后，此成员可读取范围内的内容，并将读取内容交给其当前配置的模型处理。其他成员仍需单独授权；写入权限需另行授予。</p>
+    <p className="connector-note">请先在设置中的「应用连接」配置账号。在此读取已授权内容、保存草稿，并逐次审批外发。</p>
     {error ? <p className="connector-error" role="alert">{error}</p> : null}
     {notice ? <p className="connector-note" role="status">{notice}</p> : null}
     {leavePrompt ? <div className="connector-confirm" role="group" aria-label="未保存应用草稿"><p>当前应用草稿尚未保存。保存或丢弃后继续。</p><div className="connector-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => void save().then(saved => { if (saved) finishLeave(true); })}>保存草稿并继续</button><button type="button" className="secondary-button" disabled={busy} onClick={() => { const saved = editorRef.current?.saved; replaceEditor(saved ? { connectionId: saved.draft.connectionId, saved, content: saved.revision.content } : null); finishLeave(true); }}>丢弃修改并继续</button><button type="button" className="secondary-button" disabled={busy} onClick={() => finishLeave(false)}>继续编辑</button></div></div> : null}
@@ -287,5 +288,6 @@ export const ConnectorPanel = forwardRef<ConnectorPanelHandle, Props>(function C
         {confirmDelete ? <div className="connector-confirm" role="group" aria-label="确认删除本地草稿"><p>删除此本地草稿；外部应用内容不受影响。</p><div className="connector-actions"><button className="secondary-button danger" type="button" disabled={busy} onClick={() => void deleteDraft()}>确认删除本地草稿</button><button className="secondary-button" type="button" onClick={() => setConfirmDelete(false)}>保留草稿</button></div></div> : null}
       </section> : null}
     </section>
+    <ConnectorOutboundSection key={`${scopeKey}:${connectionId}`} sessionId={sessionId} executorBotId={executorBotId} connection={connection} saved={editor?.saved ?? null} dirty={dirty} active={active} ownerName={ownerName} />
   </section>;
 });

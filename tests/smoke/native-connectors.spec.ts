@@ -171,7 +171,9 @@ test("native read authorization is isolated and local draft conflicts retain the
     await page.getByRole("button", { name: "丢弃修改并继续", exact: true }).click();
     await expect(page.getByRole("tab", { name: "资料库", exact: true })).toHaveAttribute("aria-selected", "true");
     expect(unwrap(await page.evaluate(async input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.drafts.list(input), { sessionId: room.sessionId, executorBotId: bots[0]!.id }))).toEqual([]);
-    await page.screenshot({ path: join(tmpdir(), "aevoren-native-connectors-private-1182x804.png") });
+    // Hidden Windows package capture can stall after fonts load. All content,
+    // permission and hidden-window assertions still run on every platform.
+    if (process.platform !== "win32") await page.screenshot({ path: join(tmpdir(), "aevoren-native-connectors-private-1182x804.png") });
   });
 });
 
@@ -212,6 +214,6 @@ test("late native reads cannot replace another member's pane or reappear after r
     await expect(page.getByText("REVOKED_DELAYED_CONTENT", { exact: false })).toHaveCount(0);
     expect(unwrap(await page.evaluate(async input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.connectors.bindings(input), { sessionId: room.sessionId, executorBotId: bots[0]!.id }))).toHaveLength(1);
     expect(unwrap(await page.evaluate(async input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.connectors.bindings(input), { sessionId: room.sessionId, executorBotId: bots[1]!.id }))).toEqual([]);
-    await page.screenshot({ path: join(tmpdir(), "aevoren-native-connectors-group-revoke-1182x804.png") });
+    if (process.platform !== "win32") await page.screenshot({ path: join(tmpdir(), "aevoren-native-connectors-group-revoke-1182x804.png") });
   });
 });

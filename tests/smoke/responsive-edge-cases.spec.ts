@@ -250,7 +250,7 @@ test("keeps contact editing, model configuration and settings usable at 200 perc
       (await BrowserWindow.getAllWindows()[0]!.webContents.capturePage()).toPNG().toString("base64"),
     );
     writeFileSync("/tmp/aevoren-bot-responsive-settings-zoom-200-fixed.png", Buffer.from(settingsCapture, "base64"));
-    const sections = ["通用", "能力与权限", "长期记忆", "MCP", "主动服务", "版本更新"];
+    const sections = ["通用", "能力与权限", "长期记忆", "应用连接", "MCP", "主动服务", "版本更新"];
     await page.getByRole("button", { name: sections[0], exact: true }).focus();
     for (const [index, name] of sections.entries()) {
       const category = page.getByRole("button", { name, exact: true });

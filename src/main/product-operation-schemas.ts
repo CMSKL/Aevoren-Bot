@@ -1,3 +1,4 @@
+import { NATIVE_OUTBOUND_OPERATION_SCHEMAS } from "@shared/native-outbound-product";
 import { z } from "zod";
 import { LIBRARY_OPERATION_SCHEMAS } from "@shared/library-product";
 import { ENVIRONMENT_OPERATION_SCHEMAS } from "@shared/environment-product";
@@ -14,6 +15,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...BROWSER_OPERATION_SCHEMAS,
   ...SKILL_EXECUTION_OPERATION_SCHEMAS,
   ...NATIVE_CONNECTOR_OPERATION_SCHEMAS,
+  ...NATIVE_OUTBOUND_OPERATION_SCHEMAS,
   "userProfile.get": z.undefined(),
   "userProfile.update": z.object({ name: z.string().min(1).max(80).optional(), avatarUrl: z.string().max(524_288).nullable().optional() }).strict(),
   "attachments.pick": z.undefined(),

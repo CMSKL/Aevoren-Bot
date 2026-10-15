@@ -29,6 +29,7 @@ type SnapshotContext = {
   executionReady: boolean;
   scriptReady: boolean;
   nativeReadReady: boolean;
+  nativeWriteReady: boolean;
   browserReady: boolean;
   browserUserControlled: boolean;
 };
@@ -36,7 +37,7 @@ type SnapshotContext = {
 const unsupported: Array<Pick<CapabilityDescriptor, "id" | "name" | "category" | "description" | "effectClass" | "adapterKind">> = [
   { id: "device.location", name: "定位", category: "device", description: "读取用户授权的位置。", effectClass: "read-local", adapterKind: "none" },
   { id: "device.personal-data", name: "设备个人数据", category: "device", description: "访问相册、日历或通讯录。", effectClass: "read-local", adapterKind: "none" },
-  { id: "external.actions", name: "外部操作", category: "external", description: "发送消息、邮件、订票、下单或控制其他服务。", effectClass: "write-external", adapterKind: "none" },
+  { id: "external.actions", name: "其他外部操作", category: "external", description: "尚未适配的订票、下单或其他服务操作；原生应用草稿另按具体授权提供。", effectClass: "write-external", adapterKind: "none" },
   { id: "multimodal.input", name: "多模态输入", category: "multimodal", description: "理解图片、音频、视频或屏幕内容。", effectClass: "read-local", adapterKind: "none" },
 ];
 
@@ -130,10 +131,17 @@ function capabilityDescriptors(
     },
     {
       id: "apps.read", name: "原生应用读取", category: "external",
-      description: "读取当前会话 Bot 明确授权的 Gmail、所选 Drive 文件和共享 Notion 页面；配置连接不授予会话权限，本地草稿尚未外发。",
+      description: "读取当前会话 Bot 明确授权的 Gmail、所选 Drive 文件和共享 Notion 页面；配置连接不授予会话权限，外发另需写授权和固定内容审批。",
       effectClass: "read-remote", adapterKind: "core", availability: executionTools && context.nativeReadReady ? "available" : "unavailable",
       reason: !executionTools ? "当前来源未接入宿主工具。" : context.nativeReadReady ? null : "请先验证账号，并在当前会话为此 Bot 授予读取权限。",
       permissionState: context.nativeReadReady ? "granted" : "not-granted", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "apps.write", name: "原生应用固定草稿外发", category: "external",
+      description: "按当前会话 Bot 的账号、操作和目标写授权，审批固定 Gmail、Drive 或 Notion 草稿版本；未知结果只读核验，不自动重发。",
+      effectClass: "write-external", adapterKind: "core", availability: executionTools && context.nativeWriteReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前来源未接入宿主工具。" : context.nativeWriteReady ? null : "请为当前会话 Bot 授予具体账号、操作和目标的写入权限；每次外发仍需审批。",
+      permissionState: context.nativeWriteReady ? "granted" : "not-granted", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
       id: "environment.execution", name: "隔离 Linux 执行环境", category: "workspace",
@@ -376,7 +384,12 @@ export class CapabilityRegistry {
       const connection = this.repository.connectors.get(binding.connectionId);
       return connection.state === "connected" && connection.authVersion === binding.authVersion && Boolean(connection.account);
     }));
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady,
+    const nativeWriteReady = Boolean(botId && sessionId && this.repository.outbound.grants({ sessionId, executorBotId: botId }).some(grant => {
+      if (grant.revokedAt) return false;
+      try { this.repository.outbound.assertGrant({ sessionId, executorBotId: botId }, grant.id, grant.version); return true; }
+      catch { return false; }
+    }));
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
       browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));
