@@ -106,6 +106,8 @@ export class MediaRepository {
   private sequence = 0;
   private readonly leases = new WeakSet<MediaReadLease>();
   private readonly executorIncarnations = new Map<string, string>();
+  private taskRuntimeReferencesReader: ((runtimeId: string) => MessageMediaReference[] | null) | null = null;
+  setTaskRuntimeReferencesReader(reader: (runtimeId: string) => MessageMediaReference[] | null): void { this.taskRuntimeReferencesReader = reader; }
   constructor(private readonly database: DatabaseSync, private readonly assertScope: (sessionId: string, executorBotId?: string) => void) {}
   transaction<T>(work: () => T): T {
     const name = `aevoren_media_${++this.sequence}`;
@@ -204,6 +206,9 @@ export class MediaRepository {
     const original = messageMediaReferencesSchema.parse([JSON.parse(admission.reference_json)])[0]!;
     if (fixed && (fixed.mediaId !== original.mediaId || fixed.sha256 !== original.sha256
       || fixed.extraction?.id !== original.extraction?.id || fixed.extraction?.digest !== original.extraction?.digest)) throw new AevorenBotError("MEDIA_REFERENCE_INVALID");
+    const taskReferences = this.taskRuntimeReferencesReader?.(scope.runtimeRunId) ?? null;
+    if (taskReferences !== null && !taskReferences.some(reference => reference.mediaId === original.mediaId && reference.sha256 === original.sha256
+      && reference.extraction?.id === original.extraction?.id && reference.extraction?.digest === original.extraction?.digest)) throw new AevorenBotError("MEDIA_NOT_GRANTED");
     return this.content(row, original);
   }
   listRuntimeItems(scope: MediaRuntimeScope, input: MediaAvailableInput = {}): MediaItem[] {
