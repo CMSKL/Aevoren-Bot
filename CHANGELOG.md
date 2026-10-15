@@ -32,6 +32,7 @@
 
 ## v0.3.0-beta.31 (development candidate)
 
+- Preserve the main renderer's save/close handshake when an embedded App or preview frame loads; reset readiness only for a real main-page navigation. Add source, installed-package and signed-package close regressions.
 - Add native Gmail, selected/app-created Drive files and shared Notion-page read adapters; Google uses PKCE and a random loopback callback, with separate Drive Picker authorization. Notion uses internal tokens and API version 2026-03-11.
 - Encrypt credentials in the host, keep them outside AI metadata, and require explicit conversation/executor grants. Account/scope changes invalidate grants; token refresh does not expand permissions. Revocation and member removal block late results and old bindings.
 - Add application connection settings and Contact/Room application tabs, with local draft revisions, conflict-preserving editors and fixed-account draft provenance. This delivery has no external send/write path.
