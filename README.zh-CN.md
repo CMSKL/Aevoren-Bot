@@ -24,6 +24,8 @@ Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联�
 
 ## 核心能力
 
+- 开发候选新增[聊天分区、默认助理、通知偏好与 Bot 图片头像](docs/ORGANIZATION.md)，采用版本冲突保留和应用拥有的裁剪图片；业务、隐藏界面和真实未签名 macOS 包验证通过，跨平台与签名门禁待完成。
+
 - 基于 SQLite Transcript、Send Journal、稳定 Nonce、幂等重试、取消和崩溃恢复的流式对话。
 - 开发候选新增[全资源搜索](docs/SEARCH.md)：AI 会话范围、固定来源、分页及原消息定位；真实未签名 macOS 包验收通过；跨平台／签名门禁待通过。
 - 开发候选新增[独立任务线程](docs/TASK_THREADS.md)：默认空上下文与权限，明确选择执行成员及固定版本，历史和草稿分开，停止／删除只作用于该线程；本地源码及真实未签名 macOS 包验收通过。
@@ -98,7 +100,7 @@ AI 操作与界面共用宿主校验和权限规则。创建 Bot 或群聊支持
 
 文本 Skill 可创建、导入并按需加载到明确授权的会话。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用。Bash、Python、Node 脚本先授权固定版本、入口和环境镜像，再确认每次运行参数，见[脚本 Skill](docs/SCRIPT_SKILLS.md)。明确开始的[人类示范](docs/SKILL_DEMONSTRATIONS.md)产生可审阅草稿，发布审阅固定保存版本并创建停用 Skill，不授予执行权限。
 
-[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权与固定草稿审批，Notion 仅改标题和末尾追加保留已有正文。[MCP 工具与 Apps](docs/MCP_APPS.md)共用同一授权审批层，并明确区分服务器回执与外部实际效果。阶段 4 组合候选的四项 CI 门禁已通过，含源码及真实 macOS／Windows 安装包；阶段 5.1 [媒体与文档](docs/MEDIA.md)已有本地源码／安装包证据；阶段 5.2 [语音与音视频](docs/VOICE.md)及阶段 5.3 [实时语音](docs/REALTIME_VOICE.md)已有本地源码和未签名 macOS 包证据。实时语音累计 159 个不同场景通过、32 项条件跳过，包含宿主休眠影响的完整运行与随后 3 项定向通过，不能记为单轮完整全绿。阶段 6A [任务线程](docs/TASK_THREADS.md)本地源码及真实未签名 macOS 包验收通过；6B [全资源搜索](docs/SEARCH.md)通过 SQLite／私有传输及两项源码界面验收，真实未签名 macOS 包五项验收通过，跨平台和签名门禁待通过；分区与偏好、群自动化、事件／Webhook、模板及导出（6C–6F）继续实施。公开安装包和真实第三方账号另行验证。受限界面动作操作 Aevoren 自身界面。
+[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权与固定草稿审批，Notion 仅改标题和末尾追加保留已有正文。[MCP 工具与 Apps](docs/MCP_APPS.md)共用同一授权审批层，并明确区分服务器回执与外部实际效果。阶段 4 组合候选的四项 CI 门禁已通过，含源码及真实 macOS／Windows 安装包；阶段 5.1 [媒体与文档](docs/MEDIA.md)已有本地源码／安装包证据；阶段 5.2 [语音与音视频](docs/VOICE.md)及阶段 5.3 [实时语音](docs/REALTIME_VOICE.md)已有本地源码和未签名 macOS 包证据。实时语音累计 159 个不同场景通过、32 项条件跳过，包含宿主休眠影响的完整运行与随后 3 项定向通过，不能记为单轮完整全绿。阶段 6A [任务线程](docs/TASK_THREADS.md)本地源码及真实未签名 macOS 包验收通过；6B [全资源搜索](docs/SEARCH.md)通过 SQLite／私有传输及两项源码界面验收，真实未签名 macOS 包五项验收通过，跨平台和签名门禁待通过；6C [分区、偏好与图片头像](docs/ORGANIZATION.md)已通过本地业务、隐藏界面与真实未签名 macOS 包检查，平台／签名发行待通过；群自动化、事件／Webhook、模板及导出（6D–6F）继续实施。公开安装包和真实第三方账号另行验证。受限界面动作操作 Aevoren 自身界面。
 
 ## 资料库与文本 Skill
 

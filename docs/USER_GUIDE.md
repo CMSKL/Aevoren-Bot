@@ -4,6 +4,8 @@ This guide covers the v0.3.0-beta.42 local implementation candidate: Bot/group M
 
 Release status and exact source/package evidence are recorded separately in the [implementation record](IMPLEMENTATION_PLAN.md); a feature described in this guide is not proof that its signed release has shipped. Task threads, search and earlier media/voice work retain their recorded local source and unsigned-package evidence. The beta.42 [MAIN Bot/group Routine](GROUP_ROUTINES.md) integration is under validation: its targeted component tests and Web typecheck pass, while hidden Electron, actual-package, cross-platform and signed-release gates remain pending. Real cloud accounts, physical audio devices and Windows Docker remain unverified. Event subscriptions/Webhooks and templates/exports are separate later deliveries.
 
+[Chat organization and Bot image avatars](ORGANIZATION.md) have local business, hidden UI and actual unsigned macOS-package evidence; platform/signed checks remain pending.
+
 ## First run
 
 1. Follow [Installation](INSTALLATION.md). The ordinary app uses your configured API or an installed, authenticated CLI; the Fake Provider is only a development test fixture.
@@ -19,6 +21,10 @@ The narrow left navigation switches between Chats and Contacts. Existing Workspa
 Choose **Dark** or **Daylight** in **Settings → General**. Both themes use the same layout and controls. Click the personal avatar at the top of the navigation to change your nickname or upload a PNG, JPEG or WebP image up to 5 MB. Cropping and storage happen on this computer; the app saves a centered 256-pixel PNG. The personal avatar updates in your messages and group collages. Bots receive stable cartoon-human portraits derived from their existing saved avatar identity.
 
 The conversation's **…** menu opens group management, files and execution records. Edit Bot profiles and model selection within **Contacts**; group management opens in a closable dialog. The next-message response mode sits beside **@** in the composer; explicit mentions still override it. **View collaboration details** or **View tool activity** above a related message expands that message's records without adding a permanent process panel. Enter sends; Shift, Ctrl or Cmd + Enter inserts a newline.
+
+## Chat organization and Bot pictures
+
+Choose **整理聊天** in the sidebar or **Settings → General → 聊天整理与通知** to create/order sections, move MAIN or TASK chats, choose the fallback default assistant and independently configure notifications/sound. Conflicts retain local edits. In **Contacts → Profile → 更换图片头像**, choose an authorized PNG/JPEG up to 2 MiB; the host publishes an owned 256×256 crop. The photo is visible as that Bot’s profile throughout its chats. Restore the default or duplicate a Bot without sharing mutable image identity. See [the detailed guide](ORGANIZATION.md).
 
 ## Documents and text Skills
 

@@ -9,9 +9,10 @@
 
 ## v0.3.0-beta.41 (development candidate)
 
-- Add persistent sidebar sections, default assistant selection, category/sound notification preferences and app-owned custom Bot image avatars through shared host operations.
-- Keep organization separate from authority; preserve MAIN/TASK identities and revocable real avatar-pixel reads. Verification evidence and platform boundaries are recorded in the implementation plan.
-
+- Persist session-based chat sections/order, a fallback default assistant and independent notification/sound preferences. Keep concurrent edits through explicit version conflicts.
+- Publish actual centered 256×256 Bot image avatars from authorized PNG/JPEG media; preserve owned copies through source removal/restart and independent Bot duplication.
+- Share validated organization/avatar operations with connected AI, retaining actual Runtime/TASK scope, approvals and revocable pixel transport.
+- Focused business checks, two hidden source UI scenarios and actual unsigned macOS-package checks pass. Platform and signed-release gates remain pending; group automation, events/Webhooks and templates/exports follow separately.
 
 ## v0.3.0-beta.40 (development candidate)
 
