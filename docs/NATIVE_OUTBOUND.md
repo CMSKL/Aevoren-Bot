@@ -1,6 +1,6 @@
 # Approved external drafts
 
-This guide accompanies the v0.3.0-beta.35 development candidate. The earlier beta.32 outbound unit has separate source and package receipts; the Notion-update unit passed its own source build and ten hidden Electron checks. An earlier combined unsigned macOS beta.35 package passed its business checks, but its cleanup helper did not establish normal application exit. The latest normal-close fix awaits final beta.35 rebuild/package acceptance. Cross-platform CI and signed publication remain pending. This page does not imply a published installer or verified access to a real third-party account. Configure reads and local drafts using [Native connections](NATIVE_CONNECTORS.md).
+This guide accompanies the v0.3.0-beta.35 development candidate. The latest combined build passed 1,587 ordinary tests, 22 hidden source scenarios and 30 actual unsigned macOS-package scenarios, including both Notion updates and normal application exit. Earlier receipts remain separately recorded. Cross-platform CI and signed publication remain pending. This page does not imply a published installer or verified access to a real third-party account. Configure reads and local drafts using [Native connections](NATIVE_CONNECTORS.md).
 
 ## Separate writing permission
 

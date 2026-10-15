@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.35**。阶段 4 先前的本机源码和未签名 macOS 包回执保留为历史；当前候选已纳入正常关闭修复，最终 beta.35 重建／安装包复核待完成。跨平台 CI、真实 Docker 增量场景与签名发行仍是门禁，不能据此宣布阶段整体完成。阶段 5–6 尚未实施。各候选记录保留其当时状态；最新状态以本表与末尾验收更正为准。
+当前开发候选为 **v0.3.0-beta.35**。阶段 4 已完成最新本机开发验收：全量 1,587 项、源码界面 22 项、真实未签名 macOS 安装包 30 项通过，含正常关闭修复。跨平台 CI、真实 Docker 增量场景与签名发行仍是门禁，不能据此宣布阶段整体发行完成。阶段 5–6 尚未实施。各候选记录保留其当时状态；最新状态以本表与末尾验收更正为准。
 
 ## 已确定的方案
 
@@ -30,7 +30,7 @@
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 已纳入 v0.3.0-beta.29 签名发行 | 开发与跨平台安装包验证通过，之前签名 fixture 失败保留为历史记录 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
-| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 既有本机源码／包回执为历史；正常关闭修复已纳入，当前 beta.35 最终重建／包与跨平台发行验收待完成 | 各源码／包与真实适配器证据分开记录，跨平台 CI／签名发行仍为门禁 |
+| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | beta.35 本机开发验收完成，跨平台与分批发行待完成 | 最新普通 1,587／45 跳过、源码界面 22、真实 macOS 包 30 项通过；真实适配器、跨平台 CI／签名发行分开记录 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
 
@@ -250,4 +250,12 @@ The current source at `843d8d4` incorporates the complete readiness/close fix, s
 
 The old main code fails the real `srcdoc` regression. Fixed beta.35 source passed eight close scenarios plus three MCP scenarios (11 total); an actual MCP application exited normally with code 0 in 275 ms without forced termination. The first beta.31 package close selection passed 17/18: its HTTP iframe fixture was blocked by beta.31's intended CSP, so the fixture was corrected to a real `srcdoc` frame without loosening CSP. The corrected frozen beta.31 package then passed 19 actual packaged checks (Library 8, native connections 2, close 8, typed API 1). Beta.31 backport validation also passed 1,488 ordinary tests with 44 skipped, all four TypeScript projects, lint, build, license checks for 215 packages / 7 groups, documentation checks for 31 files and four focused Node fixture tests. These are beta.31 receipts, not final beta.35 package results.
 
-Windows checks for PR #37/#38 reached their source business assertions, but the test worker failed during exit; no installation-package gate ran in those jobs. They are not successful Windows or package acceptance. A later pre-close-fix beta.35 source run passed 1,587 ordinary tests with 45 skipped, and 41 Linux Docker checks passed; those and the earlier 22-package-case aggregate predate this final close fix and remain historical. Final beta.35 rebuild, normal-close package acceptance and cross-platform CI are pending. Phase 5/6 remain unimplemented, and real account/private-credential, microphone, audio/cloud inference and Windows Docker checks remain unverified.
+Windows checks for PR #37/#38 reached their source business assertions, but the test worker failed during exit; no installation-package gate ran in those jobs. They are not successful Windows or package acceptance. A pre-close-fix beta.35 source run passed 1,587 ordinary tests with 45 skipped, and 41 Linux Docker checks passed; those and the earlier package aggregate remain historical. The current results follow below. Phase 5/6 remain unimplemented, and real account/private-credential, microphone, audio/cloud inference and Windows Docker checks remain unverified.
+
+## Final beta.35 local acceptance after normal-close fixes
+
+The clean tested source is `93e5e17b18c400d75dafe6873d80454853dc2614`. A single full run with one worker passed **1,587 tests, 45 skipped**, across 130 passing files; no rerun or timeout change. Lint, all four TypeScript projects, the complete build and both Worker bundles, license checks (215 packages / 7 groups), 34 documentation files and open-source readiness passed.
+
+Hidden source acceptance passed **22/22**. The rebuilt actual unsigned macOS arm64 beta.35 application passed **30 unique scenarios**: Library 8, native reads 2, outbound 7 (including both Notion updates), demonstration 1, MCP Apps 3, normal close 8 and actual packaged typed API 1. Source and package UI logs contain **zero forced-cleanup warnings**. Genuine `isPackaged`, version, seven guides and Execution Worker 1.2.0 / Browser Worker 1.1.0 were checked; packaged Worker bytes match the build output.
+
+ASAR SHA-256 is `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf3`. Compiled Main and package-extracted Main both hash to `627d2e5c89eccd164d5e60240bb41d70ea42894146be9c59852c467a772ca78b`. Subsequent documentation-only commits do not change these application bytes. Cross-platform CI, validated Beta promotion and signed publication remain pending; these local results do not establish real external-account or Windows Docker behavior.
