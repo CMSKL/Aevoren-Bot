@@ -26,7 +26,7 @@ Each `(sessionId, executorBotId)` has its own execution container, browser compa
 
 Sleep stops containers and retains volumes. Wake checks actual health and preserves user ownership, and never replays a previous command or input. Explicit environment rebuild recreates the companion from the current image while retaining its profile and control ownership. App upgrades do not automatically replace running environments or their background services. New preview support requires an explicit rebuild of an older execution image.
 
-Execution Worker 1.1.0 adds the preview proxy; browser Worker 1.0.0 uses Playwright Core 1.63.0. Images record their actual platform and immutable digest separately from the application version. Both use the pinned base manifest `node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20`. See [third-party notices](../THIRD_PARTY_NOTICES.md) for host dependencies; Debian and Chromium distributions retain their own notices in the image.
+Execution Worker 1.2.0 supports fixed-revision script execution and the preview proxy; browser Worker 1.1.0 adds explicit human demonstration capture and uses Playwright Core 1.63.0. Images record their actual platform and immutable digest separately from the application version. Both use the pinned base manifest `node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20`. See [third-party notices](../THIRD_PARTY_NOTICES.md) for host dependencies; Debian and Chromium distributions retain their own notices in the image.
 
 ## Current boundaries
 
@@ -35,3 +35,5 @@ Six parallel browser scopes passed the native Linux CI. The local Docker VM with
 Only the application's local Docker environments are controlled. Host Shell/GUI control, copying existing browser cookies, remote Docker and remote deployment are outside this implementation. The browser has outbound network access and may encounter an account login; log in only inside the selected isolated profile. Application connectors, executable Skill grants, document interpretation and voice follow later stages.
 
 Actual macOS arm64 and Linux Docker checks, package checks and remaining platform limitations are recorded with evidence in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Windows x64 uses a local Linux container runtime; real Windows Docker/desktop validation remains pending until run on such a host.
+
+Human demonstrations produce reviewable, initially disabled text Skills and capture no page content, screenshots or typed text. See [Skill demonstrations](SKILL_DEMONSTRATIONS.md) for recording boundaries and current validation status.

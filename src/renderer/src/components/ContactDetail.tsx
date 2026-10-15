@@ -9,6 +9,8 @@ import { LibraryPanel, type LibraryPanelHandle } from "./LibraryPanel";
 import { EnvironmentPanel } from "./EnvironmentPanel";
 import { ComputerPanel } from "./ComputerPanel";
 import { ConnectorPanel, type ConnectorPanelHandle } from "./ConnectorPanel";
+import { McpToolPanel } from "./McpToolPanel";
+import { ScopedAppsApprovalHost } from "./ScopedAppsApprovalHost";
 import "../styles/contacts.css";
 
 type ProfileTab = "profile" | "models" | "memory" | "library" | "skill" | "environment" | "browser" | "computer" | "apps";
@@ -148,6 +150,8 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
       </div>)}
       <div id={`contact-${bot.id}-apps-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-apps-tab`} hidden={tab !== "apps"} className="contact-tab-panel">
         {librarySessionId ? <ConnectorPanel key={`${librarySessionId}:${bot.id}`} ref={appsRef} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={active && tab === "apps"} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊应用范围…</p>}
+        {librarySessionId ? <McpToolPanel key={`mcp:${librarySessionId}:${bot.id}`} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={active && tab === "apps"} /> : null}
+        {librarySessionId ? <ScopedAppsApprovalHost key={`approvals:${librarySessionId}:${bot.id}`} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={active && tab === "apps"} /> : null}
       </div>
       {tab === "profile" ? <details className="contact-section-disclosure contact-room-disclosure">
         <summary><RoomIcon /><strong>加入群聊</strong><ChevronDownIcon className="contact-disclosure-chevron" /></summary>

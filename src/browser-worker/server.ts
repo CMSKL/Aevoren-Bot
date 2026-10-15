@@ -12,6 +12,7 @@ import {
 } from "@shared/browser-schemas";
 import type { BrowserWorker } from "./browser-worker";
 import { BrowserWorkerError } from "./worker-error";
+import { RfbDemonstrationParser } from "./rfb-demonstration-parser";
 
 async function body(request: IncomingMessage): Promise<unknown> {
   if (Number(request.headers["content-length"] ?? 0) > ENV_HTTP_BODY_MAX_BYTES) throw new BrowserWorkerError("BROWSER_REQUEST_TOO_LARGE", 413);
@@ -50,7 +51,7 @@ const computerActions = {
   scroll: computerScrollSchema.omit({ sessionId: true, executorBotId: true, clientNonce: true }).extend(browserWorkerMutationAccessSchema.shape).strict(),
 };
 
-export function createBrowserServer(worker: BrowserWorker, token: string) {
+export function createBrowserServer(worker: BrowserWorker, token: string, vncPort = 5900) {
   if (!/^[a-f0-9]{64}$/u.test(token)) throw new BrowserWorkerError("BROWSER_TOKEN_INVALID", 503);
   const expected = Buffer.from(`Bearer ${token}`);
   const authorized = (request: IncomingMessage): boolean => {
@@ -65,7 +66,12 @@ export function createBrowserServer(worker: BrowserWorker, token: string) {
       if (method === "GET" && url.pathname === "/v1/health") {
         worker.assertHealthy();
         respond(response, { environmentId: worker.options.environmentId, browserSessionId: worker.options.browserSessionId, bootId: worker.bootId,
-          protocolVersion: BROWSER_PROTOCOL_VERSION, workerVersion: BROWSER_WORKER_VERSION, capabilities: ["browser", "desktop", "images", "downloads", "control", "vnc"], control: worker.control() }); return;
+          protocolVersion: BROWSER_PROTOCOL_VERSION, workerVersion: BROWSER_WORKER_VERSION, capabilities: ["browser", "desktop", "images", "downloads", "control", "vnc", "demonstration"], control: worker.control() }); return;
+      }
+      if (method === "GET" && url.pathname === "/v1/demonstrations/status") { respond(response, worker.demonstrations.status()); return; }
+      if (method === "POST" && ["/v1/demonstrations/start", "/v1/demonstrations/stop", "/v1/demonstrations/discard"].includes(url.pathname)) {
+        const input = z.object({ actor: z.enum(["ai", "user"]), expectedEpoch: z.number().int().positive(), id: uuid }).strict().parse(await body(request));
+        respond(response, worker.demonstration({ ...input, action: parts[2] as "start" | "stop" | "discard" })); return;
       }
       if (method === "GET" && url.pathname === "/v1/computer/control") { respond(response, worker.control()); return; }
       if (method === "POST" && parts[0] === "v1" && parts[1] === "operations" && parts.length === 4 && parts[3] === "cancel") { respond(response, await worker.cancelOperation(uuid.parse(parts[2]))); return; }
@@ -121,8 +127,9 @@ export function createBrowserServer(worker: BrowserWorker, token: string) {
       socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); socket.destroy(); return;
     }
     viewers.handleUpgrade(request, socket, head, viewer => {
-      const target = connect(5_900, "127.0.0.1");
+      const target = connect(vncPort, "127.0.0.1");
       worker.viewerConnected();
+      const parser = new RfbDemonstrationParser(event => worker.acceptedViewerInput(epoch, event), () => worker.viewerInputUnsupported());
       target.on("connect", () => { if (!worker.canConnectViewer(epoch)) { target.destroy(); viewer.terminate(); } });
       target.on("data", bytes => {
         if (!worker.canConnectViewer(epoch) || viewer.readyState !== WebSocket.OPEN || viewer.bufferedAmount > 1_048_576) { viewer.terminate(); return; }
@@ -134,7 +141,9 @@ export function createBrowserServer(worker: BrowserWorker, token: string) {
       viewer.on("message", (bytes, binary) => {
         if (!binary || !worker.canConnectViewer(epoch)) { viewer.terminate(); return; }
         const payload = Array.isArray(bytes) ? Buffer.concat(bytes) : bytes instanceof ArrayBuffer ? Buffer.from(bytes) : bytes;
-        if (!target.write(payload)) viewer.pause();
+        const writable = target.write(payload);
+        parser.accepted(payload);
+        if (!writable) viewer.pause();
       });
       viewer.once("close", () => { target.destroy(); worker.viewerDisconnected(); });
       viewer.on("error", () => target.destroy());

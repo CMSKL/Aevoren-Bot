@@ -1,3 +1,4 @@
+import type { ObservedNotionTarget } from "@shared/native-outbound-contracts";
 import { createHash } from "node:crypto";
 import { bearerToken, NativeHttpClient, object, resourceId, text } from "./http";
 import { DRIVE_FILE_SCOPE, GMAIL_READ_SCOPE, GMAIL_SEND_SCOPE, GoogleNativeOAuth } from "./google-oauth";
@@ -28,6 +29,32 @@ function notionId(value: string): string {
   if (!/^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/iu.test(value)) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
   return value;
 }
+function canonicalNotionId(value: string): string { return notionId(value).replace(/-/gu, "").toLowerCase(); }
+function richTextValue(value: unknown): string {
+  if (!Array.isArray(value) || value.length > 100) throw new NativeConnectorError("RESPONSE_INVALID");
+  return value.map(item => { const rich = object(item), txt = object(rich.text);
+    if (rich.type !== "text" || typeof txt.content !== "string" || txt.link != null || rich.plain_text !== undefined && rich.plain_text !== txt.content) throw new NativeConnectorError("RESPONSE_INVALID");
+    return txt.content;
+  }).join("");
+}
+function notionTarget(page: Record<string, unknown>, expectedId: string): ObservedNotionTarget {
+  if (page.object !== "page" || typeof page.id !== "string" || canonicalNotionId(page.id) !== canonicalNotionId(expectedId) || page.in_trash === true || page.archived === true) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
+  const parent = object(page.parent), kind = parent.type;
+  if (kind !== "page_id" && kind !== "data_source_id" && kind !== "workspace") throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
+  if (kind === "workspace" ? parent.workspace !== true : typeof parent[kind] !== "string" || !canonicalNotionId(parent[kind] as string)) throw new NativeConnectorError("RESPONSE_INVALID");
+  const titles = Object.values(object(page.properties)).map(object).filter(property => property.type === "title");
+  const property = titles[0];
+  if (titles.length !== 1 || !property || typeof property.id !== "string" || !property.id || property.id.length > 256 || /[\0\r\n]/u.test(property.id)) throw new NativeConnectorError("RESPONSE_INVALID");
+  const title = richTextValue(property.title);
+  if (title.length > 4096 || typeof page.last_edited_time !== "string" || !/^\d{4}-\d{2}-\d{2}T[0-9:.]+Z$/u.test(page.last_edited_time)) throw new NativeConnectorError("RESPONSE_INVALID");
+  return { pageId: expectedId, titlePropertyId: property.id, title, lastEditedTime: page.last_edited_time, parentType: kind };
+}
+function matchesParagraph(block: Record<string, unknown>, expectedId: string, pageId: string, expectedText: string): boolean {
+  try { const parent = object(block.parent), parentId = parent.type === "page_id" ? parent.page_id : parent.type === "block_id" ? parent.block_id : undefined;
+    return block.object === "block" && typeof block.id === "string" && canonicalNotionId(block.id) === canonicalNotionId(expectedId) && block.type === "paragraph" && block.in_trash !== true && block.archived !== true && block.has_children === false
+      && typeof parentId === "string" && canonicalNotionId(parentId) === canonicalNotionId(pageId) && richTextValue(object(block.paragraph).rich_text) === expectedText;
+  } catch { return false; }
+}
 function normalizedBody(value: string): string { return value.replace(/\r\n|\r|\n/gu, "\n"); }
 function notionParagraphs(value: string): string[] {
   const chunks: string[] = [];
@@ -37,6 +64,7 @@ function notionParagraphs(value: string): string[] {
     chunk += character;
   }
   if (chunk) chunks.push(chunk);
+  if (chunks.length > 100) throw new NativeConnectorError("TOO_LARGE");
   return chunks;
 }
 function base64Lines(value: string): string { return Buffer.from(value, "utf8").toString("base64").match(/.{1,76}/gu)?.join("\r\n") ?? ""; }
@@ -75,6 +103,8 @@ export function outboundTargetDescriptor(auth: NativeWriteAuthorization, request
   if ((request.operation === "drive-create-text" || request.operation === "drive-update-text") && request.content.kind === "drive-text") return { operation: request.operation, accountId: auth.accountId,
     fileId: request.operation === "drive-create-text" ? request.identity.reservedResourceId ?? null : request.content.targetFileId, title: request.content.title };
   if (request.operation === "notion-create-page" && request.content.kind === "notion-page") return { operation: request.operation, accountId: auth.accountId, parentPageId: request.content.parentPageId, title: request.content.title };
+  if ((request.operation === "notion-update-page-title" && request.content.kind === "notion-page-title" || request.operation === "notion-append-page" && request.content.kind === "notion-page-append") && request.observedNotionTarget)
+    return { operation: request.operation, accountId: auth.accountId, pageId: request.content.pageId, observedTarget: request.observedNotionTarget, ...(request.content.kind === "notion-page-append" ? { position: "end" } : {}) };
   throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
 }
 export function outboundTargetDigest(auth: NativeWriteAuthorization, request: NativeOutboundRequest): string {
@@ -120,12 +150,31 @@ export class NativeOutboundAdapter {
     return current.version;
   }
 
+  async observeNotionTarget(auth: NativeWriteAuthorization, pageId: string): Promise<ObservedNotionTarget> {
+    targetId(auth, notionId(pageId)); await this.account(auth, "notion");
+    return this.readNotionTarget(auth, pageId);
+  }
+  private async readNotionTarget(auth: NativeWriteAuthorization, pageId: string): Promise<ObservedNotionTarget> {
+    const page = await this.readHttp.json(new URL(`https://api.notion.com/v1/pages/${notionId(pageId)}`), { headers: this.headers(auth), signal: auth.signal }, auth.assertCurrent);
+    return notionTarget(page, pageId);
+  }
+  private async reconcileNotionAppend(auth: NativeWriteAuthorization, request: NativeOutboundRequest, ids?: string[]): Promise<NativeWriteOutcome> {
+    if (request.content.kind !== "notion-page-append") throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
+    const chunks = notionParagraphs(request.content.text), pageId = request.content.pageId;
+    if (!ids || ids.length !== chunks.length || new Set(ids.map(canonicalNotionId)).size !== ids.length) return { state: "unknown", reason: "not-proven" };
+    for (let index = 0; index < ids.length; index++) {
+      const block = await this.readHttp.json(new URL(`https://api.notion.com/v1/blocks/${notionId(ids[index]!)}`), { headers: this.headers(auth), signal: auth.signal }, auth.assertCurrent);
+      if (!matchesParagraph(block, ids[index]!, pageId, chunks[index]!)) return { state: "unknown", reason: "not-proven", hint: { childIds: ids } };
+    }
+    return this.confirmed(request, pageId, { childIds: ids, richTextHashes: chunks.map(nativeContentDigest) });
+  }
+
   async execute(auth: NativeWriteAuthorization, request: NativeOutboundRequest): Promise<NativeWriteOutcome> {
     request = structuredClone(request);
     auth = { ...auth, credentials: structuredClone(auth.credentials), allowedResourceIds: [...auth.allowedResourceIds] };
     validate(auth, request);
     outboundTargetDescriptor(auth, request);
-    const provider = request.operation === "gmail-send" ? "gmail" : request.operation === "notion-create-page" ? "notion" : "drive";
+    const provider = request.operation === "gmail-send" ? "gmail" : request.operation.startsWith("notion-") ? "notion" : "drive";
     let url: URL, body: string, method = "POST", contentType = "application/json", resource: string | undefined;
     if (request.operation === "gmail-send") {
       const payload = gmailPayload(auth, request); resource = payload.id;
@@ -153,8 +202,28 @@ export class NativeOutboundAdapter {
         children: chunks.map(chunk => ({ object: "block", type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: chunk } }] } })) });
       if (Buffer.byteLength(body) > 500_000) throw new NativeConnectorError("TOO_LARGE");
       url = new URL("https://api.notion.com/v1/pages");
+    } else if (request.operation === "notion-update-page-title" && request.content.kind === "notion-page-title") {
+      resource = targetId(auth, notionId(request.content.pageId));
+      if (!request.observedNotionTarget || canonicalNotionId(request.observedNotionTarget.pageId) !== canonicalNotionId(resource)) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
+      body = JSON.stringify({ properties: { [request.observedNotionTarget.titlePropertyId]: { type: "title", title: [{ type: "text", text: { content: bounded(request.content.title, 2_000) } }] } } });
+      method = "PATCH"; url = new URL(`https://api.notion.com/v1/pages/${resource}`);
+    } else if (request.operation === "notion-append-page" && request.content.kind === "notion-page-append") {
+      resource = targetId(auth, notionId(request.content.pageId));
+      if (!request.observedNotionTarget || canonicalNotionId(request.observedNotionTarget.pageId) !== canonicalNotionId(resource)) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
+      const chunks = notionParagraphs(bounded(request.content.text, 100_000));
+      if (!chunks.length) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
+      body = JSON.stringify({ children: chunks.map(chunk => ({ object: "block", type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: chunk } }] } })) });
+      if (Buffer.byteLength(body) > 500_000) throw new NativeConnectorError("TOO_LARGE");
+      // Omitted position appends at the end in API 2026-03-11. Existing body is preserved.
+      method = "PATCH"; url = new URL(`https://api.notion.com/v1/blocks/${resource}/children`);
     } else throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
     await this.account(auth, provider);
+    if (request.operation === "notion-update-page-title" || request.operation === "notion-append-page") {
+      const current = await this.readNotionTarget(auth, resource!);
+      if (!request.observedNotionTarget || current.titlePropertyId !== request.observedNotionTarget.titlePropertyId || current.parentType !== request.observedNotionTarget.parentType
+        || request.operation === "notion-update-page-title" && (current.title !== request.observedNotionTarget.title || current.lastEditedTime !== request.observedNotionTarget.lastEditedTime)) return { state: "rejected", code: "TARGET_CHANGED" };
+      // Preflight detects observed changes; Notion does not provide an atomic compare-and-swap here.
+    }
     if (request.operation === "drive-update-text") {
       if (!request.observedDriveVersion || !/^\d{1,30}$/u.test(request.observedDriveVersion)) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
       const currentUrl = new URL(`https://www.googleapis.com/drive/v3/files/${resource}`); currentUrl.search = "fields=id,version,trashed,mimeType";
@@ -168,6 +237,25 @@ export class NativeOutboundAdapter {
     const result = await this.writeHttp.once(auth, request.identity.dispatchAttemptId, proof, url, { method, headers: { ...this.headers(auth), "content-type": contentType }, body });
     if ("unknown" in result) return { state: "unknown", reason: result.unknown, hint: provider === "gmail" ? { messageId: resource } : resource ? { resourceId: resource } : undefined };
     if (result.status >= 200 && result.status < 300) {
+      if (request.operation === "notion-append-page" && request.content.kind === "notion-page-append") {
+        const blocks = result.data.results, chunks = notionParagraphs(request.content.text);
+        if (!Array.isArray(blocks) || blocks.length !== chunks.length || result.data.has_more !== false) return { state: "unknown", reason: "response-invalid" };
+        const ids: string[] = [];
+        for (let index = 0; index < blocks.length; index++) {
+          const block = object(blocks[index]);
+          if (block.object !== "block" || typeof block.id !== "string") return { state: "unknown", reason: "response-invalid" };
+          try { notionId(block.id); } catch { return { state: "unknown", reason: "response-invalid" }; }
+          ids.push(block.id);
+        }
+        if (new Set(ids.map(canonicalNotionId)).size !== ids.length) return { state: "unknown", reason: "response-invalid" };
+        try { return await this.reconcileNotionAppend(auth, request, ids); }
+        catch { return { state: "unknown", reason: "not-proven", hint: { childIds: ids } }; }
+      }
+      if (request.operation === "notion-update-page-title" && request.content.kind === "notion-page-title") {
+        try { const page = notionTarget(result.data, resource!); if (page.titlePropertyId !== request.observedNotionTarget!.titlePropertyId || page.title !== request.content.title) return { state: "unknown", reason: "response-invalid", hint: { resourceId: resource } }; }
+        catch { return { state: "unknown", reason: "response-invalid", hint: { resourceId: resource } }; }
+        return this.confirmed(request, resource!);
+      }
       if (typeof result.data.id !== "string") return { state: "unknown", reason: "response-invalid", ...(resource ? { hint: provider === "gmail" ? { messageId: resource } : { resourceId: resource } } : {}) };
       let id: string;
       try { id = provider === "notion" ? notionId(result.data.id) : resourceId(result.data.id); }
@@ -185,11 +273,12 @@ export class NativeOutboundAdapter {
     hint = hint ? structuredClone(hint) : undefined;
     auth = { ...auth, credentials: structuredClone(auth.credentials), allowedResourceIds: [...auth.allowedResourceIds] };
     validate(auth, request);
-    const provider = request.operation === "gmail-send" ? "gmail" : request.operation === "notion-create-page" ? "notion" : "drive";
+    const provider = request.operation === "gmail-send" ? "gmail" : request.operation.startsWith("notion-") ? "notion" : "drive";
     if (provider === "gmail") gmailPayload(auth, request);
     else if (provider === "notion") {
-      if (request.content.kind !== "notion-page") throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
-      targetId(auth, notionId(request.content.parentPageId)); bounded(request.content.title, 2_000); bounded(request.content.text, 128_000);
+      if (request.content.kind === "notion-page") { targetId(auth, notionId(request.content.parentPageId)); bounded(request.content.title, 2_000); bounded(request.content.text, 128_000); }
+      else if (request.content.kind === "notion-page-title" || request.content.kind === "notion-page-append") { targetId(auth, notionId(request.content.pageId)); if (!request.observedNotionTarget) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED"); }
+      else throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
     } else {
       if (request.content.kind !== "drive-text") throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
       if (request.operation === "drive-update-text") targetId(auth, request.content.targetFileId ?? "");
@@ -198,6 +287,13 @@ export class NativeOutboundAdapter {
     try {
       if (provider === "gmail") return await this.reconcileGmail(auth, request);
       if (provider === "drive") return await this.reconcileDrive(auth, request);
+      if (request.content.kind === "notion-page-append") return await this.reconcileNotionAppend(auth, request, hint?.childIds);
+      if (request.content.kind === "notion-page-title") {
+        const page = await this.readNotionTarget(auth, request.content.pageId);
+        if (page.titlePropertyId !== request.observedNotionTarget!.titlePropertyId || page.title !== request.content.title) return { state: "unknown", reason: "not-proven", hint };
+        // This proves current target state only, not who caused it or when the write committed.
+        return { ...this.confirmed(request, request.content.pageId, { evidence: "target-state", observedTarget: page }), confirmationEvidence: "target-state" };
+      }
       if (!hint?.resourceId || request.content.kind !== "notion-page") return { state: "unknown", reason: "not-proven" };
       const id = notionId(hint.resourceId), url = new URL(`https://api.notion.com/v1/pages/${id}`);
       const page = await this.readHttp.json(url, { headers: this.headers(auth), signal: auth.signal }, auth.assertCurrent);
@@ -213,8 +309,8 @@ export class NativeOutboundAdapter {
       return { state: "unknown", reason: "not-proven", hint };
     }
   }
-  private confirmed(request: NativeOutboundRequest, id: string): NativeWriteOutcome {
-    return { state: "confirmed", resourceId: id, proofDigest: nativeContentDigest(JSON.stringify({ operation: request.operation, draftDigest: request.draftDigest, resourceId: id })) };
+  private confirmed(request: NativeOutboundRequest, id: string, evidence?: Record<string, unknown>): Extract<NativeWriteOutcome, { state: "confirmed" }> {
+    return { state: "confirmed", resourceId: id, proofDigest: nativeContentDigest(JSON.stringify({ operation: request.operation, draftDigest: request.draftDigest, resourceId: id, ...(evidence ? { evidence } : {}) })) };
   }
   private async reconcileDrive(auth: NativeWriteAuthorization, request: NativeOutboundRequest): Promise<NativeWriteOutcome> {
     if (request.content.kind !== "drive-text") throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");

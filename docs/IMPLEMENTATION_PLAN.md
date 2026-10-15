@@ -1,10 +1,8 @@
 # Aevoren 功能扩展实施计划
 
-> beta.32 当前补充：CI `38680943010` 的 Linux 普通检查通过，真实 Docker 为 39／40；六 Scope 电脑截图被原有 `BROWSER_OBSERVATION_STALE` 规则拒绝。本轮未取得成功画面，不能记为完整 Linux 门禁通过。当前补入同仓 beta.35 已验证的脱敏截图阶段诊断，保持原有焦点、版本和接管检查及调用顺序；该补丁不表示已修复错误。此前本机安装包记录先于该 Worker 补丁，后续须分别核验。
-
-诊断候选 `1ca624d` 的本机补充验收：截图诊断／控制专项 15 项、Browser Worker TypeScript 与定向 lint、Worker 构建通过。重新打包的真实未签名 macOS arm64 beta.32 完成 23 项场景（原生读取 2、外发 5、关闭 8、Runtime 8），包括 15 次重载恢复、失败后重试、SIGKILL 恢复、关闭阻塞提示及 typed API；全部通过。两套 Worker 共八个文件及五份指南与构建输出逐字节相同。ASAR SHA-256 为 `f095741de56104676e8854fcf9d2472a4887ed0164945bb850dbdd3d035cff0a`，Browser engine 为 `9788e576cc351bcfea9e380484b33df8456582b143d0c7fac271662e1ded6e7d`。新一轮跨平台／Docker 检查仍需完成；本机没有启动 Docker 或连接真实账号。
-
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
+
+当前开发候选为 **v0.3.0-beta.35**。包含脱敏截图诊断的 `b811747` 已重新构建并通过真实未签名 macOS 包 30 项；其 Linux PR 合并检查通过普通测试 1,593 项／45 跳过及真实 Docker 41 项，含六 Scope 实际画面。此前 409 拒绝及失败记录保留，本轮成功不确定其根因。完整跨平台、Beta 晋级和签名门禁仍待完成，不能据此宣布阶段整体完成。阶段 5–6 尚未实施；最新状态以本表及末尾更正为准。
 
 ## 已确定的方案
 
@@ -32,13 +30,13 @@
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 已纳入 v0.3.0-beta.29 签名发行 | 开发与跨平台安装包验证通过，之前签名 fixture 失败保留为历史记录 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
-| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本 Skill 单元本机验收通过（beta.30 候选），跨平台 CI 收尾；应用连接实施中 | Worker 12、Host 4、脚本包 2 与单成员停止 1 项通过；签名发行待完成，示范／外发／写 MCP 尚未开始 |
+| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 诊断版本机真实包与 Linux 验收通过；完整跨平台／晋级／签名待完成 | `b811747` 真实 macOS 包 30；Linux 合并检查普通 1,593／45 跳过、实际 Docker 41／41；旧拒绝记录保留 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
 
-## 阶段 1 交付记录：v0.3.0-beta.27
+## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
 
-当前为候选版本，尚未发布；master 不晋级。已完成以下实现：
+当时为未发布候选；这些能力后来纳入 beta.29 发行。master 不晋级。该候选完成以下实现：
 
 - 资料/文本 Skill CRUD、正文检索、expectedVersion、不可变版本、历史恢复、启停、软删除及显式会话绑定；跨会话只提供可复用元信息，正文读取仍检查绑定。
 - `SKILL.md` YAML 元信息、文件/目录导入、references/scripts/assets 保存、内容寻址摘要校验与固定版本导出。导出保留真实字节、不覆盖已有目标；取消和无效输入不发布部分资源。脚本不执行，二进制只提供元信息。
@@ -59,9 +57,9 @@
 
 验收采用临时数据与受控 localhost HTTP，未调用真实云模型或用户聊天数据库。Windows 符号链接相关用例受运行器权限限制而跳过；未将这些边界标为实际验证。
 
-阶段 1 只完成文本资料与 Skill 能力。阶段 2 已完成开发验收；阶段 3 已完成本机与原生 Linux 核心验收，跨平台最终 CI／签名发布仍在收尾，阶段 4–6 尚未实施。未发布能力不能作为已安装产品的可用功能。
+该历史时点的阶段 1 只完成文本资料与 Skill 能力，阶段 2–3 尚在后续验收；此段不描述 beta.35 的当前实现。未发布能力不能作为已安装产品的可用功能。
 
-## 阶段 2 交付记录：v0.3.0-beta.28 开发候选
+## 阶段 2 交付记录：v0.3.0-beta.28（历史快照）
 
 开发分支为 `codex/docker-execution`，从已验收的 `dev` 创建；`v0.3.0-beta.28` 已合入 beta 并建立同名标签，尚未公开发布，master 不晋级。
 
@@ -92,7 +90,7 @@
 
 本阶段没有交付 BrowserSession、桌面／截图／图像传输、接管、服务预览、可执行 Skill 包、应用连接或语音；这些继续按阶段 3–6 实施。首期命令界面不提供交互式 PTY。
 
-## 阶段 3 交付记录：v0.3.0-beta.29 开发候选
+## 阶段 3 交付记录：v0.3.0-beta.29（候选与发行历史）
 
 当前发行状态： [Beta PR #29](https://github.com/CMSKL/Aevoren-Bot/pull/29) 已合入 beta `c36049b8`，同名标签精确指向该提交；[macOS 签名工作流](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38548693111) 成功并公开 [v0.3.0-beta.29](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.29)。标签和标题均为 `v0.3.0-beta.29`，包含 DMG、ZIP、blockmap、Beta 更新清单、SHA256 与 SBOM。Windows 签名工作流因未配置签名而跳过，不将其声明为已发布签名 Windows 包。下方候选阶段记录保留为开发历史。
 
@@ -137,7 +135,7 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 
 该交付的真实 Google／Notion 凭据尚未提供，不把受控 HTTP／真实本机回调测试算作真实第三方账号验收。宿主读取的二进制只返回元信息与字节计数，没有媒体存储、下载、预览或模型像素。最后安装包与跨平台 CI 尚未完成。使用与支持边界见[原生应用连接](NATIVE_CONNECTORS.md)；外发、示范与写 MCP／Apps 仍为阶段 4 后续单元，阶段 5–6 未开始。
 
-最终 native.31 本机验收：普通测试 1,487 通过、44 跳过，四套 TypeScript、lint、构建、文档、许可、开源和安全检查通过。Drive 25 项适配器测试包含仅请求绑定 ID 的网络边界、空授权零 HTTP、绑定／查询改变拒绝旧分页游标；不用账号级列表再过滤。真实 SQLite 与共享网关验证每次远端读取鲜取、撤销丢弃迟到正文，原草稿版本重试复核当前授权且不覆盖新草稿。最终未签名 macOS beta.31 包的原生连接 2 项与 typed API 1 项通过，确认 isPackaged、beta.31 与随包连接指南；较早 beta.31 包的资料库 8 项也通过。测试均采用假 provider 数据和真实本机 HTTP／IPC／SQLite，不声称真实第三方账号已经授权。跨平台 CI／签名发行仍是后续门禁。
+最终 native.31 本机验收：普通测试 1,487 通过、44 跳过，四套 TypeScript、lint、构建、文档、许可、开源和安全检查通过。Drive 25 项适配器测试包含仅请求绑定 ID 的网络边界、空授权零 HTTP、绑定／查询改变拒绝旧分页游标；不用账号级列表再过滤。真实 SQLite 与共享网关验证每次远端读取鲜取、撤销丢弃迟到正文，原草稿版本重试复核当前授权且不覆盖新草稿。最终未签名 macOS beta.31 包的原生连接 2 项通过，确认 isPackaged、beta.31 与随包连接指南；当时汇总中的 typed API 1 项更正为源码 fixture 证据，原因见末尾验收更正；较早 beta.31 包的资料库 8 项也通过。测试均采用假 provider 数据和真实本机 HTTP／IPC／SQLite，不声称真实第三方账号已经授权。跨平台 CI／签名发行仍是后续门禁。
 
 阶段 4 首个交付从已通过四项跨平台 CI 并合入 dev 的第三阶段创建 `codex/script-skills`，候选版本为 `v0.3.0-beta.30`。固定版本、入口 SHA、镜像和会话／执行者构成脚本授权；每次运行另记录固定参数审批快照。执行复用现有任务、日志、取消与未知结果查询，Worker 1.2.0 使用私有安装缓存和逐任务只读快照。真实 Docker、界面与关键安装包场景已经通过，跨平台最终 CI 与签名发行尚未完成；该单元不代表整个阶段 4 完成。使用与边界见[脚本 Skill](SCRIPT_SKILLS.md)。
 
@@ -183,11 +181,92 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 
 外发 beta.32 本机验收：普通测试 1,528 通过、44 跳过；TypeScript、lint、构建、许可 215 包／7 类、文档、开源和安全检查通过。真实 SQLite／Coordinator 网关覆盖有效审批正向回执、固定草稿、已确认／未知结果经过新工具调用查询而不再次审批／派发、六成员全部先启动、单成员停止、同步校验失败清理与移出再加入的不可恢复正文边界。迁移 39 以真实旧库验证历史各表、待处理审批／工具、环境／进程／日志／端口、外键、索引和触发器保留。
 
-隐藏源码外发五项与 typed API 一项共 6／6 通过；最终未签名 macOS beta.32 包为连接 2、外发 5、typed API 1 共 8／8 通过，实查 isPackaged、版本和随包指南。实际本机 HTTP／IPC／SQLite 的 Notion 503 已提交提示保存 unknown，重启后仅 GET 核验确认且 POST 总数为 1；审批前编辑／撤权禁用允许按钮且零外发，六群成员停止一个后另外五个完成，已经打开群聊时新宿主任务仍能精确停止。接管用户应用未参与这些测试，所有 Electron 窗口隐藏。
+隐藏源码外发五项与 typed API 一项共 6／6 通过；最终未签名 macOS beta.32 包为连接 2、外发 5 共 7／7 通过，typed API 1 项更正为独立源码 fixture 证据，实查 isPackaged、版本和随包指南。实际本机 HTTP／IPC／SQLite 的 Notion 503 已提交提示保存 unknown，重启后仅 GET 核验确认且 POST 总数为 1；审批前编辑／撤权禁用允许按钮且零外发，六群成员停止一个后另外五个完成，已经打开群聊时新宿主任务仍能精确停止。接管用户应用未参与这些测试，所有 Electron 窗口隐藏。
 
 首次外发隐藏场景复现严格 Scope 额外参数拒绝，修正为仅会话／执行者后暴露隐藏聊天和应用页的重复审批 portal；修复实际显示归属后重跑通过，没有改用第 n 个匹配或强制点击。外发仍只验证受控服务，真实第三方账号、真实 Windows Docker、签名包另行验收；示范、可写 MCP／Apps 和阶段 5–6 尚未完成。
 
 原生 beta.31 跨平台 fixture 收尾：新增应用设置入口后的六项导航假设修正为实际七项并保留键盘焦点断言；后一轮 Windows 两个场景在末尾诊断截图等待 30 秒失败，业务回调断言已到末尾，后续隐藏窗口断言尚未执行。仅对 Windows 不采集两张装饰性诊断截图，业务／错误／隐藏窗口断言全保留，修正 ed8675f 后仍需跨平台 CI 全通过。不能将原失败或未取得的 Windows 像素记为验收成功。
+
+
+## 阶段 4 Notion 页面更新单元：beta.35 开发候选
+
+由 dev 基线创建 `codex/notion-page-updates`，接入已实现的 beta.32 固定草稿外发基础。新增 `notion-page-title` 和 `notion-page-append`，分别对应仅更新标题和末尾追加段落的精确页面写授权；不做覆盖正文或多步删除。普通／data-source 页面准备时读取真实 title 属性 ID、标题和编辑时间，存入原审批快照；保存后操作类型固定。派发前重新核对账号／写授权及标题目标观察，保持同一外发账本和一次派发规则，无新迁移。
+
+Notion API `2026-03-11` 的标题 PATCH 仅包含已观察的属性 ID。追加单次 PATCH，省略 position 表示末尾，最多 100 个 2,000 字符段落。成功返回或 503 committed_child_ids 均精确 GET 子块并验证父页面与文本摘要；缺失、重复、错父级或不可读取不确认且不重发。标题未知结果只读匹配时明确展示“已核对目标当前状态”，不证明原请求造成变化。依据 [更新页面](https://developers.notion.com/reference/patch-page)、[追加区块](https://developers.notion.com/reference/patch-block-children)、[503 提交提示](https://developers.notion.com/reference/request-limits#retry-a-write-that-returns-503)。
+
+初步针对性验收为主进程 100 项通过、Renderer 18 项及状态文案回归 7 项通过；Node／Web TypeScript、相关 ESLint 通过。随后新增成功回执后精确块 GET 断线保留提示用例继续验证。隐藏 Electron、安装包、跨平台 CI 和签名发行均另行记录；真实账号凭据和写目标未提供，受控 HTTP 不代表实际第三方验收。
+
+Final Notion beta.35 source acceptance: one complete build passed all four TypeScript projects and main/preload/renderer/Worker bundles. Hidden Electron acceptance passed 10/10 in 23.2 seconds: two Notion updates, five existing outbound cases, two native-read cases and one typed-API case. Actual IPC/SQLite and controlled Notion HTTP exercised title-property-ID PATCH, disabled approval after a draft edit with zero writes, and append 503 unknown recovery after restart with exact child GET verification and a total of one PATCH. Existing six-member parallelism, single-member stop and group approval ownership assertions also passed. All windows stayed hidden. These are source checks, not installer or live-account verification.
+
+Frozen SHA-256: main `51d6738f71a2d1f164dd7b7ab46d16da6e5f9ca83a3d98055422406b54be32cf`, preload `bb83458a39161e01f8f16983d811513c1ca1cc2a0b6b4ff9b0e27c433737a6ab`, renderer `f9d7ac861455cf013e2214dd0ff5a72c363a06b2b863655d7839d63799a1838d`. The final focused Notion/SQLite/evidence-label suite passed 21 tests; documentation link checking passed for 32 files. No third-party credentials were available.
+
+### 阶段 4：示范录制与待审阅 Skill 草稿（独立开发单元）
+
+`codex/skill-demonstrations` 从已验证 dev 的 Script30 基线创建。Browser Worker 1.1.0 在真实接受的 WebSocket→VNC 输入转发之后解析有界分片 RFB，仅保存按钮/滚动坐标及白名单导航键；文字、Unicode 按键、修饰键和剪贴板以脱敏占位符替代，页面内容、截图和网址不进入录制。断线、epoch 变化、引擎停止、重启和 500 步上限会封存中断录制，不自动归还 AI。
+
+宿主迁移 40 保存独立会话/执行者草稿；停止不会创建、启用、绑定或执行资料库 Skill。用户审阅固定版本与摘要后才能发布，发布结果初始停用，无脚本授权。AI 开始/停止/丢弃录制仅返回 waiting_user；草稿读写共用宿主处理器，发布采用保存的全文审批快照并在提交前重新核验版本、摘要和 Scope。完整使用与边界见[示范 Skill](SKILL_DEMONSTRATIONS.md)。
+
+本机专项包含 13 项分片 RFB、真实鉴权 WebSocket→TCP 转发、Worker SQLite、宿主 SQLite 与请求关闭验收；合并脚本审批回归的 10 个核心文件 67 项通过，普通测试（排除等待真实 38/39 的旧连续迁移诊断命令）1,432 项通过、44 项跳过。隐藏 Electron 示范编辑／冲突／确认发布与完整 Typed API 共 2 项通过（5.4 秒），最终四配置类型检查、lint、build、文档链接、许可与安全审计通过。此开发工作树保留迁移 38/39 给原生连接与外发单元；独立完整单测中旧诊断命令要求连续迁移号，合入真实 38/39 后再验证。当前 Docker daemon 不可用，不将控制 RFB fixture 声称为 Docker/noVNC、Windows 或第三方网站实测。
+
+示范 beta.33 集成原生连接及外发基础后，真实迁移 38、39 先于示范迁移 40 执行，连续迁移诊断三项通过；脚本、外发和示范三类固定审批保留各自严格判别分支。专项 68 项与外发／脚本回归 49 项通过，四配置 TypeScript、lint、build、文档、215 包／7 类许可、开源和安全 32 项检查通过。隐藏源码界面 17／17 通过（示范 1、资料库 8、原生连接 2、外发 5、typed API 1）。普通完整检查遇到原有计时断言超时，保留原结果后对未改变的用例复核；不能据此宣布完整门禁已经通过。
+
+审查发现已发布示范的缓存回执可能在资料解绑／删除后仍带旧正文；修复为复核原资源、原版本及当前 Scope，拒绝已解绑／删除资源，原发布 Skill 不重复创建或自动启用。产品网关 37 项通过，含后续修改资料后仍返回原版本、解绑／删除后拒绝两项回归。修复源码重新通过四配置 TypeScript 与构建并冻结未签名 macOS beta.33 包；该包原生连接 2、外发 5 通过，typed API 1 项更正为源码 fixture 证据；示范 1 在纠正测试读取随包指南的方式后通过，实查 isPackaged、版本与指南正文。最初指南测试在 Electron evaluate 内动态 import 不被支持，改为查询实际 Resources 路径后读取；应用和包均未为此重建或修改。
+
+最终完整普通测试记录为 1,540 通过、45 跳过、6 失败：五项原有 5 秒超时（CDP 1 MiB、群聊 20 轮、FIFO 20 轮、工具混合指令循环、诊断参数循环），一项 lead-room 在轮询期限内仍为 running。对应未修改的六个文件单 Worker 复核 128／128 通过，未提高超时或减少断言；保留完整失败证据，远端完整 CI 仍须独立通过，不能把分次复核改记为一次完整全绿。
+
+真实 Linux Docker 集成测试已加入现有浏览器套件，走实际 x11vnc 的 RFB 握手、页面点击、文字／剪贴板脱敏、断线封存、容器重启、旧 epoch 拒绝和归还后重新观察。该测试将在 Linux CI 的真实容器门禁执行；本机 Docker daemon 未启动，本机结果为跳过，不算真实 Docker 已验收。示范单元不代表阶段 4 全部完成，可写 MCP／交互 Apps 以及阶段 5–6 仍待交付。
+
+## 阶段 4 MCP／Apps：v0.3.0-beta.34 候选
+
+迁移 41 接在真实 38／39／40 后，按 Scope 保存工具授权、固定参数／目标审批及持久调用账本。配置、凭据与格式变化使授权失效；移出再加入不能恢复旧参数。host-mcp Runtime 支持六成员先启动，单成员停止／撤权不影响兄弟任务；HTTP 写调用不自动重授权重放，已结束意图只查询回执。
+
+隔离 App 使用独立 loopback 外层及 opaque 内层。App-only 工具不进入模型和旧只读路径；协议 _meta 仅在宿主及已授权 App 之间传递，公共回执、模型和日志剥离顶层 _meta，保留同名嵌套用户数据。模型打开操作返回 waiting_user，不暴露视图 URL。一个活跃 Scope 的原生／MCP 审批由同一组件持有。支持范围见[MCP 工具与 Apps](MCP_APPS.md)。
+
+初次隐藏验收复现 Renderer CSP 阻止 loopback iframe，修正窄 frame-src 后 MCP 3 与 typed API 1 共 4 项通过，原生外发回归 5 项通过；含真实隔离 frame、父级／Preload 拒绝、实际 App 调用审批、撤权关闭、未知取消及原生→MCP 审批交接。后续私有 metadata／app-only 回归与能力检查 19 项、Node 类型及针对性 lint 通过。上述早期源码回执为 Source33；Source34 最终构建、完整普通测试及安装包验收单列，尚未完成。
+
+脚本 beta.30 的合并提交 93bd211 已全部验收并建立不可变标签。签名工作流 38591554270 在 Mac 普通文件系统测试发生只读目录 rename EACCES，未创建公开 Release。修复 39e12da 保持 staging0700 到 rename 后再固定0550；原代码确定性回归失败、修正后10项通过，不放宽最终只读权限。修复进入后续 Beta，旧标签不移动。
+
+MCP beta.34 最终源码包含 metadata 私有投影、App-only 路由、统一 Apps 审批持有者及快照发布修复。完整普通测试单 Worker 1,565 通过、45 跳过；四配置 TypeScript、lint、build、文档、215 包／7 类许可、开源及安全审计通过。隐藏源码 MCP3／示范1／typed1／外发5／读取2 的不同场景均通过；读取回归最初因新增 MCP 范围说明与原生说明文字重复而严格匹配失败，收窄到真实“聊天应用”区域后两项通过，未使用第 n 个元素或减少业务断言。最终安装包仍在验收。
+
+Combined Stage 4 beta.35 source acceptance after merging MCP beta.34 foundation `4c0834fa`: all four TypeScript projects, full ESLint, one full build and the ordinary single-worker suite passed (1,586 passed, 45 skipped; 130 passed and 8 skipped test files). The combined hidden Electron suite passed 14/14 in 46.7 seconds: demonstrations 1, MCP Apps 3, native reads 2, native outbound including Notion updates 7, typed API 1. The unified parent-owned Apps approval host remained intact; no child native approval portal was restored. Actual migrations 38/39/40/41, private MCP metadata, App-only visibility, demonstration privacy/replay protection and the Worker private staging rename fix were preserved. No new migration or dependency was introduced.
+
+Combined frozen SHA-256: main `b69062c51e85525ae838aaf8659119891d4c7af44bdd4351becb2b51536ab436`, preload `04360d5de6b69c317a2a4f4cbcc56a0a4a92d26e4ef6f1bd00716108cc49d05d`, renderer `a1e3f97f27cc288fe38cb5c3c70f3316696eb9778aea2ea56400cf804a16c301`. Documentation links passed for 34 files; license checks passed for 215 packages / 7 groups, open-source readiness and dependency/security audits passed with the verified existing backport. Package beta.35 and cross-platform CI are separate pending gates; real third-party credentials were unavailable. The earlier isolated Notion source receipts remain historical and are not substituted for this combined build.
+
+## Earlier beta.35 package snapshot and evidence correction
+
+The final MCP setup-failure cleanup `f85c8cc` was integrated as `c384380`. The controlled DNS/client-cleanup suite passed 6 tests with 1 skipped; the scoped-write foundation passed 13 tests, and Node TypeScript passed. The 1,586/45 ordinary and 14-source-case aggregates above belong to the pre-cleanup combined source; they were not relabeled as a fresh full run after this narrow fix.
+
+The rebuilt unsigned macOS beta.35 package from `c384380` passed 21 actual packaged scenarios in 1.4 minutes: Library 8, demonstrations 1, MCP Apps 3, native reads 2 and native outbound including Notion updates 7. Each relevant fixture used the actual package executable and checked packaged metadata. That historical bundle SHA-256: main `02945cd6a5439fa5cb52be18366cc8a5fe28aea115045fe6d6642a0cb29309a5`, preload `04360d5de6b69c317a2a4f4cbcc56a0a4a92d26e4ef6f1bd00716108cc49d05d`, renderer `a1e3f97f27cc288fe38cb5c3c70f3316696eb9778aea2ea56400cf804a16c301`.
+
+A final audit found that the old runtime typed-API fixture ignored `AEVOREN_PACKAGED_APP_PATH`; earlier typed-API checks counted in beta.31/beta.32/beta.33/beta.34 package summaries therefore establish source behavior only. Their separate Library/native/outbound/demonstration package receipts remain valid where those fixtures selected and verified the real package. The corrected fixture commit `37c762e` now honors the executable and asserts `isPackaged` and the exact version. Its initial real-package run exposed a source-only mock-keychain-flag assertion; the test now applies that assertion only to source runs. The actual packaged rerun passed 1/1, and the source rerun passed 1/1. At that historical candidate, package acceptance was 21 + 1 = 22 actual packaged checks, without retroactively upgrading old evidence. All windows stayed hidden.
+
+Stage 4 has local implementation, source and unsigned macOS-package acceptance; cross-platform CI, actual Docker demonstration increments, Windows Docker and signed publication remain gates. Real user private credentials, Gmail/Drive/Notion account writes, cloud-model inference and audio service integration were not exercised. Phase 5 media/audio/voice and Phase 6 automation/search/thread/template/export extensions remain unimplemented. The complete six-phase scope and branch/release requirements above remain in force; master does not advance.
+
+## Normal-close fix: current beta.35 candidate
+
+The former test cleanup helper could terminate an application that had not exited normally. Earlier business assertions and genuine packaged metadata remain evidence for those behaviors, but do not establish a successful graceful shutdown. Subframe loading had cleared the main renderer's readiness, leaving a real close request waiting for an ACK that would never be resent.
+
+The current source at `843d8d4` incorporates the complete readiness/close fix, strict normal-close cleanup, private owned-tree cleanup, transactional legacy database fixtures and event-driven project-tool waits. Readiness resets only on committed main navigation; iframe and in-page navigation preserve it. Main loading gates flush requests, and an existing pending-close request retries when loading stops. Cancelled main navigation retains the live renderer and its dirty-save handshake. No additional readiness IPC or replacement timeout was introduced.
+
+The old main code fails the real `srcdoc` regression. Fixed beta.35 source passed eight close scenarios plus three MCP scenarios (11 total); an actual MCP application exited normally with code 0 in 275 ms without forced termination. The first beta.31 package close selection passed 17/18: its HTTP iframe fixture was blocked by beta.31's intended CSP, so the fixture was corrected to a real `srcdoc` frame without loosening CSP. The corrected frozen beta.31 package then passed 19 actual packaged checks (Library 8, native connections 2, close 8, typed API 1). Beta.31 backport validation also passed 1,488 ordinary tests with 44 skipped, all four TypeScript projects, lint, build, license checks for 215 packages / 7 groups, documentation checks for 31 files and four focused Node fixture tests. These are beta.31 receipts, not final beta.35 package results.
+
+Windows checks for PR #37/#38 reached their source business assertions, but the test worker failed during exit; no installation-package gate ran in those jobs. They are not successful Windows or package acceptance. A pre-close-fix beta.35 source run passed 1,587 ordinary tests with 45 skipped, and 41 Linux Docker checks passed; those and the earlier package aggregate remain historical. The current results follow below. Phase 5/6 remain unimplemented, and real account/private-credential, microphone, audio/cloud inference and Windows Docker checks remain unverified.
+
+## Final beta.35 local acceptance after normal-close fixes
+
+The clean tested source is `93e5e17b18c400d75dafe6873d80454853dc2614`. A single full run with one worker passed **1,587 tests, 45 skipped**, across 130 passing files; no rerun or timeout change. Lint, all four TypeScript projects, the complete build and both Worker bundles, license checks (215 packages / 7 groups), 34 documentation files and open-source readiness passed.
+
+Hidden source acceptance passed **22/22**. The rebuilt actual unsigned macOS arm64 beta.35 application passed **30 unique scenarios**: Library 8, native reads 2, outbound 7 (including both Notion updates), demonstration 1, MCP Apps 3, normal close 8 and actual packaged typed API 1. Source and package UI logs contain **zero forced-cleanup warnings**. Genuine `isPackaged`, version, seven guides and Execution Worker 1.2.0 / Browser Worker 1.1.0 were checked; packaged Worker bytes match the build output.
+
+ASAR SHA-256 is `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf3`. Compiled Main and package-extracted Main both hash to `627d2e5c89eccd164d5e60240bb41d70ea42894146be9c59852c467a772ca78b`. Subsequent documentation-only commits do not change these application bytes. Cross-platform CI, validated Beta promotion and signed publication remain pending; these local results do not establish real external-account or Windows Docker behavior.
+
+## Windows TCP 录制夹具验收更正
+
+另有 Linux run 38677885045：普通测试 1,587／45 跳过通过，真实 Docker 40／41；六独立 Scope 的截图返回 `409 BROWSER_OBSERVATION_STALE`。容器仍运行，约 427.5／768 MiB，OOM 计数为零；未据此认定内存问题。代码没有观察 TTL，截图内部聚焦并重新观察，不能靠增加夹具观察或放宽新鲜度解决。
+
+`65437c8` 仅在显式开启时写入固定诊断文件，记录焦点／文档版本前后、epoch、布尔状态和有界耗时，不记录 DOM、URL、图片、Cookie、路径或能力令牌。所有 409 校验和捕获顺序保持不变。六个负向用例及相关 26 项、Node／浏览器 Worker 类型、lint、Worker 构建通过。Worker 字节／镜像 context 摘要会变化；前述包 30 项先于此补丁，补丁后的真实 Docker／安装包仍待验证。下一轮真实 Linux CI 用于确定拒绝阶段。
+
+最新 TCP 录制夹具更正：MCP34 Windows 运行 38675963129 的五项进程清理通过，但普通测试 1,550 通过／60 跳过／1 失败；录制事件数先更新，接收端 TCP data 回调尚未交付 28 字节，后续构建／包验收未运行。真实 socket 暂停确定性复现旧断言失败；现先登记接收等待，再恢复并等待完整字节，保留原录制／控制和精确字节断言。相关 9 项、Node／浏览器 Worker 类型和 lint 通过。仅测试改变，安装包业务代码和既有本机回执不变；修正后的跨平台 CI 待验证。
 
 ## Beta.31 晋级收尾：主页面关闭与测试进程生命周期
 
@@ -200,6 +279,36 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 
 现仍是开发候选，跨平台修复检查、Beta 晋级及签名发行未完成；master 不晋级。真实第三方账号和 Windows Linux Docker 继续标为未验证。后续阶段 5–6 尚未实现。
 
+## Diagnostic beta.35 rebuild and fresh Linux acceptance
+
+Source `b81174717ae16afdaf543d8cc2eed2d21f72c95c`, containing the opt-in sanitized frame diagnostics, was rebuilt and packaged locally with reduced process priority. The actual unsigned macOS arm64 application passed **30/30** distinct checks in **1.8 minutes**: close 8 (including ten immediate startup close attempts), Library 8, native reads 2, outbound 7, demonstrations 1, MCP Apps 3 and actual packaged typed API 1. No forced-cleanup warning occurred. Fixtures checked genuine packaged metadata and beta.35; no installed user application, personal profile, microphone, real credentials or local Docker was used.
+
+Archive metadata, compiled/package-extracted Main, both complete Worker resource directories and all seven bundled guides matched at build time. ASAR SHA-256 remains `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf3`; Main remains `627d2e5c89eccd164d5e60240bb41d70ea42894146be9c59852c467a772ca78b`. The ASAR excludes the separately bundled Workers: the diagnostic Browser Worker 1.1.0 index now hashes to `41e2318a05a29e20c1b0777f2d28d2871ecad5505b553ff9d2970d7b55898a73`, its engine to `9788e576cc351bcfea9e380484b33df8456582b143d0c7fac271662e1ded6e7d`; Execution Worker 1.2.0 index hashes to `3ec6b2072432c77b904b363b2afad4929e6568115e513ff08304f4dd1055570e`. Worker bytes exactly matched this build output. Subsequent documentation edits do not change those tested application bytes.
+
+Fresh [Linux run 38680254801 / job 116243117780](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38680254801/job/116243117780) checked PR merge `ef1beefb0320145713c60cd6f4e495fdc28bc8f2` (b811747 into dev 4f24f153). One ordinary run passed **1,593 tests, 45 skipped**, across 131 passing and 8 skipped files in 77.29 seconds. The six frame-diagnostic unit tests are already included in that total. TypeScript, lint, build, 215-package / 7-group license checks, 34-document checks and security/backport checks passed.
+
+The opt-in real Linux Docker gate separately passed **41/41**, seven files, in 125.27 seconds: Chromium/desktop 10, host browser 4, environment gateway 4, host environment 5, host Skill execution 4, Worker execution 12 and registered preview 2. Six isolated scopes with private cookies/profiles and real frames passed in 7.999 seconds; sanitized human RFB recording with disconnect/restart passed in 4.153 seconds; six approved Room scripts passed in 5.439 seconds. Both diagnostic flags were enabled. This successful run emitted no failed capture-phase record; it does not identify the cause of the prior `BROWSER_OBSERVATION_STALE` rejection, relax provenance/freshness checks or erase another run's failure.
+
+The earlier pre-diagnostic 30-case package/source receipts and negative runs remain historical. This is fresh diagnostic-code Linux and unsigned macOS-package evidence, not complete cross-platform acceptance or signed publication. Windows Linux Docker, real third-party account actions and cloud inference remain unverified; phase 5/6 are not implemented and master does not advance.
+
+## Windows compound navigation-test budget correction
+
+Notion beta.35 Windows job [116243117566](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38680254801/job/116243117566) passed all 40 source-interface cases in 17.8 minutes. The separate close suite passed seven cases, including all ten immediate startup closes, but the main-document navigation case reached its overall 30-second test deadline; package gates did not execute.
+
+The retained trace proves reload succeeded, the dirty description was filled and the first normal-close assertion passed at 22.58 seconds. The second application launch also completed. Reopening its contact profile consumed the remaining budget through several Windows navigation clicks of about two seconds each; only approximately 173ms remained when it reached the Edit Profile button. Timeout occurred there, before the persisted-description assertion or second close request. This is evidence of the compound test exhausting its total budget, not a failed close handshake.
+
+Only that main-document case on Windows now uses a 60-second total test budget. Other platforms and the same-document case retain 30 seconds; per-request close limits remain 3 seconds, and the separate immediate-startup close limit remains 1.5 seconds. All UI, persistence, normal-exit and failure assertions remain intact. No product handler, readiness flag, IPC, guard or application byte changed. The new Windows branch requires CI validation; the change was checked with targeted lint, documentation links and diff checks rather than relabeling a local macOS run as Windows evidence. Earlier failures and traces remain retained, and stages 5/6 remain unimplemented.
+
+## Installed Windows MCP unsupported-RPC evidence and fixture diagnostics
+
+At source `9b238fd946e93f44bfa14ca6c304122508842ad0`, [Windows job 116251033557](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38682850255/job/116251033557) passed 1,578 ordinary tests with 60 skipped, all 40 source-interface cases, all eight source close cases, packaging checks and isolated installer launch. Installed feature acceptance passed 37/38: the first MCP App case did not receive its expected `data-unknown` attribute within five seconds after clicking the unsupported-capability button. Both other MCP cases, both Notion update cases and all remaining installed feature cases passed. The separate installed close suite was skipped after this failure; the overall Windows gate did not pass.
+
+The retained trace shows the nested-frame click returned, the initialized inner App remained live and normal application close completed in 228 ms. It contains no browser input/network events, so it cannot establish whether the original click, message forwarding or response delivery caused the missing attribute. No production protocol defect or original cause is claimed.
+
+The test now registers a real page response waiter before the same UI click, matching only POST to that controlled view's exact RPC endpoint with the unsupported method. It verifies HTTP 200, the matching numeric JSON-RPC ID and error -32601 before retaining the original five-second DOM assertion. The 90-second case limit and existing Playwright deadlines are unchanged; no direct/fake RPC, forced click, retry or application change was added. A bounded attachment records only handler entry, trusted-input status, request posting, response receipt, HTTP status, ID-match boolean and numeric error code; URLs, capability tokens, request/response contents and credentials are excluded.
+
+The updated fixture passed all three source MCP cases in 10.63 seconds and all three cases against the existing actual unsigned macOS arm64 beta.35 package in 10.07 seconds, with no skips, flaky results or forced-cleanup warnings. Both receipts show a trusted click, posted request, real HTTP 200, matching ID, -32601 and inner response receipt. The packaged fixture checked genuine `isPackaged`, version `0.3.0-beta.35` and its bundled MCP guide. No rebuild was needed: ASAR remains `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf3`, and compiled Main remains `627d2e5c89eccd164d5e60240bb41d70ea42894146be9c59852c467a772ca78b`. Node TypeScript, targeted lint, documentation links and diff checks passed. These local macOS checks do not replace the retained Windows failure or establish a new complete cross-platform gate; stages 5/6 remain unimplemented.
+
 ## Beta.32 同步 dev 后的验收
 
 `e83e91dd67ca665f2045fc378a3989605d87bb97` 合入已验证 dev `4f24f15`，保留版本 beta.32。相较原 `b922ca8`，生产代码仅增加主文档关闭修复与 Skill 私有 staging 发布修复，原生外发业务及 API 未改，也未引入示范或 MCP Apps。
@@ -207,3 +316,11 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 专项 96／96（快照 10、数据库 25、项目审批 25、外发 36），四套 TypeScript、目标 lint 和完整构建通过。隐藏源码 16／16；实际未签名 macOS arm64 包 24／24：资料库 8、原生读取 2、外发 5、关闭 8、真实包 typed API 1。源码／包界面日志均无强制清理或关闭超时警告，实查版本、isPackaged 和 Resources。
 
 随包 Execution Worker 1.2.0 含私有发布修复，与构建输出字节相同，SHA-256 为 `572b1b355fa653ff37957750aeab7c4aa8af6c1aa77d40fd0b6d05b13056321b`；脚本指南字节一致。未重复整套普通测试，新的跨平台 CI 与签名发行仍待完成；未将此记录称为真实账号或 Windows Docker 验收。
+
+### Beta.32 截图诊断历史补充
+
+> beta.32 当前补充：CI `38680943010` 的 Linux 普通检查通过，真实 Docker 为 39／40；六 Scope 电脑截图被原有 `BROWSER_OBSERVATION_STALE` 规则拒绝。本轮未取得成功画面，不能记为完整 Linux 门禁通过。当前补入同仓 beta.35 已验证的脱敏截图阶段诊断，保持原有焦点、版本和接管检查及调用顺序；该补丁不表示已修复错误。此前本机安装包记录先于该 Worker 补丁，后续须分别核验。
+
+诊断候选 `1ca624d` 的本机补充验收：截图诊断／控制专项 15 项、Browser Worker TypeScript 与定向 lint、Worker 构建通过。重新打包的真实未签名 macOS arm64 beta.32 完成 23 项场景（原生读取 2、外发 5、关闭 8、Runtime 8），包括 15 次重载恢复、失败后重试、SIGKILL 恢复、关闭阻塞提示及 typed API；全部通过。两套 Worker 共八个文件及五份指南与构建输出逐字节相同。ASAR SHA-256 为 `f095741de56104676e8854fcf9d2472a4887ed0164945bb850dbdd3d035cff0a`，Browser engine 为 `9788e576cc351bcfea9e380484b33df8456582b143d0c7fac271662e1ded6e7d`。新一轮跨平台／Docker 检查仍需完成；本机没有启动 Docker 或连接真实账号。
+
+当前 beta.35 合入已验证 dev `36a48730002a5a8bd7115891a99a18a7cffa792c`，保留上述两版独立验收记录。相较合并前 `15ac2b8`，源码、测试、工作流、构建配置、package 和锁文件字节均未改变；只合并实施历史，不重记既有失败为成功。版本仍为 beta.35，新的合并提交仍须完成正常跨平台 CI。

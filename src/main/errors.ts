@@ -11,6 +11,13 @@ type ErrorDescriptor = {
 };
 
 export const ERROR_REGISTRY = {
+  DEMONSTRATION_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到当前会话成员的示范草稿或录制。", allowedDetailKeys: [] },
+  DEMONSTRATION_STATE_INVALID: { domain: "tool", retryable: false, safeMessage: "示范状态已变化，请刷新后再处理。", allowedDetailKeys: [] },
+  DEMONSTRATION_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "示范草稿已更新，当前编辑仍保留；请读取最新版本后再保存。", allowedDetailKeys: ["currentVersion"] },
+  DEMONSTRATION_LIMIT: { domain: "tool", retryable: false, safeMessage: "示范记录达到数量限制，请清理旧录制或草稿。", allowedDetailKeys: [] },
+  DEMONSTRATION_UNSUPPORTED: { domain: "tool", retryable: false, safeMessage: "当前浏览器镜像不支持示范，请停止后明确重建隔离环境；后台服务不会自动重建。", allowedDetailKeys: [] },
+  DEMONSTRATION_INPUT_UNSUPPORTED: { domain: "tool", retryable: false, safeMessage: "当前电脑连接输入格式无法录制。录制已停止，请重新连接后明确开始示范。", allowedDetailKeys: [] },
+  DEMONSTRATION_VIEWER_REQUIRED: { domain: "tool", retryable: false, safeMessage: "请先接管并连接电脑，再明确开始示范。", allowedDetailKeys: [] },
   INVALID_REQUEST: { domain: "validation", retryable: false, safeMessage: "请求参数不符合要求。", allowedDetailKeys: [] },
   CONNECTOR_UNAVAILABLE: { domain: "provider", retryable: false, safeMessage: "应用连接服务尚未初始化。", allowedDetailKeys: [] },
   CONNECTOR_NOT_FOUND: { domain: "provider", retryable: false, safeMessage: "没有找到这项应用连接。", allowedDetailKeys: [] },

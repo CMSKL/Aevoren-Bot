@@ -1,0 +1,4 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import { DemonstrationReview } from "./DemonstrationReview";
+describe("saved demonstration review", () => { it("renders the complete frozen Skill body as text and its concrete scope", () => { const html = renderToStaticMarkup(<DemonstrationReview snapshot={{ kind: "demonstration-skill", resourceName: "Original <script>", revisionNumber: 2, target: { sessionId: "session-original", executorBotId: "bot-original", draftId: "draft-original", draftVersion: 2, draftDigest: "a".repeat(64), body: "<script>alert('untrusted')</script>\nFULL_SAVED_BODY", initiallyEnabled: false } }} />); expect(html).toContain("Original &lt;script&gt;"); expect(html).toContain("&lt;script&gt;alert"); expect(html).not.toContain("<script>"); for (const field of ["FULL_SAVED_BODY", "session-original", "bot-original", "a".repeat(64), "初始停用"]) expect(html).toContain(field); }); });

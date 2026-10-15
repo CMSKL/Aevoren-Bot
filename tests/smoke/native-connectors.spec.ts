@@ -197,7 +197,7 @@ test("late native reads cannot replace another member's pane or reappear after r
     await resultButton.click();
     await expect.poll(delayed.entered).toBe(true);
     await page.getByLabel("应用执行成员").selectOption(bots[1]!.id);
-    await expect(page.getByText(`${room.name} · ${bots[1]!.name}`, { exact: false })).toBeVisible();
+    await expect(page.getByRole("region", { name: "聊天应用", exact: true }).getByText(`${room.name} · ${bots[1]!.name}`, { exact: false })).toBeVisible();
     delayed.release();
     await page.getByLabel("当前聊天的应用连接").selectOption(connection.id);
     await page.getByRole("button", { name: "搜索应用内容", exact: true }).click();

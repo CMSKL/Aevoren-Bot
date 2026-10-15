@@ -507,6 +507,7 @@ const TranscriptItem = memo(function TranscriptItem({
                   step={speakerName}
                   errorCode={run?.lastErrorCode}
                   hostOutbound={run?.route === "host-outbound"}
+                  hostMcp={run?.route === "host-mcp"}
                   invocations={toolInvocations}
                   canRetry={canRetryRoomTurn}
                   onRetry={() => onRetryRoomTurn(entry.sourceTurnId!)}
@@ -515,12 +516,13 @@ const TranscriptItem = memo(function TranscriptItem({
             ) : isSuperseded ? (
               <details className="superseded-attempt-details" data-testid={entry.sourceTurnId ? undefined : "direct-attempt-history"}>
                 <summary>查看较早失败详情</summary>
-                <RunFailureCard step={speakerName} errorCode={run?.lastErrorCode} hostOutbound={run?.route === "host-outbound"} invocations={toolInvocations} canRetry={false} onRetry={() => undefined} />
+                <RunFailureCard step={speakerName} errorCode={run?.lastErrorCode} hostOutbound={run?.route === "host-outbound"} hostMcp={run?.route === "host-mcp"} invocations={toolInvocations} canRetry={false} onRetry={() => undefined} />
               </details>
             ) : <RunFailureCard
               step={speakerName}
               errorCode={run?.lastErrorCode}
               hostOutbound={run?.route === "host-outbound"}
+              hostMcp={run?.route === "host-mcp"}
               invocations={toolInvocations}
               canRetry={Boolean(canRegenerate && run)}
               onRetry={() => { if (canRegenerate && run) onRetryRun(run.id); }}
@@ -771,7 +773,7 @@ export function Conversation({
   );
   const latestFailedRun = latestFailedTurn?.runtimeRunId ? runsById.get(latestFailedTurn.runtimeRunId) ?? null : null;
   const latestRetryRun = !room
-    ? [...latestAttempts.values()].find((run) => run.route !== "host-outbound" && ["failed", "cancelled", "interrupted"].includes(run.state) && run.clientNonce === latestUserNonce) ?? null
+    ? [...latestAttempts.values()].find((run) => run.route !== "host-outbound" && run.route !== "host-mcp" && ["failed", "cancelled", "interrupted"].includes(run.state) && run.clientNonce === latestUserNonce) ?? null
     : null;
   const retryableUserEntry = entries.toReversed().find((entry) => entry.role === "user" && entry.sendState === "failed-before-acceptance" && entry.clientNonce === latestUserNonce) ?? null;
   const latestFailedTools = latestFailedRun ? toolInvocations.filter((invocation) => invocation.runtimeRunId === latestFailedRun.id) : [];
@@ -1178,7 +1180,7 @@ export function Conversation({
           const run = runsByAssistant.get(entry.id) ?? null;
           const canRegenerate = Boolean(
             !room &&
-            run && run.route !== "host-outbound" &&
+            run && run.route !== "host-outbound" && run.route !== "host-mcp" &&
             latestAttempts.get(runtimeTaskKey(run))?.id === run.id &&
             ["failed", "cancelled", "interrupted"].includes(run.state) &&
             run.clientNonce === latestUserNonce &&

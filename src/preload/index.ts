@@ -1,5 +1,7 @@
+import { MCP_WRITE_CHANNELS } from "@shared/mcp-write-channels";
 import { NATIVE_OUTBOUND_CHANNELS, NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "@shared/native-outbound-channels";
 import { contextBridge, ipcRenderer } from "electron";
+import { DEMONSTRATION_CHANNELS } from "@shared/demonstration-channels";
 import { IPC } from "@shared/channels";
 import { LIBRARY_CHANNELS } from "@shared/library-channels";
 import { ENVIRONMENT_CHANNELS, EXECUTION_CHANNELS, PROCESS_CHANNELS, ENVIRONMENT_EVENTS } from "@shared/environment-channels";
@@ -25,6 +27,30 @@ function onBrowserChanged(listener: (event: BrowserChangedEvent) => void): () =>
 }
 
 const api: AevorenBotApi = {
+  mcpWrites: {
+    toolCatalog: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.toolCatalog, input),
+    toolGrants: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.toolGrants, input),
+    grantTool: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.grantTool, input),
+    revokeTool: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.revokeTool, input),
+    prepareTool: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.prepareTool, input),
+    toolResult: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.toolResult, input),
+    listToolIntents: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.listToolIntents, input),
+    cancelTool: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.cancelTool, input),
+    requestToolApproval: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.requestToolApproval, input),
+    openApp: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.openApp, input),
+    closeApp: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.closeApp, input),
+  },
+  demonstrations: {
+    status: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.status, input),
+    start: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.start, input),
+    stop: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.stop, input),
+    discard: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.discard, input),
+    drafts: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.drafts, input),
+    readDraft: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.readDraft, input),
+    deleteDraft: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.deleteDraft, input),
+    updateDraft: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.updateDraft, input),
+    publish: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.publish, input),
+  },
   outbound: {
     writeGrants: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.writeGrants,input),
     grantWrite: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.grantWrite,input),

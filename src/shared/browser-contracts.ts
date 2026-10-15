@@ -2,7 +2,7 @@ import type { ApiResult } from "./contracts";
 import type { EnvironmentPlatform, EnvironmentScope } from "./environment-contracts";
 import type { MediaRef } from "./library-contracts";
 
-export const BROWSER_WORKER_VERSION = "1.0.0";
+export const BROWSER_WORKER_VERSION = "1.1.0";
 export const BROWSER_PROTOCOL_VERSION = 1;
 export const BROWSER_FRAME_MAX_BYTES = 2_097_152;
 export const BROWSER_DOWNLOAD_MAX_BYTES = 1_048_576;

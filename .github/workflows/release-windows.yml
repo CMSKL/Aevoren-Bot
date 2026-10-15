@@ -75,7 +75,7 @@ jobs:
         run: |
           $env:AEVOREN_PACKAGED_APP_PATH = Join-Path $PWD "dist/win-unpacked/Aevoren Bot.exe"
           if (!(Test-Path $env:AEVOREN_PACKAGED_APP_PATH)) { throw "Missing signed Windows app" }
-          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts
+          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts
           if ($LASTEXITCODE -ne 0) { throw "Signed Windows library acceptance failed" }
       - name: Validate close handshakes in the signed Windows app
         env:

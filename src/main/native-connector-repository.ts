@@ -218,7 +218,7 @@ export class NativeConnectorRepository {
     return { connection: connection(value), binding: granted };
   }
   private validateDraftContent(provider: NativeConnection["provider"], content: ConnectorDraftContent, allowed: string[]): void {
-    if (provider !== ({ "gmail-message": "gmail", "drive-text": "drive", "notion-page": "notion" } as const)[content.kind]) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
+    if (provider !== ({ "gmail-message": "gmail", "drive-text": "drive", "notion-page": "notion", "notion-page-title": "notion", "notion-page-append": "notion" } as const)[content.kind]) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
     if (content.kind === "drive-text" && content.targetFileId && !allowed.includes(content.targetFileId)) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
   }
   private addRevision(draftId: string, number: number, content: ConnectorDraftContent, at: string): string {
@@ -278,6 +278,7 @@ export class NativeConnectorRepository {
       const value = this.draftRow({ ...this.scope(parsed), id: parsed.id });
       if (value.version !== parsed.expectedVersion) throw new ConnectorStateError("CONNECTOR_DRAFT_VERSION_CONFLICT", value.version);
       const target = this.get(value.connection_id), previous = this.readDraft({ ...this.scope(parsed), id: value.id });
+      if (previous.revision.content.kind !== parsed.content.kind) throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
       // Local edits remain possible after revocation. They retain the original account
       // and authorization snapshot; they cannot expand a revoked Drive target.
       const allowed = previous.revision.content.kind === "drive-text" && previous.revision.content.targetFileId ? [previous.revision.content.targetFileId] : [];

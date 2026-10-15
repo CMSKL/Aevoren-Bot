@@ -25,6 +25,7 @@ type SnapshotContext = {
   providerCapabilities: ProviderCapabilities | null;
   room: boolean;
   mcpTools: McpToolInfo[];
+  mcpScopedReady: boolean;
   routines: Routine[];
   executionReady: boolean;
   scriptReady: boolean;
@@ -130,6 +131,13 @@ function capabilityDescriptors(
       permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
+      id: "mcp.scoped-tools", name: "会话 MCP 工具与交互 App", category: "external",
+      description: "按当前会话 Bot 的固定连接、凭据及工具格式授权，逐次审批真实 MCP 调用；结果未知不重发。交互 App 仅打开同一结果附带且验证通过的隔离 HTML 资源。",
+      effectClass: "write-external", adapterKind: "mcp", availability: executionTools && context.mcpScopedReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前来源未接入宿主工具。" : context.mcpScopedReady ? null : "请在当前会话为此 Bot 授予固定 MCP 工具权限；全局配置连接不会自动授权。",
+      permissionState: context.mcpScopedReady ? "granted" : "not-granted", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
       id: "apps.read", name: "原生应用读取", category: "external",
       description: "读取当前会话 Bot 明确授权的 Gmail、所选 Drive 文件和共享 Notion 页面；配置连接不授予会话权限，外发另需写授权和固定内容审批。",
       effectClass: "read-remote", adapterKind: "core", availability: executionTools && context.nativeReadReady ? "available" : "unavailable",
@@ -155,6 +163,12 @@ function capabilityDescriptors(
       description: "在同一隔离浏览器与屏幕观察、导航和输入；用户接管会暂停 AI，归还后必须重新观察。宿主电脑与现有浏览器 Cookie 不在范围内。",
       availability: executionTools && context.browserReady && !context.browserUserControlled ? "available" : "unavailable",
       reason: context.browserUserControlled ? "用户正在接管，AI 输入与观察已暂停。" : !executionTools ? "当前来源未接入宿主工具。" : context.browserReady ? null : "当前浏览器伴随环境尚未运行。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "skills.demonstrations", name: "示范 Skill 草稿", category: "workspace", effectClass: "write-reversible", adapterKind: "core",
+      description: "由用户明确开始与停止隔离电脑示范，只保留脱敏坐标和导航按键；生成待审阅草稿，发布后初始停用。AI 只能请求用户录制和处理已保存草稿。",
+      availability: executionTools ? "available" : "unavailable", reason: executionTools ? null : "当前来源未接入宿主产品工具。",
       permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
@@ -328,7 +342,7 @@ export class CapabilityRegistry {
     private readonly providers: Pick<ProviderService, "list" | "getCached" | "getCapabilities">,
     private readonly environment: CapabilityAppEnvironment,
     private readonly clock: () => Date = () => new Date(),
-    private readonly mcp?: Pick<McpService, "list" | "availableTools">,
+    private readonly mcp?: Pick<McpService, "list" | "availableTools"> & Partial<Pick<McpService, "scopedCredentialDigest">>,
     private readonly routineList: () => Routine[] = () => [],
   ) {}
 
@@ -376,6 +390,11 @@ export class CapabilityRegistry {
       }
     })();
     const mcpTools = this.mcp?.availableTools(botId) ?? [];
+    const mcpScopedReady = Boolean(botId && sessionId && this.repository.mcpWrites.grants({ sessionId, executorBotId: botId }).some(grant => {
+      if (grant.revokedAt) return false;
+      try { const server = this.repository.getMcpServerConfig(grant.serverId); return server.enabled && server.version === grant.serverVersion &&
+        this.mcp?.scopedCredentialDigest?.(server.id) === this.repository.mcpWrites.credentialForGrant(grant.id); } catch { return false; }
+    }));
     const routines = this.routineList();
     const environment = botId && sessionId ? this.repository.environments.get({ sessionId, executorBotId: botId }) : null;
     const executionReady = environment?.state === "running";
@@ -389,7 +408,7 @@ export class CapabilityRegistry {
       try { this.repository.outbound.assertGrant({ sessionId, executorBotId: botId }, grant.id, grant.version); return true; }
       catch { return false; }
     }));
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
       browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));

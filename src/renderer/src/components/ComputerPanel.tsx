@@ -2,6 +2,7 @@ import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useSta
 import type { ApiResult } from "@shared/contracts";
 import type { BrowserChangedEvent, BrowserDownload, BrowserDownloadFailure, BrowserDownloadsPage, BrowserObservation, BrowserPage, BrowserSession, ComputerScreenshot, ComputerView, ComputerVncTicket, ServicePreview } from "@shared/browser-contracts";
 import type RFB from "@novnc/novnc";
+import { DemonstrationPanel } from "./DemonstrationPanel";
 import { pollBrowserDownloads } from "./browser-download-poller";
 import "../styles/computer.css";
 
@@ -228,6 +229,7 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
     {confirmStop ? <div className="computer-confirm" role="group" aria-label="确认停止浏览器"><p>停止当前成员的浏览器与电脑，会中断页面操作与接管连接；持久登录数据保留。</p><div className="computer-actions"><button type="button" className="secondary-button" disabled={Boolean(pending)} onClick={() => { const payload = { sessionId, executorBotId, expectedVersion: session?.version }; void mutate("stop", payload, clientNonce => window.aevorenBot.browser.stop({ ...payload, clientNonce }), () => setConfirmStop(false)); }}>确认停止</button><button type="button" className="text-button" onClick={() => setConfirmStop(false)}>保留运行</button></div></div> : null}
     {view && running ? <><p className="computer-control-status" role="status">{view.owner === "user" ? "你持有控制权 · AI 输入、观察与画面上传暂停" : "AI 持有控制权"} · {view.connectionState === "connected" ? "接管连接已连接" : "无接管连接"}</p><div className="computer-actions"><button type="button" className="secondary-button" disabled={Boolean(pending)} onClick={() => changeOwner(view.owner === "user" ? "ai" : "user")}>{view.owner === "user" ? "归还 AI" : "接管电脑"}</button>{view.owner === "user" ? <button type="button" className="secondary-button" disabled={Boolean(pending) || vncState === "connecting" || vncState === "connected"} onClick={connectComputer}>{vncState === "connecting" ? "正在连接…" : vncState === "connected" ? "电脑已连接" : "连接电脑"}</button> : <button type="button" className="text-button" onClick={() => void readFrame()}>刷新画面</button>}</div><p className="computer-note">关闭此面板或断线不会自动归还控制权。请使用“归还 AI”明确交还。</p></> : <p className="computer-note">先在执行环境页启动 Linux 环境，再启动浏览器与电脑。Docker、镜像或 Worker 不可用时会显示实际错误。</p>}
     {error ? <p className="computer-error" role="alert">{error}</p> : null}{retryMutation ? <button type="button" className="text-button" disabled={Boolean(pending)} onClick={retryMutation}>重试上次操作（沿用原请求）</button> : null}{notice ? <p className="computer-note" role="status">{notice}</p> : null}
+    <DemonstrationPanel sessionId={sessionId} executorBotId={executorBotId} epoch={view?.epoch} userControl={Boolean(userControl)} connected={vncState === "connected"} active={active} />
     <label className="field"><span>网址</span><input aria-label="浏览器网址" value={draft.url} maxLength={4000} placeholder="https://" onChange={event => updateDraft("url", event.target.value)} /></label>
     <p className="computer-note">网址草稿不会自动打开页面；接管后点击“打开网址”才会执行。</p>
     {running ? <>
