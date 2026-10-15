@@ -315,7 +315,10 @@ export class McpService {
     try {
       const { definition } = current(); connection.assertCurrent();
       const remote = connection.tools.find(item => item.name === tool.toolName);
-      if (!remote?.readOnlyClaim || !remote.visibility.includes("model") || mcpDigest(remote.inputSchema) !== mcpDigest(definition.inputSchema)) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      if (!remote?.readOnlyClaim || !remote.visibility.includes("model") || mcpDigest(remote.inputSchema) !== mcpDigest(definition.inputSchema)) {
+        this.repository.tasks.retireMcpSelections(tool.serverId);
+        throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      }
       const result = await connection.call(tool.toolName, tool.arguments);
       current(); connection.assertCurrent();
       if (result.isError) throw new AevorenBotError("MCP_RESULT_INVALID");

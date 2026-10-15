@@ -12,7 +12,7 @@ import { registerTaskMcpAuthority } from "./task-mcp-authority";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 async function fixture() {
-  let calls = 0, hold = false, release: (() => void) | undefined;
+  let calls = 0, hold = false, changedSchema = false, release: (() => void) | undefined;
   const transports = new Map<string, StreamableHTTPServerTransport>(), remotes: McpServer[] = [];
   const http: Server = createServer((request, response) => {
     const chunks: Buffer[] = []; request.on("data", chunk => chunks.push(Buffer.from(chunk)));
@@ -22,7 +22,7 @@ async function fixture() {
       if (existing) { void existing.handleRequest(request, response, body); return; }
       if (body?.method !== "initialize") { response.writeHead(404).end(); return; }
       const remote = new McpServer({ name: "task-read-only-fixture", version: "1" }); remotes.push(remote);
-      for (const name of ["lookup", "other"]) remote.registerTool(name, { inputSchema: { query: z.string() }, annotations: { readOnlyHint: true } }, async ({ query }) => {
+      for (const name of ["lookup", "other"]) remote.registerTool(name, { inputSchema: { query: z.string(), ...(changedSchema ? { changed: z.boolean().optional() } : {}) }, annotations: { readOnlyHint: true } }, async ({ query }) => {
         calls++; if (hold) await new Promise<void>(resolve => { release = resolve; });
         return { content: [{ type: "text", text: `CONTROLLED:${query}` }] };
       });
@@ -48,7 +48,7 @@ async function fixture() {
     const entry = repository.getUserMessage(nonce);
     return repository.createRuntimeRun(nonce, "fake", { schemaVersion: 1, botId: owner.bot.id, profileVersion: 1, sessionId: task.session.id, generation: entry.generation, inputSeq: entry.seq, blocks: [], digest: "task-mcp" });
   }
-  return { repository, service, enabled, runtime, selection, config, calls: () => calls, hold: () => { hold = true; }, release: () => { hold = false; release?.(); }, tool: { kind: "mcp-call" as const, serverId: saved.id, toolName: "lookup", arguments: { query: "original" }, readOnly: true as const } };
+  return { repository, service, enabled, runtime, selection, config, calls: () => calls, changeSchema: (value: boolean) => { changedSchema = value; }, hold: () => { hold = true; }, release: () => { hold = false; release?.(); }, tool: { kind: "mcp-call" as const, serverId: saved.id, toolName: "lookup", arguments: { query: "original" }, readOnly: true as const } };
 }
 
 describe("TASK MCP explicit host authority", () => {
@@ -62,6 +62,14 @@ describe("TASK MCP explicit host authority", () => {
     expect(f.service.availableTaskTools(empty.id)).toEqual([]);
     await expect(f.service.runTask(f.tool, new AbortController().signal, empty.id)).rejects.toMatchObject({ code: "APPROVAL_SCOPE_INVALID" });
     expect(f.calls()).toBe(1);
+  });
+  it("retires the original task after a changed remote schema even if the old schema returns", async () => {
+    const f = await fixture(), run = f.runtime(); f.changeSchema(true);
+    await expect(f.service.runTask(f.tool, new AbortController().signal, run.id)).rejects.toMatchObject({ code: "APPROVAL_SCOPE_INVALID" });
+    f.changeSchema(false);
+    expect(() => f.service.availableTaskTools(run.id)).toThrowError(expect.objectContaining({ code: "APPROVAL_SCOPE_INVALID" }));
+    await expect(f.service.runTask(f.tool, new AbortController().signal, run.id)).rejects.toMatchObject({ code: "APPROVAL_SCOPE_INVALID" });
+    expect(f.calls()).toBe(0);
   });
   it("discards a late result and permanently retires the old task after disable/re-enable", async () => {
     const f = await fixture(), run = f.runtime(); f.hold();
