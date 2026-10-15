@@ -518,3 +518,7 @@
   .expandable-trace-spinner { animation: none; }
   .expandable-trace-collapse, .expandable-trace-chevron, .message-evidence-toggle > span, .tool-run-chevron { transition: none; }
 }
+
+@media (max-width: 300px) {
+  .conversation-header { gap: 6px; padding-inline: 6px; }
+}

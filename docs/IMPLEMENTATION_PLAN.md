@@ -539,3 +539,17 @@ PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/act
 实现 `search.query/open` 共用业务入口、当前会话／项目／全部本地资源界面、七类资源与已保存语音转录、固定来源与分页游标。AI 固定 Runtime 会话和执行 Bot，TASK 使用原始选定版本与历史；来源撤销、重绑、世代清空和内容变化会重新校验。私有标题／片段不进入持久工具回执，实际模型发送前检查私有附件授权。
 
 本地十一项 SQLite、两项产品传输、两项隐藏 Electron 界面和二十四项组合回归通过，完整类型与构建通过。两项界面场景同轮通过，应用拥有进程正常退出。证据标签：`$CODEX_HOME/aevoren-evidence/2026-10-15/search40-*`。未验证当前实际安装包、Windows、签名或真实云账号。详见 [搜索说明](SEARCH.md)。
+
+### beta.40 真实未签名 macOS 包验收
+
+Search2 与继承的 Task3 同轮 **5/5 通过（40.3 秒）**，实际 app.isPackaged=true、版本 0.3.0-beta.40，拥有进程均正常退出。Main SHA-256 `56d0a85414736fb5aefa9b1bdee86a84fd2935c4fa669a8a79b82bd0028c9319`；已验收 ASAR `b613e598efaab4bf519cad53d54361dbb83729aae57eca10dc2ec36db03fd12e`。17 项 ASAR 输出与216项Worker/parser输出逐字节匹配；207 parser资产／233资源文件／9556 ASAR条目校验通过，四Helper麦克风声明存在，未验证真实硬件。后续合入39的正常dev同步仅修改历史文档、工作流和七项旧迁移测试，无业务代码差异，不重记为新的模型／设备证据。当前跨平台CI和签名发行仍待完成。
+
+### beta.40 高缩放布局与继承 Runtime 修复
+
+保留正常 CI 失败与本地复现：200% 缩放时新增搜索按钮使输入框只余 6px；修正旧的单按钮期望后，新增任务入口也使会话标题只余 5px。保留搜索、未读、创建、关闭、任务和菜单入口，搜索按钮使用 24×32px 的独立布局，窄屏减少搜索内边距／间距与会话头间距。没有删除原有宽度、包含关系、拖动区域或防重叠检查。typed API 的固定命名空间清单只补入实际存在的 search。
+
+另继承 beta.39 的有界 Codex 子进程 teardown 修复 `e1078a0`，相关权限／关闭普通测试 12/12 通过。最终 Electron Main／Preload／Renderer 构建、Node／Web 类型与定向 lint 通过。两个高缩放场景、typed Runtime API 和 UI-only 明暗设计参考在最终源码同轮 4/4（5.9 秒），新实际未签名 macOS arm64 包同轮 4/4（12.3 秒）；四个对应夹具均真实核验 packaged=true/version40。200% 时搜索输入 40px、会话标题 43px，150% 标题 108px，控件均在范围内且没有内外重叠。UI-only 设计参考仍不是 Agent 执行业务证据。
+
+首次打包停留在 Electron 校验清单网络下载且没有生成输出；保存诊断后终止该下载进程，使用已安装且核验为 Electron 44.3.0 arm64 的运行时执行标准 ASAR／afterPack 未签名打包。17 项应用输出与 216 项 Worker／parser 输出逐字节匹配，Worker／parser 输出未重建。实际 ASAR SHA-256 `d67b1a55c22c960aa57d903029ed7c1548ad0cf85ef2cc313d5a29ac4a8715a5`，Main 为 `1cd908a142d6a0e882cb9a2ac43e60d9f09433b9113be47a1c6b1581b4744ef0`。207 项 parser 资产、234 项资源文件及 9556 ASAR 条目校验通过；四 Helper 麦克风声明通过，未验证签名或硬件。
+
+持久证据在 `$CODEX_HOME/aevoren-evidence/2026-10-15/releases/search40/`，包含修复前日志／trace、最终 source/package-focused-final 的日志与 JSON、实际几何与明暗截图、字节核对、打包与 parser／麦克风回执。Browser 插件未提供，使用仓库既有隐藏 Playwright Electron 工作流。上述四项是本次变更的定向验收；新的完整跨平台 CI／签名发行仍待完成，不能把历史五项业务包验收记为本次完整全绿。

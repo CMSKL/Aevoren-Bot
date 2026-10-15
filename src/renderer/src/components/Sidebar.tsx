@@ -886,7 +886,7 @@ export function Sidebar({
             <>
               {tab !== "workspace" ? (
                 <div className="sidebar-search">
-                  {onOpenSearch?<button type="button" className="icon-button" title="全资源搜索" aria-label="打开全资源搜索" onClick={onOpenSearch}><SearchIcon/></button>:<SearchIcon/>}
+                  {onOpenSearch?<button type="button" className="icon-button sidebar-global-search-button" title="全资源搜索" aria-label="打开全资源搜索" onClick={onOpenSearch}><SearchIcon/></button>:<SearchIcon/>}
                   <input type="search" aria-label={tab === "chats" ? "搜索聊天" : "搜索联系人"} placeholder={tab === "chats" ? "搜索聊天" : "搜索联系人"} value={query} onChange={(event) => { clearMultiSelection(); setQuery(event.target.value); }} />
                   {tab === "chats" ? <button type="button" className="sidebar-unread-filter" aria-pressed={unreadOnly} title="只看未读聊天" onClick={() => { clearMultiSelection(); setUnreadOnly((current) => !current); }}>未读</button> : null}
                 </div>

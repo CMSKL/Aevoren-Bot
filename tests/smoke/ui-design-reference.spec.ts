@@ -251,8 +251,10 @@ test("UI-only approved light/dark reference: real avatars and journal-backed fil
     const height = Number(process.env.AEVOREN_BOT_UI_REFERENCE_HEIGHT || 832);
     expect(Number.isInteger(width) && width >= 390).toBe(true);
     expect(Number.isInteger(height) && height >= 640).toBe(true);
+    const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH ?? process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE;
     application = await electron.launch({
-      args: ["."], cwd: process.cwd(),
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : ["."], cwd: process.cwd(),
       env: {
         ...process.env,
         TZ: "Asia/Shanghai",
@@ -262,6 +264,12 @@ test("UI-only approved light/dark reference: real avatars and journal-backed fil
         AEVOREN_BOT_ATTACHMENT_TEST_PATHS: join(workspaceRoot, fixture.files[0]!.name),
       },
     });
+    if (executablePath) {
+      const runtime = await application.evaluate(({ app }) => ({ isPackaged: app.isPackaged, version: app.getVersion() }));
+      expect(runtime.isPackaged).toBe(true);
+      expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
+      await test.info().attach("actual-reference-package", { body: JSON.stringify(runtime), contentType: "application/json" });
+    }
     const page = await application.firstWindow();
     const consoleErrors: string[] = [];
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
@@ -275,7 +283,9 @@ test("UI-only approved light/dark reference: real avatars and journal-backed fil
     await expect(page.locator(".conversation-header h1")).toHaveText("个人网站小组");
     await expect(page.locator(".conversation-header-counts")).toHaveText("3 位 Agent");
     await expect(page.locator(".sidebar-list .bot-row")).toHaveCount(8);
-    await expect(page.locator(".conversation-header button")).toHaveCount(1);
+    await expect(page.locator(".conversation-header").getByRole("button", { name: "新建任务", exact: true })).toBeVisible();
+    await expect(page.locator(".conversation-header").getByRole("button", { name: "聊天选项", exact: true })).toBeVisible();
+    await expect(page.locator(".conversation-header button")).toHaveCount(2);
     await expect(page.locator("article.message-user")).toHaveCount(2);
     await expect(page.locator("article.message-assistant")).toHaveCount(1);
     await expect(page.locator(".artifact-card")).toHaveCount(2);
