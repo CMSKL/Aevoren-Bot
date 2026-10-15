@@ -1,3 +1,4 @@
+import { addVoiceProductHandlers, type VoiceProductDependencies } from "./voice-product-handlers";
 import { addMediaProductHandlers, type MediaProductDependencies } from "./media-product-handlers";
 import { addMcpWriteProductHandlers, type McpWriteProductDependencies } from "./mcp-write-product-handlers";
 import { addNativeOutboundProductHandlers } from "./native-outbound-product-handlers";
@@ -86,7 +87,7 @@ import { addSkillExecutionProductHandlers, type SkillExecutionProductDependencie
 import { addNativeConnectorProductHandlers, type NativeConnectorProductDependencies } from "./native-connector-product-handlers";
 import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 
-export type ProductDependencies = MediaProductDependencies & McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & DemonstrationProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
+export type ProductDependencies = VoiceProductDependencies & MediaProductDependencies & McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & DemonstrationProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
   nativeOutboundService?: NativeOutboundService;
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
@@ -142,6 +143,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   const handlers = new Map<string, (input?: unknown) => unknown>();
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
   addMediaProductHandlers(handlers, dependencies, commit, libraryContext);
+  addVoiceProductHandlers(handlers, dependencies);
   addEnvironmentProductHandlers(handlers, dependencies, commit, libraryContext);
   addBrowserProductHandlers(handlers, dependencies, commit, libraryContext);
   addDemonstrationProductHandlers(handlers, dependencies, commit, libraryContext);

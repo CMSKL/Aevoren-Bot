@@ -1,3 +1,7 @@
+import { VoiceService } from "./voice-service";
+import { installVoiceCaptureHost } from "./voice-capture-host";
+import { VOICE_CHANGED_CHANNEL } from "@shared/voice-channels";
+import type { VoiceFetch } from "./voice-http-adapter";
 import { MediaService } from "./media-service";
 import { MediaParserHost, registerMediaParserScheme } from "./media-parser-host";
 import { MEDIA_CHANGED_CHANNEL } from "@shared/media-channels";
@@ -80,6 +84,8 @@ let mcpAppsBridge: McpAppsBridge | null = null;
 let environmentService: EnvironmentService | null = null;
 let browserService: BrowserService | null = null;
 let mediaService: MediaService | null = null;
+let voiceService: VoiceService | null = null;
+let voiceCapture: ReturnType<typeof installVoiceCaptureHost> | null = null;
 let skillExecutionService: SkillExecutionService | null = null;
 let nativeConnectorService: NativeConnectorService | null = null;
 let nativeOutboundService: NativeOutboundService | null = null;
@@ -182,6 +188,8 @@ async function finishClose(): Promise<void> {
     await nativeOutboundService?.shutdown();
     await nativeConnectorService?.shutdown();
     await skillExecutionService?.shutdown();
+    await voiceCapture?.shutdown();
+    await voiceService?.shutdown();
     await mediaService?.shutdown();
     await runtimeCoordinator?.shutdown();
     await roomCoordinator?.shutdown();
@@ -338,10 +346,23 @@ app.whenReady().then(async () => {
   const productMediaService = new MediaService(repository, join(app.getPath("userData"), "media-blobs"),
     new MediaParserHost({ directory: app.isPackaged ? join(process.resourcesPath, "media-parser") : join(app.getAppPath(), "out", "media-parser") }), {
       workspaceService, onChanged: event => {
+        voiceService?.mediaChanged(event);
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(MEDIA_CHANGED_CHANNEL, event);
       },
     });
   mediaService = productMediaService;
+  const voiceTestOrigin = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_VOICE_TEST_ORIGIN : undefined;
+  let voiceFetch: VoiceFetch | undefined;
+  if (voiceTestOrigin) {
+    const origin = new URL(voiceTestOrigin);
+    if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.pathname !== "/" || origin.username || origin.password || origin.search || origin.hash) throw new AevorenBotError("INVALID_REQUEST");
+    voiceFetch = (url, input) => fetch(new URL(url.pathname + url.search, origin), { ...input, redirect: "error" });
+  }
+  const productVoiceService = new VoiceService(repository, electronSecretCodec, productMediaService,
+    join(app.getPath("userData"), "voice-blobs"), { ...(voiceFetch ? { fetch: voiceFetch } : {}), onChanged: event => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(VOICE_CHANGED_CHANNEL, event);
+    } });
+  voiceService = productVoiceService;
   environmentService = new EnvironmentService(repository.environments, electronSecretCodec,
     app.isPackaged ? join(process.resourcesPath, "environment-worker") : join(app.getAppPath(), "out", "worker"), (event) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ENVIRONMENT_EVENTS.changed, event);
@@ -404,6 +425,12 @@ app.whenReady().then(async () => {
     packaged: app.isPackaged,
   }, undefined, mcpService, () => routineService?.list() ?? []);
   mainWindow = createWindow(!hideTestWindow && !openedAtLogin);
+  voiceCapture = installVoiceCaptureHost(repository, mainWindow, async (input, context) => {
+    const result = await productMediaService.importBytes({ ...input, requiredKind: "audio" }, context);
+    const item = result.imported[0];
+    if (!item || result.failed.length) throw new AevorenBotError("VOICE_RESPONSE_INVALID");
+    return item.reference;
+  });
   const sendWorker = new SendWorker(
     repository,
     providerService,
@@ -465,11 +492,13 @@ app.whenReady().then(async () => {
     repository,
     libraryService,
     mediaService: productMediaService,
+    voiceService: productVoiceService,
+    voiceCapture,
     async pickMediaPaths(_input, signal) {
       signal?.throwIfAborted();
       if (!mainWindow || mainWindow.isDestroyed()) return null;
-      const result = await dialog.showOpenDialog(mainWindow, { title: "导入图片、PDF 或 DOCX", properties: ["openFile", "multiSelections"],
-        filters: [{ name: "媒体与文档", extensions: ["png", "jpg", "jpeg", "pdf", "docx"] }] });
+      const result = await dialog.showOpenDialog(mainWindow, { title: "导入媒体与文档", properties: ["openFile", "multiSelections"],
+        filters: [{ name: "媒体与文档", extensions: ["png", "jpg", "jpeg", "pdf", "docx", "wav", "mp3", "ogg", "webm", "mp4", "m4a"] }] });
       signal?.throwIfAborted();
       return result.canceled ? null : result.filePaths;
     },
