@@ -22,6 +22,7 @@ import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import type { LibraryResource, LibraryResourceKind, ResourceReference } from "@shared/library-contracts";
 import type { MessageMediaReference } from "@shared/media-contracts";
 import type { VoiceCaptureBegin, VoiceTask } from "@shared/voice-contracts";
+import type { RealtimeStartInput } from "@shared/realtime-contracts";
 import { voiceTextDigest } from "../voice-ui-state";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
 import { shouldShowBriefApproval } from "../brief-approval-state";
@@ -50,6 +51,7 @@ import { MediaReferenceBadge } from "./MediaReferenceBadge";
 import { VoiceCapturePanel } from "./VoiceCapturePanel";
 import { VoiceTaskPanel } from "./VoiceTaskPanel";
 import { VoicePlaybackBar, type VoicePlaybackHandle } from "./VoicePlaybackBar";
+import { RealtimeVoicePanel } from "./RealtimeVoicePanel";
 import {
   ArtifactStatusBar,
   ArtifactCard,
@@ -376,7 +378,7 @@ const TranscriptItem = memo(function TranscriptItem({
   const hasVisibleBody = entry.role === "user" || assistantBody.trim().length > 0;
   const speakerName = entry.role === "assistant"
     ? speakerDisplayName ?? speakerBot?.name ?? entry.speakerNameSnapshot ?? "Bot"
-    : entry.origin ? `${entry.origin.fromBotNameSnapshot ?? "Bot"} · ${entry.origin.kind === "routine" ? "定时任务" : "AI 委派"}` : userProfile.name;
+    : entry.origin?.kind === "voice-input" ? `${userProfile.name} · 语音输入` : entry.origin ? `${entry.origin.fromBotNameSnapshot ?? "Bot"} · ${entry.origin.kind === "routine" ? "定时任务" : "AI 委派"}` : userProfile.name;
   const hasEvidence = toolInvocations.length > 0 || handoffs.length > 0 || handoffRejections.length > 0 || coordinationErrorCode !== null;
   const hasCollaboration = handoffs.length > 0 || handoffRejections.length > 0 || turnPurpose !== undefined;
 
@@ -548,7 +550,7 @@ const TranscriptItem = memo(function TranscriptItem({
             </div>
           ) : null}
         </div>
-        {entry.role === "user" ? <span className="message-avatar message-avatar-user">{entry.origin ? <BotAvatarIcon size={48} /> : <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={48} />}</span> : null}
+        {entry.role === "user" ? <span className="message-avatar message-avatar-user">{entry.origin && entry.origin.kind !== "voice-input" ? <BotAvatarIcon size={48} /> : <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={48} />}</span> : null}
       </div>
     </article>
   );
@@ -707,6 +709,7 @@ export function Conversation({
   const composerMountedRef = useRef(true);
   const voicePlaybackRef = useRef<VoicePlaybackHandle>(null);
   const [latestVoiceTask, setLatestVoiceTask] = useState<VoiceTask | null>(null);
+  const [realtimeActive, setRealtimeActive] = useState(false);
   useEffect(() => { composerMountedRef.current = true; return () => { composerMountedRef.current = false; }; }, []);
   const applyResourceInsertion = useEffectEvent((): void => {
     if (!resourceInsertion || resourceInsertion.sessionId !== sessionId || resourceInsertion.id === consumedInsertionRef.current) return;
@@ -776,6 +779,14 @@ export function Conversation({
   }, [sessionId, readVoiceDraft, updateComposer]);
   const readAloud = useCallback((entry: TranscriptEntry): void => voicePlaybackRef.current?.enqueue(entry), []);
   const playVoiceTask = useCallback((task: VoiceTask): void => voicePlaybackRef.current?.play(task), []);
+  const readRealtimeSelection = useCallback((executorBotId: string): Omit<RealtimeStartInput, "expectedConfigVersion"> => {
+    const base = composerSnapshotRef.current;
+    if (!sessionId || !composerMountedRef.current || composerSnapshotRef.current !== base) throw new Error("草稿已变化，请重新连接语音。");
+    const routingMode = room ? base.routingPreference : "automatic";
+    const targets = routingMode === "everyone" ? memberBotIds : routingMode === "explicit" ? resolveRoomTargetIds(base.roomMentions, memberBotIds) : [];
+    if (room && !memberBotIds.includes(executorBotId) || !room && bot?.id !== executorBotId || routingMode !== "automatic" && !targets.length) throw new Error("语音业务 Bot 或群聊目标已变化，请重新选择。");
+    return { sessionId, executorBotId, routingMode, targetBotIds: targets, resourceRefs: base.resourceRefs, mediaRefs: base.mediaRefs };
+  }, [sessionId, room, memberBotIds, bot?.id]);
   const subjectName = bot?.name ?? room?.room.name ?? "选择对话";
   const currentDate = new Date();
   const conversationScopeId = room?.room.id ?? bot?.id ?? null;
@@ -1674,7 +1685,7 @@ export function Conversation({
             </button>
           )}
           </div>
-          {sessionId ? <><VoiceCapturePanel sessionId={sessionId} active={approvalVisible} readDraft={readVoiceDraft} onTask={setLatestVoiceTask} /><VoiceTaskPanel sessionId={sessionId} sessionGeneration={sessionGeneration} latestTask={latestVoiceTask} onInsert={insertVoiceTranscript} onPlay={playVoiceTask} /><VoicePlaybackBar ref={voicePlaybackRef} sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible} entries={entries} speakerName={entry => entry.speakerBotId ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? bot?.name ?? "AI" : bot?.name ?? "AI"} /></> : null}
+          {sessionId ? <><VoiceCapturePanel sessionId={sessionId} active={approvalVisible && !realtimeActive} readDraft={readVoiceDraft} onTask={setLatestVoiceTask} /><VoiceTaskPanel sessionId={sessionId} sessionGeneration={sessionGeneration} latestTask={latestVoiceTask} onInsert={insertVoiceTranscript} onPlay={playVoiceTask} /><VoicePlaybackBar ref={voicePlaybackRef} sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible && !realtimeActive} entries={entries} speakerName={entry => entry.speakerBotId ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? bot?.name ?? "AI" : bot?.name ?? "AI"} /><RealtimeVoicePanel sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible} executors={bot ? [{ id: bot.id, name: bot.name }] : room?.members.map(member => ({ id: member.botId, name: roomMemberIdentities.get(member.botId)?.inline ?? member.bot.name })) ?? []} readSelection={readRealtimeSelection} onActiveChange={setRealtimeActive} /></> : null}
         </div>
       </footer>
       {mediaPickerOpen && sessionId ? <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMediaPickerOpen(false); }}><section className="media-selection-dialog" role="dialog" aria-modal="true" aria-label="选择媒体引用" onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setMediaPickerOpen(false); } }}><header><h2>引用当前会话媒体</h2><button ref={mediaPickerCloseRef} className="icon-button" type="button" aria-label="关闭媒体选择" onClick={() => setMediaPickerOpen(false)}><CloseIcon /></button></header><MediaLibraryPanel key={sessionId} sessionId={sessionId} onUse={selectMedia} /></section></div> : null}

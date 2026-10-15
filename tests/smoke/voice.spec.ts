@@ -160,7 +160,7 @@ test("saves three independent editable voice configurations without echoing keys
       await expect(card).toContainText("已安全保存");
     }
     const metadata = await configurations(f.page); expect(metadata.map(item => [item.kind, item.model, item.enabled, item.keyConfigured])).toEqual([["stt", "explicit-stt-model", true, true], ["tts", "explicit-tts-model", true, true], ["realtime", "explicit-realtime-model", true, true]]);
-    expect(JSON.stringify(metadata)).not.toContain("fixture-key"); expect(f.transcriptions).toHaveLength(0); expect(f.speeches).toHaveLength(0); await expect(f.page.getByText(/实时连接与通话尚未启用/u)).toBeVisible();
+    expect(JSON.stringify(metadata)).not.toContain("fixture-key"); expect(f.transcriptions).toHaveLength(0); expect(f.speeches).toHaveLength(0); await expect(f.page.getByText(/Realtime V1 · 手动分轮/u)).toBeVisible();
     const stt = f.page.getByRole("region", { name: "转写 STT 配置", exact: true }); await stt.getByLabel(/启用此配置/u).uncheck(); await stt.getByLabel("清除此配置保存的密钥", { exact: true }).check(); await stt.getByRole("button", { name: "保存转写 STT配置", exact: true }).click();
     await expect(stt).toContainText("尚未配置"); expect((await configurations(f.page)).filter(item => item.kind !== "stt").every(item => item.enabled && item.keyConfigured)).toBe(true);
     expect(await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceMicFixture!.requests)).toEqual([]);
