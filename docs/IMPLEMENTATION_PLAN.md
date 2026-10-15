@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.38**。阶段 5.1 已通过本地源码与真实未签名 macOS 包；Windows 检出字节一致性修复仍需 CI。阶段 5.2 的语音及音视频专项／安装包检查通过，但完整源码验收发现默认语音面板挤占聊天区，正修复后重新验收。阶段 5.3 已实现受控实时语音与普通 Runtime 委派，专项及首轮隐藏音频场景通过，最终整轮、安装包和跨平台尚未通过。阶段 4 的 [beta.32](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.32) 已公开，beta.33 晋级 PR #43 仍在正常检查。master 不晋级；阶段 6 尚未实施。
+当前开发候选为 **v0.3.0-beta.39**。阶段 6A 的 MAIN/TASK 数据、固定成员上下文、明确权限上限、独立线程界面及共享业务操作已实现，并通过专项单元／静态检查；构建、隐藏界面、真实安装包与跨平台门禁仍待通过。阶段 5 已有本地源码与真实未签名 macOS 包证据，beta.38 实时语音累计 159 个不同场景通过、32 条件跳过，包含休眠影响的失败和随后定向通过，不记为单轮完整全绿。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，beta.34 及后续单元按正常顺序等待晋级；master 不晋级。6B–6F、真实第三方账号／音频硬件及 Windows Docker 均未完成验收。
 
 ## 已确定的方案
 
@@ -31,8 +31,8 @@
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
 | 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 开发组合候选四项 CI 通过，分单元晋级中 | `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
-| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1–5.3 源码已实现，布局修复及最终验收中 | 本地媒体源码／包与语音专项已有证据；实时协议、真实 Worklet 和普通 Runtime 来源已验证；完整门禁／云账号／硬件分开记录 |
-| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
+| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1–5.3 源码及本地包证据完成，跨平台／签名发行待通过 | beta.38 源码累计 159 个不同通过、32 条件跳过；保留完整运行 3 项失败及定向 3/3，通过真实 Worklet／受控协议／普通 Runtime；云账号／硬件另行验证 |
+| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 6A TASK 源码与专项检查完成，6B–6F 待实施 | beta.39 的迁移／授权／UI 身份与能力专项已有证据；三项隐藏 fixture 验收中，保留失败，最新构建与包门禁待通过 |
 
 ## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
 
@@ -422,3 +422,39 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 ### beta.33 晋级 Windows 失败（不发布）
 
 晋级 PR #43 的运行 38707578493：Linux、macOS 与密钥检查通过，Windows 源码选择 34 项通过、1 项失败。失败为 `native-outbound.spec.ts` 的未知结果重启场景，`closeTestApplication` 在拥有的 Electron 进程／stdio 收尾阶段报错；该场景含中途重启，尚不能据终端错误断定全部业务断言已完成。Windows 后续关闭、打包和安装验证均未执行，因此当前不合并或发布 beta.33。原始日志 `/tmp/aevoren-beta33-windows-promotion-failure.log` 已保留，正分析 trace 与关闭诊断，未通过盲目重跑或增加期限掩盖失败。
+
+
+### beta.38 当前冻结源码覆盖与宿主休眠证据（2026-10-15）
+
+在 `65e497d3ba18f17ca682a144ac08cc9c777fbfbf`、Node 24.19.0 下直接使用现有构建，单 worker、nice 10、隐藏 Electron、独立临时数据目录及禁用更新执行完整 191 项源码 smoke。结果为 **156 通过、32 条件跳过、3 失败**，25.1 分钟，退出码 1；没有修改产品、fixture、原有期限或重建产物。受控 HTTP 在三个 Runtime 阶段跨 15 次 Renderer 重载保持响应屏障的修正已在该轮通过（1.3 分钟）；真实 Chromium AudioWorklet／生成音频、受控 WebSocket 和普通 Runtime 委派界面亦通过。
+
+失败分别是三十秒 stale／取消、关闭超时提示、未绑定聊天工作区入口。独立读取系统电源记录确认宿主在 08:04:13 −0500 进入 Idle Sleep 586 秒，08:13:59 DarkWake；08:14:43 再进入 Maintenance Sleep 354 秒，08:20:37 用户活动唤醒。关闭提示的 trace 在 close 请求后停顿约 589 秒，未绑定聊天在 firstWindow 阶段停顿约 352 秒，与两段系统休眠对应。stale 场景则在约 19.2 秒时页面关闭，未到三十秒断言边界；没有独立记录证明这次页面关闭的根因，不将其直接归因为产品或休眠。三项原始失败与 trace 保留。
+
+仅对上述三项使用有限子进程 `/usr/bin/caffeinate -i` 防止该轮空闲系统休眠，不唤醒屏幕、不改变电源设置或操作用户应用；冻结代码、构建及 45／20／30 秒原期限均保持不变。定向 **3/3 通过（44.7 秒，退出码 0）**，所属 Electron 均 exitCode=0、signal=null，无强制清理警告。当前累计覆盖 **159 个不同通过场景、32 项条件跳过**，**不是一次完整全绿运行**。随后误启动的完整重跑已按范围收敛要求在 8 项后中止（退出码 130），不计入成功门禁。
+
+只读复核确认包版本为 `0.3.0-beta.38`，Main／Preload／Renderer 共 17 个 out 文件与现有真实未签名 macOS 包逐字节一致；解析资产校验通过 207 项清单资产、231 个资源文件与 9,556 个 ASAR 文件。Main SHA-256 为 `faa97cfb320b2b951982e8d6cf27f06e94aa835b2272774900d355bab56ae7bc`，Preload 为 `1e984f697c82447ea2c6b68faefbb73819c0cf86ad86ac184522b0ee35fb27ca`，Renderer 为 `45092d7bd13fbe6e0a1623f30f41909ee71589c2c8e24cd7d0b9f86b534f7828`，ASAR 为 `c88639591fad72fad6c7509537e59dc5ec99ea8880f19155612acb38987532a3`，parser 清单为 `c3849e73366654ababa5a7aebe47e053201dacc40b2c6c03918a549c8bba1fa1`。麦克风用途声明及四个 Helper 存在；此轮未执行签名 entitlement 验证或物理麦克风测试。
+
+新证据持久保存于本机 `$CODEX_HOME/aevoren-evidence/2026-10-15/`：`voice38-final-source191.log`、对应 metadata JSON、`voice38-final-source191-test-results/`、四行 `voice38-final-source191-power-transitions.log`、`voice38-focused-awake-three.log` 及对应 metadata、`voice38-final-out-package-hashes.json`、`voice38-final-package-assets.json` 与 `voice38-final-microphone-declaration.json`。这些本地证据不是仓库附件。环境重启前部分历史 `/tmp` 证据已不存在，前文仍按历史结果保留，不能宣称那些临时文件当前可用。此前真实未签名包 40 项为既有验收结果，本轮未重复该套场景。跨平台、签名发行、真实云账号、物理设备与 Windows 恢复仍待验证；阶段 6 尚未交付。
+
+
+## 阶段 6A：TASK 数据、授权与线程界面（beta.39，门禁待通过）
+
+- 迁移 45 保留 MAIN、旧聊天／Runtime／Memory／媒体及入向外键，TASK 可与相同 Bot／群的 MAIN 和其他 TASK 并存。任务标题／版本与历史 generation 分开。
+- 通过 taskOptions 读取精确来源范围版本，默认不选择执行者、上下文或权限。每个执行者明确选择固定 Memory、引用历史、资料／Skill 版本、媒体摘要、Workspace 读写／自动化上限、read-only MCP 身份、产品动作、联网和剪贴板。目录／同 Bot／同项目不产生授权。
+- 原 Runtime 与重试固定最初选择，修订不动态扩权。成员／资源／MCP 撤销和 ABA 不复活旧授权；任务能力快照只描述当前执行者与实际选择，不泄露其他连接元信息。
+- 新建 Task 只打开独立聊天。Task 侧栏按 sessionId 识别，联系人及原群继续打开 MAIN；历史、运行事件、草稿缓存、迟到请求和 Room 快照分别按实际 session 过滤。任务标题 CAS 冲突保留用户草稿；授权修订另行审阅。
+- 停止仅作用于此 Task 的活动 Runtime／批次；删除要求空闲并保留 owner Bot／群。独立后台服务仍使用其生命周期控制。
+- 八项 sessions.* 共享业务动作及可信 onTasksChanged 生命周期已实现，模型不能伪造执行者或通过权限修订自授新访问。
+
+本地已运行的具体增量证据：Renderer 身份／空默认值和设置合计 8 项通过，能力注册专项 10 项通过（含原 Runtime 重试快照、独立联网／剪贴板、精确 MCP 及旧 MAIN 行为）；Node／Web 类型与定向 ESLint 通过。日志在 `$CODEX_HOME/aevoren-evidence/2026-10-15/task39-ui-focused.log`、`task39-capability-tests.log` 及同前缀 types／lint 日志。另有 SQLite、宿主 Runtime/MCP 专项由对应交付记录汇总，当前不填尚未冻结的整轮总数。
+
+三项 `tests/smoke/task-sessions.spec.ts` 已通过静态发现（3 项）并开始执行，覆盖真实 Preload／SQLite、受控 HTTP／MCP、独立草稿／重启历史、CAS、任务级删除、六成员／兄弟线程并行、actor 查询与撤销。**隐藏门禁尚未通过**；已有一次冻结完整构建通过记录，参数规范化修复后的新构建与隐藏场景仍待验收，当前没有 beta.39 真实包、Windows 或签名发行通过记录。6B 搜索、6C 整理与偏好、6D 群 Routine、6E 事件／Webhook、6F 模板／离线导出仍待实施，不能将 6A 视为全部六阶段完成。
+
+当前公开基线为 v0.3.0-beta.33。前文 beta.33 Windows 晋级失败保留为历史，不代表现有发行未发布；之后的正常验证与签名发行已完成。beta.34 起按单元继续 dev → beta → 安装包验收 → 同版本 Beta Release，标签和标题都严格等于 v<package.json version>，master 暂不晋级。
+
+
+### beta.39 隐藏验收前两轮失败（保留，尚未通过）
+
+首轮三项均在 Electron 启动前失败：fixture 的连续大写 Memory 标记触发既有 MEMORY_SENSITIVE_CONTENT 校验。只把种子改为普通带空格的私有测试句子，未修改产品敏感内容检查；精确清理三个本轮拥有的临时目录，失败日志／trace 保留。第二轮三个 Electron 均正常退出，但场景仍失败：两个 fixture 分别使用不符合已有规则的中文 MCP 连接名和 Everyone 空目标列表，现已改为合法 slug 与明确成员 ID。第三项已完成实际产品工具往返，发现 Task 产品输入在宿主注入范围之前被 normalizeProductRequest 的严格 UI schema 拒绝；Task 专用产品 schema 现允许省略宿主 session 字段，再由既有宿主校验注入，可信 UI schema 保持严格。对应规范化专项通过，新的完整构建及三项隐藏回归待验证，不把先前 INVALID_REQUEST 当作查询成功。
+
+本机持久证据为 `$CODEX_HOME/aevoren-evidence/2026-10-15/task39-hidden-first-three*` 和 `task39-hidden-second-three*`（完整日志、metadata 与 artifacts）；第二轮清理前未保存私有 Tool Journal，因此不能声称这些行仍可读取。后续 fixture 在失败时附上有界真实请求／工具回执、Runtime/Tool API 快照及自有 SQLite，避免再次丢失诊断。没有增加原 90 秒场景期限、绕过审批或放宽产品权限。

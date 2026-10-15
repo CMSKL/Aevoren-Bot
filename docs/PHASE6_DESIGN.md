@@ -1,8 +1,8 @@
 # 阶段 6 实施设计：任务线程、搜索、自动化与本地分享
 
-状态：准备稿，仅保存设计，不代表功能已实现。阶段 5 验收完成后，才从当时已验证的 dev 创建阶段 6 功能分支。
+状态：beta.39 已实现 6A 的 TASK 数据、明确授权与线程界面，并通过专项单测及静态检查；构建、隐藏界面、安装包及跨平台门禁仍待通过。6B–6F 待实施。当前使用说明见 [任务线程](TASK_THREADS.md)，验证证据见 [实施记录](IMPLEMENTATION_PLAN.md)。
 
-本文存放分支基线为 `codex/media-documents` 的 `23eec734a1608b271a0e59d350d16197799abba0`；功能盘点依据为已组装 Notion beta.35 源码 `b81174717ae16afdaf543d8cc2eed2d21f72c95c`。下文源码路径指后者，其中部分原生外发、MCP 文件尚未进入前者。实施时先整合已验收的阶段 4、5，再确认接口和迁移序号；不在准备稿中预占迁移编号，也不把旧安装包证据沿用为新功能验收。
+历史准备稿存放基线为 `codex/media-documents` 的 `23eec734a1608b271a0e59d350d16197799abba0`，功能盘点依据为 Notion beta.35 源码 `b81174717ae16afdaf543d8cc2eed2d21f72c95c`。当前 6A 源码已整合阶段 4、5，并使用迁移 45；历史安装包证据不沿用为任务线程验收。下面未标为已实施的设计仍是后续约束。
 
 阶段 5 的媒体与语音接口准备见 [MEDIA_VOICE_DESIGN.md](MEDIA_VOICE_DESIGN.md)。本稿只依赖其最终验收后的媒体所有权、版本与授权合同。
 
@@ -10,7 +10,7 @@
 
 | 范围 | 可以复用 | 尚需实现 |
 | --- | --- | --- |
-| 会话 | Session、Transcript、Runtime、会话草稿、范围版本、独立环境 | `MAIN / TASK`、线程元数据、选择性历史与授权快照、固定执行者名单 |
+| 会话 | beta.39 源码已含 `MAIN / TASK`、独立线程界面、固定成员上下文及权限快照、原 Runtime 重试 | 完成 6A 隐藏场景、构建与安装包门禁；全资源搜索后续实施 |
 | 搜索 | 当前会话资料 FTS、中文子串匹配；侧栏名称与末条消息过滤 | 跨资源结果、来源定位、分页、按调用者过滤正文 |
 | 整理与偏好 | 项目分组、置顶、隐藏、未读；Bot 形状/颜色头像 | 持久侧栏分区、默认助理、Bot 图片头像、通知类别与声音设置 |
 | 自动化 | 定时/间隔/Cron Routine、运行快照、唯一 trigger key、Runtime 回收 | 群目标、运行取消、内部事件、Webhook、持久入站去重与恢复 |
@@ -22,25 +22,25 @@
 
 | 单元 | 实施结果 | 依赖与验收门槛 |
 | --- | --- | --- |
-| 6A：TASK 数据与授权 | 可创建多个私聊/群任务；空授权默认；固定执行者与所选上下文 | 先完成迁移、宿主校验与模型工具限制，再显示创建入口；旧 MAIN 与数据不变 |
-| 6B：线程界面与搜索 | 按 sessionId 打开线程；搜索定位原消息/资料版本 | 6A；切换、重启和迟到响应不串草稿/历史；AI 查询不扩大范围 |
+| 6A：TASK 数据、授权与线程界面 | beta.39 源码已实现多个私聊/群任务、空授权默认、固定上下文、sessionId 界面与任务级停止／删除 | 专项单测／静态通过；完整构建、隐藏场景、实际包与跨平台门禁待通过 |
+| 6B：全资源搜索 | 搜索定位原消息/资料版本；复用 6A 的 sessionId 线程身份 | 待 6A 验收；AI 查询不能扩大范围 |
 | 6C：整理与个人设置 | 分区、默认助理、Bot 图片头像、通知设置 | 6B 的会话身份；图片复用阶段 5 所有权与媒体处理；不改变项目授权 |
 | 6D：群 Routine 与取消 | 固定目标与成员、运行快照、单运行停止 | 6A；复用 Runtime/RoomCoordinator；六成员并行，停止不影响其他批次 |
 | 6E：内部事件与 Webhook | 入站账本、去重、明确状态、停用与恢复 | 6D 的共同派发入口；未知结果查询原 nonce，不能自动重新派发 |
 | 6F：模板与选择性导出 | 不可变模板版本、显式导入；可独立打开的离线包 | 6A/6B 和阶段 5；导出只含选择范围，模板不携带授权或凭据 |
 
-每个单元先验证 dev，再进入 beta、安装包验收和对应 Beta Release。标签和标题严格使用 `v<package.json version>`；master 暂不晋级。准备稿不指定后续版本号。
+每个单元先验证 dev，再进入 beta、安装包验收和对应 Beta Release。标签和标题严格使用 `v<package.json version>`；master 暂不晋级。6A 候选为 beta.39，后续单元尚不预定版本号。
 
 ## 3. 6A：TASK 的数据和宿主约束
 
 ### 3.1 数据迁移
 
-- `Session.kind` 扩为 `MAIN | TASK`。当前 SQL `CHECK(kind = 'MAIN')` 必须重建；不能只修改 TypeScript。
-- 当前 `sessions_one_main_per_bot/room` 实际唯一键为 `(owner_id, kind)`，会限制每个 owner 只能有一个 TASK。替换为仅 `kind='MAIN'` 生效的条件唯一索引，TASK 不设 owner 唯一约束。
-- 线程标题、父 session 引用与排序归属放在会话元数据中，沿用 `conversation_metadata.version` 做 CAS；单独删除父线程后置空引用，不能连带删除独立任务。删除 owner Bot/Room 本身仍按其生命周期清理相关线程。`generation` 继续只表示聊天历史世代，不兼任元数据版本。
-- 增加 TASK 执行者准入记录，键为 `(session_id, executor_bot_id)`，保存版本和撤销状态。增加窄用途的 TASK 选择快照：所选历史、资料版本、Memory 正文版本、目录权限上限及读工具策略。二进制只引用阶段 5 的应用拥有媒体，不复制宿主路径。
-- 新增表/列使用实施时下一个迁移号。重建 sessions 时逐字段复制，保存所有入向外键、索引和触发器；使用现有备份、事务及 `foreign_key_check` 流程，失败必须回滚。
-- `initialize_conversation` 对所有新 session 创建元数据和范围版本，但仅 MAIN 能读取并消费 `legacy_session_scopes`。先创建 TASK 不得偷走尚未打开的 legacy MAIN 的有限资料/Memory 快照。
+- 迁移 45 已把 `Session.kind` 扩为 `MAIN | TASK` 并重建真实 SQL 约束，未只修改 TypeScript。
+- 迁移 45 已将 `sessions_one_main_per_bot/room` 替换为仅 `kind='MAIN'` 生效的条件唯一索引，TASK 不设 owner 唯一约束。
+- 实际 Task 标题、父 session 引用及 CAS 版本使用 `sessions.task_title/task_parent_id/task_version`；不把 `conversation_metadata.version` 或历史 `generation` 混作 Task 版本。单独删除父线程后置空引用，保留独立子任务；删除 owner Bot/Room 本身仍按其生命周期清理相关线程。
+- 已增加 TASK 执行者准入记录，键含 `(session_id, executor_bot_id, incarnation)`，保存版本和撤销状态。增加窄用途的 TASK 选择快照：所选历史、资料版本、Memory 正文版本、目录权限上限及读工具策略。二进制只引用阶段 5 的应用拥有媒体，不复制宿主路径。
+- 新增表／列使用迁移 45。重建 sessions 时逐字段复制并保留入向外键、索引和触发器，沿用备份、事务及 `foreign_key_check`，迁移失败回滚。
+- MAIN 与 TASK 的初始化触发器分别建立元数据和范围版本；只有 MAIN 消费 `legacy_session_scopes`，先创建 TASK 不会取走旧 MAIN 的有限资料／Memory 快照。
 
 依据：`src/shared/contracts.ts: Session`；`src/main/database.ts: MIGRATIONS / initialize_conversation / initializeMainSession / conversation_scope_versions`。
 
@@ -59,16 +59,20 @@ Memory 选择按执行者隔离；不能把某成员选中的私聊 Memory 聚�
 
 ### 3.2 创建和更新接口
 
-新增共享 `task-session-contracts/schemas/channels/product`，宿主服务接入既有产品操作服务。以下为待实现接口，不是当前可调用 API：
+beta.39 已新增共享 `task-session-contracts/schemas/channels/product`，宿主服务接入既有产品操作服务。以下八项接口已实现，完整端到端与安装包验收仍待完成；目录元信息不代表已授权：
 
 | 操作 | 必须固定的输入与结果 |
 | --- | --- |
+| `sessions.taskOptions` | 当前来源 session 的精确范围版本、可选择的执行成员和固定资源／权限选项；默认不勾选 |
 | `sessions.createTask` | `parentSessionId`、父范围版本、`clientNonce`、标题、所选执行者、所选历史与授权；返回新 Session、元数据版本、选择快照摘要 |
-| `sessions.listTasks` | owner 或父 session 条件、分页游标；AI 结果仅限本人/明确委派的线程 |
+| `sessions.listTasks` | parentSessionId 与有界 limit；AI 结果仅限当前执行者已准入的线程 |
 | `sessions.getTask` | sessionId；返回元数据、准入状态与授权摘要，不返回凭据 |
 | `sessions.updateTask` | sessionId、expectedVersion、标题等元数据变更；授权调整由单独明确的选择操作处理 |
 | `sessions.reviseTaskSelection` | expectedVersion、完整所选快照；宿主重验来源、当前授权和执行者，产生新版本 |
 | `sessions.cancelTask` | sessionId 与当前版本；只停止此线程当前任务，转调已有 Runtime/Room 批次取消 |
+| `sessions.deleteTask` | sessionId 与当前版本；要求线程空闲，删除线程并保留 Bot／群 owner |
+
+实际迁移 45 使用 `sessions.task_title/task_version` 保存 Task 标题与 CAS 版本；`generation` 仍只表示历史世代。执行者准入另含 incarnation，避免移出／重加复活旧授权。MAIN 与 TASK 分别初始化元数据，只有 MAIN 消费旧的 legacy 范围。选择修订由可信界面显式完成；旧 Runtime／重试继续读取原选择版本。
 
 同 nonce 的规范化输入和选择摘要必须一致，改变成员、正文或资源版本即冲突。AI 的当前 session/executor 从 Runtime 注入，不能伪造父范围；创建其他会话仍需真实审批。共享授权、创建记录与首条选定上下文原子提交；中途撤权或取消不留下半成品。
 
@@ -76,7 +80,7 @@ Memory 选择按执行者隔离；不能把某成员选中的私聊 Memory 聚�
 
 ### 3.3 固定成员与精确撤销
 
-`assertSessionExecutor` 当前只验证 owner Bot 或当前 Room 成员。TASK 必须同时满足：TASK 准入记录有效，并且仍为该 Room 当前成员（私聊则仍是 owner Bot）。
+beta.39 的 `assertSessionExecutor` 对 TASK 同时核验：TASK 准入记录有效，并且仍为该 Room 当前成员（私聊则仍是 owner Bot）。
 
 - 新 Bot 加入父 Room，不获得已有 TASK 的资料、Memory、环境、浏览器或结果权限。
 - 移出成员时撤销该成员在相关 TASK 的准入，递增范围版本，封闭准备中的调用，并取消精确 `(taskSessionId, botId)` 的任务。其他成员/私聊不受影响。
@@ -104,11 +108,11 @@ Memory 选择按执行者隔离；不能把某成员选中的私聊 Memory 聚�
 
 复制选择会建立独立子会话授权；父绑定后续变化不成为子会话的动态授权来源。全局删除/停用、连接撤销及子会话自身撤权仍按现有实时规则生效。Bot 角色/模型配置可以继续共享，但每个 Runtime 仍固定实际 profile/model 版本；角色或目录中声明的工具不是授权。
 
-## 4. 6B：线程选择与全资源搜索
+## 4. 已纳入 6A 的线程选择与待实施 6B 搜索
 
 ### 4.1 界面按 sessionId 选择
 
-当前 `Sidebar.tsx` 的 `ConversationKey = bot:* | room:*` 与 `summaryByKey` 会合并同 owner 多个会话；`App.tsx: openBot/openRoom` 总是取 MAIN，记忆选择也保存 owner ID。新增统一 `openSession(sessionId)` 与 `session:*` 聊天身份；联系人入口仍打开 MAIN。
+beta.39 已把 Task 侧栏身份与 owner 的 MAIN 行分开；Task 使用 `session:*`，读取精确 Task Session 的 Runtime／Room 快照。Bot／群联系人入口继续打开 MAIN，Task 摘要不会覆盖 owner 行的未读、置顶或隐藏元数据。此项界面实现已纳入 6A，其隐藏交互门禁仍待完成。
 
 草稿、未读、隐藏、置顶、打开中的资源/审批、取消和历史加载均以 sessionId 为键。迟到异步响应须同时核对 sessionId 与打开请求代次。Room TASK 快照/发送接口接收并校验实际 sessionId，不能转回 Room MAIN。原 Bot/Room 菜单继续保持联系人管理语义，线程删除与删除联系人分开。
 
