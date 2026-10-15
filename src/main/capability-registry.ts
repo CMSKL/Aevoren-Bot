@@ -17,6 +17,8 @@ import type { AppRepository } from "./database";
 import type { ProviderService } from "./provider-service";
 import type { McpService } from "./mcp-service";
 import { SKILL_SCRIPT_WORKER_VERSION } from "@shared/skill-execution-contracts";
+import type { TaskSessionPolicy } from "./task-session-repository";
+import { AevorenBotError } from "./errors";
 
 export type CapabilityAppEnvironment = CapabilityPromptSnapshot["app"];
 
@@ -380,6 +382,39 @@ function mcpConnection(server: McpServerInfo): CapabilityConnection {
   };
 }
 
+const forbiddenTaskProducts = new Set(["messages.send", "roomRuntime.send", "bots.create", "bots.duplicate", "teams.createContentTeam", "rooms.create", "approvals.resolve"]);
+
+function taskCapability(capability: CapabilityDescriptor, policy: TaskSessionPolicy): CapabilityDescriptor {
+  const selected = policy.selection;
+  const operations = selected.productOperations.filter(name => !forbiddenTaskProducts.has(name));
+  const denied = (): CapabilityDescriptor => ({ ...capability, availability: "unavailable", permissionState: "not-granted", toolNames: [], reason: "当前任务未选择此能力所需的权限或产品动作。" });
+  if (capability.id === "product.operations") return { ...capability,
+    description: operations.length ? `本任务只可按现有审批执行以下明确选择的产品动作：${operations.join("、")}。` : "本任务未选择可执行的产品动作；查询目录不会增加授权。",
+    reason: operations.length ? `仅限本任务明确选择的 ${operations.length} 个产品动作；实际列表请查询 product_catalog。` : "当前任务的可执行产品动作目录为空。",
+    toolNames: capability.toolNames.filter(name => name === "product_catalog" || operations.length > 0),
+  };
+  if (capability.id === "project.provisioning") return denied();
+  if (["network.search", "network.realtime-data"].includes(capability.id) && !selected.network) return denied();
+  if (capability.id === "device.clipboard" && !selected.clipboard) return denied();
+  if (capability.id === "memory.manual") return policy.memories.length || operations.some(name => name.startsWith("memories."))
+    ? { ...capability, description: `本任务仅使用 ${policy.memories.length} 条明确选择的固定记忆；不动态继承 user、Bot 或 Workspace 记忆。` }
+    : denied();
+  const groups: Record<string, string[]> = {
+    "media.documents": ["media."], "media.audio-video": ["media."], "media.tool-images": ["media.read", "media.preview"],
+    "library.documents": ["library."], "skills.text": ["library.", "skills.load"], "skills.scripts": ["skills.runScript"],
+    "voice.transcription": ["voice.transcribe"], "voice.speech": ["voice.speak"], "voice.realtime": ["voice.realtime."],
+    "mcp.scoped-tools": ["mcp."], "apps.read": ["connectors.", "drafts."], "apps.write": ["outbound."],
+    "environment.execution": ["environments.", "execution.", "processes."], "computer.control": ["browser.", "computer.", "preview."],
+    "skills.demonstrations": ["demonstrations."], "browser.tool-images": ["browser.observe", "computer.screenshot"],
+    "automation.scheduler": ["routines."],
+  };
+  const prefixes = groups[capability.id];
+  if (!prefixes) return capability;
+  const permitted = operations.filter(name => prefixes.some(prefix => prefix.endsWith(".") ? name.startsWith(prefix) : name === prefix));
+  if (!permitted.length) return denied();
+  return { ...capability, description: `本任务明确选择的相关产品动作：${permitted.join("、")}。实际调用仍校验当前状态、授权与审批。` };
+}
+
 export class CapabilityRegistry {
   constructor(
     private readonly repository: AppRepository,
@@ -392,17 +427,20 @@ export class CapabilityRegistry {
   ) {}
 
   async getSnapshot(input: { botId?: string; sessionId?: string } = {}): Promise<CapabilitySnapshot> {
+    const session = input.sessionId ? this.repository.getSession(input.sessionId) : null;
+    const botId = input.botId ?? (session?.kind === "TASK" ? session.botId ?? undefined : undefined);
+    if (session?.kind === "TASK" && !botId) throw new AevorenBotError("INVALID_REQUEST");
     const providerList = await this.providers.list();
-    const selection = input.botId
-      ? this.repository.getBot(input.botId).modelSelection
+    const selection = botId
+      ? this.repository.getBot(botId).modelSelection
       : this.repository.getDefaultModelSelection();
     const provider = providerList.find((candidate) => candidate.id === selection.providerInstanceId) ?? null;
-    return this.build(selection, provider, providerList, this.mcp?.list() ?? [], Boolean(input.sessionId && this.repository.getSession(input.sessionId).roomId), input.botId, input.sessionId);
+    return this.build(selection, provider, providerList, this.mcp?.list() ?? [], Boolean(session?.roomId), botId, input.sessionId);
   }
 
-  forPrompt(botId: string, selection: ModelSelection, room: boolean, sessionId?: string): CapabilityPromptSnapshot {
+  forPrompt(botId: string, selection: ModelSelection, room: boolean, sessionId?: string, runtimeRunId?: string): CapabilityPromptSnapshot {
     this.repository.getBot(botId);
-    const snapshot = this.build(selection, this.providers.getCached(selection.providerInstanceId), [], this.mcp?.list() ?? [], room, botId, sessionId);
+    const snapshot = this.build(selection, this.providers.getCached(selection.providerInstanceId), [], this.mcp?.list() ?? [], room, botId, sessionId, runtimeRunId);
     return {
       schemaVersion: snapshot.schemaVersion,
       generatedAt: snapshot.generatedAt,
@@ -423,8 +461,14 @@ export class CapabilityRegistry {
     room: boolean,
     botId?: string,
     sessionId?: string,
+    runtimeRunId?: string,
   ): CapabilitySnapshot {
-    const workspaces = botId
+    const taskPolicy = botId && sessionId ? runtimeRunId ? this.repository.tasks.runtimeTaskPolicy(runtimeRunId) : this.repository.tasks.taskSessionPolicy(sessionId, botId) : null;
+    if (taskPolicy && (taskPolicy.sessionId !== sessionId || taskPolicy.executorBotId !== botId)) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+    const workspaces = taskPolicy ? taskPolicy.selection.workspaces.filter(item => item.read).flatMap(limit => {
+      try { const workspace = this.repository.getWorkspace(limit.id); return [{ ...workspace, writeEnabled: workspace.writeEnabled && limit.write, automationEnabled: workspace.automationEnabled && limit.automation }]; }
+      catch { return []; }
+    }) : botId
       ? this.repository.listSessionWorkspaces(sessionId ?? this.repository.getMainSession(botId).id, botId)
       : this.repository.listWorkspaces();
     const providerCapabilities: ProviderCapabilities | null = (() => {
@@ -434,13 +478,14 @@ export class CapabilityRegistry {
         return null;
       }
     })();
-    const mcpTools = this.mcp?.availableTools(botId) ?? [];
+    const mcpTools = (this.mcp?.availableTools(botId) ?? []).filter(tool => !taskPolicy || taskPolicy.selection.mcp.some(item => item.serverId === tool.serverId && item.toolNames.includes(tool.name)));
     const mcpScopedReady = Boolean(botId && sessionId && this.repository.mcpWrites.grants({ sessionId, executorBotId: botId }).some(grant => {
       if (grant.revokedAt) return false;
+      if (taskPolicy && !taskPolicy.selection.mcp.some(item => item.serverId === grant.serverId && item.toolNames.includes(grant.toolName))) return false;
       try { const server = this.repository.getMcpServerConfig(grant.serverId); return server.enabled && server.version === grant.serverVersion &&
         this.mcp?.scopedCredentialDigest?.(server.id) === this.repository.mcpWrites.credentialForGrant(grant.id); } catch { return false; }
     }));
-    const routines = this.routineList();
+    const routines = taskPolicy ? [] : this.routineList();
     const voiceConfigurations = this.voiceConfigurations();
     const voiceReady = (kind: "stt" | "tts" | "realtime"): boolean => voiceConfigurations.some(item => item.kind === kind && item.enabled && item.keyConfigured);
     const environment = botId && sessionId ? this.repository.environments.get({ sessionId, executorBotId: botId }) : null;
@@ -456,7 +501,7 @@ export class CapabilityRegistry {
       catch { return false; }
     }));
     const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, voiceSttReady: voiceReady("stt"), voiceTtsReady: voiceReady("tts"), voiceRealtimeReady: voiceReady("realtime"), room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
-      browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map((capability) => {
+      browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map(original => taskPolicy ? taskCapability(original, taskPolicy) : original).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));
       return toolNames.length > 0 ? { ...capability, toolNames } : {
@@ -495,7 +540,7 @@ export class CapabilityRegistry {
       availableTools: [...new Set(capabilities.flatMap((capability) => capability.toolNames))],
       capabilities,
       permissions,
-      connections: [...providerList.map(connection), ...mcpServers.map(mcpConnection)],
+      connections: [...providerList.filter(item => !taskPolicy || item.id === selection.providerInstanceId).map(connection), ...mcpServers.filter(server => !taskPolicy || taskPolicy.selection.mcp.some(item => item.serverId === server.id)).map(mcpConnection)],
       workspaceCount: workspaces.length,
       backgroundMode: routines.some((routine) => routine.enabled) ? "background-while-routines-enabled" : "foreground-only",
     };
