@@ -1,0 +1,33 @@
+.connector-panel { min-width: 0; padding: 16px 0; color: var(--text); }
+.connector-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.connector-heading h3, .connector-section h3, .connector-section h4 { margin: 0; font-size: 16px; font-weight: 500; }
+.connector-heading > span, .connector-note { color: var(--text-muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.connector-note { margin: 10px 0; }
+.connector-error { color: var(--danger); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.connector-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.connector-panel :is(.primary-button, .secondary-button) { min-height: 34px; padding: 6px 12px; font-size: 13px; }
+.connector-panel .text-button { font-size: 12px; }
+.connector-panel .field { margin: 12px 0; }
+.connector-panel .field :is(input, select, textarea) { width: 100%; min-width: 0; }
+.connector-panel textarea { min-height: 160px; resize: vertical; line-height: 1.7; }
+.connector-panel button:disabled { cursor: default; opacity: .55; }
+.connector-panel .danger { color: var(--danger); }
+.connector-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.connector-connections, .connector-results, .connector-draft-list { display: grid; gap: 10px; margin: 12px 0; }
+.connector-card, .connector-confirm { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-bg); }
+.connector-confirm { border-color: var(--border-strong); background: var(--surface-soft); }
+.connector-confirm p { margin: 0; font-size: 13px; line-height: 1.7; }
+.connector-panel details { color: var(--text-muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.connector-result { width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel-bg); text-align: left; overflow-wrap: anywhere; }
+.connector-result.selected { border-color: var(--accent); }
+.connector-result > small { display: block; margin-top: 5px; color: var(--text-muted); }
+.connector-read { padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); }
+.connector-read h4 { margin: 0 0 10px; font-size: 14px; overflow-wrap: anywhere; }
+.connector-read pre { max-height: 380px; overflow: auto; margin: 12px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: 13px; line-height: 1.7; }
+.connector-read dl { display: grid; grid-template-columns: minmax(70px, auto) minmax(0, 1fr); gap: 6px 12px; font-size: 12px; }
+.connector-read dd { margin: 0; overflow-wrap: anywhere; }
+.connector-file-selection { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; font-size: 12px; overflow-wrap: anywhere; }
+.connector-file-selection input { flex: 0 0 auto; }
+.contact-detail .contact-profile-tabs { overflow-x: auto; }
+.contact-detail .contact-profile-tabs > button { flex: 0 0 auto; }
+.inspector > .library-tabs { flex: 0 0 auto; }

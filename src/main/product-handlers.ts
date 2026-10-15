@@ -78,9 +78,10 @@ import type { LibraryChangedEvent, LibraryExportResult, LibraryResourceKind } fr
 import { addEnvironmentProductHandlers, type EnvironmentProductDependencies } from "./environment-product-handlers";
 import { addBrowserProductHandlers, type BrowserProductDependencies } from "./browser-product-handlers";
 import { addSkillExecutionProductHandlers, type SkillExecutionProductDependencies } from "./skill-execution-product-handlers";
+import { addNativeConnectorProductHandlers, type NativeConnectorProductDependencies } from "./native-connector-product-handlers";
 import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 
-export type ProductDependencies = EnvironmentProductDependencies & BrowserProductDependencies & SkillExecutionProductDependencies & {
+export type ProductDependencies = EnvironmentProductDependencies & BrowserProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
   pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
@@ -137,6 +138,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   addEnvironmentProductHandlers(handlers, dependencies, commit, libraryContext);
   addBrowserProductHandlers(handlers, dependencies, commit, libraryContext);
   addSkillExecutionProductHandlers(handlers, dependencies, commit, libraryContext);
+  addNativeConnectorProductHandlers(handlers, dependencies, commit, libraryContext);
   const handle = (channel: string, operation: (input?: unknown) => unknown): void => { handlers.set(channel, operation); };
   handle(IPC.roomRuntimeCancelMember, (input: unknown) => {
     const runId = runIdSchema.parse(input);

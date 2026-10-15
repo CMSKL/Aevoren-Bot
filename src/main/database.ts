@@ -94,6 +94,7 @@ import { approvalReviewInputSchema, approvalReviewSnapshotSchema } from "@shared
 import { resourceReferencesSchema } from "@shared/library-schemas";
 import type { ResourceReference } from "@shared/library-contracts";
 import { containsLikelySecret } from "./memory-safety";
+import { NativeConnectorRepository, NATIVE_CONNECTOR_MIGRATION } from "./native-connector-repository";
 
 const ACTIVE_RUNTIME_STATES: readonly RuntimeState[] = [
   "created",
@@ -2070,6 +2071,7 @@ export const MIGRATIONS = [
   ENVIRONMENT_MIGRATION,
   BROWSER_MIGRATION,
   SKILL_EXECUTION_MIGRATION,
+  NATIVE_CONNECTOR_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3241,6 +3243,7 @@ export class AppRepository {
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
   readonly skillExecutions: SkillExecutionRepository;
+  readonly connectors: NativeConnectorRepository;
 
   constructor(private readonly filename: string, private readonly options: AppRepositoryOptions = {}) {
     this.database = new DatabaseSync(filename);
@@ -3256,6 +3259,7 @@ export class AppRepository {
       });
       this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.browsers = new BrowserRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.connectors = new NativeConnectorRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.skillExecutions = new SkillExecutionRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId),
         (scope, reference) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId)[0]!);
     } catch (error) {
