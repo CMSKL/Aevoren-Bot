@@ -201,3 +201,5 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 最终完整普通测试记录为 1,540 通过、45 跳过、6 失败：五项原有 5 秒超时（CDP 1 MiB、群聊 20 轮、FIFO 20 轮、工具混合指令循环、诊断参数循环），一项 lead-room 在轮询期限内仍为 running。对应未修改的六个文件单 Worker 复核 128／128 通过，未提高超时或减少断言；保留完整失败证据，远端完整 CI 仍须独立通过，不能把分次复核改记为一次完整全绿。
 
 真实 Linux Docker 集成测试已加入现有浏览器套件，走实际 x11vnc 的 RFB 握手、页面点击、文字／剪贴板脱敏、断线封存、容器重启、旧 epoch 拒绝和归还后重新观察。该测试将在 Linux CI 的真实容器门禁执行；本机 Docker daemon 未启动，本机结果为跳过，不算真实 Docker 已验收。示范单元不代表阶段 4 全部完成，可写 MCP／交互 Apps 以及阶段 5–6 仍待交付。
+
+后续原生 Linux [CI 38666108922](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38666108922/job/116198324472) 在 12288fd 通过完整 Validate：普通 1,547 通过、45 跳过；真实 Docker／Host 7 文件 41／41 通过。新增实际桌面 RFB 示范用例 3.239 秒通过，包含输入脱敏、断线／重启封存和归还后观察边界。该证据来自 Linux 容器，不改变本机 daemon 未启动和真实 Windows Docker 未验证的记录。
