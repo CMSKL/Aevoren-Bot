@@ -4,7 +4,7 @@
 
 [Beta PR #39](https://github.com/CMSKL/Aevoren-Bot/pull/39) 的八项检查在 dev `4f24f153` 全部通过后，正常合入 beta `7989bf6d2bd42efa0525dee84377bbcf3b1ab860`。实际合并树 `80479d1062a51b3f63ad85ebdff73b6c40d024a5` 与已测试 PR 合并树逐字节相同；同名不可变标签指向该 beta 提交。[macOS 签名工作流 38684641775](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38684641775) 成功并公开 [v0.3.0-beta.31](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.31)，标签／标题严格一致，包含签名、公证 DMG／ZIP、两个 blockmap、Beta 更新清单、SHA256 和 SBOM，共七项资产。小型清单下载及 GitHub 资产摘要复核通过；完整产物的下载校验由发行工作流完成。
 
-该发行提供脚本 Skill、Gmail／Drive／Notion 原生读取及本地草稿，包含主页面正常关闭与脚本快照发布修复；不包括后续原生外发、示范录制、可写 MCP／Apps、Notion 页面更新或阶段 5–6。Windows 签名工作流因当前配置跳过，没有公开签名 Windows 包。master 未晋级。合并后另一轮 Windows 源码检查出现 Skill 加载工具往返的五秒等待失败，正在定位；保留该失败与此前同树八项成功证据，旧标签和发行不移动。
+该发行提供脚本 Skill、Gmail／Drive／Notion 原生读取及本地草稿，包含主页面正常关闭与脚本快照发布修复；不包括后续原生外发、示范录制、可写 MCP／Apps、Notion 页面更新或阶段 5–6。发行校验中普通测试 1,488 通过／44 跳过，源码界面 128 通过／33 跳过，真实签名包资料／原生读取 10 项及关闭 8 项全部通过。Windows 签名工作流因当前配置跳过，没有公开签名 Windows 包。master 未晋级。旧 PR #18（beta → master）自动触发的 Windows 源码检查出现 Skill 工具往返的五秒捕获等待失败；该轮不是 PR #39 或直接 beta 分支检查。保留失败及此前同树八项成功证据，PR #18 按用户要求暂不推进，旧标签和发行不移动。
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
