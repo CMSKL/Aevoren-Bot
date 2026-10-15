@@ -91,7 +91,10 @@ describe("Conversation repository", () => {
     const reopened = repository(filename);
     expect(reopened.listConversations()).toEqual(expected);
     const inspected = new DatabaseSync(filename, { readOnly: true });
-    expect(inspected.prepare("SELECT * FROM bots").all()).toEqual(identities);
+    expect(inspected.prepare("SELECT * FROM bots").all().map(({ avatar_image_json, ...row }) => {
+      expect(avatar_image_json).toBeNull();
+      return row;
+    })).toEqual(identities);
     expect(inspected.prepare("SELECT * FROM transcript_entries ORDER BY id").all().map(({ origin_json, resource_references_json, media_references_json, ...row }) => {
       expect(origin_json).toBeNull();
       expect(resource_references_json).toBe("[]");
