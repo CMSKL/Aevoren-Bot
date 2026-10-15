@@ -33,3 +33,6 @@ Speech input is limited to 8,000 characters, transcript output to 100,000 charac
 macOS packaging retains the microphone usage description and declares audio-input permission for the App and Helpers. An unsigned package check proves its declaration; the signed release gate separately checks actual App/Renderer Helper entitlements. Permission declarations alone do not prove a physical microphone works.
 
 Current controlled acceptance uses local HTTP, deterministic WAV and generated WebM, fixture microphone tracks and fixture playback devices. Actual cloud accounts, physical microphone/output devices and final cross-platform/signed packages remain separate gates. Evidence and failures are recorded in the [implementation plan](IMPLEMENTATION_PLAN.md); the underlying import/authorization model is documented in [Media](MEDIA.md).
+
+
+实时语音开发候选 beta.38 的操作与支持边界见 [实时语音](REALTIME_VOICE.md)。该候选尚未通过完整发布验收，不把 beta.37 配置保存能力称为实时通话。

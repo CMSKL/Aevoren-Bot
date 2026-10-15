@@ -29,6 +29,7 @@ module.exports = {
     { from: "docs/MCP_APPS.md", to: "docs/MCP_APPS.md" },
     { from: "docs/MEDIA.md", to: "docs/MEDIA.md" },
     { from: "docs/VOICE.md", to: "docs/VOICE.md" },
+    { from: "docs/REALTIME_VOICE.md", to: "docs/REALTIME_VOICE.md" },
     { from: "NOTICE", to: "NOTICE" },
     { from: "out/worker", to: "environment-worker" },
     { from: "out/browser-worker", to: "browser-worker" },

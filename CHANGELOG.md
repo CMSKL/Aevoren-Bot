@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.0-beta.38 (development candidate)
+
+- Add user-initiated, manually committed Realtime voice turns with host-owned credentials, final human transcript provenance, ordinary Runtime delegation and independent speech/task stop controls.
+- Add persistent turn/call journals, fixed resource and member admissions, actual rendered-sample interrupt acknowledgements and fail-closed disconnect/recovery.
+- Local controlled integration and cross-platform/package acceptance are pending. Physical devices and a live cloud account remain unverified.
+
 ## v0.3.0-beta.37 (development candidate)
 
 - Add separate encrypted STT/TTS/Realtime settings, completed-file streaming transcription and actual PCM-to-WAV speech, durable non-replaying task intents and scoped cancellation/recovery. Realtime configuration is saved; connection support follows separately.

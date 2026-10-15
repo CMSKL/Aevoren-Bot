@@ -96,7 +96,7 @@ AI 操作与界面共用宿主校验和权限规则。创建 Bot 或群聊支持
 
 文本 Skill 可创建、导入并按需加载到明确授权的会话。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用。Bash、Python、Node 脚本先授权固定版本、入口和环境镜像，再确认每次运行参数，见[脚本 Skill](docs/SCRIPT_SKILLS.md)。明确开始的[人类示范](docs/SKILL_DEMONSTRATIONS.md)产生可审阅草稿，发布审阅固定保存版本并创建停用 Skill，不授予执行权限。
 
-[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权与固定草稿审批，Notion 仅改标题和末尾追加保留已有正文。[MCP 工具与 Apps](docs/MCP_APPS.md)共用同一授权审批层，并明确区分服务器回执与外部实际效果。阶段 4 组合候选的四项 CI 门禁已通过，含源码及真实 macOS／Windows 安装包；阶段 5.1 [媒体与文档](docs/MEDIA.md)已有本地源码／安装包证据；阶段 5.2 [语音与音视频](docs/VOICE.md)正在安装包与跨平台验收，实时连接和阶段 6 待实施。公开安装包和真实第三方账号另行验证。受限界面动作操作 Aevoren 自身界面。
+[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权与固定草稿审批，Notion 仅改标题和末尾追加保留已有正文。[MCP 工具与 Apps](docs/MCP_APPS.md)共用同一授权审批层，并明确区分服务器回执与外部实际效果。阶段 4 组合候选的四项 CI 门禁已通过，含源码及真实 macOS／Windows 安装包；阶段 5.1 [媒体与文档](docs/MEDIA.md)已有本地源码／安装包证据；阶段 5.2 [语音与音视频](docs/VOICE.md)正在安装包与跨平台验收，阶段 5.3 [实时语音](docs/REALTIME_VOICE.md)正在实施及受控传输／界面验收，阶段 6 待实施。公开安装包和真实第三方账号另行验证。受限界面动作操作 Aevoren 自身界面。
 
 ## 资料库与文本 Skill
 
