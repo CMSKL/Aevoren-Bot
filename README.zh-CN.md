@@ -14,9 +14,9 @@ Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联�
 
 > **源码版本：v0.3.0-beta.34（开发候选）。** 当前源码新增按会话授权的 MCP 工具审批与隔离交互 Apps，并保留示范 Skill 草稿及原生应用固定外发审批。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
-[v0.3.0-beta.29](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.29) 已公开发布签名 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输和登记服务预览。脚本 Skill 与原生应用连接作为后续单元验收。真实 Windows Docker、真实第三方账号仍未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
+[v0.3.0-beta.31](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.31) 已公开发布签名 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输、登记服务预览、脚本 Skill、Gmail／Drive／Notion 原生读取及本地草稿。原生外发从 beta.32 加入；示范草稿与按会话授权的可写 MCP／Apps 属于当前 beta.34 源码候选，不包含在已发布 beta.31 安装包内。真实 Windows Docker、真实第三方账号仍未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
 
-最新 beta.34 未签名 macOS 候选包已完成 28 项真实安装包检查，包含内嵌页面后的保存／关闭和 typed API。跨平台检查及签名发行仍待完成，完整失败、修正与验收边界保留在实施记录中。
+此前 beta.34 未签名 macOS 候选包完成 28 项真实安装包检查，包含内嵌页面后的保存／关闭和 typed API。此次 Native32 基线集成只改变浏览器 Worker 的脱敏诊断，新增验收单独记录。跨平台检查及签名发行仍待完成，完整失败、修正与验收边界保留在实施记录中。
 
 > **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 
@@ -94,7 +94,9 @@ Fake Provider 是确定性的，不需要账号或 API Key。源码构建、数�
 
 AI 操作与界面共用宿主校验和权限规则。创建 Bot 或群聊支持补充角色等多轮澄清，实际创建仍需要真实用户审批。工具回执区分实际执行与等待状态，模型文字本身不能证明操作成功。
 
-现在可创建、导入、发现并按需加载已授权文本 Skill。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用。Bash、Python、Node 脚本先授权固定版本、入口和环境镜像，再确认每次运行的参数，见[脚本 Skill](docs/SCRIPT_SKILLS.md)。当前开发候选新增[原生应用连接](docs/NATIVE_CONNECTORS.md)，可按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。外发／第三方写入、示范草稿与语音继续分交付实施；二进制预览及真实账号授权不能由受控测试证明。受限界面动作操作 Aevoren 自身界面。
+文本 Skill 可创建、导入并按需加载到已授权会话。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用。Bash、Python、Node 脚本先授权固定版本、入口和环境镜像，再确认每次运行参数，见[脚本 Skill](docs/SCRIPT_SKILLS.md)。明确开始的[人类示范](docs/SKILL_DEMONSTRATIONS.md)产生可审阅草稿，发布审阅保存的正文并创建停用 Skill，不授予脚本权限或自动执行。
+
+[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[原生外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权及固定版本审批；当前候选支持 Notion 页面创建，不包含后续标题更新／追加单元。[MCP 工具与 Apps](docs/MCP_APPS.md)共用宿主审批和取消链，未知写入不会自动重放。受控测试不能证明真实账号授权或外部效果；媒体／语音与阶段 6 扩展仍待实施。受限界面动作操作 Aevoren 自身界面。
 
 ## 资料库与文本 Skill
 
@@ -151,7 +153,7 @@ Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac
 
 应用数据存储在 Electron 的 user-data 目录。Aevoren Bot 会在 SQLite 中保存 Bot、Room、Transcript、显式 Memory、设置、Tool Journal 元数据和 Routine 历史；密钥值通过 `safeStorage` 单独存储。
 
-资料与 Skill 的正文、版本和会话绑定保存在 SQLite；导入的辅助文件由应用内容寻址存储保存并核对摘要。开发环境／任务／浏览器元数据也在 SQLite 中，工作目录、Worker 状态与独立浏览器 profile 位于各自命名 Docker 卷；截图和下载由应用存储并核对摘要。模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远端主机控制、宿主 Shell／GUI 控制、未经审核的自动 Memory 写入或可写 MCP 工具。宿主 Workspace 写入只允许在明确开启的根目录中新建 UTF-8 Markdown/CSV；经过批准的 Docker 命令可以修改隔离工作目录或访问外部服务，其副作用不能自动撤销。
+资料与 Skill 的正文、版本和会话绑定保存在 SQLite；导入的辅助文件由应用内容寻址存储保存并核对摘要。开发环境／任务／浏览器元数据也在 SQLite 中，工作目录、Worker 状态与独立浏览器 profile 位于各自命名 Docker 卷；截图和下载由应用存储并核对摘要。模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远端主机控制、宿主 Shell／GUI 控制或未经审核的自动 Memory 写入。beta.34 源码候选支持明确授权的可写 MCP 工具与隔离 Apps；连接配置和工具元信息不能代替会话／Bot 授权及固定操作审批。宿主 Workspace 写入只允许在明确开启的根目录中新建 UTF-8 Markdown/CSV；经过批准的 Docker 命令可以修改隔离工作目录或访问外部服务，其副作用不能自动撤销。
 
 ## 文档、贡献和支持
 
