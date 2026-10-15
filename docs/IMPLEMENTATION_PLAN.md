@@ -390,3 +390,18 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 - Node24 完整普通测试 1,669 通过／45 跳过；隐藏语音 4、typed API 1、A/V 与原媒体 5 通过；独立解码 3 和有界权限／存储／SSE／WAV 等专项证据分别保留。UI 与音频设备是受控测试，不证明真实硬件或云账号。
 - 宿主语音 nonce 对规范化后的实际 scope／参数生成。旧代码可由省略／显式当前 session 重复未知云请求的确定性负例已复现，修复后共用一个实际请求与任务 ID。密钥与原始音频不进入模型工具回执。
 - 补齐 macOS 麦克风声明、App／Helper 音频权限及有区分的未签名／实际签名校验；三个校验器正反例通过。真实 beta.37 安装包、跨平台、签名和账号／设备仍待完成。
+
+
+### 5.2 布局修复后的冻结 Mac 包（源码全量复验待完成）
+
+代码基线 `020cee458e2bba0c90767ca5c1fbe3b01f1861bf`，工具链为 Node `24.19.0` / pnpm `11.19.0`。串行普通测试 **1,670 通过 / 45 跳过**（111.71 秒）；后续 Renderer 修正通过完整 lint、五个 TypeScript 目标及一次完整构建，再直接打包同一冻结输出，未重复构建。源码专项 **6/6** 通过，包括原有明暗参考图、200% 缩放键盘操作、关闭控件释放录音/播放、草稿冲突及显式 `@所有人` 的六请求并行与朗读顺序。两项包校验器的 10 个正反例、39 份文档链接、依赖许可检查（240 包 / 11 组）、未变化的 243 项 npm notices 与 250 项 SBOM 组件检查分别保留。
+
+真实未签名 macOS arm64 `0.3.0-beta.37` 应用包完成 **38 项功能/正常关闭 + 1 项 typed API = 39 项不同场景**，全部通过。八项正常关闭均保留，强制进程清理和目录清理警告均为 **0**。这些场景实际断言打包身份和版本；不将源码启动计为包验收。Main、Preload、14 个 Renderer 文件、两套 Worker 的八个文件、九份随包指南及 notices 与冻结构建/源码逐字节一致；VOICE 指南 SHA-256 为 `10ed6461ce8cf8a9a9bd64b910b186dca982fe35413cd734558f5db4c72f0332`。
+
+包内解析器扫描通过：清单资产 **207**、Resources 文件 **230**、ASAR 文件 **9,555**。实际麦克风包校验确认用途声明及四个 Helper；`signedEntitlementsVerified=false`、`physicalMicrophoneVerified=false`，未将声明当成签名权限或硬件证明。`.gitattributes` 仅对 `resources/media-parser-fonts/**` 设定 `-text`；以 `core.autocrlf=true` 的独立 checkout 复核六个文件均与原始字节相同，LICENSE SHA-256 为 `93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b`。未改变字体、许可或固定摘要的验证规则。
+
+冻结 Main SHA-256：`63b26b2c31d4a613113d5ceab5cc3183c2936cb8d0abe7c77ee70b16bd8eca84`；ASAR：`acdff8bfbae6d6c675996c8577a069ef90fc557c2c07584956d1ce8ca1716c8d`；parser manifest：`657468e6f843090b3d5bd7a9b55a92f286bce6397e283a921d52e679cb1042cd`。完整资产、指南摘要与待验状态记录于本机 `/tmp/aevoren-voice37-final-acceptance-artifact.json`；包场景日志为 `/tmp/aevoren-voice37-final2-actual-package39.log`，源码专项日志为 `/tmp/aevoren-voice37-final-quiet-target-source6.log`。它们是临时本机证据，不是仓库附件。
+
+历史失败继续保留：旧包首轮 37/38 的视频首帧红色通道为 0；两次诊断未重现，测试现等待真实 presented frame 后仍检查原 RGB 阈值与暂停状态，未宣称确定了唯一原因。旧完整源码轮次 **156 通过 / 32 跳过 / 2 失败**，分别为遗漏“语音”分类的旧键盘顺序和真实布局回归：默认语音面板将 composer 增高至 337px、transcript 缩至 407px。产品现以紧凑入口和有界浮层承载控件；原参考图可见性断言未修改。中间浮层修正还发现外部点击焦点与提及选择交互问题，已修正并用明确的提及 chip、everyone 路由、六请求及朗读顺序验证；未提高断言时限。原 trace、布局截图/矩形及旧包摘要独立留在 `/tmp/aevoren-voice37-package-initial-av-pixel-failure`、`/tmp/aevoren-voice37-source-initial-settings-tab-failure`、`/tmp/aevoren-voice37-source-initial-ui-reference-failure`、`/tmp/aevoren-voice37-post-layout-target6-failures` 和 `/tmp/aevoren-voice37-pre-layout-package-hashes.json`。
+
+**最终冻结输出的完整 190 项隐藏源码回归仍待独立执行**，不能将上述专项或旧轮次合计成全量通过。Windows、实际签名权限、真实麦克风/输出设备和云账号仍待相应验收；此记录不代表阶段 5.3、阶段 6 或整个计划完成。
