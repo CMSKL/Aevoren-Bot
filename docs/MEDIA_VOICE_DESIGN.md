@@ -39,7 +39,7 @@
 
 | 包 | 版本 | 许可与用途 |
 | --- | --- | --- |
-| [pdfjs-dist](https://registry.npmjs.org/pdfjs-dist/6.4.299) | 6.4.299 | Apache-2.0；PDF 文本、受限页渲染；Node ≥22.13 或 ≥24 |
+| [pdfjs-dist](https://registry.npmjs.org/pdfjs-dist/6.4.299) | 6.4.299 | 主代码 Apache-2.0；内嵌资产分别核验，不能据此批准整包字体；Node ≥22.13 或 ≥24 |
 | [mammoth](https://registry.npmjs.org/mammoth/1.13.0) | 1.13.0 | BSD-2-Clause；浏览器 `extractRawText({ arrayBuffer })` |
 | [@zip.js/zip.js](https://registry.npmjs.org/@zip.js%2fzip.js/2.23.0) | 2.23.0 | BSD-3-Clause；有界 ZIP 检查与规范化 |
 
@@ -47,23 +47,53 @@
 - 采用独立 `media-parser.vite.config.ts`；构建 HTML/资产，再以单入口、内联依赖的 CJS 构建窄 `preload.cjs`。不把主 Preload 改为会产生共享 require chunk 的多入口。
 - 窄 Preload 只导入纯 channel 常量和类型，不导入 Zod/业务运行时；Main 验证 exact sender、mainFrame、预期页面 URL、job nonce、资源摘要和有界结果。
 - 开发也使用本地构建的解析页，不允许整个 Vite origin、`/@fs`、任意 `file://` 或第三方 URL；开发命令先构建 parser。
-- 参照现有 Worker 输出 `out/media-parser`，从 ASAR 的 `out/**/*` 中排除并整体作为 `media-parser` extraResource；不改现有执行/浏览器 Worker，不在签名后生成文件。
-- manifest 确定性记录应用/parser/PDF.js 版本及入口、相对路径、MIME、大小、SHA-256；将 Main 专用 Preload 与可供页面读取的资产分开，不公开 manifest/Preload。
+- 参照现有 Worker 输出 `out/media-parser`，从 ASAR 的 `out/**/*` 中排除并整体作为 `media-parser` extraResource；不改现有执行/浏览器 Worker，不在签名后生成文件。三个解析包保留精确生产依赖以进入许可证清单，浏览器代码全部内联；electron-builder 还会单独收集生产依赖，因此 `files` 必须同时排除 `!out/media-parser/**/*`、`!**/node_modules/pdfjs-dist/**/*`、`!**/node_modules/mammoth/**/*` 和 `!**/node_modules/@zip.js/zip.js/**/*`，防止原始 PDF.js 字体及重复包被自动带回。已核对本项目 app-builder-lib 26.15.3 的 Node module 负模式过滤；实际安装包仍须检查完整 ASAR/extraResources，不能以模式声明代替验收。[打包内容规则](https://www.electron.build/contents.html)
+- manifest 确定性记录应用/parser/PDF.js/替换字体版本及入口、相对路径、MIME、大小、SHA-256；将 Main 专用 Preload 与可供页面读取的资产分开，不公开 manifest/Preload。
 - 专用标准安全协议仅服务 manifest 精确清单，在 parser session 注册；不启用 `bypassCSP`。外部网络、任意本地文件、导航、新窗口和设备权限均拒绝。[Electron 协议](https://www.electronjs.org/docs/latest/api/protocol)
-- 从同一精确 PDF.js 依赖复制 Worker、`cmaps/`、`standard_fonts/`、`wasm/`；显式建立 module Worker 并设置 `GlobalWorkerOptions.workerPort`，不用 CDN。[Vite 资产导入](https://vite.dev/guide/assets)
-- PDF `getDocument` 只收字节及固定本地资源 URL，设置 `stopAtErrors:true`、`enableXfa:false` 和像素预算；不实例化脚本管理器/通用 Viewer。6.4.299 已无 `isEvalSupported`，不能沿用旧参数。[PDF.js API](https://mozilla.github.io/pdf.js/api/draft/api.js.html)
-- CSP 只开放必要本地脚本/Worker/字体；若使用打包 WASM，使用 `wasm-unsafe-eval` 而非 JavaScript `unsafe-eval`。取消调用 loading task `destroy()` 并销毁所属解析窗口/Worker。
-- 保留 PDF.js 主许可、`cmaps/LICENSE`、`standard_fonts/LICENSE_*`、`wasm/LICENSE_*`；许可生成器补充内嵌资产说明，正常生成 notices/SBOM，不把 npm 包标识当作全部资产许可。
-- 安装前核验 PDF.js 的 Node 可选 canvas 依赖：本方案只使用隔离 Renderer 的浏览器构建，不引入宿主原生 canvas 解码。明确锁定依赖和打包清单，避免 Electron 包意外携带未使用的原生二进制；若采用 pnpm 的定向可选依赖排除，先核验当前版本支持，再检查实际安装包。不能为省包体遗漏已打包浏览器代码的许可／SBOM。
+- PDF.js 根入口为浏览器 `build/pdf.mjs`；`DocumentInitParameters`、`TextContent`、`TextItem` 类型从 `pdfjs-dist/types/src/display/api` 导入，根类型未导出它们。按下方精确清单复制 Worker 与资产，显式建立 module Worker 并设置 `GlobalWorkerOptions.workerPort`，不用 CDN。[固定 API 源码](https://github.com/mozilla/pdf.js/blob/v6.4.299/src/display/api.js)、[Vite 资产导入](https://vite.dev/guide/assets)
+- PDF `getDocument` 只收字节副本及固定本地资源 URL，设置 `stopAtErrors:true`、`enableXfa:false` 和像素预算；不实例化脚本管理器/通用 Viewer。6.4.299 已无 `isEvalSupported`，不能沿用旧参数。`getTextContent()` 的条目需区分文字与标记；预览使用 `page.render({ canvas, viewport })` 并检查最终画布尺寸，不能将图片尺寸预算当作全部进程内存上限。
+- 专用协议不满足 PDF.js 默认的 HTTP(S) Worker fetch 条件，须显式设置 `useWorkerFetch:true`，固定 `cMapUrl`、`standardFontDataUrl`、`wasmUrl`、`iccUrl`，并实测 module Worker 内同协议的 fetch 与同步 XHR。否则 QCMS 会禁用；`iccUrl` 用于 DeviceCMYK 外置默认 profile，缺失时可能近似回退，不能声称色彩保真。[固定色彩转换实现](https://github.com/mozilla/pdf.js/blob/v6.4.299/src/core/icc_colorspace.js)
+- CSP 只开放必要本地脚本/Worker/字体；若使用打包 WASM，使用 `wasm-unsafe-eval` 而非 JavaScript `unsafe-eval`。取消须等待 loading task `destroy()`，另行 `terminate()` 本任务显式创建的 Worker，再销毁所属解析窗口；PDF.js 不替调用者终止传入的外部 `workerPort`。
+- 许可生成器、现有 npm 许可证检查与 SBOM 增补下表中的内嵌组件、源版本、文件摘要及完整许可，不能把 pdfjs-dist 的 Apache-2.0 标识当作全部资产许可；不修改现有 GPL 拒绝规则。OFL-1.1 仅在已核验的解析字体资产中明确登记。
+- PDF.js 的 Node 可选依赖为 `@napi-rs/canvas:^1.0.10`；本方案仅用隔离 Renderer 浏览器构建，不引入宿主原生 canvas 解码。pnpm 11.19.0 已从固定版本源码核验支持以下定向配置；实现时更新锁文件中的同名设置并执行 frozen install，检查实际安装包不存在该原生包／二进制，不使用全局 `--no-optional`。浏览器代码的许可与 SBOM 仍须保留。[设置](https://pnpm.io/11.x/settings/dependency-resolution#ignoredoptionaldependencies)、[11.19.0 实现](https://github.com/pnpm/pnpm/blob/v11.19.0/pnpm11/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts)、[锁文件测试](https://github.com/pnpm/pnpm/blob/v11.19.0/pnpm11/installing/deps-installer/test/install/ignoredOptionalDependencies.ts)
+
+```yaml
+ignoredOptionalDependencies:
+  - '@napi-rs/canvas'
+```
+
+下列为已核验源码与文件许可的**拟打包清单**，尚未复制、构建或通过解析／安装包测试；不整目录复制 `standard_fonts/` 或 `wasm/`：
+
+| 资产 | 来源与保留许可 |
+| --- | --- |
+| `build/pdf.worker.mjs` | pdfjs-dist 6.4.299；与 API 同版，保留主 Apache-2.0 LICENSE |
+| `cmaps/*.bcmap`（168 个） | 同版；保留 `cmaps/LICENSE` 的 Adobe BSD 风格条款 |
+| `standard_fonts/Foxit*.pfb`（10 个） | 同版；保留 `LICENSE_FOXIT`（BSD-3-Clause），覆盖 Courier/Times/Symbol/Dingbats，不包含 FoxitSans |
+| 四个 `LiberationSans-*.ttf` | 使用下方官方 2.1.5 OFL-1.1 原字节替换；排除 npm 包内 1.07.4 的四个 GPL v2/font exceptions TTF，不为其创建例外 |
+| `iccs/CGATS001Compat-v2-micro.icc` | 同版；保留 `iccs/LICENSE`（CC0） |
+| `wasm/openjpeg.wasm`、`openjpeg_nowasm_fallback.js` | 同版；保留 `LICENSE_OPENJPEG` 与 `LICENSE_PDFJS_OPENJPEG`（BSD-2-Clause） |
+| `wasm/jbig2.wasm`、`jbig2_nowasm_fallback.js` | 同版；保留 `LICENSE_JBIG2`（BSD-3-Clause）与 `LICENSE_PDFJS_JBIG2`（Apache-2.0） |
+| `wasm/qcms_bg.wasm` | 同版；保留 `LICENSE_QCMS` 与 `LICENSE_PDFJS_QCMS`（MIT） |
+
+受限 API 不加载 Viewer 脚本路径；从清单排除 `build/pdf.sandbox.mjs` 与 `wasm/quickjs-eval.js/.wasm`。PDF.js 原包完整资产可由[精确 npm tarball](https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-6.4.299.tgz)复核，不能因清单漏项便默认允许访问其他文件。
+
+字体替换固定采用[官方 Liberation Fonts 2.1.5 发布](https://github.com/liberationfonts/liberation-fonts/releases/tag/2.1.5)链接的 [TTF 包](https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz)，大小 2,385,008 字节，SHA-256 为 `7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0`。包内 LICENSE SHA-256 为 `93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b`；LICENSE 及四字体 name table 均为 OFL-1.1 / Version 2.1.5。保留原始字体字节、内部名称与 Reserved Font Name，不修改或重新生成字体，同时分发完整 OFL 许可。文件名与 [PDF.js Helvetica 映射](https://github.com/mozilla/pdf.js/blob/v6.4.299/src/core/standard_fonts.js)一致，但新旧字形、度量与真实 PDF 像素表现仍须实际测试，不能仅凭同名宣称兼容或完成预览。
+
+| 替换文件 | SHA-256 |
+| --- | --- |
+| `LiberationSans-Regular.ttf` | `76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8` |
+| `LiberationSans-Bold.ttf` | `788abee4c806d660e8aee46689dd8540cd4bb98da03dcc9d171ce3efd99a9173` |
+| `LiberationSans-Italic.ttf` | `e5bae5c4cde31f22142753855f4f8fb86da6ff39955ed3c0a11248b0d16948b0` |
+| `LiberationSans-BoldItalic.ttf` | `698da70fc191cc5f33ad4d6d3fe830fe4624b898ea2e3169955928b7c491f1ee` |
 
 ### DOCX 的 ZIP/XML 边界
 
-- 用 zip.js 原生浏览器入口，`useWebWorkers:false`、`useCompressionStream:true`；只接收存储/Deflate。实测 Electron 对 `deflate-raw` 的支持，不静默换解码实现。
+- 仅导入 `@zip.js/zip.js/lib/zip-core-custom.js`，配置 `useWebWorkers:false`、`useCompressionStream:true` 及显式原生 `CompressionStream`/`DecompressionStream`；只接收存储/Deflate，先实测 Electron 的 `deflate-raw`，不支持则明确失败。2.23.0 的 default/native 入口仍注册 JS zlib fallback，单设 `useCompressionStream:true` 不保证原生实现；`configure` 忽略 undefined，不能靠它清除已注册 fallback。解析包不得混入其他入口、Worker 或 WASM fallback。[固定 custom 入口](https://github.com/gildas-lormeau/zip.js/blob/v2.23.0/lib/zip-core-custom.js)
 - `ZipReader` 用 `strictness:"strict"`、`filenameValidation:"strict"`，先用 `getEntriesGenerator()` 检查目录、数量、声明尺寸和普通 OOXML 类型，再顺序解压。[目录 API](https://gildas-lormeau.github.io/zip.js/api/classes/ZipReader.html)
-- 在 `WritableStream.write()` 中先检查实际字节预算再保存，传递 AbortSignal，检查 CRC、本地头、重叠及实际/声明尺寸；不要依赖进度回调抛错实施安全限制。[读取选项](https://gildas-lormeau.github.io/zip.js/api/interfaces/EntryGetDataOptions.html)
-- 拒绝重复、绝对、越界路径及非法名称；只将已核验条目重建为唯一名称、无压缩的临时规范 ZIP，再交给 Mammoth，避免两个 ZIP 解析器对原包解释不一致。
+- 在 `WritableStream.write()` 中先检查实际字节预算再保存，传递 AbortSignal，显式设置 `checkCrc32:true`、`checkOverlappingEntry:true`，检查本地头及实际/声明尺寸；严格模式不自动启用 CRC／重叠检查。逐项拒绝 `encrypted`、symlink 和非 0/8 压缩方法，完整读取目录后才通过档案级检查。不要依赖进度回调抛错或最终 `arrayBuffer()` 实施安全限制；`ZipReader.close()` 不代替取消。[固定类型与读取选项](https://github.com/gildas-lormeau/zip.js/blob/v2.23.0/index.d.ts)
+- 拒绝重复、绝对、越界路径及非法名称；不能依赖严格文件名选项处理 Unicode／大小写等价冲突。只将已核验条目用 `ZipWriter(...,{level:0})` 重建为唯一名称、无压缩的临时规范 ZIP，再交给 Mammoth，避免两个 ZIP 解析器对原包解释不一致。
 - XML/`.rels` 先严格解码再检测 DTD；首轮接受 UTF-8、UTF-16LE/BE，拒绝其他声明编码、非法编码、DOCTYPE、ENTITY 和 XML 错误，规范为 UTF-8；不能只扫描原始 ASCII 字节。
-- Mammoth 采用 browser 映射，外部文件读取适配器拒绝链接文件；宿主和协议层仍禁止外部资源解析。超链接最多作为不可信文本，不自动抓取或注入转换 HTML。[源码及安全说明](https://github.com/mwilliamson/mammoth.js#security)
+- Mammoth 采用 browser 映射，核验 `lib/unzip.js` 与 `lib/docx/files.js` 已替换为对应 browser 文件。`extractRawText({ arrayBuffer })` 仅有一个 input 参数，不接受 `externalFileAccess` 选项；browser 文件适配器本身拒绝外链文件，宿主和协议层仍禁止外部资源解析。超链接最多作为不可信文本，不自动抓取、使用 `images.dataUri` 或注入未经消毒的转换 HTML。[固定源码及安全说明](https://github.com/mwilliamson/mammoth.js/tree/791a189230977143cde64dbf9f1d24dce96ac8a1)
 - 导入超时、取消或崩溃不得发布解析记录；只终止所属任务。内存采样属于补充防护，不能声称等同 OS 硬内存上限。
 
 ### 首交付分工与验收
