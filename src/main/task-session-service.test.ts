@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TaskExecutorSelection } from "@shared/task-session-contracts";
 import { AppRepository } from "./database";
+import { normalizeProductRequest } from "./product-request";
+import { taskScopeSchema, taskListSchema } from "@shared/task-session-schemas";
 import { TaskSessionService } from "./task-session-service";
 import type { SendWorker } from "./send-worker";
 import type { RoomCoordinator } from "./room-coordinator";
@@ -17,6 +19,11 @@ function fixture(retire?:EnvironmentService["retire"]){
   return {repo,owner,service,cancelRun,cancel,changed,create};
 }
 describe("Task host lifecycle",()=>{
+  it("normalizes omitted AI scope before host injection while keeping trusted UI schemas strict",()=>{
+    expect(normalizeProductRequest({kind:"product-call",action:"execute",operation:"sessions.listTasks",input:{}})).toMatchObject({input:{}});
+    expect(normalizeProductRequest({kind:"product-call",action:"execute",operation:"sessions.taskOptions"})).toMatchObject({input:{}});
+    expect(()=>taskScopeSchema.parse({})).toThrow();expect(()=>taskListSchema.parse({})).toThrow();
+  });
   it("lists real MAIN resources and restricts AI options to its selected member resources",()=>{
     const f=fixture(),other=f.repo.createBot(),room=f.repo.createRoom({memberBotIds:[f.owner.bot.id,other.bot.id]});
     const a=f.repo.library.create({sessionId:room.session.id,kind:"document",name:"Chosen A",body:"A"});
