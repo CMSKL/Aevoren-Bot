@@ -553,3 +553,7 @@ Search2 与继承的 Task3 同轮 **5/5 通过（40.3 秒）**，实际 app.isPa
 首次打包停留在 Electron 校验清单网络下载且没有生成输出；保存诊断后终止该下载进程，使用已安装且核验为 Electron 44.3.0 arm64 的运行时执行标准 ASAR／afterPack 未签名打包。17 项应用输出与 216 项 Worker／parser 输出逐字节匹配，Worker／parser 输出未重建。实际 ASAR SHA-256 `d67b1a55c22c960aa57d903029ed7c1548ad0cf85ef2cc313d5a29ac4a8715a5`，Main 为 `1cd908a142d6a0e882cb9a2ac43e60d9f09433b9113be47a1c6b1581b4744ef0`。207 项 parser 资产、234 项资源文件及 9556 ASAR 条目校验通过；四 Helper 麦克风声明通过，未验证签名或硬件。
 
 持久证据在 `$CODEX_HOME/aevoren-evidence/2026-10-15/releases/search40/`，包含修复前日志／trace、最终 source/package-focused-final 的日志与 JSON、实际几何与明暗截图、字节核对、打包与 parser／麦克风回执。Browser 插件未提供，使用仓库既有隐藏 Playwright Electron 工作流。上述四项是本次变更的定向验收；新的完整跨平台 CI／签名发行仍待完成，不能把历史五项业务包验收记为本次完整全绿。
+
+### beta.40 继承语音交互修复与音视频诊断
+
+继承 beta.38 已实际定向验证的语音弹层 Tab/ShiftTab 焦点循环与聊天 @／Skill 选择器层级修复，保持语音控件挂载和既有播放／采集生命周期。同步两项只影响夹具的实际缩放等待／原生像素截图，以及音视频导入失败的安全诊断；不修改解析器、编码器、业务断言或期限。本分支 Web 类型与定向 lint 通过。前一节 ASAR／四项实际包证据保留为修复前历史，不冒认为新语音字节的安装包结果；新完整正常 CI 另行验收，未重跑未修改的失败任务或发布新标签。
