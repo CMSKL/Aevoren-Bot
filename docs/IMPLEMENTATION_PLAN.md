@@ -375,3 +375,9 @@ Limited local macOS validation passed both affected source cases (2/2, 10.3 seco
 ### 媒体 CAS 并发回补（beta.36，重新验收中）
 
 后续六成员朗读验收用受控边界稳定复现：一个读取者已打开同内容 CAS 文件时，写入者清理临时硬链接会改变 ctime，即使字节与 mtime 未变，也被原严格来源读取器拒绝。此前随机成功不作为修复证据。回补仅在读取前已知预期 SHA 的 CAS 路径允许这一元数据变化，并在读取器内验证完整真实字节摘要；用户选择／Workspace 来源继续严格比较 ctime、fd/path、模式、大小和 mtime。新增来源篡改与摘要不符负例、六个同摘要并发写入通过。当前候选正在重新执行完整普通测试、源码和实际安装包门禁；上方冻结包的成功是回补前的历史证据。
+
+### CAS 回补后的 beta.36 本地验收与 Windows fixture 前置失败
+
+回补后重新构建的真实未签名 macOS 包通过功能／正常关闭 33 项及 typed API 1 项，Main 与冻结 out 字节一致。Node24 普通测试 1,630 通过／45 跳过；完整隐藏源码独立一轮 150 通过／32 条件跳过，无失败或强制清理。资产扫描仍为 207 个清单资产、228 个资源文件、9,555 个 ASAR 文件。新 Main SHA-256 为 `66653babda594c7dc6cdb791caf89ed7603711ef36b7e6489e3b9ceb512853cd`，ASAR 为 `0518eaab74bb1e5574e06b7105059cae3c2d01278349d5c028c2f293557d5b9e`，parser 清单为 `07888e2755c41232ff400118ad5b0e910bcc150ee68920ad50f1251e2dd12e50`；上方旧冻结包证据保持独立。本机 JSON 位于 `/tmp/aevoren-media36-cas-acceptance.json`，它不是仓库附件。
+
+PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：新增硬链接回归停在 `realpath(dirname(path))` 前置校验，尚未进入被测 ctime 边界；Windows源码与安装包步骤未到达。fixture 现在使用和业务读取器相同的异步规范路径准备临时目录，并规范实际 CAS 父目录，不放宽产品路径、fd 或摘要检查。七项本地 CAS 测试通过；Windows结果须由新检查确认，不能用 macOS 成功替代。签名发行与真实账号／模型验证仍为独立门禁。
