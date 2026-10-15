@@ -437,4 +437,20 @@ describe("demonstration product approvals", () => {
     f.repository.demonstrations.update({ ...scope, id: draft.id, expectedVersion: 1, name: "Changed draft", body: draft.body + "\nCHANGED_AFTER_APPROVAL" });
     await expect(f.executor.execute(pending.invocation.id)).rejects.toMatchObject({ code: "DEMONSTRATION_VERSION_CONFLICT" }); expect(f.repository.library.list({ sessionId: scope.sessionId, includeDisabled: true })).toHaveLength(0);
   });
+  it.each(["unbind", "delete"] as const)("rechecks the original published Skill before a cached receipt after %s", async change => {
+    const f = fixture(); f.dependencies.demonstrationService = new DemonstrationService(f.repository, { demonstrationRequest: async () => null }, f.libraryService);
+    const scope = { sessionId: f.actor.session.id, executorBotId: f.actor.bot.id }, now = new Date().toISOString();
+    const draft = f.repository.demonstrations.create(scope, { id: crypto.randomUUID(), browserSessionId: crypto.randomUUID(), epoch: 2, state: "stopped", reason: null, events: [], eventCount: 0, createdAt: now, updatedAt: now });
+    const tool = call("demonstrations.publish", { id: draft.id, expectedVersion: draft.version, expectedDigest: draft.digest });
+    const first = JSON.parse((await f.execute(tool)).content).result as import("@shared/library-contracts").LibraryContent;
+    const edited = f.repository.library.update({ sessionId: scope.sessionId, id: first.resource.id, expectedVersion: first.resource.version, body: draft.body + "\nLATER_LIBRARY_EDIT" });
+    const replay = JSON.parse((await f.execute(tool)).content).result as import("@shared/library-contracts").LibraryContent;
+    expect(replay.revision.id).toBe(first.revision.id); expect(replay.revision.body).toBe(draft.body); expect(replay.resource.enabled).toBe(false);
+    if (change === "unbind") f.repository.library.unbind({ sessionId: scope.sessionId, id: first.resource.id });
+    else f.repository.library.delete({ sessionId: scope.sessionId, id: first.resource.id, expectedVersion: edited.resource.version });
+    await expect(f.execute(tool)).rejects.toBeDefined();
+    const saved = f.repository.demonstrations.read(scope, draft.id); expect(saved.publishedResourceId).toBe(first.resource.id);
+    const resources = f.repository.library.available({ includeDeleted: true, includeDisabled: true });
+    expect(resources).toHaveLength(1); expect(resources[0]?.enabled).toBe(false);
+  });
 });

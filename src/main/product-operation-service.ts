@@ -250,6 +250,14 @@ export class ProductOperationService {
           return this.result({ status: "previously_completed", operation: tool.operation, reused: true, result,
             receiptNotice: "未再次执行脚本；已查询原任务的实际状态和固定版本来源。" });
         }
+        if (tool.operation === "demonstrations.publish") {
+          const receipt = JSON.parse(previous) as { result?: import("@shared/library-contracts").LibraryContent };
+          if (!receipt.result?.resource.id || !receipt.result.revision.id) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+          const result = this.dependencies.repository.library.read({ sessionId: runtime.sessionId, id: receipt.result.resource.id,
+            revisionId: receipt.result.revision.id, includeDisabled: true }, runtime.executorBotId);
+          return this.result({ status: "previously_completed", operation: tool.operation, reused: true, result,
+            receiptNotice: "未再次发布或启用 Skill；已核验原发布版本的当前会话授权与状态。" });
+        }
         if (tool.operation.startsWith("demonstrations.")) { const receipt = JSON.parse(previous) as { status?: string; result?: unknown }; return this.result({ ...receipt, status: receipt.status === "waiting_user" ? "waiting_user" : "previously_completed", reused: true, receiptNotice: "返回首次已保存操作回执；当前示范草稿或 Skill 状态请重新查询。" }); }
         if (browserOperation(tool.operation)) {
           const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
