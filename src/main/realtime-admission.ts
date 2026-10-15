@@ -12,7 +12,7 @@ export type RealtimeAdmission = {
 export function captureRealtimeAdmission(repository: AppRepository, input: RealtimeStartInput): RealtimeAdmission {
   repository.voice.assertScope(input.sessionId, { executorBotId: input.executorBotId });
   const session = repository.getSession(input.sessionId);
-  const members = session.roomId ? repository.getRoomDetail(session.roomId).members.map(member => member.botId) : [input.executorBotId];
+  const members = session.roomId ? repository.getRoomDetail(session.roomId,session.id).members.map(member => member.botId) : [input.executorBotId];
   if (!session.roomId && (input.routingMode !== "automatic" || input.targetBotIds.length) || input.targetBotIds.some(id => !members.includes(id))) throw new AevorenBotError("VOICE_NOT_GRANTED");
   return { input: structuredClone(input), generation: session.generation, roomId: session.roomId, membershipVersion: session.roomId ? repository.getRoom(session.roomId).membershipVersion : null, memberBotIds: members,
     resources: repository.library.captureReferenceBindings(session.id, input.resourceRefs ?? [], input.executorBotId),
@@ -26,7 +26,7 @@ export function assertRealtimeAdmission(repository: AppRepository, admission: Re
   const media = repository.media.captureSendReferences(input.sessionId, admission.media.map(item => item.reference), input.executorBotId);
   if (media.some((item, index) => item.incarnation !== admission.media[index]?.incarnation)) throw new AevorenBotError("VOICE_NOT_GRANTED");
   if (admission.roomId) {
-    const detail = repository.getRoomDetail(admission.roomId);
+    const detail = repository.getRoomDetail(admission.roomId,input.sessionId);
     if (detail.room.membershipVersion !== admission.membershipVersion) throw new AevorenBotError("VOICE_NOT_GRANTED");
     const live = detail.members.map(member => member.botId);
     // The durable session's retirement trigger separately tombstones remove/re-add.

@@ -388,7 +388,7 @@ export type SaveCliProviderInput = {
 };
 
 export type RuntimeRoute = "fake" | "host-outbound" | "host-mcp" | ProviderDriverKind;
-export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "media-resource" | "user" | "assistant";
+export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "media-resource" | "task-context" | "user" | "assistant";
 
 export type PromptManifestBlock = {
   authority: PromptAuthority;
@@ -401,7 +401,7 @@ export type PromptManifestBlock = {
 };
 
 export type PromptManifest = {
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6;
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   botId: string;
   profileVersion: number;
   sessionId: string;

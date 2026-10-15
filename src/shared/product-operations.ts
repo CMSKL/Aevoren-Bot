@@ -1,3 +1,4 @@
+import { TASK_SESSION_PRODUCT_OPERATIONS } from "./task-session-product";
 import { REALTIME_PRODUCT_OPERATIONS } from "./realtime-product";
 import { VOICE_PRODUCT_OPERATIONS } from "./voice-product";
 import { MEDIA_PRODUCT_OPERATIONS } from "./media-product";
@@ -16,6 +17,7 @@ export type ProductOperationDefinition = { name: string; channel: string; descri
 
 /** User-facing host operations; lifecycle acknowledgements are intentionally excluded. */
 export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
+  ...TASK_SESSION_PRODUCT_OPERATIONS,
   ...LIBRARY_PRODUCT_OPERATIONS,
   ...MEDIA_PRODUCT_OPERATIONS,
   ...VOICE_PRODUCT_OPERATIONS,

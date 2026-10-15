@@ -1,3 +1,5 @@
+import type { TaskSessionChanged } from "@shared/task-session-contracts";
+import { TASK_SESSION_CHANNELS, TASK_SESSION_CHANGED_CHANNEL } from "@shared/task-session-channels";
 import { REALTIME_CHANNELS, REALTIME_CHANGED_CHANNEL } from "@shared/realtime-channels";
 import type { RealtimeEvent } from "@shared/realtime-contracts";
 import { VOICE_CHANNELS, VOICE_CHANGED_CHANNEL } from "@shared/voice-channels";
@@ -350,6 +352,19 @@ const api: AevorenBotApi = {
     removeMember: (input) => ipcRenderer.invoke(IPC.roomsRemoveMember, input),
   },
   sessions: {
+    onTasksChanged: listener => {
+      const handler=(_event:Electron.IpcRendererEvent,event:TaskSessionChanged):void=>listener(event);
+      ipcRenderer.on(TASK_SESSION_CHANGED_CHANNEL,handler);
+      return ()=>ipcRenderer.removeListener(TASK_SESSION_CHANGED_CHANNEL,handler);
+    },
+    taskOptions: input => ipcRenderer.invoke(TASK_SESSION_CHANNELS.taskOptions, input),
+    createTask: input => ipcRenderer.invoke(TASK_SESSION_CHANNELS.createTask, input),
+    listTasks: input => ipcRenderer.invoke(TASK_SESSION_CHANNELS.listTasks, input),
+    getTask: input => ipcRenderer.invoke(TASK_SESSION_CHANNELS.getTask, input),
+    updateTask: input => ipcRenderer.invoke(TASK_SESSION_CHANNELS.updateTask, input),
+    reviseTaskSelection: input => ipcRenderer.invoke(TASK_SESSION_CHANNELS.reviseTaskSelection, input),
+    cancelTask: input => ipcRenderer.invoke(TASK_SESSION_CHANNELS.cancelTask, input),
+    deleteTask: input => ipcRenderer.invoke(TASK_SESSION_CHANNELS.deleteTask, input),
     onChanged: listener => {
       const handler = (_event: Electron.IpcRendererEvent, event: { session: import("@shared/contracts").Session }): void => listener(event);
       ipcRenderer.on(IPC.sessionChangedEvent, handler);

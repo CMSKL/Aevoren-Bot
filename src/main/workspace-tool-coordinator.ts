@@ -50,6 +50,7 @@ export class WorkspaceToolCoordinator {
     tool: ToolRequest,
     signal: AbortSignal,
   ): Promise<WorkspaceToolOutcome> {
+    this.repository.tasks.assertToolAllowed(runtimeRunId,tool);
     if (tool.kind === "bot-create" && containsLikelySecret(JSON.stringify(tool))) throw new AevorenBotError("PROJECT_PROFILE_SENSITIVE");
     if (tool.kind === "product-call") this.executor.validateProductRequest?.(tool, runtimeRunId);
     const runtime = this.repository.getRuntimeRun(runtimeRunId);

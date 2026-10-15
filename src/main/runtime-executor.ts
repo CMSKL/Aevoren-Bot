@@ -86,7 +86,7 @@ export type RuntimeExecutionResult = {
 };
 
 export type CapabilitySnapshotSource = {
-  forPrompt(botId: string, selection: ModelSelection, room: boolean, sessionId?: string): CapabilityPromptSnapshot;
+  forPrompt(botId: string, selection: ModelSelection, room: boolean, sessionId?: string, runtimeRunId?: string): CapabilityPromptSnapshot;
 };
 
 type AbortReason = "user" | "deadline" | "app-shutdown";
@@ -342,7 +342,7 @@ export class RuntimeExecutor {
     private readonly providerOverride?: ModelProvider,
     private readonly workspaceTools?: WorkspaceToolCoordinator,
     private readonly capabilitySnapshots?: CapabilitySnapshotSource,
-    private readonly mcpTools?: Pick<McpService, "availableTools">,
+    private readonly mcpTools?: Pick<McpService, "availableTools"> & Partial<Pick<McpService,"availableTaskTools">>,
     private readonly decisions?: DecisionService,
     private readonly memoryCapture?: MemoryCaptureService,
   ) {
@@ -372,11 +372,17 @@ export class RuntimeExecutor {
     }
     if (input.room?.leadBotId && !toolsAllowed) this.assertLeadAvailable(input.room.leadBotId, modelSelection);
     this.repository.assertSessionExecutor(session.id, bot.id);
-    const availableCapabilities = this.capabilitySnapshots?.forPrompt(bot.id, modelSelection, Boolean(input.room), session.id);
-    const resourceContents = turnPurpose === "summary" ? [] : this.repository.library.resolveReferences(session.id, user.resourceRefs ?? [], bot.id);
+    const previousTaskRun=session.kind==="TASK"?this.repository.listRuntimeRuns(session.id).find(run=>run.executionKey===(input.executionKey??input.clientNonce)):undefined;
+    const taskContext=previousTaskRun?this.repository.tasks.runtimeTaskPolicy(previousTaskRun.id):this.repository.tasks.taskSessionPolicy(session.id,bot.id);
+    const availableCapabilities = this.capabilitySnapshots?.forPrompt(bot.id, modelSelection, Boolean(input.room), session.id, previousTaskRun?.id);
+    const selectedResourceRefs=taskContext?(user.resourceRefs??[]).filter(ref=>taskContext.selection.resourceRefs.some(selected=>selected.resourceId===ref.resourceId&&selected.revisionId===ref.revisionId&&selected.digest===ref.digest)):user.resourceRefs??[];
+    const resourceContents = turnPurpose === "summary" ? [] : this.repository.library.resolveReferences(session.id, selectedResourceRefs, bot.id, previousTaskRun?.id);
     const promptEntries = this.repository.listPromptEntries(session.id, promptCutoffSeq)
       .filter((entry) => user.origin?.kind !== "ai-delegation" || entry.clientNonce === input.clientNonce || entry.seq >= user.seq)
-      .map((entry) => entry.id === user.id && resourceContents.length ? { ...entry, resourceContents } : entry);
+      .map((entry) => {
+        const scopedEntry=taskContext?{...entry,resourceRefs:(entry.resourceRefs??[]).filter(ref=>taskContext.selection.resourceRefs.some(selected=>selected.resourceId===ref.resourceId&&selected.revisionId===ref.revisionId&&selected.digest===ref.digest)),mediaRefs:(entry.mediaRefs??[]).filter(ref=>taskContext.selection.mediaRefs.some(selected=>selected.mediaId===ref.mediaId&&selected.sha256===ref.sha256&&selected.extraction?.id===ref.extraction?.id&&selected.extraction?.digest===ref.extraction?.digest))}:entry;
+        return entry.id === user.id && resourceContents.length ? {...scopedEntry,resourceContents}:scopedEntry;
+      });
     const capabilitySnapshot = availableCapabilities && !toolsAllowed
       ? { ...availableCapabilities, availableTools: [], capabilities: availableCapabilities.capabilities.map((capability) => ({
           ...capability, availability: "unavailable" as const, reason: "当前回合仅协调或汇总，不执行工具。",
@@ -403,8 +409,9 @@ export class RuntimeExecutor {
             ...(toolsAllowed && input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
           }
         : undefined,
-      turnPurpose === "summary" || user.origin?.kind === "ai-delegation" ? [] : this.repository.listRuntimeMemories(bot.id, session.id),
+      turnPurpose === "summary" || user.origin?.kind === "ai-delegation" ? [] : taskContext?taskContext.memories.map(item=>item.memory):this.repository.listRuntimeMemories(bot.id, session.id),
       capabilitySnapshot,
+      taskContext?{selectionVersion:taskContext.selectionVersion,selectionDigest:taskContext.selectionDigest,history:taskContext.history}:undefined,
     );
     const route = this.route(modelSelection);
     const providerCapabilities = this.forceFakeProvider
@@ -420,6 +427,7 @@ export class RuntimeExecutor {
       providerInstanceId: route === "fake" ? "fake" : modelSelection.providerInstanceId,
       providerModelId: route === "fake" ? "" : modelSelection.modelId,
     });
+    const taskPolicy=this.repository.tasks.runtimeTaskPolicy(run.id);
     try {
       input.onRunCreated?.(run);
     } catch (error) {
@@ -435,9 +443,9 @@ export class RuntimeExecutor {
       evidenceToolNames.add("workspace_write");
     }
     const isScopedHandoff = Boolean(input.incomingHandoff);
-    const allowNetworkTools = toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsNetworkTools(evidenceRequestText));
+    const allowNetworkTools = (!taskPolicy||taskPolicy.selection.network) && toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsNetworkTools(evidenceRequestText));
     const allowMcpTools = toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsMcpTools(evidenceRequestText));
-    const allowDeviceTools = toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsDeviceTools(evidenceRequestText));
+    const allowDeviceTools = (!taskPolicy||taskPolicy.selection.clipboard) && toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsDeviceTools(evidenceRequestText));
     if (/text_measure/iu.test(bot.instructions) && /写|草稿|审校|长度|draft|review/iu.test(evidenceRequestText)) {
       evidenceToolNames.add("text_measure");
     }
@@ -465,6 +473,7 @@ export class RuntimeExecutor {
       onLeadPlan: input.onLeadPlan,
       evidenceCorrectionAttempts: 0,
       providerContext: {
+        ...(taskPolicy?{assertAuthority:()=>this.repository.tasks.assertTaskRuntime(run.id),taskScoped:true}:{}),
         supportedToolNames: providerCapabilities?.supportedToolNames,
         requestedWritePaths: requestedWritePaths(evidenceRequestText),
         executorBotId: bot.id,
@@ -478,10 +487,10 @@ export class RuntimeExecutor {
         ...(input.incomingHandoff ? { incomingHandoff: input.incomingHandoff } : {}),
         ...(toolsAllowed && input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
         workspaces: toolsAllowed && providerCapabilities?.workspaceTools === true
-          ? this.repository.listSessionWorkspaces(session.id, bot.id).map(({ id, name, writeEnabled, automationEnabled }) => ({ id, name, writeEnabled, automationEnabled }))
+          ? this.repository.listSessionWorkspaces(session.id, bot.id).flatMap(({ id, name, writeEnabled, automationEnabled }) => {const ceiling=taskPolicy?.selection.workspaces.find(item=>item.id===id);return taskPolicy&&!ceiling?.read?[]:[{id,name,writeEnabled:writeEnabled&&(!taskPolicy||ceiling!.write),automationEnabled:automationEnabled&&(!taskPolicy||ceiling!.automation)}];})
           : [],
         networkTools: allowNetworkTools,
-        mcpTools: allowMcpTools ? this.mcpTools?.availableTools(bot.id) ?? [] : [],
+        mcpTools: allowMcpTools ? taskPolicy?this.mcpTools?.availableTaskTools?.(run.id)??[]:this.mcpTools?.availableTools(bot.id)??[] : [],
         deviceTools: allowDeviceTools && user.origin?.kind !== "ai-delegation",
         requireToolCall: toolsAllowed && (requiresToolCall(evidenceRequestText) || Boolean(input.executionReceipt?.artifacts.length)),
         textMeasureTools: toolsAllowed && (providerCapabilities?.workspaceTools === true || providerCapabilities?.networkTools === true),
@@ -663,6 +672,7 @@ export class RuntimeExecutor {
         let rejectedFixedHandoff = false;
         let retryAfterEvidenceRepair = false;
         const roundBodyStart = active.providerBody.length;
+        active.providerContext.assertAuthority?.();
         iterator = provider.run(active.messages, active.controller.signal, active.providerContext)[Symbol.asyncIterator]();
         while (true) {
         const next = await nextModelEvent(
@@ -817,7 +827,7 @@ export class RuntimeExecutor {
             [this.repository.getUserMessage(active.clientNonce).body, active.rootRequirements, active.evidenceRequestText]
               .some((request) => prohibitsProjectCreation(request, event.tool)))) throw new AevorenBotError("PROJECT_TOOL_NOT_REQUESTED");
           const recordOrRespond = async (action: Extract<(typeof roundActions)[number], { kind: "tool" }>): Promise<void> => {
-            if (event.respond) await event.respond(action.result.content);
+            if (event.respond) { active.providerContext.assertAuthority?.(); await event.respond(action.result.content); }
             else roundActions.push(action);
           };
           if (active.forceCompleteAfterToolRound) {
@@ -1137,6 +1147,7 @@ export class RuntimeExecutor {
             active.forceCompleteAfterToolRound = true;
           }
           if (event.respond) {
+            active.providerContext.assertAuthority?.();
             await event.respond(providerOutcomeContent, outcome.images, outcome.modelText);
             if (event.toolSignal) {
               const argumentsValue = Object.fromEntries(Object.entries(event.tool).filter(([key]) => key !== "kind" && !(event.tool.kind === "product-call" && key === "action")));
@@ -1174,7 +1185,7 @@ export class RuntimeExecutor {
             run = this.repository.transitionRuntimeRun(runId, "completed");
             this.emitRuntime(run);
             const user = this.repository.getUserMessage(active.clientNonce);
-            if (active.turnPurpose === "work") this.memoryCapture?.enqueue({
+            if (active.turnPurpose === "work"&&this.repository.getSession(active.sessionId).kind==="MAIN") this.memoryCapture?.enqueue({
               botId: active.providerContext.executorBotId,
               sourceEntryId: user.id,
               userText: user.body,
@@ -1283,7 +1294,7 @@ export class RuntimeExecutor {
           run = this.repository.transitionRuntimeRun(runId, "completed");
           this.emitRuntime(run);
           const user = this.repository.getUserMessage(active.clientNonce);
-          if (active.turnPurpose === "work") this.memoryCapture?.enqueue({
+          if (active.turnPurpose === "work"&&this.repository.getSession(active.sessionId).kind==="MAIN") this.memoryCapture?.enqueue({
             botId: active.providerContext.executorBotId,
             sourceEntryId: user.id,
             userText: user.body,

@@ -1,3 +1,6 @@
+import { TaskSessionService } from "./task-session-service";
+import { registerTaskMcpAuthority } from "./task-mcp-authority";
+import { TASK_SESSION_CHANGED_CHANNEL } from "@shared/task-session-channels";
 import { WebSocket } from "ws";
 import type { RealtimeSocketFactory } from "./realtime-socket-adapter";
 import { RealtimeService } from "./realtime-service";
@@ -415,6 +418,7 @@ app.whenReady().then(async () => {
   for (const saved of repository.browsers.listInternal()) void browserService.get(saved).catch(() => undefined);
   mcpService = new McpService(repository, electronSecretCodec, app.getVersion(), (url) => shell.openExternal(url));
   await mcpService.initialize();
+  registerTaskMcpAuthority(repository,mcpService);
   const workspaceToolExecutor = new WorkspaceToolExecutor(repository, workspaceService, new NetworkToolExecutor(), mcpService, new DeviceToolExecutor(() => clipboard.readText()));
   const workspaceToolCoordinator = new WorkspaceToolCoordinator(
     repository,
@@ -483,6 +487,9 @@ app.whenReady().then(async () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(REALTIME_CHANGED_CHANNEL, event);
   } });
   realtimeService = productRealtimeService;
+  const taskSessionService=new TaskSessionService(repository,sendWorker,roomCoordinator,mcpService,event=>{
+    if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send(TASK_SESSION_CHANGED_CHANNEL,event);
+  },environmentService??undefined);
   const updateConfigurationPath = join(process.resourcesPath, "app-update.yml");
   const updateChannel = resolveUpdateChannel({
     isPackaged: app.isPackaged,
@@ -524,6 +531,7 @@ app.whenReady().then(async () => {
     mediaService: productMediaService,
     voiceService: productVoiceService,
     realtimeService: productRealtimeService,
+    taskSessionService,
     voiceCapture,
     sessionChanged(session) {
       voiceCapture?.cancelSession(session.id);

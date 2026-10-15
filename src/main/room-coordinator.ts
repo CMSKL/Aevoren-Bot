@@ -112,16 +112,17 @@ export class RoomCoordinator {
     private readonly decisions?: DecisionService,
   ) {}
 
-  getSnapshot(roomId: string): RoomRuntimeSnapshot {
-    const detail = this.repository.getRoomDetail(roomId);
-    const batches = this.repository.listRoomBatches(roomId);
+  getSnapshot(input: string | { roomId: string; sessionId: string }): RoomRuntimeSnapshot {
+    const roomId=typeof input === "string"?input:input.roomId;
+    const detail = this.repository.getRoomDetail(roomId,typeof input === "string"?undefined:input.sessionId);
+    const batches = this.repository.listRoomBatches(roomId).filter(batch=>batch.sessionId===detail.session.id);
     return {
       detail,
       transcriptCursor: this.repository.getTranscriptCursor(detail.session.id),
       entries: this.repository.listTranscript(detail.session.id),
       runs: this.repository.listRuntimeRuns(detail.session.id),
       batches,
-      turns: this.repository.listRoomTurnsForRoom(roomId),
+      turns: batches.flatMap(batch=>this.repository.listRoomTurns(batch.id)),
       handoffs: batches.flatMap((batch) => publicHandoffs(this.repository, batch.id)),
       rejections: batches.flatMap((batch) => publicHandoffRejections(this.repository, batch.id)),
       liveState: this.executor.getLiveState(detail.session.id),
@@ -130,6 +131,8 @@ export class RoomCoordinator {
 
   send(command: Omit<RoomSendCommand, "routingMode">): RoomSendResult {
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
+    const detail=this.repository.getRoomDetail(command.roomId,command.sessionId);
+    if(command.targetBotIds.some(id=>!detail.members.some(member=>member.botId===id)))throw new AevorenBotError("ROOM_MEMBER_INVALID");
     const prepared = this.repository.prepareRoomMessage(command);
     if (prepared.disposition === "duplicate") {
       return {
@@ -329,7 +332,7 @@ export class RoomCoordinator {
     const parallelFanout = !coordinated && batch.routingMode === "everyone";
     const completions: Promise<void>[] = [];
     const roomRoster = coordinated
-      ? this.repository.listRoomMembers(room.id).map((member) => ({
+      ? this.repository.getRoomDetail(room.id,batch.sessionId).members.map((member) => ({
           id: member.botId,
           name: member.bot.name,
           label: member.bot.label,
@@ -661,7 +664,7 @@ export class RoomCoordinator {
   }
 
   private assertLiveRoute(command: RoomSendCommand, routingMode: "explicit" | "everyone"): void {
-    const detail = this.repository.getRoomDetail(command.roomId);
+    const detail = this.repository.getRoomDetail(command.roomId, command.sessionId);
     if (detail.session.id !== command.sessionId) throw new AevorenBotError("SESSION_NOT_FOUND");
     const memberIds = detail.members.map((member) => member.botId);
     const uniqueTargets = new Set(command.targetBotIds);
@@ -676,7 +679,7 @@ export class RoomCoordinator {
   private async selectAndSend(command: RoomSendCommand, policy: CoordinatedRoomPolicy): Promise<RoomSendResult> {
     const deadlineMs = policy.deadlineMs ?? DEFAULT_ROOT_DEADLINE_MS;
     if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new AevorenBotError("INVALID_REQUEST");
-    const detail = this.repository.getRoomDetail(command.roomId);
+    const detail = this.repository.getRoomDetail(command.roomId, command.sessionId);
     if (detail.session.id !== command.sessionId) throw new AevorenBotError("SESSION_NOT_FOUND");
     if (detail.room.archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     if (this.repository.getActiveRoomBatch(detail.session.id) || this.repository.getActiveRuntimeRun(detail.session.id)) {
@@ -944,7 +947,8 @@ export class RoomCoordinator {
   }
 
   async getBriefApproval(input: { roomId: string; sourceRuntimeRunId: string }): Promise<BriefApprovalView> {
-    const detail = this.repository.getRoomDetail(input.roomId);
+    const runtime = this.repository.getRuntimeRun(input.sourceRuntimeRunId);
+    const detail = this.repository.getRoomDetail(input.roomId,runtime.sessionId);
     const source = this.repository.findLatestCompletedWorkspaceArtifact(detail.session.id, "02-briefs/");
     if (!source || source.run.id !== input.sourceRuntimeRunId || !source.invocation.workspaceId) {
       throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
@@ -970,7 +974,8 @@ export class RoomCoordinator {
 
   async approveBrief(command: BriefApprovalCommand): Promise<RoomSendResult> {
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
-    const detail = this.repository.getRoomDetail(command.roomId);
+    const runtime = this.repository.getRuntimeRun(command.sourceRuntimeRunId);
+    const detail = this.repository.getRoomDetail(command.roomId,runtime.sessionId);
     if (detail.room.archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     const view = await this.getBriefApproval(command);
     if (view.briefInvocationId !== command.briefInvocationId || view.sha256 !== command.sha256) {

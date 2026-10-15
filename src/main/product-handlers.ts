@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { TASK_SESSION_PRODUCT_OPERATIONS } from "@shared/task-session-product";
+import type { TaskSessionService } from "./task-session-service";
 import { REALTIME_PRODUCT_OPERATIONS } from "@shared/realtime-product";
 import { realtimeInputSchema } from "@shared/realtime-schemas";
 import type { RealtimeService } from "./realtime-service";
@@ -97,6 +100,7 @@ export type ProductDependencies = VoiceProductDependencies & MediaProductDepende
   pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
   exportLibraryResource?(input: { sessionId: string; id: string; revisionId?: string }, signal?: AbortSignal): Promise<LibraryExportResult | null>;
   realtimeService?: RealtimeService;
+  taskSessionService?: TaskSessionService;
   productChanged?(): void;
   sessionChanged?(session: import("@shared/contracts").Session): void;
   requestUpdateAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
@@ -149,6 +153,20 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
   addMediaProductHandlers(handlers, dependencies, commit, libraryContext);
   addVoiceProductHandlers(handlers, dependencies, commit);
+  for (const definition of TASK_SESSION_PRODUCT_OPERATIONS) handlers.set(definition.channel,input=>{
+    const service=dependencies.taskSessionService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
+    switch(definition.name){
+      case "sessions.taskOptions":return service.options(input as import("@shared/task-session-contracts").TaskScopeInput);
+      case "sessions.createTask":return commit(()=>service.create(input as import("@shared/task-session-contracts").TaskCreateInput));
+      case "sessions.listTasks":return service.list(input as import("@shared/task-session-contracts").TaskListInput);
+      case "sessions.getTask":return service.get(input as import("@shared/task-session-contracts").TaskScopeInput);
+      case "sessions.updateTask":return commit(()=>service.update(input as import("@shared/task-session-contracts").TaskUpdateInput));
+      case "sessions.reviseTaskSelection":return commit(()=>service.revise(input as import("@shared/task-session-contracts").TaskSelectionUpdateInput));
+      case "sessions.cancelTask":return service.cancel(input as import("@shared/task-session-contracts").TaskCancelInput);
+      case "sessions.deleteTask":return service.delete(input as import("@shared/task-session-contracts").TaskCancelInput);
+      default:throw new AevorenBotError("INVALID_REQUEST");
+    }
+  });
   for (const definition of REALTIME_PRODUCT_OPERATIONS) handlers.set(definition.channel, input => {
     const service = dependencies.realtimeService;
     if (!service) throw new AevorenBotError("VOICE_UNSUPPORTED");
@@ -263,7 +281,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const parsed = conversationBatchDeleteSchema.parse(input);
     const remove = () => commit(() => repository.deleteConversations(parsed));
     return dependencies.environmentService ? dependencies.environmentService.retire(
-      parsed.roomIds.map(id => repository.getRoomMainSession(id).id), parsed.botIds,
+      repository.listConversations().filter(item=>item.roomId&&parsed.roomIds.includes(item.roomId)).map(item=>item.sessionId), parsed.botIds,
       () => repository.assertConversationsDeletable(parsed), remove) : remove();
   });
   handle(IPC.teamsCreateContentTeam, (input: unknown) => {
@@ -416,7 +434,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   });
   handle(IPC.roomsDelete, (id: unknown) => {
     const parsed = roomIdSchema.parse(id), remove = () => commit(() => repository.deleteRoom(parsed));
-    return dependencies.environmentService ? dependencies.environmentService.retire([repository.getRoomMainSession(parsed).id], [], () => repository.assertRoomDeletable(parsed), remove) : remove();
+    return dependencies.environmentService ? dependencies.environmentService.retire(repository.listConversations().filter(item=>item.roomId===parsed).map(item=>item.sessionId), [], () => repository.assertRoomDeletable(parsed), remove) : remove();
   });
   handle(IPC.roomsAddMember, (input: unknown) => {
     const parsed = roomMembershipSchema.parse(input);
@@ -427,7 +445,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const remove = () => commit(() => repository.removeRoomMember(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion));
     return dependencies.environmentService ? dependencies.environmentService.retire([], [],
       () => repository.assertRoomMemberRemovable(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion), remove,
-      [{ sessionId: repository.getRoomMainSession(parsed.roomId).id, executorBotId: parsed.botId }]) : remove();
+      repository.listConversations().filter(item=>item.roomId===parsed.roomId).map(item=>({sessionId:item.sessionId,executorBotId:parsed.botId}))) : remove();
   });
   handle(IPC.sessionsGetMain, (botId: unknown) => repository.getMainSession(botIdSchema.parse(botId)));
   handle(IPC.transcriptList, (sessionId: unknown) => repository.listTranscript(sessionIdSchema.parse(sessionId)));
@@ -454,7 +472,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     return sendWorker.cancelRun(runId);
   });
   handle(IPC.runtimeRetry, (runId: unknown) => sendWorker.retryRun(runIdSchema.parse(runId)));
-  handle(IPC.roomRuntimeSnapshot, (roomId: unknown) => roomCoordinator.getSnapshot(roomIdSchema.parse(roomId)));
+  handle(IPC.roomRuntimeSnapshot, (input: unknown) => roomCoordinator.getSnapshot(z.union([roomIdSchema,z.object({roomId:roomIdSchema,sessionId:z.string().uuid()}).strict()]).parse(input)));
   handle(IPC.roomRuntimeSend, (command: unknown) => roomCoordinator.routeAndSend(roomSendCommandSchema.parse(command)));
   handle(IPC.roomRuntimeCancel, (batchId: unknown) => roomCoordinator.cancel(batchIdSchema.parse(batchId)));
   handle(IPC.roomRuntimeContinue, (batchId: unknown) => roomCoordinator.continue(batchIdSchema.parse(batchId)));

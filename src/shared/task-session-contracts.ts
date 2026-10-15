@@ -36,7 +36,9 @@ export type TaskOptions = {
   media: MediaItem[]; productOperations: { name: string; description: string }[];
   currentSelections: TaskExecutorSelection[] | null;
 };
+export type TaskSessionChanged = { sessionId:string; parentSessionId?:string; deleted?:boolean };
 export type TaskSessionApi = {
+  onTasksChanged(listener:(event:TaskSessionChanged)=>void):()=>void;
   taskOptions(input: TaskScopeInput): Promise<ApiResult<TaskOptions>>;
   createTask(input: TaskCreateInput): Promise<ApiResult<TaskDetail>>;
   listTasks(input: TaskListInput): Promise<ApiResult<TaskDetail[]>>;

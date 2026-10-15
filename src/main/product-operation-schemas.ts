@@ -1,3 +1,4 @@
+import { TASK_SESSION_OPERATION_SCHEMAS } from "@shared/task-session-product";
 import { REALTIME_OPERATION_SCHEMAS } from "@shared/realtime-product";
 import { VOICE_OPERATION_SCHEMAS } from "@shared/voice-product";
 import { MCP_WRITE_OPERATION_SCHEMAS } from "@shared/mcp-write-product";
@@ -18,6 +19,7 @@ import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema
 
 export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...MEDIA_OPERATION_SCHEMAS,
+  ...TASK_SESSION_OPERATION_SCHEMAS,
   ...VOICE_OPERATION_SCHEMAS,
   ...REALTIME_OPERATION_SCHEMAS,
   ...LIBRARY_OPERATION_SCHEMAS,
@@ -108,7 +110,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "runtime.getSessionSnapshot": sessionIdSchema,
   "runtime.cancel": runIdSchema,
   "runtime.retry": runIdSchema,
-  "roomRuntime.getSnapshot": roomIdSchema,
+  "roomRuntime.getSnapshot": z.union([roomIdSchema,z.object({roomId:roomIdSchema,sessionId:sessionIdSchema}).strict()]),
   "roomRuntime.send": z.object(Object.fromEntries(Object.entries(roomSendCommandSchema.shape).filter(([name]) => name !== "clientNonce"))).strict(),
   "roomRuntime.cancel": batchIdSchema,
   "roomRuntime.cancelMember": runIdSchema,

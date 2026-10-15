@@ -1,3 +1,5 @@
+import { taskCreateSchema } from "@shared/task-session-schemas";
+import { TASK_SESSION_OPERATION_SCHEMAS } from "@shared/task-session-product";
 import { realtimeInputSchema } from "@shared/realtime-schemas";
 import { mcpWriteIdSchema } from "@shared/mcp-write-schemas";
 import { MCP_WRITE_PRODUCT_OPERATIONS } from "@shared/mcp-write-product";
@@ -16,7 +18,7 @@ import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import type { ModelImageAttachment, ModelTextAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
-  "voice.realtime.snapshot", "voice.configurations", "voice.get", "voice.list", "voice.audio",
+  "sessions.taskOptions", "sessions.listTasks", "sessions.getTask", "voice.realtime.snapshot", "voice.configurations", "voice.get", "voice.list", "voice.audio",
   "media.list", "media.metadata", "media.read", "media.preview",
   "mcp.toolCatalog", "mcp.toolGrants", "mcp.toolResult", "mcp.listToolIntents",
   "demonstrations.status", "demonstrations.drafts", "demonstrations.readDraft",
@@ -140,11 +142,29 @@ export class ProductOperationService {
     const runtime = repository.getRuntimeRun(runtimeRunId);
     repository.assertSessionExecutor(runtime.sessionId, runtime.executorBotId);
     if (!["running", "streaming"].includes(runtime.state)) throw new AevorenBotError("TOOL_EXECUTION_CANCELLED");
+    repository.tasks.assertToolAllowed(runtimeRunId,tool);
     if (tool.action !== "execute") return;
     const definition = productOperation(tool.operation);
     if (!definition) throw new AevorenBotError("INVALID_REQUEST", "产品操作不存在，请先查询功能目录。");
     const schema = PRODUCT_OPERATION_SCHEMAS[tool.operation]!;
     const input = schema.parse(this.libraryInput(tool.operation, tool.input, runtime));
+    const taskPolicy=repository.tasks.runtimeTaskPolicy(runtimeRunId);
+    if(taskPolicy){
+      const record=input&&typeof input==="object"&&!Array.isArray(input)?input as Record<string,unknown>:null;
+      if(record?.sessionId!==undefined&&record.sessionId!==runtime.sessionId&&!tool.operation.startsWith("sessions."))throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+      let targetSession:string|undefined;
+      if(["transcript.list","runtime.getSessionSnapshot","conversations.clear"].includes(tool.operation))targetSession=input as string;
+      if(["messages.retry","messages.cancel","messages.getStatus"].includes(tool.operation))targetSession=repository.getSendOrThrow(input as string).sessionId;
+      if(["runtime.cancel","runtime.retry","roomRuntime.cancelMember"].includes(tool.operation))targetSession=repository.getRuntimeRun(input as string).sessionId;
+      if(["roomRuntime.cancel","roomRuntime.continue"].includes(tool.operation))targetSession=repository.getRoomBatch(input as string).sessionId;
+      if(tool.operation==="roomRuntime.retryTurn")targetSession=repository.getRoomBatch(repository.getRoomTurn(input as string).batchId).sessionId;
+      if(tool.operation==="roomRuntime.getSnapshot")targetSession=typeof input==="string"?repository.getRoomMainSession(input).id:(input as {sessionId:string}).sessionId;
+      if(targetSession!==undefined&&targetSession!==runtime.sessionId)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+      if(tool.operation==="memories.list"&&(record?.botId!==undefined&&record.botId!==runtime.executorBotId||record?.scope==="bot"&&record.scopeKey!==runtime.executorBotId))throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      if(["memories.update","memories.delete","memories.restore"].includes(tool.operation)&&!taskPolicy.selection.memories.some(memory=>memory.id===record?.id))throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      if(tool.operation==="memories.create"&&(record?.botId!==runtime.executorBotId&&!(record?.scope==="bot"&&record.scopeKey===runtime.executorBotId)))throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      if(["memories.acceptProposal","memories.rejectProposal"].includes(tool.operation))throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+    }
     if (voiceOperation(tool.operation)) {
       if (!this.dependencies.voiceService) throw new AevorenBotError("VOICE_UNSUPPORTED");
       repository.voice.assertScope(runtime.sessionId, { executorBotId: runtime.executorBotId, runtimeRunId: runtime.id });
@@ -219,6 +239,20 @@ export class ProductOperationService {
   private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<ProductExecutionResult> {
     this.validate(tool, invocation.runtimeRunId);
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
+    if(tool.action==="execute"&&Object.hasOwn(TASK_SESSION_OPERATION_SCHEMAS,tool.operation)){
+      const service=this.dependencies.taskSessionService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
+      const input=PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(this.libraryInput(tool.operation,tool.input,runtime));
+      const actor=runtime.executorBotId;
+      const value=await (tool.operation==="sessions.taskOptions"?service.options(input as import("@shared/task-session-contracts").TaskScopeInput,actor,runtime.id)
+        :tool.operation==="sessions.createTask"?service.create(input as import("@shared/task-session-contracts").TaskCreateInput,actor)
+        :tool.operation==="sessions.listTasks"?service.list(input as import("@shared/task-session-contracts").TaskListInput,actor)
+        :tool.operation==="sessions.getTask"?service.get(input as import("@shared/task-session-contracts").TaskScopeInput,actor)
+        :tool.operation==="sessions.updateTask"?service.update(input as import("@shared/task-session-contracts").TaskUpdateInput,actor)
+        :tool.operation==="sessions.reviseTaskSelection"?service.revise(input as import("@shared/task-session-contracts").TaskSelectionUpdateInput,actor)
+        :tool.operation==="sessions.cancelTask"?service.cancel(input as import("@shared/task-session-contracts").TaskCancelInput,actor)
+        :service.delete(input as import("@shared/task-session-contracts").TaskCancelInput,actor));
+      return this.result({status:"completed",operation:tool.operation,result:value});
+    }
     if (tool.action === "execute" && tool.operation.startsWith("voice.realtime.")) {
       const service = this.dependencies.realtimeService;
       if (!service) throw new AevorenBotError("VOICE_UNSUPPORTED");
@@ -275,7 +309,8 @@ export class ProductOperationService {
     }
     if (tool.action === "catalog") {
       const query = tool.query?.trim().toLocaleLowerCase() ?? "";
-      const operations = PRODUCT_OPERATIONS.filter((item) => !query || `${item.name} ${item.description}`.toLocaleLowerCase().includes(query));
+      const policy=this.dependencies.repository.tasks.runtimeTaskPolicy(runtime.id);
+      const operations = PRODUCT_OPERATIONS.filter((item) => (!policy||policy.selection.productOperations.includes(item.name)&&!["messages.send","roomRuntime.send","bots.create","bots.duplicate","teams.createContentTeam","rooms.create","approvals.resolve"].includes(item.name))&&(!query || `${item.name} ${item.description}`.toLocaleLowerCase().includes(query)));
       return this.result({ status: "completed", operations: operations.map(({ channel: _channel, ...item }) => ({ ...item, approvalRequired: this.requiresApproval({ kind: "product-call", action: "execute", operation: item.name }) })) });
     }
     if (tool.action === "describe") {
@@ -394,6 +429,15 @@ export class ProductOperationService {
         return { content: previous, metadata: { operation: tool.operation, reused: true } };
       }
     }
+    const taskPolicy=this.dependencies.repository.tasks.runtimeTaskPolicy(runtime.id);
+    if(taskPolicy&&tool.operation==="memories.list"){
+      const filter=PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(tool.input) as {botId?:string;scope?:string;scopeKey?:string};
+      const result=taskPolicy.memories.map(item=>item.memory).filter(memory=>filter.botId?memory.botId===filter.botId:memory.scope===filter.scope&&memory.scopeKey===filter.scopeKey);
+      return this.result({status:"completed",operation:tool.operation,result});
+    }
+    if(taskPolicy&&tool.operation==="memories.listProposals")return this.result({status:"completed",operation:tool.operation,result:[]});
+    if(taskPolicy&&tool.operation==="library.available")return this.result({status:"completed",operation:tool.operation,result:this.dependencies.repository.library.list({...tool.input as object,sessionId:runtime.sessionId},runtime.executorBotId,runtime.id)});
+    if(taskPolicy&&tool.operation==="media.available")return this.result({status:"completed",operation:tool.operation,result:this.dependencies.repository.media.listRuntimeItems({sessionId:runtime.sessionId,executorBotId:runtime.executorBotId,runtimeRunId:runtime.id},tool.input as import("@shared/media-contracts").MediaAvailableInput)});
     let input = PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(this.libraryInput(tool.operation, tool.input, runtime));
     if (["media.read", "media.preview"].includes(tool.operation)) {
       const service = this.dependencies.mediaService!;
@@ -510,7 +554,7 @@ export class ProductOperationService {
     if (["userProfile.get", "userProfile.update"].includes(tool.operation)) result = { name: (result as import("@shared/contracts").UserProfile).name, hasAvatar: Boolean((result as import("@shared/contracts").UserProfile).avatarUrl) };
     if (tool.operation === "bots.list") result = (result as import("@shared/contracts").Bot[]).map(({ id, name, label, description, version, modelSelection }) => ({ id, name, label, description, version, modelSelection }));
     if (tool.operation === "rooms.list") result = (result as import("@shared/contracts").Room[]).map(({ id, name, description, version, membershipVersion, leadBotId, archivedAt }) => ({ id, name, description, version, membershipVersion, leadBotId, archivedAt }));
-    if (tool.operation === "workspaces.list") result = this.dependencies.repository.listSessionWorkspaces(runtime.sessionId, runtime.executorBotId).map(({ id, name, writeEnabled, automationEnabled, version }) => ({ id, name, writeEnabled, automationEnabled, version }));
+    if (tool.operation === "workspaces.list") result = this.dependencies.repository.listSessionWorkspaces(runtime.sessionId, runtime.executorBotId).flatMap(({ id, name, writeEnabled, automationEnabled, version }) => {const limit=taskPolicy?.selection.workspaces.find(item=>item.id===id);return taskPolicy&&!limit?.read?[]:[{id,name,version,writeEnabled:writeEnabled&&(!taskPolicy||limit!.write),automationEnabled:automationEnabled&&(!taskPolicy||limit!.automation)}];});
     if (definition.effectClass === "write-reversible" || definition.effectClass === "irreversible") this.dependencies.productChanged?.();
     const output = this.result({ status: result && typeof result === "object" && "status" in result && result.status === "waiting_user" ? "waiting_user" : result === null && definition.interaction === "native" ? "cancelled" :
       ["execution.run", "processes.start"].includes(tool.operation) && (result as { state?: string } | null)?.state === "running" ? "running" : "completed", operation: tool.operation, result: result ?? null });
@@ -523,8 +567,44 @@ export class ProductOperationService {
     return { content, metadata: { status: receipt.status ?? "completed", ...(receipt.operation ? { operation: receipt.operation } : {}), ...(receipt.result?.runId ? { targetRunId: receipt.result.runId } : {}), ...(receipt.result?.state ? { taskState: receipt.result.state } : {}) } };
   }
 
-  private libraryInput(operation: string, value: unknown, runtime: Pick<RuntimeRun, "sessionId" | "clientNonce" | "executorBotId">): unknown {
+  private libraryInput(operation: string, value: unknown, runtime: Pick<RuntimeRun, "id" | "sessionId" | "clientNonce" | "executorBotId">): unknown {
     const input = value === null ? undefined : value;
+    const taskPolicy=this.dependencies.repository.tasks.runtimeTaskPolicy(runtime.id);
+    if(Object.hasOwn(TASK_SESSION_OPERATION_SCHEMAS,operation)){
+      if(input!==undefined&&(!input||typeof input!=="object"||Array.isArray(input)))throw new AevorenBotError("INVALID_REQUEST");
+      const supplied=(input??{}) as Record<string,unknown>;
+      if(["sessions.createTask","sessions.listTasks"].includes(operation)){
+        if(supplied.parentSessionId!==undefined&&supplied.parentSessionId!==runtime.sessionId)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+        const scoped={...supplied,parentSessionId:runtime.sessionId};
+        if(operation==="sessions.createTask"&&taskPolicy){
+          const requested=taskCreateSchema.parse(scoped),ceiling=taskPolicy.selection;
+          for(const item of requested.selections){
+            const sameRef=(a:unknown,b:unknown):boolean=>JSON.stringify(a)===JSON.stringify(b);
+            if(item.executorBotId!==runtime.executorBotId||item.network&&!ceiling.network||item.clipboard&&!ceiling.clipboard
+              ||item.productOperations.some(name=>!ceiling.productOperations.includes(name))
+              ||item.memories.some(memory=>!ceiling.memories.some(value=>value.id===memory.id&&value.version===memory.version&&value.digest===memory.digest))
+              ||item.resourceRefs.some(ref=>!ceiling.resourceRefs.some(value=>sameRef(value,ref)))
+              ||item.mediaRefs.some(ref=>!ceiling.mediaRefs.some(value=>sameRef(value,ref)))
+              ||item.workspaces.some(workspace=>!ceiling.workspaces.some(value=>value.id===workspace.id&&value.read&&(!workspace.write||value.write)&&(!workspace.automation||value.automation)))
+              ||item.mcp.some(server=>!ceiling.mcp.some(value=>value.serverId===server.serverId&&value.expectedVersion===server.expectedVersion&&server.toolNames.every(name=>value.toolNames.includes(name)))))throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+          }
+        }
+        return scoped;
+      }
+      if(operation==="sessions.taskOptions"){
+        if(supplied.sessionId!==undefined&&supplied.sessionId!==runtime.sessionId)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+        return {...supplied,sessionId:runtime.sessionId};
+      }
+      return input;
+    }
+
+    if(taskPolicy&&operation==="roomRuntime.getSnapshot"){
+      const session=this.dependencies.repository.getSession(runtime.sessionId);
+      if(!session.roomId)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+      const supplied=typeof input==="string"?{roomId:input}:input as {roomId?:string;sessionId?:string}|undefined;
+      if(supplied?.roomId!==undefined&&supplied.roomId!==session.roomId||supplied?.sessionId!==undefined&&supplied.sessionId!==runtime.sessionId)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+      return {roomId:session.roomId,sessionId:runtime.sessionId};
+    }
     if (voiceOperation(operation) || mediaOperation(operation)) {
       if (operation === "media.available" || ["voice.configurations", "voice.configure"].includes(operation)) return input;
       if (input !== undefined && (!input || typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");
@@ -542,11 +622,13 @@ export class ProductOperationService {
     if (input !== undefined && (typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");
     const scoped = input as { sessionId?: string; id?: string; revisionId?: string } | undefined;
     if (scoped?.sessionId !== undefined && scoped.sessionId !== runtime.sessionId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
-    const reference = PINNED_LIBRARY_READS.has(operation) && scoped?.revisionId === undefined
+    const selected=taskPolicy&&scoped?.id?taskPolicy.selection.resourceRefs.find(item=>item.resourceId===scoped.id):undefined;
+    if(taskPolicy&&scoped?.id&&(!selected||scoped.revisionId!==undefined&&scoped.revisionId!==selected.revisionId))throw new AevorenBotError("LIBRARY_NOT_BOUND");
+    const reference = selected??(PINNED_LIBRARY_READS.has(operation) && scoped?.revisionId === undefined
       ? this.dependencies.repository.getUserMessage(runtime.clientNonce).resourceRefs?.find((item) => item.resourceId === scoped?.id)
-      : undefined;
-    if (reference) this.dependencies.repository.library.assertReferences(runtime.sessionId, [reference], runtime.executorBotId);
-    return { ...scoped, sessionId: runtime.sessionId, ...(reference ? { revisionId: reference.revisionId } : {}) };
+      : undefined);
+    if (reference) this.dependencies.repository.library.assertReferences(runtime.sessionId, [reference], runtime.executorBotId, runtime.id);
+    return { ...scoped, sessionId: runtime.sessionId, ...(reference && PINNED_LIBRARY_READS.has(operation) ? { revisionId: reference.revisionId } : {}) };
   }
 
   private assertLibraryReplayAccess(operation: string, content: string, runtime: RuntimeRun): void {
@@ -558,6 +640,6 @@ export class ProductOperationService {
       const value = result as { revision?: { body?: unknown }; reference?: unknown };
       return typeof value.revision?.body === "string" ? [resourceReferenceSchema.parse(value.reference)] : [];
     });
-    if (references.length) this.dependencies.repository.library.assertReferences(runtime.sessionId, references, runtime.executorBotId);
+    if (references.length) this.dependencies.repository.library.assertReferences(runtime.sessionId, references, runtime.executorBotId, runtime.id);
   }
 }
