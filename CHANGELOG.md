@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.0-beta.35 (development candidate)
+
+- Add distinct Notion saved-draft operations and exact page write grants for title-only updates and end-of-page paragraph appends. Preserve existing page body and ordinary/data-source title property identity.
+- Pin observed target metadata in the fixed approval review and recheck the current account and grant before a single PATCH. Changed drafts invalidate pending approval.
+- Verify appended blocks by returned or committed child IDs, parent and text; ambiguous attempts remain unknown and cannot resend. Label title reconciliation based only on current state without claiming the original request caused that state.
+- Real SQLite, controlled HTTP and Renderer unit checks pass. Hidden source, installation-package and cross-platform checks remain separate gates; real Notion credentials are unavailable and unverified.
+
 ## v0.3.0-beta.32 (development candidate)
 
 - Add separate account/operation/target write grants and fixed saved-draft approvals for Gmail sending, ordinary Drive text-file creation/replacement and Notion page creation. Gmail sending requires explicit full-scope reauthorization.

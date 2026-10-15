@@ -36,7 +36,9 @@ export type ConnectorReadResult = {
 export type ConnectorDraftContent =
   | { kind: "gmail-message"; to: string[]; cc: string[]; subject: string; body: string }
   | { kind: "drive-text"; targetFileId: string | null; title: string; text: string }
-  | { kind: "notion-page"; parentPageId: string; title: string; text: string };
+  | { kind: "notion-page"; parentPageId: string; title: string; text: string }
+  | { kind: "notion-page-title"; pageId: string; title: string }
+  | { kind: "notion-page-append"; pageId: string; text: string };
 export type ConnectorDraft = EnvironmentScope & {
   id: string; connectionId: string; accountId: string; authVersion: number; version: number; latestRevisionId: string;
   createdAt: string; updatedAt: string; deletedAt: string | null; state: "local-draft";

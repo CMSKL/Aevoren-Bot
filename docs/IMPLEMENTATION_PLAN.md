@@ -184,3 +184,12 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 首次外发隐藏场景复现严格 Scope 额外参数拒绝，修正为仅会话／执行者后暴露隐藏聊天和应用页的重复审批 portal；修复实际显示归属后重跑通过，没有改用第 n 个匹配或强制点击。外发仍只验证受控服务，真实第三方账号、真实 Windows Docker、签名包另行验收；示范、可写 MCP／Apps 和阶段 5–6 尚未完成。
 
 原生 beta.31 跨平台 fixture 收尾：新增应用设置入口后的六项导航假设修正为实际七项并保留键盘焦点断言；后一轮 Windows 两个场景在末尾诊断截图等待 30 秒失败，业务回调断言已到末尾，后续隐藏窗口断言尚未执行。仅对 Windows 不采集两张装饰性诊断截图，业务／错误／隐藏窗口断言全保留，修正 ed8675f 后仍需跨平台 CI 全通过。不能将原失败或未取得的 Windows 像素记为验收成功。
+
+
+## 阶段 4 Notion 页面更新单元：beta.35 开发候选
+
+由 dev 基线创建 `codex/notion-page-updates`，接入已实现的 beta.32 固定草稿外发基础。新增 `notion-page-title` 和 `notion-page-append`，分别对应仅更新标题和末尾追加段落的精确页面写授权；不做覆盖正文或多步删除。普通／data-source 页面准备时读取真实 title 属性 ID、标题和编辑时间，存入原审批快照；保存后操作类型固定。派发前重新核对账号／写授权及标题目标观察，保持同一外发账本和一次派发规则，无新迁移。
+
+Notion API `2026-03-11` 的标题 PATCH 仅包含已观察的属性 ID。追加单次 PATCH，省略 position 表示末尾，最多 100 个 2,000 字符段落。成功返回或 503 committed_child_ids 均精确 GET 子块并验证父页面与文本摘要；缺失、重复、错父级或不可读取不确认且不重发。标题未知结果只读匹配时明确展示“已核对目标当前状态”，不证明原请求造成变化。依据 [更新页面](https://developers.notion.com/reference/patch-page)、[追加区块](https://developers.notion.com/reference/patch-block-children)、[503 提交提示](https://developers.notion.com/reference/request-limits#retry-a-write-that-returns-503)。
+
+初步针对性验收为主进程 100 项通过、Renderer 18 项及状态文案回归 7 项通过；Node／Web TypeScript、相关 ESLint 通过。随后新增成功回执后精确块 GET 断线保留提示用例继续验证。隐藏 Electron、安装包、跨平台 CI 和签名发行均另行记录；真实账号凭据和写目标未提供，受控 HTTP 不代表实际第三方验收。

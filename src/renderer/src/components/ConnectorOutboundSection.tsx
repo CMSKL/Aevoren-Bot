@@ -3,13 +3,26 @@ import type { ApprovalRequest, ApprovalResolution, ToolPrepareResult } from "@sh
 import type { EnvironmentScope } from "@shared/environment-contracts";
 import type { ConnectorDraftResult, NativeConnection } from "@shared/native-connector-contracts";
 import type { NativeOutboundIntent, NativeWriteGrant, NativeWriteOperation } from "@shared/native-outbound-contracts";
-import { outboundOperationLabels, outboundStateLabels } from "../outbound-approval-review";
+import { outboundOperationLabels, outboundResultNotice, outboundStateLabel, outboundTargetStateNotice } from "../outbound-approval-review";
 import { ExternalDraftReview } from "./ExternalDraftReview";
 import { ToolPermissionDialog } from "./ToolPermissionDialog";
 
 type Props = EnvironmentScope & { connection: NativeConnection | null; saved: ConnectorDraftResult | null; dirty: boolean; active: boolean; ownerName?: string };
-const operationFor = (draft: ConnectorDraftResult): NativeWriteOperation => draft.revision.content.kind === "gmail-message" ? "gmail-send" : draft.revision.content.kind === "notion-page" ? "notion-create-page" : draft.revision.content.targetFileId ? "drive-update-text" : "drive-create-text";
-const targetsFor = (draft: ConnectorDraftResult): string[] => draft.revision.content.kind === "gmail-message" ? [...new Set([...draft.revision.content.to, ...draft.revision.content.cc])] : draft.revision.content.kind === "notion-page" ? [draft.revision.content.parentPageId] : draft.revision.content.targetFileId ? [draft.revision.content.targetFileId] : [];
+const operationFor = (draft: ConnectorDraftResult): NativeWriteOperation => {
+  const content = draft.revision.content;
+  if (content.kind === "gmail-message") return "gmail-send";
+  if (content.kind === "notion-page") return "notion-create-page";
+  if (content.kind === "notion-page-title") return "notion-update-page-title";
+  if (content.kind === "notion-page-append") return "notion-append-page";
+  return content.targetFileId ? "drive-update-text" : "drive-create-text";
+};
+const targetsFor = (draft: ConnectorDraftResult): string[] => {
+  const content = draft.revision.content;
+  if (content.kind === "gmail-message") return [...new Set([...content.to, ...content.cc])];
+  if (content.kind === "notion-page") return [content.parentPageId];
+  if (content.kind === "notion-page-title" || content.kind === "notion-page-append") return [content.pageId];
+  return content.targetFileId ? [content.targetFileId] : [];
+};
 
 export function ConnectorOutboundSection({ sessionId, executorBotId, connection, saved, dirty, active, ownerName }: Props): React.JSX.Element {
   const scopeKey = `${sessionId}:${executorBotId}:${connection?.id ?? ""}`;
@@ -100,7 +113,7 @@ export function ConnectorOutboundSection({ sessionId, executorBotId, connection,
     try {
       const result = await window.aevorenBot.outbound[action]({ sessionId, executorBotId, id: intent.id, expectedVersion: intent.version });
       if (request !== generation.current) return false;
-      if (result.ok) { setNotice(result.data.state === "unknown" ? "尚无可验证的提交结果。原意图没有重发。" : result.data.state === "confirmed" ? "已核对到第三方实际提交结果。" : "外发意图已拒绝。"); await load(); return true; }
+      if (result.ok) { setNotice(outboundResultNotice(result.data)); await load(); return true; }
       setError(result.error.safeMessage); return false;
     } catch { if (request === generation.current) setError("结果核对未完成，原意图不会重发。"); return false; }
     finally { if (request === generation.current) setPending(false); }
@@ -115,8 +128,8 @@ export function ConnectorOutboundSection({ sessionId, executorBotId, connection,
     <div className="connector-actions"><button type="button" className="secondary-button" disabled={pending || !ready || !grant || Boolean(unresolved) || Boolean(currentIntent && currentIntent.state !== "prepared")} onClick={() => void prepare()}>准备此保存版本外发</button><button type="button" className="text-button" disabled={pending} onClick={() => void load()}>刷新外发状态</button></div>
     {unresolved ? <p className="connector-note">此草稿仍有派发中或未知结果，不能准备新的提交。请先核对原外发记录。</p> : null}
     {dirty ? <p className="connector-note">当前编辑内容尚未保存，不能提交。保存后需要重新核对此版本。</p> : null}
-    {prepared ? <article className="connector-card" aria-label="准备外发的固定版本"><ExternalDraftReview snapshot={prepared.review} /><p role="status">{outboundStateLabels[prepared.state]}</p>{prepared.state === "prepared" ? <div className="connector-actions"><button type="button" className="primary-button" disabled={pending || !ready || !grant} onClick={() => void requestApproval()}>审阅并批准此版本</button><button type="button" className="text-button" disabled={pending} onClick={() => void intentAction(prepared, "reject")}>拒绝此版本外发</button></div> : null}</article> : null}
-    <div className="connector-outbound-list" aria-label="外发记录">{intents.filter(intent => !connection || intent.connectionId === connection.id).map(intent => <article className="connector-card" key={intent.id}><div className="connector-heading"><strong>{outboundOperationLabels[intent.operation]} · v{intent.review.revisionNumber}</strong><span>{outboundStateLabels[intent.state]}</span></div><p className="connector-note">{intent.account.email ?? intent.account.displayName} · {intent.updatedAt}</p>{intent.resultResourceId ? <p className="connector-note">第三方结果 ID：{intent.resultResourceId}</p> : null}{intent.state === "dispatching" ? <button type="button" className="secondary-button" disabled={pending} onClick={() => void intentAction(intent, "cancel")}>停止此次提交并核对</button> : null}{intent.state === "unknown" ? <><p className="connector-note">提交结果未知，可能已生效。只读核对不会再次提交；查无结果仍保持未知。</p><button type="button" className="secondary-button" disabled={pending} onClick={() => void intentAction(intent, "reconcile")}>只读核对此次结果</button></> : null}<details><summary>查看该记录固定内容</summary><ExternalDraftReview snapshot={intent.review} /></details></article>)}</div>
+    {prepared ? <article className="connector-card" aria-label="准备外发的固定版本"><ExternalDraftReview snapshot={prepared.review} /><p role="status">{outboundStateLabel(prepared)}</p>{prepared.state === "prepared" ? <div className="connector-actions"><button type="button" className="primary-button" disabled={pending || !ready || !grant} onClick={() => void requestApproval()}>审阅并批准此版本</button><button type="button" className="text-button" disabled={pending} onClick={() => void intentAction(prepared, "reject")}>拒绝此版本外发</button></div> : null}</article> : null}
+    <div className="connector-outbound-list" aria-label="外发记录">{intents.filter(intent => !connection || intent.connectionId === connection.id).map(intent => <article className="connector-card" key={intent.id}><div className="connector-heading"><strong>{outboundOperationLabels[intent.operation]} · v{intent.review.revisionNumber}</strong><span>{outboundStateLabel(intent)}</span></div>{intent.state === "confirmed" && intent.lastErrorCode === "TARGET_STATE_MATCH" ? <p className="connector-note">{outboundTargetStateNotice}</p> : null}<p className="connector-note">{intent.account.email ?? intent.account.displayName} · {intent.updatedAt}</p>{intent.resultResourceId ? <p className="connector-note">第三方结果 ID：{intent.resultResourceId}</p> : null}{intent.state === "dispatching" ? <button type="button" className="secondary-button" disabled={pending} onClick={() => void intentAction(intent, "cancel")}>停止此次提交并核对</button> : null}{intent.state === "unknown" ? <><p className="connector-note">提交结果未知，可能已生效。只读核对不会再次提交；查无结果仍保持未知。</p><button type="button" className="secondary-button" disabled={pending} onClick={() => void intentAction(intent, "reconcile")}>只读核对此次结果</button></> : null}<details><summary>查看该记录固定内容</summary><ExternalDraftReview snapshot={intent.review} /></details></article>)}</div>
     {approval ? <ToolPermissionDialog approval={approval.approval} invocation={approval.invocation} label="外发固定草稿" botName={ownerName ?? "当前成员"} onResolve={resolve} onStop={() => { if (approvalIntent) void intentAction(approvalIntent, "cancel").then(accepted => { if (accepted) { setApproval(null); setApprovalIntent(null); } }); }} /> : null}
   </section>;
 }

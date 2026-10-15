@@ -7,7 +7,8 @@ function safeEndpoint(url: URL, method: string): boolean {
   if (url.hostname === "gmail.googleapis.com") return method === "POST" && url.pathname === "/gmail/v1/users/me/messages/send";
   if (url.hostname === "www.googleapis.com") return method === "POST" && url.pathname === "/upload/drive/v3/files"
     || method === "PATCH" && /^\/upload\/drive\/v3\/files\/[A-Za-z0-9_-]{1,256}$/u.test(url.pathname);
-  return url.hostname === "api.notion.com" && method === "POST" && url.pathname === "/v1/pages";
+  return url.hostname === "api.notion.com" && (method === "POST" && url.pathname === "/v1/pages"
+    || method === "PATCH" && /^\/v1\/(?:pages\/[a-fA-F0-9-]{32,36}|blocks\/[a-fA-F0-9-]{32,36}\/children)$/u.test(url.pathname));
 }
 export function safeCommittedHint(data: Record<string, unknown>): NativeReconcileHint | undefined {
   const additional = data.additional_data;
