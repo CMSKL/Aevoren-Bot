@@ -144,7 +144,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   const handlers = new Map<string, (input?: unknown) => unknown>();
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
   addMediaProductHandlers(handlers, dependencies, commit, libraryContext);
-  addVoiceProductHandlers(handlers, dependencies);
+  addVoiceProductHandlers(handlers, dependencies, commit);
   addEnvironmentProductHandlers(handlers, dependencies, commit, libraryContext);
   addBrowserProductHandlers(handlers, dependencies, commit, libraryContext);
   addDemonstrationProductHandlers(handlers, dependencies, commit, libraryContext);

@@ -66,6 +66,30 @@ function libraryRuntime(repository: AppRepository, actor: ReturnType<AppReposito
 }
 
 describe("canonical voice intent", () => {
+  it("exposes approved non-secret voice settings without exposing or replacing the host key", async () => {
+    const f = fixture();
+    const voice = new VoiceService(f.repository, { isAvailable: () => true, encrypt: value => `sealed:${value}`, decrypt: value => value.slice(7) },
+      { readBinary: async () => { throw new Error("not used"); } }, join(f.root, "voice-config"), { fetch: async () => { throw new Error("no network expected"); } });
+    f.dependencies.voiceService = voice;
+    try {
+      const current = voice.configurations().find(item => item.kind === "tts")!;
+      const saved = voice.saveConfiguration({ kind: "tts", expectedVersion: current.version, enabled: true, model: "gpt-4o-mini-tts", voice: "coral", apiKey: "private-fixture-key" });
+      const input = { kind: "tts", expectedVersion: saved.version, enabled: true, model: saved.model, voice: "cedar" };
+      expect(() => f.service.validate(call("voice.configure", { ...input, apiKey: "forged" }), f.runtime.id)).toThrow();
+      expect(() => f.service.validate(call("voice.configure", { ...input, clearApiKey: true }), f.runtime.id)).toThrow();
+      expect(f.service.requiresApproval(call("voice.configure", input))).toBe(true);
+      const result = await f.execute(call("voice.configure", input));
+      expect(JSON.parse(result.content).result).toMatchObject({ voice: "cedar", keyConfigured: true, version: saved.version + 1 });
+      expect(result.content).not.toContain("private-fixture-key"); expect(result.content).not.toContain("sealed:");
+      const latest = voice.configurations().find(item => item.kind === "tts")!;
+      voice.saveConfiguration({ kind: "tts", expectedVersion: latest.version, enabled: false, model: latest.model, voice: latest.voice, clearApiKey: true });
+      expect(f.service.requiresApproval(call("voice.configure", input), f.runtime.id)).toBe(false);
+      const replay = await f.execute(call("voice.configure", input));
+      expect(JSON.parse(replay.content)).toMatchObject({ status: "previously_completed", result: { enabled: false, keyConfigured: false, version: latest.version + 1 } });
+
+    } finally { await voice.shutdown(); }
+  });
+
   it("does not repeat an unknown cloud request when the optional current session is made explicit", async () => {
     const f = fixture(); let requests = 0;
     const voice = new VoiceService(f.repository, { isAvailable: () => true, encrypt: value => `sealed:${value}`, decrypt: value => value.slice(7) },

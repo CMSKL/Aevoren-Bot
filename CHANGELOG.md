@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.0-beta.37 (development candidate)
+
+- Add separate encrypted STT/TTS/Realtime settings, completed-file streaming transcription and actual PCM-to-WAV speech, durable non-replaying task intents and scoped cancellation/recovery. Realtime configuration is saved; connection support follows separately.
+- Add explicit audio-only microphone intents, draft-version guarded manual transcript insertion, current-session completion-order reading, AI voice identity and late-result/generation cancellation guards.
+- Add genuinely decoded bounded audio/video imports and local players, persisted durations and revocable binary reads; video is preview-only.
+- Node24 ordinary tests pass1,669 with45 skips; controlled hidden voice4, typed API1 and A/V plus legacy media5 pass. Cloud/hardware, package and final cross-platform gates remain distinct.
+
 ## v0.3.0-beta.36 (development candidate)
 
 - Add owned PNG/JPEG/PDF/DOCX storage, fixed message/extraction references, conversation bindings and immutable Runtime admission snapshots; revocation blocks later reads and rebinding does not revive old tasks.

@@ -11,6 +11,11 @@ export const voiceConfigurationSaveSchema = z.object({ kind: voiceConfigurationK
   enabled: z.boolean(), model: z.string().trim().min(1).max(100), voice: z.string().trim().min(1).max(100),
   apiKey: z.string().trim().min(1).max(1_024).optional(), clearApiKey: z.boolean().optional(),
 }).strict().refine(input => !input.apiKey || !input.clearApiKey, "Choose a key or clear it");
+/** Model-visible settings patch preserves the existing host key reference. */
+export const voiceConfigurationPatchSchema = z.object({
+  kind: voiceConfigurationSaveSchema.shape.kind, expectedVersion: voiceConfigurationSaveSchema.shape.expectedVersion,
+  enabled: voiceConfigurationSaveSchema.shape.enabled, model: voiceConfigurationSaveSchema.shape.model, voice: voiceConfigurationSaveSchema.shape.voice,
+}).strict();
 export const voiceCaptureOriginSchema = z.object({ captureId: id, draftVersion: z.number().int().nonnegative(), baseDigest: digest }).strict();
 export const voiceCaptureBeginSchema = voiceScopeSchema.extend({ draftVersion: z.number().int().nonnegative(), baseDigest: digest });
 export const voiceCaptureCommitSchema = voiceScopeSchema.extend({ ...voiceCaptureOriginSchema.shape, mimeType: z.string().min(1).max(100),
