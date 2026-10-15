@@ -91,6 +91,17 @@ describe("Realtime host transport and ordinary Runtime delegation",()=>{
     expect(()=>f.service.append({...live.scope,captureId:live.captureId,sequence:0,dataBase64:Buffer.alloc(480).toString("base64")})).toThrow();
     f.service.append({...live.scope,captureId:live.captureId,sequence:1,dataBase64:Buffer.alloc(480).toString("base64")});expect(f.service.snapshot(live.scope).turns).toHaveLength(2);
   });
+  it("accepts a matching121s truncate ACK for actual PCM beyond two minutes",async()=>{
+    const f=await fixture(),live=await f.start(),turn=await f.commit(live),response=await f.response(live,turn),frames=130,pcm=Buffer.alloc(48_000);
+    for(let index=0;index<frames;index++)await f.send(live.peer,{type:"response.output_audio.delta",response_id:response,item_id:"long_audio",content_index:0,delta:pcm.toString("base64")});
+    await vi.waitFor(()=>expect(f.events.filter(event=>event.type==="audio")).toHaveLength(frames));
+    expect(f.service.snapshot(live.scope).session.receivedSamples).toBe(130*24_000);
+    const result=f.service.interrupt({...live.scope,playbackEpoch:0,responseId:response,itemId:"long_audio",contentIndex:0,playedSamples:121*24_000});expect(result.session.state).toBe("interrupting");
+    await vi.waitFor(()=>expect(f.messages.find(event=>event.type==="conversation.item.truncate")).toMatchObject({item_id:"long_audio",content_index:0,audio_end_ms:121000}));
+    await f.send(live.peer,{type:"response.done",response:{id:response,status:"cancelled",output:[]}});
+    await f.send(live.peer,{type:"conversation.item.truncated",item_id:"long_audio",content_index:0,audio_end_ms:121000});
+    await vi.waitFor(()=>expect(f.service.snapshot(live.scope).session.state).toBe("ready"));expect(f.requests).toEqual([]);
+  });
   it("holds a completed business result behind truncate confirmation",async()=>{
     const f=await fixture();f.hold();const live=await f.start(),turn=await f.commit(live),response=await f.response(live,turn);
     await f.send(live.peer,{type:"response.output_audio.delta",response_id:response,item_id:"audio_1",content_index:0,delta:Buffer.alloc(4800).toString("base64")});const call=await f.functionDone(live,response);
