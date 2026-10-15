@@ -92,6 +92,8 @@ macOS arm64 与 Windows x64 的实际安装包均验证资产、独立解析进�
 - AI 第一批操作拟为 `media.list/read/importPath/bind/unbind/delete`；可信文件选择为独立 `pickImport` IPC。预览页只读取宿主已授权的有界字节；解析任务绑定发起会话、nonce、摘要与取消信号，不能借解析页获得主应用能力。
 - 三来源首批以 `media.read` 工具返回图片走实际像素通道；当前 API 初始消息、Codex `turn/start` 和 Claude stdin 仍是文本，不能仅增加发送引用便声明直接初始图片支持。能力快照独立报告媒体传输与模型模态，不依赖浏览器启动状态。
 - 媒体读取加入 `ProductOperationService` 的 scoped 路由与只读集合，绕过普通永久工具回执缓存。模型派发前再次检查原绑定版本、Runtime、当前成员及删除／撤销状态；解绑再绑定不能使原任务读取复活。解析正文同样需要来源与即时授权，不能作为无来源普通工具文本永久留在后续 API 对话或 MCP 同 ID 重送中。已发送到供应商的内容不能由本地撤销收回。
+- 实施时采用窄用途的宿主文本授权回调，与现有图片 side channel 并列：`ProductOperationService`／工具 Coordinator 只在内存传递；`ChatMessage` 的工具条目携带该回调；API 序列化先检查并从线上 JSON 去除回调字段；`ModelToolResponder.respond` 的可选第三参数传至 Codex 和 Claude。Claude 现有同请求 ID 缓存保存渲染闭包，须在每次渲染时重验；Codex 在实际答复时检查。授权失效返回固定提示并移除正文／图片，不能写入永久回执。扩展现有图片线协议测试验证三个来源，不另建通用数据权限框架。
+- 导入／解析归属 `MediaService` 的任务集合；Main 正常退出先取消并等待所属解析窗口和任务结束，再关闭数据库。关闭后、超时、撤权、取消或迟到的解析结果都不得提交媒体与绑定；CAS 中无记录引用的暂存字节不算已发布资料。
 
 这些是已核对源码的集成位置与拟定合同，仍不表示阶段 5 已编码或验收。
 
