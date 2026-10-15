@@ -180,7 +180,9 @@ test("creates explicit empty task scopes through UI and keeps sibling drafts, hi
     await f.page.reload(); await expect(f.page.getByRole("heading", { name: "独立任务乙已命名", exact: true })).toBeVisible();
     await f.restart(); await openTask(f, { ...second, title: "独立任务乙已命名" }); expect((await snapshot(f.page, second.session.id)).entries).toEqual([]);
     await openTask(f, first); await expect(f.page.locator("article.message-user")).toContainText("TASK_A_ONLY_MESSAGE"); await expect(f.page.locator("article.message-user")).not.toContainText("TASK_PARENT_HISTORY_PRIVATE");
-    await f.page.getByRole("listitem", { name: "任务：独立任务乙已命名", exact: true }).click(); await f.page.getByRole("button", { name: "任务详情", exact: true }).click(); await details.getByRole("button", { name: "删除此任务线程", exact: true }).click(); await details.getByRole("button", { name: "确认删除此任务线程", exact: true }).click(); await expect(details).toBeHidden();
+    await f.page.getByRole("listitem", { name: "任务：独立任务乙已命名", exact: true }).click(); await f.page.getByRole("button", { name: "任务详情", exact: true }).click();
+    const restartedDetails = f.page.getByRole("dialog", { name: "任务线程详情", exact: true });
+    await restartedDetails.getByRole("button", { name: "删除此任务线程", exact: true }).click(); await restartedDetails.getByRole("button", { name: "确认删除此任务线程", exact: true }).click(); await expect(restartedDetails).toBeHidden();
     const contacts = value(await f.page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.bots.list())); expect(contacts.find(item => item.id === bot.id)?.name).toBe(bot.name);
     expect(value(await f.page.evaluate(botId => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.sessions.getMain(botId), bot.id)).id).toBe(bot.sessionId);
     expect(value(await f.page.evaluate(sessionId => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.sessions.getTask({ sessionId }), first.session.id)).title).toBe(first.title);
