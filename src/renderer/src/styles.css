@@ -1,5 +1,6 @@
 @import "./styles/conversation.css";
 @import "./styles/settings.css";
+@import "./styles/task-session.css";
 
 /* Approved daylight and dark messenger themes share the same component geometry. */
 :root {

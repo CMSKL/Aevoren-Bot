@@ -560,6 +560,9 @@ const TranscriptItem = memo(function TranscriptItem({
 type ConversationProps = {
   sessionId?: string;
   sessionGeneration?: number;
+  taskTitle?: string;
+  onCreateTask?(): void;
+  onOpenTaskDetails?(): void;
   approvalVisible?: boolean;
   userProfile?: ConversationUserProfile;
   bot: Bot | null;
@@ -604,6 +607,9 @@ type ConversationProps = {
 export function Conversation({
   sessionId,
   sessionGeneration = 1,
+  taskTitle,
+  onCreateTask,
+  onOpenTaskDetails,
   approvalVisible = true,
   userProfile = defaultUserProfile,
   bot,
@@ -802,7 +808,7 @@ export function Conversation({
     });
     return () => { cancelled = true; };
   }, [approvalVisible, voiceOpen, pendingReadAloud, realtimeActive]);
-  const subjectName = bot?.name ?? room?.room.name ?? "选择对话";
+  const subjectName = taskTitle ?? bot?.name ?? room?.room.name ?? "选择对话";
   const currentDate = new Date();
   const conversationScopeId = room?.room.id ?? bot?.id ?? null;
   const conversationMenuScopeId = conversationScopeId ?? "empty-conversation";
@@ -1224,8 +1230,10 @@ export function Conversation({
         ) : bot ? <span className="conversation-bot-avatar"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span> : null}
         <div className="conversation-title">
           <h1>{subjectName}</h1>
-          {room ? <p className="conversation-header-counts">{room.members.length} 位 Agent</p> : bot ? <p className="conversation-header-counts">Bot</p> : null}
+          {taskTitle ? <p className="conversation-header-counts">任务线程 · {room ? `${room.members.length} 位 Agent` : bot?.name}</p> : room ? <p className="conversation-header-counts">{room.members.length} 位 Agent</p> : bot ? <p className="conversation-header-counts">Bot</p> : null}
         </div>
+        {onCreateTask ? <button type="button" className="conversation-task-trigger" onClick={onCreateTask} disabled={loading || submitting}>新建任务</button> : null}
+        {onOpenTaskDetails ? <button type="button" className="conversation-task-trigger" onClick={onOpenTaskDetails} disabled={loading}>任务详情</button> : null}
         <div className="conversation-menu-anchor" ref={menuRef}>
           <button
             className="conversation-menu-trigger"
@@ -1259,7 +1267,7 @@ export function Conversation({
               {bot || room ? <>
               <button className="conversation-menu-item" type="button" role="menuitem" aria-label={artifacts.length > 0 ? `打开会话成果，共 ${artifacts.length} 个` : "打开任务详情"} aria-expanded={artifactShelfOpen} onClick={() => openTaskDetails("artifacts")}><FolderIcon /><span>{room ? "群文件" : "会话文件"}</span><small>{artifacts.length}</small></button>
               <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => openTaskDetails("records")}><span>执行记录</span><small>{toolInvocations.length}</small></button>
-              {room ? <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => { setMenuScopeId(null); onOpenRoomSettings(); }}><PanelIcon /><span>群聊管理</span></button> : null}
+              {room && !taskTitle ? <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => { setMenuScopeId(null); onOpenRoomSettings(); }}><PanelIcon /><span>群聊管理</span></button> : null}
               {latestFailedTurn ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); void retryRoomTurn(latestFailedTurn.id); }}>重试{latestFailedTurn.turnPurpose === "summary" ? "汇总" : "此成员"}</button> : null}
               {latestRetryRun ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); onRetryRun(latestRetryRun.id); }}>重新生成回复</button> : null}
               {retryableUserEntry?.clientNonce ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); onRetryMessage(retryableUserEntry.clientNonce!); }}>安全重试发送</button> : null}
