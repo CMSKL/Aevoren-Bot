@@ -308,3 +308,19 @@ The retained trace shows the nested-frame click returned, the initialized inner 
 The test now registers a real page response waiter before the same UI click, matching only POST to that controlled view's exact RPC endpoint with the unsupported method. It verifies HTTP 200, the matching numeric JSON-RPC ID and error -32601 before retaining the original five-second DOM assertion. The 90-second case limit and existing Playwright deadlines are unchanged; no direct/fake RPC, forced click, retry or application change was added. A bounded attachment records only handler entry, trusted-input status, request posting, response receipt, HTTP status, ID-match boolean and numeric error code; URLs, capability tokens, request/response contents and credentials are excluded.
 
 The updated fixture passed all three source MCP cases in 10.63 seconds and all three cases against the existing actual unsigned macOS arm64 beta.35 package in 10.07 seconds, with no skips, flaky results or forced-cleanup warnings. Both receipts show a trusted click, posted request, real HTTP 200, matching ID, -32601 and inner response receipt. The packaged fixture checked genuine `isPackaged`, version `0.3.0-beta.35` and its bundled MCP guide. No rebuild was needed: ASAR remains `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf3`, and compiled Main remains `627d2e5c89eccd164d5e60240bb41d70ea42894146be9c59852c467a772ca78b`. Node TypeScript, targeted lint, documentation links and diff checks passed. These local macOS checks do not replace the retained Windows failure or establish a new complete cross-platform gate; stages 5/6 remain unimplemented.
+
+## Beta.32 同步 dev 后的验收
+
+`e83e91dd67ca665f2045fc378a3989605d87bb97` 合入已验证 dev `4f24f15`，保留版本 beta.32。相较原 `b922ca8`，生产代码仅增加主文档关闭修复与 Skill 私有 staging 发布修复，原生外发业务及 API 未改，也未引入示范或 MCP Apps。
+
+专项 96／96（快照 10、数据库 25、项目审批 25、外发 36），四套 TypeScript、目标 lint 和完整构建通过。隐藏源码 16／16；实际未签名 macOS arm64 包 24／24：资料库 8、原生读取 2、外发 5、关闭 8、真实包 typed API 1。源码／包界面日志均无强制清理或关闭超时警告，实查版本、isPackaged 和 Resources。
+
+随包 Execution Worker 1.2.0 含私有发布修复，与构建输出字节相同，SHA-256 为 `572b1b355fa653ff37957750aeab7c4aa8af6c1aa77d40fd0b6d05b13056321b`；脚本指南字节一致。未重复整套普通测试，新的跨平台 CI 与签名发行仍待完成；未将此记录称为真实账号或 Windows Docker 验收。
+
+### Beta.32 截图诊断历史补充
+
+> beta.32 当前补充：CI `38680943010` 的 Linux 普通检查通过，真实 Docker 为 39／40；六 Scope 电脑截图被原有 `BROWSER_OBSERVATION_STALE` 规则拒绝。本轮未取得成功画面，不能记为完整 Linux 门禁通过。当前补入同仓 beta.35 已验证的脱敏截图阶段诊断，保持原有焦点、版本和接管检查及调用顺序；该补丁不表示已修复错误。此前本机安装包记录先于该 Worker 补丁，后续须分别核验。
+
+诊断候选 `1ca624d` 的本机补充验收：截图诊断／控制专项 15 项、Browser Worker TypeScript 与定向 lint、Worker 构建通过。重新打包的真实未签名 macOS arm64 beta.32 完成 23 项场景（原生读取 2、外发 5、关闭 8、Runtime 8），包括 15 次重载恢复、失败后重试、SIGKILL 恢复、关闭阻塞提示及 typed API；全部通过。两套 Worker 共八个文件及五份指南与构建输出逐字节相同。ASAR SHA-256 为 `f095741de56104676e8854fcf9d2472a4887ed0164945bb850dbdd3d035cff0a`，Browser engine 为 `9788e576cc351bcfea9e380484b33df8456582b143d0c7fac271662e1ded6e7d`。新一轮跨平台／Docker 检查仍需完成；本机没有启动 Docker 或连接真实账号。
+
+当前 beta.35 合入已验证 dev `36a48730002a5a8bd7115891a99a18a7cffa792c`，保留上述两版独立验收记录。相较合并前 `15ac2b8`，源码、测试、工作流、构建配置、package 和锁文件字节均未改变；只合并实施历史，不重记既有失败为成功。版本仍为 beta.35，新的合并提交仍须完成正常跨平台 CI。
