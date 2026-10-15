@@ -553,3 +553,12 @@ Search2 与继承的 Task3 同轮 **5/5 通过（40.3 秒）**，实际 app.isPa
 首次打包停留在 Electron 校验清单网络下载且没有生成输出；保存诊断后终止该下载进程，使用已安装且核验为 Electron 44.3.0 arm64 的运行时执行标准 ASAR／afterPack 未签名打包。17 项应用输出与 216 项 Worker／parser 输出逐字节匹配，Worker／parser 输出未重建。实际 ASAR SHA-256 `d67b1a55c22c960aa57d903029ed7c1548ad0cf85ef2cc313d5a29ac4a8715a5`，Main 为 `1cd908a142d6a0e882cb9a2ac43e60d9f09433b9113be47a1c6b1581b4744ef0`。207 项 parser 资产、234 项资源文件及 9556 ASAR 条目校验通过；四 Helper 麦克风声明通过，未验证签名或硬件。
 
 持久证据在 `$CODEX_HOME/aevoren-evidence/2026-10-15/releases/search40/`，包含修复前日志／trace、最终 source/package-focused-final 的日志与 JSON、实际几何与明暗截图、字节核对、打包与 parser／麦克风回执。Browser 插件未提供，使用仓库既有隐藏 Playwright Electron 工作流。上述四项是本次变更的定向验收；新的完整跨平台 CI／签名发行仍待完成，不能把历史五项业务包验收记为本次完整全绿。
+
+
+## 阶段 6D：MAIN Bot／群聊 Routine（beta.42 集成候选）
+
+由 dev 派生，合并阶段 6C 的组织／头像源码与迁移 46 后接入迁移 47。Main 先创建 RoomCoordinator，再作为 RoutineService 的第五参数传入；真实退出先等待 Routine 接受阶段收束，再关闭运行器及 Room。保留内部事件回执桥接，不建立监听或外部订阅。
+
+设置提供 Bot／Room MAIN 目标、固定 Everyone／明确子集、定义编辑、成员版本审阅、精确取消和真实状态。新增 Room `expectedMembershipVersion` 在后端原子核验，成员增删／ABA 或配置变化要求明确重选；版本冲突保留草稿。AI 复用同一 handlers，限制当前 MAIN；修改与取消需审批，立即运行提交定义版本，旧模型轮次固定触发 key 防止重复派发。TASK、事件订阅及 Webhook 不在本单元交付范围。
+
+集成中保留实际失败：旧 v45 迁移比较因阶段 6C 的新增头像列失败，改为真实 v46→47 基线并保留全部原行／外键比较。新的产品范围测试先发现 scope helper 错误注入 session/executor 字段，现由专用 Routine 范围校验处理而不放松严格输入。另真实三成员运行证明 partial batch 原先会让 Routine 永远 running；补终态归并后以 failed 结束，保留两位成功成员结果及单次通知。9 文件相关回归目前 131/131 通过，另 19 项 Routine 组件与 5 项设置检查通过，Node／Web 类型及定向 lint 通过。当前隐藏界面、42 实际安装包、完整跨平台与发行尚未通过，不能以历史安装包结果替代。本段后续补充冻结构建及实际验收证据。

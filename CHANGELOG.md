@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.0-beta.42 (development candidate)
+
+- Add MAIN group Routine targets with reviewed membership versions, immutable selected rosters, parallel Everyone/subset execution and a versioned editor shared with host business validation.
+- Expose exact run cancellation and versioned immediate execution to both UI and approved product tools. Constrain AI inspection/control to the current MAIN conversation; keep TASK automation outside this delivery.
+- Preserve accepted prompts/references and nonce receipts through edits, cancellation and restart. Mark partial group results failed while retaining completed member output; never replay an unknown dispatch.
+- Include migration 47 after organization/avatar migration 46, retain the private host event bridge and package the group Routine guide. Local/installed/platform gates remain separately recorded; no release is implied by this source entry.
+
+## v0.3.0-beta.41 (development candidate)
+
+- Add persistent sidebar sections, default assistant selection, category/sound notification preferences and app-owned custom Bot image avatars through shared host operations.
+- Keep organization separate from authority; preserve MAIN/TASK identities and revocable real avatar-pixel reads. Verification evidence and platform boundaries are recorded in the implementation plan.
+
+
 ## v0.3.0-beta.40 (development candidate)
 
 - Search saved messages, immutable document/Skill versions, media/transcripts, Task threads, routines and authorized local drafts from one scoped interface.
