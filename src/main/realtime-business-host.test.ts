@@ -10,11 +10,11 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
 it("dispatches only frozen final human ASR through real Runtime and records distinct voice provenance", async () => {
   const repository = new AppRepository(":memory:"), actor = repository.createBot();
-  let seen: ChatMessage[] = [], host!: RealtimeBusinessHost;
+  let seen: ChatMessage[] = [];
   const provider: ModelProvider = { async *run(messages): AsyncIterable<ModelEvent> { seen=messages; yield {type:"started",requestId:"voice-runtime-fixture"}; yield {type:"delta",text:"verified ordinary runtime result"}; yield {type:"completed",finishReason:"stop"}; }, async testConnection() {} };
   const worker=new RuntimeCoordinator(repository,null,{transcript:vi.fn(),sendState:vi.fn(),runtime:()=>host?.changed()},false,provider);
   const rooms=new RoomCoordinator(repository,worker.executor,{transcript:vi.fn(),roomRuntime:()=>host?.changed()});
-  host=new RealtimeBusinessHost(repository,worker,rooms);
+  const host=new RealtimeBusinessHost(repository,worker,rooms);
   cleanups.push(async()=>{await worker.shutdown();await rooms.shutdown();repository.close();});
   const input={sessionId:actor.session.id,executorBotId:actor.bot.id,expectedConfigVersion:1,routingMode:"automatic" as const,targetBotIds:[]};
   const admission=captureRealtimeAdmission(repository,input), record=repository.realtime.create(input,randomUUID(),repository.voice.configuration("realtime").configuration,admission);
