@@ -13,3 +13,9 @@
 .voice-transcript { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow-y: auto; padding: 10px; background: var(--surface-soft); border-radius: 6px; font: inherit; }
 .message-read-aloud { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; font-size: 12px; }
 .realtime-voice-panel { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; max-height: 280px; overflow-y: auto; font-size: 12px; }
+.composer-voice-trigger { flex: 0 0 auto; height: 30px; padding: 2px 7px; border: 0; border-radius: 6px; color: var(--text-muted); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.composer-voice-trigger:hover, .composer-voice-trigger[aria-expanded="true"] { color: var(--text); background: var(--surface-soft); }
+.voice-controls-popover { position: fixed; z-index: 320; box-sizing: border-box; padding: 12px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--panel-bg); box-shadow: var(--shadow-dialog); }
+.voice-controls-popover[hidden] { display: none; }
+.voice-controls-popover > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.voice-controls-popover :is(button, input, select):focus-visible, .composer-voice-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
