@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { DEMONSTRATION_CHANNELS } from "@shared/demonstration-channels";
 import { IPC } from "@shared/channels";
 import { LIBRARY_CHANNELS } from "@shared/library-channels";
 import { ENVIRONMENT_CHANNELS, EXECUTION_CHANNELS, PROCESS_CHANNELS, ENVIRONMENT_EVENTS } from "@shared/environment-channels";
@@ -23,6 +24,17 @@ function onBrowserChanged(listener: (event: BrowserChangedEvent) => void): () =>
 }
 
 const api: AevorenBotApi = {
+  demonstrations: {
+    status: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.status, input),
+    start: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.start, input),
+    stop: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.stop, input),
+    discard: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.discard, input),
+    drafts: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.drafts, input),
+    readDraft: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.readDraft, input),
+    deleteDraft: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.deleteDraft, input),
+    updateDraft: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.updateDraft, input),
+    publish: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.publish, input),
+  },
   skillsExecution: {
     scripts: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.scripts, input),
     executionGrants: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.executionGrants, input),

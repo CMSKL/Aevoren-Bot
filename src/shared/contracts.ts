@@ -1244,6 +1244,7 @@ export type UserProfile = {
 export interface AevorenBotApi {
   browser: import("./browser-contracts").BrowserApi;
   computer: import("./browser-contracts").ComputerApi;
+  demonstrations: import("./demonstration-contracts").DemonstrationApi;
   preview: import("./browser-contracts").PreviewApi;
   environments: import("./environment-contracts").EnvironmentsApi;
   execution: import("./environment-contracts").ExecutionApi;

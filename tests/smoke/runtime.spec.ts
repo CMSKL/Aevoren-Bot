@@ -391,7 +391,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "conversations", "environments", "events", "execution", "library", "mcp", "memories", "messages", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "conversations", "demonstrations", "environments", "events", "execution", "library", "mcp", "memories", "messages", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
     ]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime,
@@ -416,6 +416,12 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.preview,
     ).toSorted())).toEqual(["close", "list", "onChanged", "open"]);
+    expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.demonstrations).toSorted())).toEqual(["deleteDraft", "discard", "drafts", "publish", "readDraft", "start", "status", "stop", "updateDraft"]);
+    const demonstrationValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      return Promise.all([api.demonstrations.drafts({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid" }), api.demonstrations.publish({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", id: "not-a-uuid", expectedVersion: -1, expectedDigest: "invalid" })]);
+    });
+    for (const result of demonstrationValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     const browserValidation = await launched.page.evaluate(async () => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       const invalidScope = { sessionId: "not-a-uuid", executorBotId: "not-a-uuid" };

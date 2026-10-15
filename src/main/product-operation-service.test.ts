@@ -16,6 +16,7 @@ import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
+import { DemonstrationService } from "./demonstration-service";
 import { LibraryService } from "./library-service";
 import { writeLibraryExport } from "./library-export";
 import type { ModelProvider } from "./model";
@@ -40,7 +41,7 @@ function fixture(provider?: ModelProvider) {
   const dependencies = { repository, libraryService, workspaceToolCoordinator: coordinator, sendWorker: worker, roomCoordinator: new RoomCoordinator(repository, worker.executor, { transcript: () => {}, roomRuntime: () => {} }), generalSettings: new GeneralSettingsService(repository), providers: { list: async () => [], isSupported: () => true }, updateService: {}, workspaceService, productChanged: vi.fn() } as unknown as ProductDependencies;
   const service = new ProductOperationService(dependencies);
   executor.setProductOperations(service);
-  const prepare = (tool: ProductToolRequest, runtimeRunId = runtime.id) => repository.prepareToolInvocation({ runtimeRunId, toolCallId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), tool });
+  const prepare = (tool: ProductToolRequest, runtimeRunId = runtime.id) => repository.prepareToolInvocation({ runtimeRunId, toolCallId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), tool }, undefined, undefined, service.approvalReview(tool, runtimeRunId));
   const execute = async (tool: ProductToolRequest, runtimeRunId = runtime.id) => {
     const prepared = prepare(tool, runtimeRunId);
     repository.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
@@ -410,5 +411,30 @@ describe("product operations", () => {
     expect(replay).toMatchObject({ reused: true, result: first.result });
     expect(replay.receiptNotice).toContain("首次操作回执");
     expect(() => f.repository.library.read({ sessionId: f.actor.session.id, id: content.resource.id })).toThrow(/未授权/);
+  });
+});
+
+
+describe("demonstration product approvals", () => {
+  it("requires genuine approval and publishes a fixed saved draft once, initially disabled", async () => {
+    const f = fixture();
+    f.dependencies.demonstrationService = new DemonstrationService(f.repository, { demonstrationRequest: async () => null }, f.libraryService);
+    const now = new Date().toISOString(), scope = { sessionId: f.actor.session.id, executorBotId: f.actor.bot.id };
+    const draft = f.repository.demonstrations.create(scope, { id: crypto.randomUUID(), browserSessionId: crypto.randomUUID(), epoch: 2, state: "stopped", reason: null, events: [{ kind: "redacted-text" }], eventCount: 1, createdAt: now, updatedAt: now });
+    const tool = call("demonstrations.publish", { id: draft.id, expectedVersion: 1, expectedDigest: draft.digest });
+    expect(f.service.requiresApproval(tool)).toBe(true); expect(f.service.requiresApproval(call("demonstrations.readDraft", { id: draft.id }))).toBe(false);
+    const pending = f.prepare(tool);
+    expect(await f.service.handlers.get("approvals:review")!({ ...scope, id: pending.approval.id, expectedVersion: pending.approval.version })).toMatchObject({ executable: true, snapshot: { kind: "demonstration-skill", resourceName: draft.name, target: { body: draft.body, draftDigest: draft.digest, initiallyEnabled: false } } });
+    await expect(f.executor.execute(pending.invocation.id)).rejects.toMatchObject({ code: "TOOL_STATE_INVALID" }); expect(f.repository.library.list({ sessionId: scope.sessionId, includeDisabled: true })).toHaveLength(0);
+    f.repository.resolveToolApproval(pending.approval.id, pending.approval.version, "allow-once"); const receipt = JSON.parse((await f.executor.execute(pending.invocation.id)).content); expect(receipt.result.resource.enabled).toBe(false); expect(receipt.result.revision.body).toBe(draft.body);
+    const replay = JSON.parse((await f.execute(tool)).content); expect(replay.status).toBe("previously_completed"); expect(replay.result.resource.id).toBe(receipt.result.resource.id); expect(f.repository.library.list({ sessionId: scope.sessionId, includeDisabled: true })).toHaveLength(1);
+    const request = await f.execute(call("demonstrations.start", { id: crypto.randomUUID(), expectedEpoch: 2 })); expect(JSON.parse(request.content).status).toBe("waiting_user");
+  });
+  it("a saved draft edit after approval invalidates the old digest without publishing", async () => {
+    const f = fixture(); f.dependencies.demonstrationService = new DemonstrationService(f.repository, { demonstrationRequest: async () => null }, f.libraryService);
+    const scope = { sessionId: f.actor.session.id, executorBotId: f.actor.bot.id }, now = new Date().toISOString(); const draft = f.repository.demonstrations.create(scope, { id: crypto.randomUUID(), browserSessionId: crypto.randomUUID(), epoch: 2, state: "stopped", reason: null, events: [], eventCount: 0, createdAt: now, updatedAt: now });
+    const pending = f.prepare(call("demonstrations.publish", { id: draft.id, expectedVersion: 1, expectedDigest: draft.digest })); f.repository.resolveToolApproval(pending.approval.id, pending.approval.version, "allow-once");
+    f.repository.demonstrations.update({ ...scope, id: draft.id, expectedVersion: 1, name: "Changed draft", body: draft.body + "\nCHANGED_AFTER_APPROVAL" });
+    await expect(f.executor.execute(pending.invocation.id)).rejects.toMatchObject({ code: "DEMONSTRATION_VERSION_CONFLICT" }); expect(f.repository.library.list({ sessionId: scope.sessionId, includeDisabled: true })).toHaveLength(0);
   });
 });

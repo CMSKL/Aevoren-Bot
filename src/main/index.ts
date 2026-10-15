@@ -31,6 +31,7 @@ import { MemoryCaptureService } from "./memory-capture-service";
 import { LibraryService } from "./library-service";
 import { writeLibraryExport } from "./library-export";
 import { EnvironmentService } from "./environment-service";
+import { DemonstrationService } from "./demonstration-service";
 import { BrowserService } from "./browser-service";
 import { SkillExecutionService } from "./skill-execution-service";
 import { SKILL_EXECUTION_EVENTS } from "@shared/skill-execution-channels";
@@ -399,6 +400,7 @@ app.whenReady().then(async () => {
     libraryService,
     environmentService,
     browserService,
+    demonstrationService: new DemonstrationService(repository, browserService, libraryService),
     skillExecutionService: productSkillExecutionService,
     async saveBrowserDownload(input, context) {
       const file = await browserService!.downloadData(input, context);

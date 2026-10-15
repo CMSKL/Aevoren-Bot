@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import type { EnvironmentScope } from "@shared/environment-contracts";
 import type { LibraryChangedEvent, ResourceReference } from "@shared/library-contracts";
 import { environmentScopeSchema } from "@shared/environment-schemas";
-import { approvalReviewSnapshotSchema, skillExecutionInputSchema, skillGrantSchema, skillGrantsSchema, skillRevokeSchema, skillRunSchema,
+import { skillScriptApprovalReviewSchema, skillExecutionInputSchema, skillGrantSchema, skillGrantsSchema, skillRevokeSchema, skillRunSchema,
   skillScriptsSchema, workerSkillInstallSchema } from "@shared/skill-execution-schemas";
-import { skillPackageDescriptor, type ApprovalReviewSnapshot, type SkillExecutionChangedEvent, type SkillExecutionGrant, type SkillGrantInput,
+import { skillPackageDescriptor, type ApprovalReviewSnapshot, type SkillScriptApprovalReviewSnapshot, type SkillExecutionChangedEvent, type SkillExecutionGrant, type SkillGrantInput,
   type SkillGrantsInput, type SkillRevokeInput, type SkillScriptDescriptor, type SkillScriptExecution, type SkillScriptExecutionInput,
   type SkillScriptInterpreter, type SkillScriptRunInput, type SkillScriptsInput, type WorkerSkillInstallRequest } from "@shared/skill-execution-contracts";
 import type { AppRepository } from "./database";
@@ -114,20 +114,20 @@ export class SkillExecutionService {
     await Promise.allSettled(affected.map(value => this.cancelGrant(value)));
   }
 
-  approvalReview(input: unknown, scope: EnvironmentScope): ApprovalReviewSnapshot {
+  approvalReview(input: unknown, scope: EnvironmentScope): SkillScriptApprovalReviewSnapshot {
     const identity = environmentScopeSchema.parse(scope);
     const supplied = (input ?? {}) as Partial<SkillScriptRunInput>;
     if (supplied.sessionId !== undefined && supplied.sessionId !== identity.sessionId || supplied.executorBotId !== undefined && supplied.executorBotId !== identity.executorBotId) throw new AevorenBotError("ENVIRONMENT_SCOPE_INVALID");
     const fields = { ...supplied, ...identity } as Partial<SkillScriptRunInput>; delete fields.clientNonce;
     const parsed = skillRunSchema.omit({ clientNonce: true }).parse(fields);
     const { grant, content } = this.repository.skillExecutions.assertGranted(identity, parsed.grantId, parsed.expectedGrantVersion);
-    return approvalReviewSnapshotSchema.parse({ kind: "skill-script", resourceName: content.revision.name, revisionNumber: content.revision.number,
+    return skillScriptApprovalReviewSchema.parse({ kind: "skill-script", resourceName: content.revision.name, revisionNumber: content.revision.number,
       target: { grantId: grant.id, grantVersion: grant.version, environmentId: grant.environmentId, imageDigest: grant.imageDigest, workerVersion: grant.workerVersion,
         reference: grant.reference, entryPath: grant.entryPath, entrySha256: grant.entrySha256, interpreter: grant.interpreter,
         args: parsed.args, cwd: parsed.cwd, timeoutMs: parsed.timeoutMs } });
   }
   assertApprovalReview(snapshot: ApprovalReviewSnapshot, scope: EnvironmentScope): void {
-    const parsed = approvalReviewSnapshotSchema.parse(snapshot);
+    const parsed = skillScriptApprovalReviewSchema.parse(snapshot);
     const current = this.approvalReview({ grantId: parsed.target.grantId, expectedGrantVersion: parsed.target.grantVersion,
       args: parsed.target.args, cwd: parsed.target.cwd, timeoutMs: parsed.target.timeoutMs }, scope);
     if (approvalReviewDigest(current) !== approvalReviewDigest(parsed)) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");

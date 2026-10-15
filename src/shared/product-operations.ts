@@ -1,3 +1,4 @@
+import { DEMONSTRATION_PRODUCT_OPERATIONS } from "./demonstration-product";
 import { IPC } from "./channels";
 import { LIBRARY_PRODUCT_OPERATIONS } from "./library-product";
 import { ENVIRONMENT_PRODUCT_OPERATIONS } from "./environment-product";
@@ -12,6 +13,7 @@ export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   ...LIBRARY_PRODUCT_OPERATIONS,
   ...ENVIRONMENT_PRODUCT_OPERATIONS,
   ...BROWSER_PRODUCT_OPERATIONS,
+  ...DEMONSTRATION_PRODUCT_OPERATIONS,
   ...SKILL_EXECUTION_PRODUCT_OPERATIONS,
   { name: "userProfile.get", channel: IPC.userProfileGet, description: "查看 · 个人资料", effectClass: "read-local", interaction: "none" },
   { name: "userProfile.update", channel: IPC.userProfileUpdate, description: "修改 · 个人资料", effectClass: "write-reversible", interaction: "none" },

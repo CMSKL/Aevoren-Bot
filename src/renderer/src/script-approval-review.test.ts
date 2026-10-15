@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ApiResult, ToolInvocation } from "@shared/contracts";
-import type { ApprovalReviewInput, ApprovalReviewResult } from "@shared/skill-execution-contracts";
+import type { ApprovalReviewInput, ApprovalReviewResult, SkillScriptApprovalReviewSnapshot } from "@shared/skill-execution-contracts";
 import { isScriptRun, loadScriptApprovalReview, scriptReviewMatches } from "./script-approval-review";
 
 const invocation: ToolInvocation = { id: "tool-a", runtimeRunId: "run-a", sessionId: "private-a", executorBotId: "bot-a", toolCallId: "call-a", idempotencyKey: "nonce-a", commandDigest: "digest-a", toolKind: "product-call", effectClass: "irreversible", workspaceId: null, targetPath: "scripts/main.py", arguments: { kind: "product-call", action: "execute", operation: "skills.runScript", input: { grantId: "grant-a", expectedGrantVersion: 3, args: ["--literal", "$(leave-me); value"], cwd: ".", timeoutMs: 120000 } }, state: "awaiting-approval", attemptCount: 0, approvalRequestId: "approval-a", resultDigest: null, resultMetadata: null, lastErrorCode: null, version: 1, createdAt: "2026-10-14T00:00:00.000Z", updatedAt: "2026-10-14T00:00:00.000Z", startedAt: null, finishedAt: null };
-const review: ApprovalReviewResult = { executable: true, snapshot: { kind: "skill-script", resourceName: "固定 Skill", revisionNumber: 2, target: { grantId: "grant-a", grantVersion: 3, environmentId: "environment-a", imageDigest: `sha256:${"1".repeat(64)}`, workerVersion: "1.2.0", reference: { resourceId: "resource-a", revisionId: "revision-a", digest: "2".repeat(64) }, entryPath: "scripts/main.py", entrySha256: "3".repeat(64), interpreter: "python", args: ["--literal", "$(leave-me); value"], cwd: ".", timeoutMs: 120000 } } };
+const review: ApprovalReviewResult & { snapshot: SkillScriptApprovalReviewSnapshot } = { executable: true, snapshot: { kind: "skill-script", resourceName: "固定 Skill", revisionNumber: 2, target: { grantId: "grant-a", grantVersion: 3, environmentId: "environment-a", imageDigest: `sha256:${"1".repeat(64)}`, workerVersion: "1.2.0", reference: { resourceId: "resource-a", revisionId: "revision-a", digest: "2".repeat(64) }, entryPath: "scripts/main.py", entrySha256: "3".repeat(64), interpreter: "python", args: ["--literal", "$(leave-me); value"], cwd: ".", timeoutMs: 120000 } } };
 
 describe("immutable script approval review", () => {
   it("requires the same frozen grant version and literal argument array as the pending invocation", () => {

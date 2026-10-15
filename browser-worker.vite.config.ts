@@ -1,3 +1,4 @@
+import { BROWSER_WORKER_VERSION } from "./src/shared/browser-contracts";
 import { builtinModules } from "node:module";
 import { resolve } from "node:path";
 import { build, defineConfig } from "vite";
@@ -16,7 +17,7 @@ export default defineConfig({
         rollupOptions: { input: resolve("src/browser-worker/engine-entry.ts"), external,
           output: { format: "es", entryFileNames: "engine.mjs", inlineDynamicImports: true } } } });
     await copyFile(resolve("workers/browser/Dockerfile"), resolve("out/browser-worker/Dockerfile"));
-    await writeFile(resolve("out/browser-worker/package.json"), JSON.stringify({ name: "aevoren-browser-worker", version: "1.0.0", type: "module", license: "Apache-2.0",
+    await writeFile(resolve("out/browser-worker/package.json"), JSON.stringify({ name: "aevoren-browser-worker", version: BROWSER_WORKER_VERSION, type: "module", license: "Apache-2.0",
       dependencies: { "playwright-core": "1.63.0", ws: "8.22.0" } }));
   } }],
 });

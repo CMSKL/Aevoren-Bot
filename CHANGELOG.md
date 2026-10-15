@@ -1,5 +1,12 @@
 # Changelog
 
+## Development: demonstration Skill unit
+
+- Record explicitly started human input after authenticated VNC forwarding in Browser Worker 1.1.0. Preserve bounded pointer/button and navigation-key evidence; redact text and clipboard data, and seal interrupted captures without handing control back to AI.
+- Store isolated editable Skill drafts in host SQLite. Stopping creates a draft only; explicit fixed-version publication creates a disabled Skill without execution grants or task dispatch.
+- Persist full saved Skill approval snapshots and reject changed draft versions/digests. Expose shared scoped UI and AI handlers; AI recording requests return `waiting_user`.
+- Preserve unsaved editors on Scope changes and conflicts, retain original publication on retry, and keep existing script approval checks strict. Actual Docker/noVNC and final installation validation remain separate gates.
+
 ## v0.3.0-beta.30 (development candidate)
 
 - Add exact-revision Bash/Python/Node Skill grants tied to a conversation, executing Bot, entry checksum and environment image. Script metadata does not grant execution permission.

@@ -142,6 +142,12 @@ function capabilityDescriptors(
       permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
+      id: "skills.demonstrations", name: "示范 Skill 草稿", category: "workspace", effectClass: "write-reversible", adapterKind: "core",
+      description: "由用户明确开始与停止隔离电脑示范，只保留脱敏坐标和导航按键；生成待审阅草稿，发布后初始停用。AI 只能请求用户录制和处理已保存草稿。",
+      availability: executionTools ? "available" : "unavailable", reason: executionTools ? null : "当前来源未接入宿主产品工具。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
       id: "browser.tool-images", name: "真实工具图片传递", category: "multimodal", effectClass: "read-local", adapterKind: "core",
       description: "将已授权画面的真实像素传入当前模型协议。传递验证不代表模型一定支持视觉理解；不支持时保留 DOM 操作。",
       availability: context.providerCapabilities?.toolImageInput && context.browserReady && !context.browserUserControlled ? "available" : "unavailable",

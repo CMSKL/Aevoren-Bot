@@ -1,3 +1,4 @@
+import { DEMONSTRATION_OPERATION_SCHEMAS } from "@shared/demonstration-product";
 import { z } from "zod";
 import { LIBRARY_OPERATION_SCHEMAS } from "@shared/library-product";
 import { ENVIRONMENT_OPERATION_SCHEMAS } from "@shared/environment-product";
@@ -11,6 +12,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...LIBRARY_OPERATION_SCHEMAS,
   ...ENVIRONMENT_OPERATION_SCHEMAS,
   ...BROWSER_OPERATION_SCHEMAS,
+  ...DEMONSTRATION_OPERATION_SCHEMAS,
   ...SKILL_EXECUTION_OPERATION_SCHEMAS,
   "userProfile.get": z.undefined(),
   "userProfile.update": z.object({ name: z.string().min(1).max(80).optional(), avatarUrl: z.string().max(524_288).nullable().optional() }).strict(),

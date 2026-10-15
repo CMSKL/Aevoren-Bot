@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { EnvironmentScope } from "@shared/environment-contracts";
-import type { ApprovalReviewSnapshot, SkillGrantInput } from "@shared/skill-execution-contracts";
+import type { SkillScriptApprovalReviewSnapshot, SkillGrantInput } from "@shared/skill-execution-contracts";
 import { AppRepository } from "./database";
 
 const roots: string[] = [], repositories: AppRepository[] = [];
@@ -22,7 +22,7 @@ function fixture() {
     reference: content.reference, entryPath: "scripts/task.py", interpreter: "python" };
   return { root, path, repository, owner, scope, configuration, environment, content, input };
 }
-function review(f: ReturnType<typeof fixture>): ApprovalReviewSnapshot {
+function review(f: ReturnType<typeof fixture>): SkillScriptApprovalReviewSnapshot {
   const grant = f.repository.skillExecutions.grant(f.input, "b".repeat(64));
   return { kind: "skill-script", resourceName: f.content.revision.name, revisionNumber: 1, target: { grantId: grant.id, grantVersion: grant.version,
     environmentId: grant.environmentId, imageDigest: grant.imageDigest, workerVersion: grant.workerVersion, reference: grant.reference,

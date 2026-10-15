@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductToolRequest, PromptManifest, RuntimeRun } from "@shared/contracts";
 import type { EnvironmentScope } from "@shared/environment-contracts";
-import type { ApprovalReviewSnapshot, SkillScriptExecution } from "@shared/skill-execution-contracts";
+import type { ApprovalReviewSnapshot, SkillScriptApprovalReviewSnapshot, SkillScriptExecution } from "@shared/skill-execution-contracts";
 import { AppRepository } from "./database";
 import { AevorenBotError } from "./errors";
 import type { ProductDependencies } from "./product-handlers";
@@ -35,7 +35,7 @@ function fixture() {
   fixtures.push({ repository, root });
   const executor = new WorkspaceToolExecutor(repository, new WorkspaceService(repository));
   const coordinator = new WorkspaceToolCoordinator(repository, executor, () => {});
-  const grants = new Map<string, ApprovalReviewSnapshot>();
+  const grants = new Map<string, SkillScriptApprovalReviewSnapshot>();
   let revoked = false;
   const adapter = {
     approvalReview: (_input: unknown, selection: EnvironmentScope) => {

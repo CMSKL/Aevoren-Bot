@@ -18,6 +18,8 @@ v0.3.0-beta.28 的 Docker 执行已通过本机检查、33 项 Worker／Docker�
 
 > **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 
+示范技能开发单元支持由用户明确开始隔离电脑录制，只保留脱敏坐标与导航按键；停止后生成可编辑草稿，审阅并发布固定版本后仍为停用 Skill，不授权脚本或自动执行。使用、隐私与待验收边界见[示范 Skill 说明](docs/SKILL_DEMONSTRATIONS.md)。
+
 ## 核心能力
 
 - 基于 SQLite Transcript、Send Journal、稳定 Nonce、幂等重试、取消和崩溃恢复的流式对话。

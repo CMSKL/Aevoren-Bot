@@ -1,0 +1,1 @@
+export const DEMONSTRATION_CHANNELS = { status: "demonstrations:status", start: "demonstrations:start", stop: "demonstrations:stop", discard: "demonstrations:discard", drafts: "demonstrations:drafts", readDraft: "demonstrations:readDraft", deleteDraft: "demonstrations:deleteDraft", updateDraft: "demonstrations:updateDraft", publish: "demonstrations:publish" } as const;

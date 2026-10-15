@@ -88,6 +88,7 @@ import { AevorenBotError } from "./errors";
 import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
 import { EnvironmentRepository, ENVIRONMENT_MIGRATION } from "./environment-repository";
 import { BrowserRepository, BROWSER_MIGRATION } from "./browser-repository";
+import { DemonstrationRepository, DEMONSTRATION_MIGRATION } from "./demonstration-repository";
 import { SkillExecutionRepository, SKILL_EXECUTION_MIGRATION, approvalReviewDigest } from "./skill-execution-repository";
 import type { ApprovalReviewInput, ApprovalReviewResult, ApprovalReviewSnapshot } from "@shared/skill-execution-contracts";
 import { approvalReviewInputSchema, approvalReviewSnapshotSchema } from "@shared/skill-execution-schemas";
@@ -2070,6 +2071,7 @@ export const MIGRATIONS = [
   ENVIRONMENT_MIGRATION,
   BROWSER_MIGRATION,
   SKILL_EXECUTION_MIGRATION,
+  DEMONSTRATION_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3240,6 +3242,8 @@ export class AppRepository {
   readonly library: LibraryRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
+  readonly demonstrations: DemonstrationRepository;
+  demonstrationsTransaction<T>(work: () => T): T { return this.transaction(work); }
   readonly skillExecutions: SkillExecutionRepository;
 
   constructor(private readonly filename: string, private readonly options: AppRepositoryOptions = {}) {
@@ -3255,6 +3259,7 @@ export class AppRepository {
         else if (session.roomId) this.getRoom(session.roomId);
       });
       this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.demonstrations = new DemonstrationRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.browsers = new BrowserRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.skillExecutions = new SkillExecutionRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId),
         (scope, reference) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId)[0]!);
@@ -4335,7 +4340,7 @@ export class AppRepository {
     const session = this.getSession(runtime.sessionId);
     const review = reviewSnapshot === undefined ? undefined : approvalReviewSnapshotSchema.parse(reviewSnapshot);
     if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "skills.runScript") {
-      if (!review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      if (review?.kind !== "skill-script") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
       const value = parsed.tool.input as { grantId: string; expectedGrantVersion: number; args: string[]; cwd: string; timeoutMs: number };
       const { grant, content } = this.skillExecutions.assertGranted({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, value.grantId, value.expectedGrantVersion);
       if (review.target.grantId !== grant.id || review.target.grantVersion !== grant.version || review.target.environmentId !== grant.environmentId ||
@@ -4344,6 +4349,11 @@ export class AppRepository {
           review.target.entrySha256 !== grant.entrySha256 || review.target.interpreter !== grant.interpreter ||
           JSON.stringify(review.target.args) !== JSON.stringify(value.args) || review.target.cwd !== value.cwd || review.target.timeoutMs !== value.timeoutMs ||
           review.resourceName !== content.revision.name || review.revisionNumber !== content.revision.number) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "demonstrations.publish") {
+      if (review?.kind !== "demonstration-skill") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      const input = { ...(parsed.tool.input as object), sessionId: runtime.sessionId, executorBotId: runtime.executorBotId } as import("@shared/demonstration-contracts").DemonstrationPublishInput;
+      const snapshot = this.demonstrations.approvalReview(input);
+      if (approvalReviewDigest(snapshot) !== approvalReviewDigest(review)) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
     } else if (review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
     this.assertToolSessionScope({ sessionId: session.id, executorBotId: runtime.executorBotId,
       runtimeRunId: runtime.id, workspaceId: toolWorkspaceId(parsed.tool), toolKind: parsed.tool.kind });
