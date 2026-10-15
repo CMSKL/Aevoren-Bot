@@ -381,3 +381,8 @@ Limited local macOS validation passed both affected source cases (2/2, 10.3 seco
 回补后重新构建的真实未签名 macOS 包通过功能／正常关闭 33 项及 typed API 1 项，Main 与冻结 out 字节一致。Node24 普通测试 1,630 通过／45 跳过；完整隐藏源码独立一轮 150 通过／32 条件跳过，无失败或强制清理。资产扫描仍为 207 个清单资产、228 个资源文件、9,555 个 ASAR 文件。新 Main SHA-256 为 `66653babda594c7dc6cdb791caf89ed7603711ef36b7e6489e3b9ceb512853cd`，ASAR 为 `0518eaab74bb1e5574e06b7105059cae3c2d01278349d5c028c2f293557d5b9e`，parser 清单为 `07888e2755c41232ff400118ad5b0e910bcc150ee68920ad50f1251e2dd12e50`；上方旧冻结包证据保持独立。本机 JSON 位于 `/tmp/aevoren-media36-cas-acceptance.json`，它不是仓库附件。
 
 PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：新增硬链接回归停在 `realpath(dirname(path))` 前置校验，尚未进入被测 ctime 边界；Windows源码与安装包步骤未到达。fixture 现在使用和业务读取器相同的异步规范路径准备临时目录，并规范实际 CAS 父目录，不放宽产品路径、fd 或摘要检查。七项本地 CAS 测试通过；Windows结果须由新检查确认，不能用 macOS 成功替代。签名发行与真实账号／模型验证仍为独立门禁。
+
+### beta.36 Windows 字节一致性修复
+
+- 第二轮 Windows CI（38703832369）普通测试通过后在构建阶段拒绝 OFL LICENSE 摘要；原因是 Windows checkout 的自动 CRLF 转换改变了已固定摘要的上游文本。新增 Git 属性对字体及来源/许可资源保留原始字节，不更改任何已审阅摘要或放宽检查。
+- 保留两次原始失败记录；修复后重新运行完整 CI，Windows 安装包验收尚待通过。
