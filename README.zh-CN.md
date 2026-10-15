@@ -180,4 +180,3 @@ Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac
 ## 许可证
 
 Aevoren Bot 使用 [Apache License 2.0](LICENSE) 开源。项目名称和图标仍受独立的[商标说明](TRADEMARKS.md)约束。
-

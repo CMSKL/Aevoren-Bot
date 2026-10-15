@@ -178,4 +178,3 @@ Development follows `dev` → `beta` → `master`. Contributor pull requests sho
 ## License
 
 Aevoren Bot is licensed under the [Apache License 2.0](LICENSE). The project name and icon remain subject to the separate [trademark notice](TRADEMARKS.md).
-
