@@ -195,32 +195,25 @@ test("flushes a dirty profile through the application quit path", async () => {
 test("flushes a dirty profile after an embedded frame loads and is removed", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-frame-"));
   let application: ElectronApplication | undefined;
-  let frameRequests = 0;
-  const server = createServer((_request, response) => {
-    frameRequests += 1;
-    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end("<!doctype html><title>Close frame fixture</title><p>Real embedded content</p>");
-  });
   try {
-    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("Missing close-frame fixture port");
     let launched = await launch(userDataDir);
     application = launched.application;
     let page = launched.page;
     await createBot(page);
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
-    await page.evaluate(async url => {
+    await page.evaluate(async () => {
       const frame = document.createElement("iframe");
       frame.title = "Close handshake fixture";
       frame.sandbox.add("allow-scripts");
       const loaded = new Promise<void>(resolve => frame.addEventListener("load", () => resolve(), { once: true }));
-      frame.src = url;
+      frame.srcdoc = "<!doctype html><title>Close frame fixture</title><p>Real embedded content</p>";
       document.body.append(frame);
       await loaded;
-      frame.remove();
-    }, `http://127.0.0.1:${address.port}/frame`);
-    expect(frameRequests).toBe(1);
+    });
+    const frame = page.frameLocator('iframe[title="Close handshake fixture"]');
+    await expect(frame.getByText("Real embedded content", { exact: true })).toBeVisible();
+    expect(await frame.locator("body").evaluate(() => typeof (window as unknown as { aevorenBot?: unknown }).aevorenBot)).toBe("undefined");
+    await page.locator('iframe[title="Close handshake fixture"]').evaluate(element => element.remove());
     expect(await page.locator('iframe[title="Close handshake fixture"]').count()).toBe(0);
     await page.getByLabel("描述").fill("嵌入内容关闭后仍需保存未移焦的修改");
     expect(await requestAppQuit(application)).toBe(true);
@@ -235,8 +228,6 @@ test("flushes a dirty profile after an embedded frame loads and is removed", asy
     application = undefined;
   } finally {
     if (application) await closeTestApplication(application);
-    server.closeAllConnections();
-    await new Promise<void>(resolve => server.close(() => resolve()));
     removeTestDirectory(userDataDir);
   }
 });
