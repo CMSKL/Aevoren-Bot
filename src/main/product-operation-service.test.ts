@@ -19,6 +19,7 @@ import { RoomCoordinator } from "./room-coordinator";
 import { DemonstrationService } from "./demonstration-service";
 import { LibraryService } from "./library-service";
 import { MediaService } from "./media-service";
+import { VoiceService } from "./voice-service";
 import type { MediaParserAdapter } from "./media-parser-types";
 import { writeLibraryExport } from "./library-export";
 import type { ModelProvider } from "./model";
@@ -63,6 +64,25 @@ function libraryRuntime(repository: AppRepository, actor: ReturnType<AppReposito
   repository.transitionRuntimeRun(runtime.id, "dispatching");
   return repository.transitionRuntimeRun(runtime.id, "running", { providerRequestId: "library-tool-test" });
 }
+
+describe("canonical voice intent", () => {
+  it("does not repeat an unknown cloud request when the optional current session is made explicit", async () => {
+    const f = fixture(); let requests = 0;
+    const voice = new VoiceService(f.repository, { isAvailable: () => true, encrypt: value => `sealed:${value}`, decrypt: value => value.slice(7) },
+      { readBinary: async () => { throw new Error("not used for text speech"); } }, join(f.root, "voice"), { fetch: async () => { requests += 1; throw new Error("controlled unknown outcome"); } });
+    f.dependencies.voiceService = voice;
+    try {
+      const current = voice.configurations().find(item => item.kind === "tts")!;
+      const saved = voice.saveConfiguration({ kind: "tts", expectedVersion: current.version, enabled: true, model: "gpt-4o-mini-tts", voice: "coral", apiKey: "controlled-fixture-key" });
+      const input = { expectedConfigVersion: saved.version, source: { text: "canonical voice" } };
+      const first = await f.execute(call("voice.speak", input));
+      expect(JSON.parse(first.content).result.state).toBe("interrupted_unknown");
+      const second = await f.execute(call("voice.speak", { ...input, sessionId: f.actor.session.id }));
+      expect(JSON.parse(second.content).result.id).toBe(JSON.parse(first.content).result.id);
+      expect(requests).toBe(1);
+    } finally { await voice.shutdown(); }
+  });
+});
 
 describe("media product transport", () => {
   it("shares scoped UI handlers but keeps AI text outside durable tool receipts and rechecks revocation", async () => {

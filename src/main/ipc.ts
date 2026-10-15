@@ -36,7 +36,7 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
     return dependencies.voiceService.saveConfiguration(voiceConfigurationSaveSchema.parse(input));
   }));
   for (const [channel, method] of [[VOICE_CHANNELS.beginCapture, "begin"], [VOICE_CHANNELS.commitCapture, "commit"], [VOICE_CHANNELS.cancelCapture, "cancel"]] as const) {
-    ipcMain.handle(channel, (event, input: unknown) => apiResult(() => {
+    ipcMain.handle(channel, (event, input: unknown) => apiResult<unknown>(() => {
       assertTrusted(event, window); if (!dependencies.voiceCapture) throw new AevorenBotError("VOICE_UNSUPPORTED");
       if (method === "begin") return dependencies.voiceCapture.begin(input as import("@shared/voice-contracts").VoiceCaptureBegin);
       if (method === "commit") return dependencies.voiceCapture.commit(input as import("@shared/voice-contracts").VoiceCaptureCommit);

@@ -228,7 +228,7 @@ export class ProductOperationService {
       }
       let task: import("@shared/voice-contracts").VoiceTask;
       if (tool.operation === "voice.transcribe" || tool.operation === "voice.speak") {
-        const hash = createHash("sha256").update(`${runtime.clientNonce}:${runtime.executorBotId}:${JSON.stringify(tool)}`).digest("hex");
+        const hash = createHash("sha256").update(`${runtime.clientNonce}:${runtime.executorBotId}:${JSON.stringify({ operation: tool.operation, input })}`).digest("hex");
         const clientNonce = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
         task = tool.operation === "voice.transcribe"
           ? await service.transcribe({ ...(input as import("@shared/voice-contracts").VoiceTranscribeInput), clientNonce }, context)
