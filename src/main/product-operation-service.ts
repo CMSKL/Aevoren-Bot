@@ -262,12 +262,12 @@ export class ProductOperationService {
       const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
       if (previous) {
         if (mediaOperation(tool.operation)) {
-          const receipt = JSON.parse(previous) as { result?: import("@shared/media-contracts").MediaImportResult };
+          const receipt = JSON.parse(previous) as { status?: string; result?: import("@shared/media-contracts").MediaImportResult };
           if (["media.importPath", "media.pickImport"].includes(tool.operation) && receipt.result) {
             for (const item of receipt.result.imported) this.dependencies.repository.media.resolveRuntimeRead({ sessionId: runtime.sessionId,
               executorBotId: runtime.executorBotId, runtimeRunId: runtime.id }, item.reference.mediaId, item.reference);
           }
-          return this.result({ status: "previously_completed", operation: tool.operation, reused: true,
+          return this.result({ status: receipt.status === "cancelled" ? "cancelled" : "previously_completed", operation: tool.operation, reused: true,
             receiptNotice: "原操作未重复执行，也未刷新旧任务授权；请重新查询当前媒体状态。" });
         }
         if (["drafts.create", "drafts.update"].includes(tool.operation)) {
