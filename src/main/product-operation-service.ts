@@ -12,9 +12,10 @@ import { AevorenBotError } from "./errors";
 import { containsLikelySecret } from "./memory-safety";
 import { createProductHandlers, type ProductDependencies } from "./product-handlers";
 import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
-import type { ModelImageAttachment } from "./model-image";
+import type { ModelImageAttachment, ModelTextAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
+  "media.list", "media.metadata", "media.read", "media.preview",
   "mcp.toolCatalog", "mcp.toolGrants", "mcp.toolResult", "mcp.listToolIntents",
   "demonstrations.status", "demonstrations.drafts", "demonstrations.readDraft",
   "outbound.writeGrants", "outbound.get", "outbound.list", "outbound.reconcile",
@@ -32,8 +33,9 @@ const browserOperation = (operation: string): boolean => /^(browser|computer|pre
 const scriptOperation = (operation: string): boolean => ["skills.scripts", "skills.executionGrants", "skills.grantExecution", "skills.revokeExecution", "skills.runScript", "skills.scriptExecution", "approvals.review"].includes(operation);
 const nativeScopedOperation = (operation: string): boolean => operation.startsWith("outbound.") && operation !== "outbound.enableSend" || operation.startsWith("drafts.") || ["connectors.bindings", "connectors.bind", "connectors.unbind", "connectors.search", "connectors.read"].includes(operation);
 const mcpWriteOperation = (operation: string): boolean => MCP_WRITE_PRODUCT_OPERATIONS.some(item => item.name === operation);
-const scopedOperation = (operation: string): boolean => environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
-type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[] };
+const mediaOperation = (operation: string): boolean => operation.startsWith("media.");
+const scopedOperation = (operation: string): boolean => mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
+type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[]; modelText?: ModelTextAttachment };
 
 /** Both transports use these handlers; only the host can supply execution identity. */
 export class ProductOperationService {
@@ -135,6 +137,15 @@ export class ProductOperationService {
     if (!definition) throw new AevorenBotError("INVALID_REQUEST", "产品操作不存在，请先查询功能目录。");
     const schema = PRODUCT_OPERATION_SCHEMAS[tool.operation]!;
     const input = schema.parse(this.libraryInput(tool.operation, tool.input, runtime));
+    if (mediaOperation(tool.operation)) {
+      if (!this.dependencies.mediaService) throw new AevorenBotError("MEDIA_PARSER_UNAVAILABLE");
+      const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, runtimeRunId: runtime.id };
+      repository.media.assertRuntime(scope);
+      if (["media.metadata", "media.read", "media.preview"].includes(tool.operation)) {
+        const read = input as import("@shared/media-contracts").MediaReadInput;
+        repository.media.resolveRuntimeRead(scope, read.id, read.reference);
+      }
+    }
     if (mcpWriteOperation(tool.operation)) {
       if (!this.dependencies.mcpWriteService) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
       this.dependencies.mcpWriteService.ledger.assertRuntime({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, runtime.id);
@@ -247,9 +258,18 @@ export class ProductOperationService {
       if (review.snapshot?.kind !== "demonstration-skill") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
       this.dependencies.repository.demonstrations.assertApprovalReview(review.snapshot, scope);
     }
-    if (!PUBLIC_READS.has(tool.operation) && !mcpWriteOperation(tool.operation)) {
+    if (!PUBLIC_READS.has(tool.operation) && !mcpWriteOperation(tool.operation) && tool.operation !== "media.available") {
       const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
       if (previous) {
+        if (mediaOperation(tool.operation)) {
+          const receipt = JSON.parse(previous) as { result?: import("@shared/media-contracts").MediaImportResult };
+          if (["media.importPath", "media.pickImport"].includes(tool.operation) && receipt.result) {
+            for (const item of receipt.result.imported) this.dependencies.repository.media.resolveRuntimeRead({ sessionId: runtime.sessionId,
+              executorBotId: runtime.executorBotId, runtimeRunId: runtime.id }, item.reference.mediaId, item.reference);
+          }
+          return this.result({ status: "previously_completed", operation: tool.operation, reused: true,
+            receiptNotice: "原操作未重复执行，也未刷新旧任务授权；请重新查询当前媒体状态。" });
+        }
         if (["drafts.create", "drafts.update"].includes(tool.operation)) {
           if (!this.dependencies.nativeConnectorService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
           const receipt = JSON.parse(previous) as { result?: import("@shared/native-connector-contracts").ConnectorDraftResult };
@@ -321,6 +341,20 @@ export class ProductOperationService {
       }
     }
     let input = PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(this.libraryInput(tool.operation, tool.input, runtime));
+    if (["media.read", "media.preview"].includes(tool.operation)) {
+      const service = this.dependencies.mediaService!;
+      const context = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, runtimeRunId: runtime.id, signal,
+        assertCurrent: () => this.validate(tool, runtime.id) };
+      const media = tool.operation === "media.read"
+        ? await service.read(input as import("@shared/media-contracts").MediaReadInput, context)
+        : await service.preview(input as import("@shared/media-contracts").MediaPreviewInput, context);
+      const supported = runtime.route !== "fake" && this.dependencies.providers.getCapabilities({ providerInstanceId: runtime.providerInstanceId, modelId: runtime.providerModelId }).toolImageInput === true;
+      const output = this.result({ status: "completed", operation: tool.operation, result: media.metadata,
+        ...(media.images.length ? { imageTransfer: supported ? "prepared_real_pixels" : "adapter_unsupported",
+          imageNotice: supported ? "实际像素随本次工具结果传输；所选模型的图像能力仍需按真实响应确认。" : "当前适配器不能传递工具图片；可以读取已解析文字，不能声称已看见图片。" } : {}) });
+      return { ...output, ...(supported && media.images.length ? { images: media.images } : {}),
+        ...("modelText" in media && media.modelText ? { modelText: media.modelText } : {}) };
+    }
     if (tool.operation === "userProfile.update") input = { ...(this.handlers.get(productOperation("userProfile.get")!.channel)!() as object), ...(input as object) };
     if (tool.operation === "capabilities.getSnapshot") input = { botId: runtime.executorBotId, sessionId: runtime.sessionId };
     if (["messages.send", "roomRuntime.send"].includes(tool.operation)) {
@@ -437,6 +471,13 @@ export class ProductOperationService {
 
   private libraryInput(operation: string, value: unknown, runtime: Pick<RuntimeRun, "sessionId" | "clientNonce" | "executorBotId">): unknown {
     const input = value === null ? undefined : value;
+    if (mediaOperation(operation)) {
+      if (operation === "media.available") return input;
+      if (input !== undefined && (!input || typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");
+      const supplied = (input ?? {}) as Record<string, unknown>;
+      if (supplied.sessionId !== undefined && supplied.sessionId !== runtime.sessionId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+      return { ...supplied, sessionId: runtime.sessionId };
+    }
     if (scopedOperation(operation) && !["environments.probe", "environments.initialize"].includes(operation)) {
       if (input !== undefined && (typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");
       const supplied = (input ?? {}) as { sessionId?: string; executorBotId?: string };

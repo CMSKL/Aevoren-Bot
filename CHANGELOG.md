@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.0-beta.36 (development candidate)
+
+- Add owned PNG/JPEG/PDF/DOCX storage, fixed message/extraction references, conversation bindings and immutable Runtime admission snapshots; revocation blocks later reads and rebinding does not revive old tasks.
+- Add bounded PDF text/page previews and DOCX plain-text extraction in independent hidden sandbox parser jobs, explicit assets and licenses, cancellation and shutdown.
+- Share twelve media operations with the UI and AI. Actual text/pixels travel as revocable ephemeral tool attachments across API, Claude and Codex; receipts contain metadata only.
+- Preserve composer drafts across late imports, sends and navigation with monotonic versions. Full cross-platform/package acceptance is pending; no OCR, audio/video or voice is claimed.
+
 ## v0.3.0-beta.35 (development candidate)
 
 - Add distinct Notion saved-draft operations and exact page write grants for title-only updates and end-of-page paragraph appends. Preserve existing page body and ordinary/data-source title property identity.

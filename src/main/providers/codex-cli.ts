@@ -593,9 +593,9 @@ export class CodexCliProvider implements ModelProvider {
         let answered = false;
         queue.push({
           ...parsed,
-          respond: async (content, images) => {
+          respond: async (content, images, modelText) => {
             if (answered) throw new AevorenBotError("RUNTIME_STATE_INVALID");
-            const visual = toolImageResponse(content, images);
+            const visual = toolImageResponse(content, images, modelText);
             answered = true;
             let success = true;
             try {

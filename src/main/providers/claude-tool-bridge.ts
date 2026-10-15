@@ -6,7 +6,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { AevorenBotError } from "../errors";
-import { toolImageResponse, type ModelImageAttachment } from "../model-image";
+import { toolImageResponse, type ModelImageAttachment, type ModelTextAttachment } from "../model-image";
 import { parseStructuredModelToolCall, structuredModelToolDefinitions, type ModelEvent, type ModelRunContext } from "../model";
 
 export const CLAUDE_HOST_TOOL_NAMES = ["workspace_list", "workspace_read", "workspace_search", "workspace_write", "web_search", "web_fetch", "weather_current", "time_now", "text_measure", "clipboard_read", "project_list_bots", "bot_create", "room_create", "product_catalog", "product_describe", "product_execute"] as const;
@@ -20,10 +20,10 @@ function errorResult(code: "INVALID_REQUEST" | "TOOL_EXECUTION_CANCELLED" | "TOO
   return { isError: true, content: [{ type: "text", text: JSON.stringify({ ok: false, code, safeMessage: error.safeMessage }) }] };
 }
 
-function toolResult(content: string, images?: readonly ModelImageAttachment[]): CallToolResult {
+function toolResult(content: string, images?: readonly ModelImageAttachment[], modelText?: ModelTextAttachment): CallToolResult {
   let isError = false;
   try { isError = (JSON.parse(content) as { ok?: unknown }).ok === false; } catch { /* Plain file text is valid. */ }
-  const visual = toolImageResponse(content, images);
+  const visual = toolImageResponse(content, images, modelText);
   return { isError, content: [{ type: "text", text: visual.text }, ...visual.images.map(image => ({ type: "image" as const, data: image.dataBase64, mimeType: image.reference.mimeType }))] };
 }
 
@@ -87,7 +87,7 @@ export class ClaudeToolBridge {
         this.pending.add(cancel);
         toolSignal.addEventListener("abort", cancel, { once: true });
         if (toolSignal.aborted) { cancel(); return; }
-        this.emit({ ...event, toolSignal, respond: async (content, images) => finish(() => toolResult(content, images)) });
+        this.emit({ ...event, toolSignal, respond: async (content, images, modelText) => finish(() => toolResult(content, images, modelText)) });
       });
       this.calls.set(key, { signature, result });
       return result.then(render => render());

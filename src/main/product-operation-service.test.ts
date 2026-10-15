@@ -18,6 +18,8 @@ import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
 import { DemonstrationService } from "./demonstration-service";
 import { LibraryService } from "./library-service";
+import { MediaService } from "./media-service";
+import type { MediaParserAdapter } from "./media-parser-types";
 import { writeLibraryExport } from "./library-export";
 import type { ModelProvider } from "./model";
 vi.mock("electron", () => ({ clipboard: { writeText: vi.fn() } }));
@@ -61,6 +63,45 @@ function libraryRuntime(repository: AppRepository, actor: ReturnType<AppReposito
   repository.transitionRuntimeRun(runtime.id, "dispatching");
   return repository.transitionRuntimeRun(runtime.id, "running", { providerRequestId: "library-tool-test" });
 }
+
+describe("media product transport", () => {
+  it("shares scoped UI handlers but keeps AI text outside durable tool receipts and rechecks revocation", async () => {
+    const f = fixture();
+    const text = "PRIVATE_EXTRACTED_TEXT";
+    const parser: MediaParserAdapter = {
+      parse: async () => ({ kind: "pdf", width: null, height: null, parserName: "controlled-unit-parser", parserVersion: "1",
+        extraction: { text, spans: [{ kind: "page", index: 0, start: 0, end: text.length }], warningCodes: [] } }),
+      renderPdfPage: async () => { throw new Error("not used"); }, shutdown: async () => {},
+    };
+    const media = new MediaService(f.repository, join(f.root, "media"), parser);
+    const source = join(f.root, "private.pdf"); writeFileSync(source, "%PDF-1.7 controlled unit fixture");
+    try {
+      const item = (await media.importPaths(f.actor.session.id, [source])).imported[0]!;
+      f.repository.transitionRuntimeRun(f.runtime.id, "completed");
+      const runtime = libraryRuntime(f.repository, f.actor);
+      f.dependencies.mediaService = media;
+      const service = new ProductOperationService(f.dependencies);
+      f.executor.setProductOperations(service);
+      const tool = call("media.read", { id: item.reference.mediaId });
+      const prepared = f.repository.prepareToolInvocation({ runtimeRunId: runtime.id, toolCallId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), tool });
+      f.repository.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
+      const result = await f.executor.execute(prepared.invocation.id);
+      expect(result.modelText?.text).toBe(text);
+      expect(result.modelText?.isAuthorized()).toBe(true);
+      expect(result.content).not.toContain(text);
+      expect(JSON.stringify(f.repository.getToolInvocation(prepared.invocation.id))).not.toContain(text);
+      expect(service.requiresApproval(call("media.available"))).toBe(true);
+      expect(service.requiresApproval(tool)).toBe(false);
+      const ui = await service.handlers.get("media:read")!({ sessionId: f.actor.session.id, id: item.reference.mediaId });
+      expect(ui).toMatchObject({ text });
+      const other = f.repository.createBot();
+      expect(() => service.validate(call("media.read", { sessionId: other.session.id, id: item.reference.mediaId }), runtime.id)).toThrow();
+      media.unbind({ sessionId: f.actor.session.id, id: item.reference.mediaId });
+      expect(result.modelText?.isAuthorized()).toBe(false);
+      expect(() => service.validate(tool, runtime.id)).toThrow();
+    } finally { await media.shutdown(); }
+  });
+});
 
 describe("product operations", () => {
   it.each(["allow-once", "deny"] as const)("uses genuine approval for creation after a short reply: %s", async (decision) => {

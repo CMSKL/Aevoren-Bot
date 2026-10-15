@@ -92,6 +92,21 @@ describe("buildPrompt", () => {
     expect(prompt.manifest).toMatchObject({ profileVersion: 3, inputSeq: 1, generation: 1 });
   });
 
+  it("keeps pure-media sends and pins only this turn's metadata in user authority", () => {
+    const ref = { mediaId: "20000000-0000-4000-8000-000000000001", sha256: "a".repeat(64), extraction: { id: "30000000-0000-4000-8000-000000000001", digest: "b".repeat(64) } };
+    const first = { ...entry(1, "user", ""), mediaRefs: [ref] };
+    const prompt = buildPrompt(bot, session, [first], 1);
+    expect(prompt.messages.some(message => message.role === "user" && message.content.includes(ref.mediaId))).toBe(true);
+    expect(prompt.messages.every(message => ["user", "assistant", "system"].includes(message.role))).toBe(true);
+    expect(prompt.manifest.schemaVersion).toBe(6);
+    expect(prompt.manifest.blocks).toContainEqual(expect.objectContaining({ authority: "media-resource", sourceEntryId: first.id }));
+    const changed = buildPrompt(bot, session, [{ ...first, mediaRefs: [{ ...ref, extraction: { ...ref.extraction, digest: "c".repeat(64) } }] }], 1);
+    expect(changed.manifest.digest).not.toBe(prompt.manifest.digest);
+    const later = buildPrompt(bot, session, [first, entry(2, "user", "next")], 2);
+    expect(later.manifest.blocks.some(block => block.authority === "media-resource")).toBe(false);
+    expect(JSON.stringify(later.messages)).not.toContain(ref.mediaId);
+  });
+
   it("builds a deterministic metadata-only manifest", () => {
     const entries = [entry(1, "user", "secret prompt body")];
     const first = buildPrompt(bot, session, entries, 1);

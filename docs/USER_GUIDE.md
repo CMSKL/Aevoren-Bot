@@ -132,3 +132,8 @@ This development unit requires Browser Worker 1.1.0. Older environments continue
 ## Scoped MCP tools and Apps
 
 The beta.35 candidate retains the beta.34 [scoped MCP tools and isolated Apps](MCP_APPS.md) to the existing Contact/Room Applications sections. Grant specific tools, approve fixed JSON arguments and targets, and query unknown results without resending. Server-reported results and real third-party verification remain distinct.
+
+
+## 图片与文档（beta.36 开发候选）
+
+在私聊或群的资料库中打开媒体区，或点击输入框文本附件旁的媒体入口，导入／选择图片、PDF 或 DOCX。只发送媒体也走原有任务流程；引用固定原始摘要及解析版本，群成员可并行读取同一已授权引用。预览、撤销、停用、删除和恢复均按当前会话权限检查；导入期间继续编辑不会被旧结果覆盖。PDF 支持逐页预览和文字提取，扫描件无 OCR；DOCX 显示纯文本分节。图片实际传输和模型是否支持视觉分别标识。当前仍在验收，完整限制见[媒体与文档](MEDIA.md)。

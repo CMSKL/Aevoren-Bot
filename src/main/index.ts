@@ -1,3 +1,6 @@
+import { MediaService } from "./media-service";
+import { MediaParserHost, registerMediaParserScheme } from "./media-parser-host";
+import { MEDIA_CHANGED_CHANNEL } from "@shared/media-channels";
 import { McpWriteService } from "./mcp-write-service";
 import { McpAppsBridge } from "./mcp-apps-bridge";
 import { NativeOutboundAdapter } from "./native-connectors/outbound";
@@ -52,6 +55,8 @@ import { ENVIRONMENT_EVENTS } from "@shared/environment-channels";
 import { environmentDirectoryPathSchema, environmentFilePathSchema } from "@shared/environment-schemas";
 import { readEnvironmentUpload, writeEnvironmentDownload } from "./environment-file-transfer";
 
+registerMediaParserScheme();
+
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
 const hideTestWindow = process.env.AEVOREN_BOT_TEST_HIDDEN === "1";
@@ -74,6 +79,7 @@ let mcpWriteService: McpWriteService | null = null;
 let mcpAppsBridge: McpAppsBridge | null = null;
 let environmentService: EnvironmentService | null = null;
 let browserService: BrowserService | null = null;
+let mediaService: MediaService | null = null;
 let skillExecutionService: SkillExecutionService | null = null;
 let nativeConnectorService: NativeConnectorService | null = null;
 let nativeOutboundService: NativeOutboundService | null = null;
@@ -176,6 +182,7 @@ async function finishClose(): Promise<void> {
     await nativeOutboundService?.shutdown();
     await nativeConnectorService?.shutdown();
     await skillExecutionService?.shutdown();
+    await mediaService?.shutdown();
     await runtimeCoordinator?.shutdown();
     await roomCoordinator?.shutdown();
     await environmentService?.shutdown();
@@ -328,6 +335,13 @@ app.whenReady().then(async () => {
   })();
   const workspaceService = new WorkspaceService(repository);
   const libraryService = new LibraryService(repository, join(app.getPath("userData"), "library-blobs"), { workspaceService });
+  const productMediaService = new MediaService(repository, join(app.getPath("userData"), "media-blobs"),
+    new MediaParserHost({ directory: app.isPackaged ? join(process.resourcesPath, "media-parser") : join(app.getAppPath(), "out", "media-parser") }), {
+      workspaceService, onChanged: event => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(MEDIA_CHANGED_CHANNEL, event);
+      },
+    });
+  mediaService = productMediaService;
   environmentService = new EnvironmentService(repository.environments, electronSecretCodec,
     app.isPackaged ? join(process.resourcesPath, "environment-worker") : join(app.getAppPath(), "out", "worker"), (event) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ENVIRONMENT_EVENTS.changed, event);
@@ -450,6 +464,15 @@ app.whenReady().then(async () => {
     window: mainWindow,
     repository,
     libraryService,
+    mediaService: productMediaService,
+    async pickMediaPaths(_input, signal) {
+      signal?.throwIfAborted();
+      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      const result = await dialog.showOpenDialog(mainWindow, { title: "导入图片、PDF 或 DOCX", properties: ["openFile", "multiSelections"],
+        filters: [{ name: "媒体与文档", extensions: ["png", "jpg", "jpeg", "pdf", "docx"] }] });
+      signal?.throwIfAborted();
+      return result.canceled ? null : result.filePaths;
+    },
     environmentService,
     browserService,
     demonstrationService: new DemonstrationService(repository, browserService, libraryService),

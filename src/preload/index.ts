@@ -4,6 +4,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import { DEMONSTRATION_CHANNELS } from "@shared/demonstration-channels";
 import { IPC } from "@shared/channels";
 import { LIBRARY_CHANNELS } from "@shared/library-channels";
+import { MEDIA_CHANNELS, MEDIA_CHANGED_CHANNEL } from "@shared/media-channels";
+import type { MediaChangedEvent } from "@shared/media-contracts";
 import { ENVIRONMENT_CHANNELS, EXECUTION_CHANNELS, PROCESS_CHANNELS, ENVIRONMENT_EVENTS } from "@shared/environment-channels";
 import { BROWSER_CHANNELS, COMPUTER_CHANNELS, PREVIEW_CHANNELS, BROWSER_EVENTS } from "@shared/browser-channels";
 import { SKILL_EXECUTION_CHANNELS, SKILL_EXECUTION_EVENTS } from "@shared/skill-execution-channels";
@@ -186,6 +188,25 @@ const api: AevorenBotApi = {
       const handler = (_event: Electron.IpcRendererEvent, value: LibraryChangedEvent): void => listener(value);
       ipcRenderer.on(IPC.libraryEvent, handler);
       return () => ipcRenderer.removeListener(IPC.libraryEvent, handler);
+    },
+  },
+  media: {
+    list: input => ipcRenderer.invoke(MEDIA_CHANNELS.list, input),
+    available: input => ipcRenderer.invoke(MEDIA_CHANNELS.available, input),
+    metadata: input => ipcRenderer.invoke(MEDIA_CHANNELS.metadata, input),
+    read: input => ipcRenderer.invoke(MEDIA_CHANNELS.read, input),
+    preview: input => ipcRenderer.invoke(MEDIA_CHANNELS.preview, input),
+    pickImport: input => ipcRenderer.invoke(MEDIA_CHANNELS.pickImport, input),
+    importPath: input => ipcRenderer.invoke(MEDIA_CHANNELS.importPath, input),
+    bind: input => ipcRenderer.invoke(MEDIA_CHANNELS.bind, input),
+    unbind: input => ipcRenderer.invoke(MEDIA_CHANNELS.unbind, input),
+    setEnabled: input => ipcRenderer.invoke(MEDIA_CHANNELS.setEnabled, input),
+    delete: input => ipcRenderer.invoke(MEDIA_CHANNELS.delete, input),
+    restore: input => ipcRenderer.invoke(MEDIA_CHANNELS.restore, input),
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, value: MediaChangedEvent): void => listener(value);
+      ipcRenderer.on(MEDIA_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(MEDIA_CHANGED_CHANNEL, handler);
     },
   },
   userProfile: {
