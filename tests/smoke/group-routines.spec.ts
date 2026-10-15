@@ -27,9 +27,13 @@ async function fixture(count:number,work:(f:{page:Page;bots:{id:string;name:stri
     await work({page,bots,room,captures});expect(errors).toEqual([]);expect(pageErrors).toEqual([]);expect(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(window=>!window.isVisible()))).toBe(true);completed=true;
   }finally{
     if(!completed){await test.info().attach("routine-loopback-states",{body:JSON.stringify({captures:captures.map(({model,released,aborted})=>({model,released,aborted})),runs:await listRuns(page).catch(()=>[])}),contentType:"application/json"});}
-    for(const capture of captures)capture.response.destroy();const owned=app.process();await closeTestApplication(app);expect({code:owned.exitCode,signal:owned.signalCode}).toEqual({code:0,signal:null});
-    if(!completed){const copy=test.info().outputPath("owned-routine.sqlite");copyFileSync(path,copy);await test.info().attach("owned-routine-database",{path:copy,contentType:"application/octet-stream"});}
-    server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));removeTestDirectory(directory);
+    for(const capture of captures)capture.response.destroy();
+    try {
+      const owned=app.process();await closeTestApplication(app);expect({code:owned.exitCode,signal:owned.signalCode}).toEqual({code:0,signal:null});
+      if(!completed){const copy=test.info().outputPath("owned-routine.sqlite");copyFileSync(path,copy);await test.info().attach("owned-routine-database",{path:copy,contentType:"application/octet-stream"});}
+    } finally {
+      server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));removeTestDirectory(directory);
+    }
   }
 }
 async function create(page:Page,name:string,target:string){await page.getByLabel("Routine 名称",{exact:true}).fill(name);await page.getByLabel("Routine 提示",{exact:true}).fill(`执行 ${name} 的固定指令`);await page.getByLabel("Routine 执行目标",{exact:true}).selectOption(target);await page.getByLabel("Routine 计划类型",{exact:true}).selectOption("interval");await page.getByRole("button",{name:"创建为暂停状态",exact:true}).click();const card=page.locator(".routine-card").filter({has:page.getByText(name,{exact:true})});await expect(card).toContainText("已暂停");return card;}
