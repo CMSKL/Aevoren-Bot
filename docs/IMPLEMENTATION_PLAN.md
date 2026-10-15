@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.40**。阶段 6A 已实现 MAIN/TASK 隔离、固定上下文、权限、独立线程与共用业务入口，三项不同源码场景和真实未签名 macOS 包四项本地验收通过；普通回归原整轮 1,777 通过／9 失败／45 跳过，九项旧迁移断言修正后七文件 72 项定向通过，累计 1,786 个不同通过场景，不记为单轮全绿。阶段 6B 全资源搜索的 11 项 SQLite、2 项产品传输及2项实际界面场景通过，当前安装包和跨平台仍待验收。6C–6F 继续实施。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，后续版本按正常顺序晋级；master 不晋级。真实第三方账号、音频硬件及 Windows Docker 未验证。
+当前开发候选为 **v0.3.0-beta.41**。阶段 6A 已实现 MAIN/TASK 隔离、固定上下文、权限、独立线程与共用业务入口，三项不同源码场景和真实未签名 macOS 包四项本地验收通过；普通回归原整轮 1,777 通过／9 失败／45 跳过，九项旧迁移断言修正后七文件 72 项定向通过，累计 1,786 个不同通过场景，不记为单轮全绿。阶段 6B 全资源搜索的 11 项 SQLite、2 项产品传输及2项实际界面场景通过，当前安装包和跨平台仍待验收。6C 分区／偏好／图片头像已通过业务、源码界面和实际未签名 macOS 包检查，跨平台／签名发行待验收；6D–6F 继续实施。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，后续版本按正常顺序晋级；master 不晋级。真实第三方账号、音频硬件及 Windows Docker 未验证。
 
 ## 已确定的方案
 
@@ -32,7 +32,7 @@
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
 | 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 开发组合候选四项 CI 通过，分单元晋级中 | `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1–5.3 源码及本地包证据完成，跨平台／签名发行待通过 | beta.38 源码累计 159 个不同通过、32 条件跳过；保留完整运行 3 项失败及定向 3/3，通过真实 Worklet／受控协议／普通 Runtime；云账号／硬件另行验证 |
-| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 6A TASK 源码与专项检查完成，6B–6F 待实施 | beta.39 的迁移／授权／UI 身份与能力专项已有证据；完整构建与三个不同隐藏场景分轮通过，保留失败，真实未签名 macOS 包 4 项通过，跨平台／签名待完成 |
+| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 6A TASK 与 6B 搜索已有本地包证据；6C 整理／偏好／图片通过源码检查；6D–6F 实施中 | beta.39 的迁移／授权／UI 身份与能力专项已有证据；完整构建与三个不同隐藏场景分轮通过，保留失败，真实未签名 macOS 包 4 项通过，跨平台／签名待完成 |
 
 ## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
 
@@ -553,3 +553,22 @@ Search2 与继承的 Task3 同轮 **5/5 通过（40.3 秒）**，实际 app.isPa
 首次打包停留在 Electron 校验清单网络下载且没有生成输出；保存诊断后终止该下载进程，使用已安装且核验为 Electron 44.3.0 arm64 的运行时执行标准 ASAR／afterPack 未签名打包。17 项应用输出与 216 项 Worker／parser 输出逐字节匹配，Worker／parser 输出未重建。实际 ASAR SHA-256 `d67b1a55c22c960aa57d903029ed7c1548ad0cf85ef2cc313d5a29ac4a8715a5`，Main 为 `1cd908a142d6a0e882cb9a2ac43e60d9f09433b9113be47a1c6b1581b4744ef0`。207 项 parser 资产、234 项资源文件及 9556 ASAR 条目校验通过；四 Helper 麦克风声明通过，未验证签名或硬件。
 
 持久证据在 `$CODEX_HOME/aevoren-evidence/2026-10-15/releases/search40/`，包含修复前日志／trace、最终 source/package-focused-final 的日志与 JSON、实际几何与明暗截图、字节核对、打包与 parser／麦克风回执。Browser 插件未提供，使用仓库既有隐藏 Playwright Electron 工作流。上述四项是本次变更的定向验收；新的完整跨平台 CI／签名发行仍待完成，不能把历史五项业务包验收记为本次完整全绿。
+
+
+## 阶段 6C：聊天整理、通知与图片头像（beta.41）
+
+迁移 46 保存聊天分区、按 sessionId 的归属／顺序和偏好，并扩展 Bot 图片引用。界面和 AI 共用七项 organization 操作及三项 Bot 头像操作；原生图片取消只属于可信界面。主会话与 TASK 分别整理，分区不改变内容／权限。默认助理仅作为无有效恢复目标时的启动回退；通知类别和声音独立设置。版本冲突保留名称、移动和偏好草稿。
+
+图片源必须属于实际任务的授权媒体；原生宿主读取实际 PNG/JPEG 字节、居中裁剪为 256×256 PNG 后先暂存，再原子提交独立拥有副本与 Bot 版本。模型读图经真实图像附件和现有可撤销 Media lease 传输；图片字节不进入持久工具回执。源删除、复制 Bot、恢复默认及取消互不误伤。停用／重启用缓存的回归原实现已通过，复用已有 lease，不声称复现了新的 ABA 缺陷。
+
+54 项相关业务回归、五配置类型、完整构建和定向 lint 通过。新增两项隐藏 Electron 界面同轮 2/2（11.4 秒）通过：真实 SQLite／IPC、MAIN/TASK 分区顺序、并发编辑、默认助理恢复，以及真实原生裁剪像素、源删除、应用重启、独立复制及恢复默认；相关拥有进程正常 exitCode=0。证据为 `$CODEX_HOME/aevoren-evidence/2026-10-15/organization41-*`。实际安装包、Windows、签名发行与物理通知待验收；6D–6F 未完成，不作为六阶段全部交付。无新依赖／许可。详见[使用说明](ORGANIZATION.md)。
+
+### beta.41 AI 头像回执与真实包记录
+
+修复前实际未签名 macOS 包同轮 6/6（42.4 秒）通过 Organization、原生头像、typed API 和 Task3，正常退出；该结果属于修复前业务字节。之后新增网关回归先修正测试未选择媒体和 Runtime 未结束的 fixture 错误，再确定性复现真实问题：成功发布后重复相同指令绕过保存回执查询，误报 BOT_VERSION_CONFLICT。最小修复把头像设置移到既有回执复用后，暂存解析仍在 SQL 外，真正发布和完成工具回执同步原子提交；同一事务拒绝回执时照片／资产／Bot 全部回滚。同三文件 56/56 通过，含实际授权 PNG 字节模型传输、持久回执无像素、清除后序列化零图片。原失败日志与修复后日志分别保留在 `organization41-avatar-receipt-before*`、`organization41-avatar-receipt-final.log`。最终业务字节需要重新打包并做定向包验收，不覆盖前一六项回执。
+
+### beta.41 修复后的最终未签名 macOS 包
+
+头像原子回执修复后重新构建 Main／Preload／Renderer，用已安装且核验版本的 Electron44.3 arm64 执行标准 ASAR／afterPack 未签名打包。最终真实包 Org、Avatar 与 typed API 同轮 **3/3（24.7 秒）** 通过，实际 packaged=true／版本41，所有自有进程正常退出。历史 Task3 仍按修复前六项包回执保留，不重记为最终三项。
+
+最终 Main SHA-256 `f851b04cb6fcac2b12ad1cec643dfef98382b3992bfec5ccc5999eaacc1bc636`，ASAR `e551a5091e67e08215480ff7b1f961ff91737552c931da02c6b5762880f5b00f`。17 项应用和216项Worker/parser文件逐字节一致；随包整理指南与打包时源文档相同。207 parser资产／235资源文件／9556 ASAR条目验证通过，四 Helper 麦克风用途声明通过，不作为签名或真实硬件证据。此处后续文档验收说明未重写已冻结的包内历史指南；生产业务字节不变。持久回执为 `organization41-actual-package-final.log`、`organization41-final-package-bytes.json`、`organization41-final-package-parser.json` 和 `organization41-final-package-microphone.json`。Windows／跨平台及签名发行待正常门禁，master 不晋级。

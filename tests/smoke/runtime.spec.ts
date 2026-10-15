@@ -425,6 +425,23 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.sessions).toSorted())).toEqual([
       "cancelTask", "createTask", "deleteTask", "getMain", "getTask", "listTasks", "onChanged", "onTasksChanged", "reviseTaskSelection", "taskOptions", "updateTask",
     ]);
+    const organizationApi = await launched.page.evaluate(() => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      return { organization: Object.keys(api.organization).toSorted(), botImages: Object.keys(api.botImages).toSorted() };
+    });
+    expect(organizationApi).toEqual({
+      organization: ["createSection", "deleteSection", "moveSession", "onChanged", "renameSection", "reorderSections", "savePreferences", "snapshot"],
+      botImages: ["cancel", "clear", "read", "set"],
+    });
+    const organizationValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      return [
+        await api.organization.moveSession({ sessionId: "not-a-uuid", sectionId: null, expectedVersion: 1 }),
+        await api.botImages.read({ botId: "not-a-uuid" }),
+        await api.botImages.clear({ botId: "not-a-uuid", expectedVersion: 1 }),
+      ];
+    });
+    for (const result of organizationValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     const taskValidation = await launched.page.evaluate(async () => {
       const sessions = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.sessions;
       const scope = { sessionId: "not-a-uuid" }, versioned = { ...scope, expectedVersion: 1 };

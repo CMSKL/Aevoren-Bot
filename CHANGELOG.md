@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.0-beta.41 (development candidate)
+
+- Persist session-based chat sections/order, a fallback default assistant and independent notification/sound preferences. Keep concurrent edits through explicit version conflicts.
+- Publish actual centered 256×256 Bot image avatars from authorized PNG/JPEG media; preserve owned copies through source removal/restart and independent Bot duplication.
+- Share validated organization/avatar operations with connected AI, retaining actual Runtime/TASK scope, approvals and revocable pixel transport.
+- Focused business checks, two hidden source UI scenarios and actual unsigned macOS-package checks pass. Platform and signed-release gates remain pending; group automation, events/Webhooks and templates/exports follow separately.
+
 ## v0.3.0-beta.40 (development candidate)
 
 - Search saved messages, immutable document/Skill versions, media/transcripts, Task threads, routines and authorized local drafts from one scoped interface.
