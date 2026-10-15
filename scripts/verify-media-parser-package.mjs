@@ -36,13 +36,13 @@ export function verifyMediaParserPackage(target, expectedManifestPath = resolve(
       const path = join(directory, entry.name), relative = path.slice(resources.length + 1).split(sep).join("/");
       if (entry.isSymbolicLink()) throw new Error(`Unexpected resource symlink: ${relative}`);
       if (entry.isDirectory()) { scan(path); continue; }
-      resourceFiles += 1; checkForbidden(relative, relative.endsWith(".ttf") ? readFileSync(path) : new Uint8Array());
+      resourceFiles += 1; checkForbidden(relative, relative.toLowerCase().endsWith(".ttf") ? readFileSync(path) : new Uint8Array());
     }
   }
   scan(resources);
   for (const path of asar.listPackage(archive)) {
     const normalized = path.replaceAll("\\", "/").replace(/^\/+/, ""), stat = asar.statFile(archive, normalized);
-    checkForbidden(normalized, normalized.endsWith(".ttf") ? asar.extractFile(archive, normalized) : new Uint8Array());
+    checkForbidden(normalized, normalized.toLowerCase().endsWith(".ttf") ? asar.extractFile(archive, normalized) : new Uint8Array());
     if (stat.link) checkForbidden(stat.link.replaceAll("\\", "/"), new Uint8Array());
     if (!stat.files) asarFiles += 1;
   }
