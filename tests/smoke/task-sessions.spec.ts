@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -99,6 +99,7 @@ async function withTasks(work: (f: Fixture) => Promise<void>, mcp = false): Prom
   }
   const f: Fixture = { app: undefined as unknown as ElectronApplication, page: undefined as unknown as Page, data, bots, room: { id: room.room.id, name: room.room.name, sessionId: room.session.id }, workspaceId: registration.workspace.id,
     document: { id: document.resource.id, reference: document.reference }, captures, handler: capture => text(capture, "CONTROLLED_TASK_REPLY"), restart: async () => { await close(); await launch(); } };
+  let completed = false;
   try {
     await launch();
     value(await f.page.evaluate(async baseUrl => {
@@ -108,7 +109,7 @@ async function withTasks(work: (f: Fixture) => Promise<void>, mcp = false): Prom
       return api.providers.saveOpenAiCompatible({ instanceId: provider.id, expectedVersion: provider.version, baseUrl, apiKey: "task-fixture-token" });
     }, `http://127.0.0.1:${address.port}/v1`));
     if (mcp) {
-      const saved = value(await f.page.evaluate(url => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.save({ name: "线程只读工具", trustedReadOnlyTools: ["read_fixture"], config: { transport: "streamable-http", url, headers: {} } }), `http://127.0.0.1:${address.port}/mcp`));
+      const saved = value(await f.page.evaluate(url => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.save({ name: "task-read-fixture", trustedReadOnlyTools: ["read_fixture"], config: { transport: "streamable-http", url, headers: {} } }), `http://127.0.0.1:${address.port}/mcp`));
       value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.setEnabled(input), { id: saved.id, expectedVersion: saved.version, enabled: true }));
       await expect.poll(async () => (await options(f.page, bots[0]!.sessionId)).executors[0]?.mcpTools.map(item => item.name)).toContain("read_fixture");
     }
@@ -117,9 +118,23 @@ async function withTasks(work: (f: Fixture) => Promise<void>, mcp = false): Prom
     expect(await f.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
     const database = new DatabaseSync(join(data, "aevoren-bot.sqlite"), { readOnly: true });
     try { expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]); } finally { database.close(); }
+    completed = true;
   } finally {
+    if (!completed && f.page && !f.page.isClosed()) {
+      try {
+        const journals = await f.page.evaluate(async () => {
+          const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot, listed = await api.conversations.list();
+          if (!listed.ok) return { error: listed.error };
+          return Promise.all(listed.data.map(async item => ({ sessionId: item.sessionId, tools: await api.tools.list({ sessionId: item.sessionId }), runtime: await api.runtime.getSessionSnapshot(item.sessionId) })));
+        });
+        const json = JSON.stringify({ fixtureErrors, pageErrors, captures: captures.map(item => ({ command: item.command, released: item.released, aborted: item.aborted })), journals });
+        const body = json.length <= 2_000_000 ? json : JSON.stringify({ truncated: true, preview: json.slice(0, 2_000_000) });
+        await test.info().attach("controlled-task-provider-and-journals", { body, contentType: "application/json" });
+      } catch { /* Preserve the original failure if its owned Renderer already exited. */ }
+    }
     server.closeAllConnections();
     if (f.app) await close();
+    if (!completed) copyFileSync(join(data, "aevoren-bot.sqlite"), test.info().outputPath("isolated-task-journal.sqlite"));
     await Promise.allSettled(remotes.map(remote => remote.close()));
     await new Promise<void>(resolve => server.close(() => resolve())); removeTestDirectory(data);
   }
@@ -174,10 +189,10 @@ test("starts all six Task Room members before any result and cancels one without
     f.handler = () => undefined;
     const task = await createTask(f.page, f.room.sessionId, "六成员任务", f.bots.map(bot => selection(bot.id)));
     const sibling = await createTask(f.page, f.room.sessionId, "兄弟任务", [selection(f.bots[0]!.id)]);
-    const sent = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.send(input), { roomId: f.room.id, sessionId: task.session.id, clientNonce: randomUUID(), text: "TASK_GROUP_ALL", routingMode: "everyone" as const, targetBotIds: [] }));
+    const sent = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.send(input), { roomId: f.room.id, sessionId: task.session.id, clientNonce: randomUUID(), text: "TASK_GROUP_ALL", routingMode: "everyone" as const, targetBotIds: f.bots.map(bot => bot.id) }));
     await expect.poll(() => f.captures.length, { timeout: 15_000 }).toBe(6); expect(f.captures.every(capture => !capture.released)).toBe(true);
     let group = await roomSnapshot(f, task.session.id); expect(group.detail.session.id).toBe(task.session.id); expect(group.runs).toHaveLength(6); expect(group.turns.every(turn => turn.state === "running")).toBe(true);
-    value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.send(input), { roomId: f.room.id, sessionId: sibling.session.id, clientNonce: randomUUID(), text: "TASK_SIBLING_ACTIVE", routingMode: "everyone" as const, targetBotIds: [] }));
+    value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.send(input), { roomId: f.room.id, sessionId: sibling.session.id, clientNonce: randomUUID(), text: "TASK_SIBLING_ACTIVE", routingMode: "everyone" as const, targetBotIds: [f.bots[0]!.id] }));
     await expect.poll(() => f.captures.length).toBe(7);
     const cancelled = group.runs.find(run => run.executorBotId === f.bots[0]!.id)!;
     value(await f.page.evaluate(runId => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.cancelMember(runId), cancelled.id));
