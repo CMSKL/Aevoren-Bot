@@ -63,7 +63,7 @@ describe("voice configuration and durable task repository",()=>{
     const removed=f.repository.removeRoomMember(room.room.id,f.bot.id,room.room.membershipVersion);f.repository.addRoomMember(room.room.id,f.bot.id,removed.room.membershipVersion);
     expect(()=>f.repository.voice.access(room.session.id,item.id)).toThrowError(expect.objectContaining({code:"VOICE_NOT_GRANTED"}));
   });
-  it("upgrades real v42 media without changing bytes, incoming FKs, indexes or the Runtime trigger",()=>{
+  it("upgrades real v42 media preserving bytes, FKs and indexes with the exact MAIN Runtime predicate",()=>{
     const root=mkdtempSync(join(tmpdir(),"aevoren-voice-migration-"));roots.push(root);const filename=join(root,"old.sqlite"),raw=new DatabaseSync(filename);
     raw.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)");
     for(const migration of MIGRATIONS.filter(value=>value.version<=42)){
@@ -78,7 +78,11 @@ describe("voice configuration and durable task repository",()=>{
     raw.close();const upgraded=new AppRepository(filename);repositories.push(upgraded);const db=Reflect.get(upgraded,"database") as DatabaseSync;
     expect(JSON.stringify(incoming.map(table=>db.prepare(`PRAGMA foreign_key_list(${table})`).all()))).toBe(fks);
     expect(JSON.stringify(db.prepare("SELECT name,sql FROM sqlite_master WHERE type='index' AND tbl_name IN ('media_assets','media_extractions','session_media_bindings','send_media_admissions','runtime_media_admissions') ORDER BY name").all())).toBe(indexes);
-    expect((db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='capture_runtime_media'").get() as {sql:string}).sql).toBe(trigger);
+    // Migration45 adds only this predicate to legacy automatic media admission;
+    // TASK admission is captured from its separate explicit selection.
+    expect(trigger).toContain("AFTER INSERT ON runtime_runs BEGIN");
+    const expectedTrigger=trigger.replace("AFTER INSERT ON runtime_runs BEGIN","AFTER INSERT ON runtime_runs WHEN (SELECT kind FROM sessions WHERE id=NEW.session_id)='MAIN' BEGIN");
+    expect((db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='capture_runtime_media'").get() as {sql:string}).sql).toBe(expectedTrigger);
     expect(db.prepare("SELECT name,sha256,duration_ms FROM media_assets WHERE id=?").get(id)).toMatchObject({name:"old.pdf",sha256:"a".repeat(64),duration_ms:null});
     expect(db.prepare("SELECT body FROM media_extractions WHERE media_id=?").get(id)).toMatchObject({body:"OLD_TEXT"});expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     const owner=upgraded.createBot();expect(upgraded.media.publishImport(owner.session.id,[{asset:{reference:{id:randomUUID(),name:"new.wav",size:44,mimeType:"audio/wav",sha256:"c".repeat(64)},kind:"audio" as MediaItem["asset"]["kind"],width:null,height:null,durationMs:null},extraction:null}])).toHaveLength(1);
