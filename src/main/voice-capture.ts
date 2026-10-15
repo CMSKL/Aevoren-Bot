@@ -84,7 +84,7 @@ export class VoiceCaptureGate {
     const capture = this.capture;
     if (!capture || capture.stage !== "issued" || permission !== "media" || details.isMainFrame !== true
       || details.requestingUrl !== capture.document.url || webContentsId !== capture.document.webContentsId
-      || this.now() > Date.parse(capture.intent.expiresAt)) return false;
+      || !capture.realtime && this.now() > Date.parse(capture.intent.expiresAt)) return false;
     const audio = details.mediaTypes ? details.mediaTypes.length === 1 && details.mediaTypes[0] === "audio" : details.mediaType === "audio";
     if (!audio) return false;
     try { this.check(capture); return true; } catch { return false; }

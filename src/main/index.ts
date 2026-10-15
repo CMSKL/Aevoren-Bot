@@ -1,3 +1,5 @@
+import { WebSocket } from "ws";
+import type { RealtimeSocketFactory } from "./realtime-socket-adapter";
 import { RealtimeService } from "./realtime-service";
 import { RealtimeBusinessHost } from "./realtime-business-host";
 import { REALTIME_CHANGED_CHANNEL } from "@shared/realtime-channels";
@@ -186,8 +188,8 @@ async function finishClose(): Promise<void> {
     closeRequested = false;
     pendingClose = false;
     voiceCapture?.invalidate();
-    realtimeService?.stopAll();
-    mainWindow.hide();
+    await realtimeService?.stopAll();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
     return;
   }
   roomCoordinator?.beginShutdown();
@@ -463,12 +465,19 @@ app.whenReady().then(async () => {
     transcript: emitTranscript,
     roomRuntime: emitRoomRuntime,
   }, decisionService);
+  const realtimeTestOrigin = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_REALTIME_TEST_ORIGIN : undefined;
+  let realtimeSocketFactory: RealtimeSocketFactory | undefined;
+  if (realtimeTestOrigin) {
+    const origin = new URL(realtimeTestOrigin);
+    if (origin.protocol !== "ws:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.pathname !== "/" || origin.username || origin.password || origin.search || origin.hash) throw new AevorenBotError("INVALID_REQUEST");
+    realtimeSocketFactory = (url, options) => new WebSocket(new URL(url.pathname + url.search, origin), options);
+  }
   realtimeBusiness = new RealtimeBusinessHost(repository, sendWorker, roomCoordinator);
   const business = realtimeBusiness;
   const productRealtimeService = new RealtimeService(repository, electronSecretCodec, {
     dispatch: (request, signal) => business.dispatch(request, signal),
     lookup: request => business.lookup(request), wait: (link, signal) => business.wait(link, signal), cancel: link => business.cancel(link),
-  }, { onEvent: event => {
+  }, { ...(realtimeSocketFactory ? { socketFactory: realtimeSocketFactory } : {}), onEvent: event => {
     if (event.type === "snapshot" && ["stopped", "failed", "interrupted_unknown"].includes(event.snapshot.session.state))
       voiceCapture?.cancel({ sessionId: event.snapshot.session.sessionId, captureId: event.snapshot.session.captureId });
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(REALTIME_CHANGED_CHANNEL, event);

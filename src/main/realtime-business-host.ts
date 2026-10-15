@@ -5,6 +5,7 @@ import { assertRealtimeAdmission, type RealtimeAdmission } from "./realtime-admi
 import type { SendWorker } from "./send-worker";
 import type { RoomCoordinator } from "./room-coordinator";
 import { AevorenBotError } from "./errors";
+import { voiceDigest } from "./voice-repository";
 
 export type RealtimeDispatchRequest = {
   voiceSessionId: string; turnId: string; callId: string; sessionId: string; executorBotId: string;
@@ -22,9 +23,8 @@ export class RealtimeBusinessHost {
         || request.admission.generation !== request.inputGeneration) throw new AevorenBotError("VOICE_NOT_GRANTED");
     };
     check();
-    const { digestMessage } = await import("./database");
     const origin: VoiceMessageOrigin = { kind: "voice-input", voiceSessionId: request.voiceSessionId, turnId: request.turnId,
-      callId: request.callId, transcriptDigest: digestMessage(request.text) };
+      callId: request.callId, transcriptDigest: voiceDigest(request.text) };
     const { input, roomId } = request.admission;
     const command = { sessionId: request.sessionId, clientNonce: request.clientNonce, text: request.text,
       resourceRefs: input.resourceRefs, mediaRefs: input.mediaRefs };

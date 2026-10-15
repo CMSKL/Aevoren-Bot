@@ -71,6 +71,8 @@ it("realtime capture has its own expiring document lease and cannot publish a re
   const f = fixture(), intent = await f.gate.beginRealtime(f.input.sessionId);
   const lease = f.gate.realtimeLease(f.input.sessionId, intent.captureId);
   f.advance(121_000); expect(() => lease.assertCurrent()).not.toThrow();
+  expect(f.gate.allows(1, "media", f.details)).toBe(true);
+  expect(f.gate.allows(1, "media", { ...f.details, mediaType: "video" })).toBe(false);
   await expect(f.gate.commit({ ...f.input, draftVersion: 0, baseDigest: "0".repeat(64), captureId: intent.captureId,
     mimeType: "audio/webm", dataBase64: Buffer.from("not a recording").toString("base64") })).rejects.toMatchObject({ code: "VOICE_CAPTURE_INVALID" });
   f.navigate(); expect(() => lease.assertCurrent()).toThrow();
