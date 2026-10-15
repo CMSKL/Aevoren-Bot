@@ -48,7 +48,8 @@ function createV6Fixture(): string {
     ) VALUES('${ROOM_ID}', 'Room', '', 1, 1, NULL, NULL, 0, NULL, '${timestamp}', '${timestamp}');
     INSERT INTO room_members VALUES('${ROOM_ID}', '${BOT_A}', 0, '${timestamp}');
     INSERT INTO room_members VALUES('${ROOM_ID}', '${BOT_B}', 1, '${timestamp}');
-    INSERT INTO sessions VALUES('${SESSION_ID}', NULL, '${ROOM_ID}', 'MAIN', 1, 1, '${timestamp}', '${timestamp}');
+    INSERT INTO sessions(id,bot_id,room_id,kind,generation,transcript_cursor,created_at,updated_at)
+      VALUES('${SESSION_ID}', NULL, '${ROOM_ID}', 'MAIN', 1, 1, '${timestamp}', '${timestamp}');
     INSERT INTO send_journal VALUES('nonce', '${SESSION_ID}', 'digest', 'acked', 0, NULL, NULL, '${timestamp}', '${timestamp}');
     INSERT INTO transcript_entries(
       id, session_id, generation, seq, client_nonce, role, body, status, updated_seq,

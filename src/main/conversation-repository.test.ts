@@ -78,6 +78,7 @@ describe("Conversation repository", () => {
 
     const first = repository(filename);
     expect(first.getConversation("direct")).toEqual({
+      kind: "MAIN",
       sessionId: "direct", botId: "bot", roomId: null, projectId: "project", workspaceIds: [], pinnedAt: "2026-01-02",
       hiddenAt: "2026-01-03", hasUnread: true, lastMessage: "Latest reply", lastActivityAt: "2026-01-08", version: 1,
     });
