@@ -11,6 +11,7 @@ type ErrorDescriptor = {
 };
 
 export const ERROR_REGISTRY = {
+  ORG_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "侧栏设置已变化，请刷新后保存；当前草稿仍保留。", allowedDetailKeys: ["currentVersion"] },
   VOICE_CONFIGURATION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "语音配置已改变，请刷新后保存。", allowedDetailKeys: [] },
   VOICE_CONFIGURATION_REQUIRED: { domain: "provider", retryable: false, safeMessage: "请在语音设置中启用并配置这项独立服务。", allowedDetailKeys: [] },
   VOICE_TASK_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这项语音任务。", allowedDetailKeys: [] },
