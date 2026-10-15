@@ -1,3 +1,4 @@
+import { DEMONSTRATION_PRODUCT_OPERATIONS } from "./demonstration-product";
 import { NATIVE_OUTBOUND_PRODUCT_OPERATIONS } from "./native-outbound-product";
 import { IPC } from "./channels";
 import { LIBRARY_PRODUCT_OPERATIONS } from "./library-product";
@@ -14,6 +15,7 @@ export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   ...LIBRARY_PRODUCT_OPERATIONS,
   ...ENVIRONMENT_PRODUCT_OPERATIONS,
   ...BROWSER_PRODUCT_OPERATIONS,
+  ...DEMONSTRATION_PRODUCT_OPERATIONS,
   ...SKILL_EXECUTION_PRODUCT_OPERATIONS,
   ...NATIVE_CONNECTOR_PRODUCT_OPERATIONS,
   ...NATIVE_OUTBOUND_PRODUCT_OPERATIONS,

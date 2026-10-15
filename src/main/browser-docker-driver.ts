@@ -1,6 +1,7 @@
+import { BROWSER_WORKER_VERSION } from "@shared/browser-contracts";
 import { DockerCommandError, DockerDriver, type DockerContainer, type DockerImage } from "./docker-driver";
 
-export const BROWSER_IMAGE_REF = "aevoren-browser-worker:1.0.0";
+export const BROWSER_IMAGE_REF = `aevoren-browser-worker:${BROWSER_WORKER_VERSION}`;
 function id(value: string): string {
   if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value)) throw new DockerCommandError("DOCKER_ID_INVALID", "");
   return value;
@@ -31,7 +32,7 @@ export class BrowserDockerDriver extends DockerDriver {
     if (probe.status !== "ready" || !probe.platform) throw new DockerCommandError("DOCKER_NOT_READY", "");
     await this.command(["build", "--platform", probe.platform, "--label", `io.aevoren.worker-bundle=${bundleSha256}`, "--tag", BROWSER_IMAGE_REF, contextPath], { signal, timeoutMs: 900_000 });
     const image = await this.inspectBrowserImage(BROWSER_IMAGE_REF, signal);
-    if (!image || image.bundleSha256 !== bundleSha256 || image.workerVersion !== "1.0.0" || image.platform !== probe.platform) throw new DockerCommandError("DOCKER_IMAGE_INVALID", "");
+    if (!image || image.bundleSha256 !== bundleSha256 || image.workerVersion !== BROWSER_WORKER_VERSION || image.platform !== probe.platform) throw new DockerCommandError("DOCKER_IMAGE_INVALID", "");
     return image;
   }
 

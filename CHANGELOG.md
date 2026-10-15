@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.0-beta.33 (development candidate)
+
+- Added explicit isolated-computer demonstration recording and scoped editable text Skill drafts; publication reviews a fixed saved version and creates a disabled Skill.
+- Browser Worker 1.1.0 redacts printable keys and clipboard input, and seals captures on disconnect or control change.
+- Native connector and outbound features from beta.31/beta.32 are retained. Real Docker and cross-platform candidate checks are pending.
+
+
 ## v0.3.0-beta.32 (development candidate)
 
 - Add separate account/operation/target write grants and fixed saved-draft approvals for Gmail sending, ordinary Drive text-file creation/replacement and Notion page creation. Gmail sending requires explicit full-scope reauthorization.
