@@ -29,7 +29,7 @@ async function fixture(){
   })().catch(()=>{if(!response.headersSent)response.writeHead(500);response.end();});});
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));const address=server.address();if(!address||typeof address==="string")throw new Error("Fixture missing");
   const fetchFn:VoiceFetch=(url,init)=>fetch(`http://127.0.0.1:${address.port}${url.pathname}`,init);
-  const bytes=pcmToWav(pcm),media=repository.media.publishImport(owner.session.id,[{asset:{reference:{id:randomUUID(),name:"owned.wav",size:bytes.length,mimeType:"audio/wav",sha256:mediaBytesDigest(bytes)},kind:"audio" as MediaItem["asset"]["kind"],width:null,height:null},extraction:null}])[0]!;
+  const bytes=pcmToWav(pcm),media=repository.media.publishImport(owner.session.id,[{asset:{reference:{id:randomUUID(),name:"owned.wav",size:bytes.length,mimeType:"audio/wav",sha256:mediaBytesDigest(bytes)},kind:"audio" as MediaItem["asset"]["kind"],width:null,height:null,durationMs:Math.max(1,Math.ceil(pcm.byteLength/48))},extraction:null}])[0]!;
   const reader:VoiceMediaReader={async readBinary(input,context={}){
     const scope=context.runtimeRunId?{sessionId:input.sessionId,executorBotId:context.executorBotId!,runtimeRunId:context.runtimeRunId}:null;
     const lease=scope?null:repository.media.captureUiLease(input,context.executorBotId);

@@ -333,6 +333,11 @@ const api: AevorenBotApi = {
     removeMember: (input) => ipcRenderer.invoke(IPC.roomsRemoveMember, input),
   },
   sessions: {
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, event: { session: import("@shared/contracts").Session }): void => listener(event);
+      ipcRenderer.on(IPC.sessionChangedEvent, handler);
+      return () => ipcRenderer.removeListener(IPC.sessionChangedEvent, handler);
+    },
     getMain: (botId) => ipcRenderer.invoke(IPC.sessionsGetMain, botId),
   },
   transcript: {

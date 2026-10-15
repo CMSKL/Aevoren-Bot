@@ -94,6 +94,7 @@ export type ProductDependencies = VoiceProductDependencies & MediaProductDepende
   pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
   exportLibraryResource?(input: { sessionId: string; id: string; revisionId?: string }, signal?: AbortSignal): Promise<LibraryExportResult | null>;
   productChanged?(): void;
+  sessionChanged?(session: import("@shared/contracts").Session): void;
   requestUpdateAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
   requestExitAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
   requestView?(input: import("@shared/product-view").ProductViewInput): Promise<import("@shared/product-view").ProductViewResult>;
@@ -237,7 +238,13 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const parsed = conversationHiddenSchema.parse(input);
     return commit(() => repository.setConversationHidden(parsed.sessionId, parsed.hidden));
   });
-  handle(IPC.conversationsClear, (sessionId: unknown) => commit(() => repository.clearConversation(sessionIdSchema.parse(sessionId))));
+  handle(IPC.conversationsClear, (input: unknown) => {
+    const sessionId = sessionIdSchema.parse(input);
+    let changed: import("@shared/contracts").Session | undefined;
+    const result = commit(() => { const value = repository.clearConversation(sessionId); changed = repository.getSession(sessionId); return value; });
+    if (changed) dependencies.sessionChanged?.(changed);
+    return result;
+  });
   handle(IPC.conversationsSetProject, (input: unknown) => {
     const parsed = conversationProjectSchema.parse(input);
     return commit(() => repository.setConversationProject(parsed.sessionId, parsed.projectId, parsed.expectedVersion));

@@ -99,6 +99,7 @@ export class VoiceCaptureGate {
     const parsed = voiceCaptureCancelSchema.parse(input), capture = this.capture;
     if (capture && parsed.captureId === capture.intent.captureId && parsed.sessionId === capture.intent.sessionId) this.invalidate();
   }
+  cancelSession(sessionId: string): void { if (this.capture?.intent.sessionId === sessionId) this.invalidate(); }
   invalidate(): void {
     const capture = this.capture; this.capture = null;
     if (capture) { clearTimeout(capture.timer); capture.controller.abort(); }

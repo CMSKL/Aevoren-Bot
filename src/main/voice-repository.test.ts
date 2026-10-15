@@ -81,7 +81,7 @@ describe("voice configuration and durable task repository",()=>{
     expect((db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='capture_runtime_media'").get() as {sql:string}).sql).toBe(trigger);
     expect(db.prepare("SELECT name,sha256,duration_ms FROM media_assets WHERE id=?").get(id)).toMatchObject({name:"old.pdf",sha256:"a".repeat(64),duration_ms:null});
     expect(db.prepare("SELECT body FROM media_extractions WHERE media_id=?").get(id)).toMatchObject({body:"OLD_TEXT"});expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    const owner=upgraded.createBot();expect(upgraded.media.publishImport(owner.session.id,[{asset:{reference:{id:randomUUID(),name:"new.wav",size:44,mimeType:"audio/wav",sha256:"c".repeat(64)},kind:"audio" as MediaItem["asset"]["kind"],width:null,height:null},extraction:null}])).toHaveLength(1);
+    const owner=upgraded.createBot();expect(upgraded.media.publishImport(owner.session.id,[{asset:{reference:{id:randomUUID(),name:"new.wav",size:44,mimeType:"audio/wav",sha256:"c".repeat(64)},kind:"audio" as MediaItem["asset"]["kind"],width:null,height:null,durationMs:null},extraction:null}])).toHaveLength(1);
     expect(readdirSync(join(root,"Backups")).some(name=>name.endsWith(".sqlite"))).toBe(true);
   });
 });

@@ -89,7 +89,7 @@ describe("media product transport", () => {
     const f = fixture();
     const text = "PRIVATE_EXTRACTED_TEXT";
     const parser: MediaParserAdapter = {
-      parse: async () => ({ kind: "pdf", width: null, height: null, parserName: "controlled-unit-parser", parserVersion: "1",
+      parse: async () => ({ kind: "pdf", width: null, height: null, durationMs: null, parserName: "controlled-unit-parser", parserVersion: "1",
         extraction: { text, spans: [{ kind: "page", index: 0, start: 0, end: text.length }], warningCodes: [] } }),
       renderPdfPage: async () => { throw new Error("not used"); }, shutdown: async () => {},
     };

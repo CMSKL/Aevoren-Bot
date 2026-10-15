@@ -101,6 +101,7 @@ export const IPC = {
   updatesRetry: "updates:retry",
   updatesInstallAndRestart: "updates:install-and-restart",
   transcriptEvent: "events:transcript",
+  sessionChangedEvent: "events:session-changed",
   sendStateEvent: "events:send-state",
   runtimeEvent: "events:runtime",
   roomRuntimeEvent: "events:room-runtime",

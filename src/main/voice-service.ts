@@ -158,6 +158,12 @@ export class VoiceService {
     for(const task of this.repository.voice.mediaTasks(event.mediaId,event.action==="unbound"?event.sessionId:undefined))
       this.emit({...task,transcript:null,audio:null,lastErrorCode:"VOICE_NOT_GRANTED"});
   }
+  sessionChanged(sessionId:string,generation:number):void {
+    for(const job of this.jobs.values()){
+      const task=this.repository.voice.internal(job.id).task;
+      if(task.sessionId===sessionId&&task.inputGeneration!==generation)this.cancelJob(job,"VOICE_SOURCE_CHANGED");
+    }
+  }
   shutdown():Promise<void>{
     if(!this.closing){for(const job of this.jobs.values())this.cancelJob(job,"APP_INTERRUPTED");this.lifetime.abort();this.closing=Promise.allSettled([...this.jobs.values()].map(job=>job.completion)).then(()=>{});}return this.closing;
   }

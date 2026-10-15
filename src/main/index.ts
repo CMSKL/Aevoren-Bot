@@ -423,7 +423,7 @@ app.whenReady().then(async () => {
     platform,
     architecture: process.arch,
     packaged: app.isPackaged,
-  }, undefined, mcpService, () => routineService?.list() ?? []);
+  }, undefined, mcpService, () => routineService?.list() ?? [], () => productVoiceService.configurations());
   mainWindow = createWindow(!hideTestWindow && !openedAtLogin);
   voiceCapture = installVoiceCaptureHost(repository, mainWindow, async (input, context) => {
     const result = await productMediaService.importBytes({ ...input, requiredKind: "audio" }, context);
@@ -494,6 +494,11 @@ app.whenReady().then(async () => {
     mediaService: productMediaService,
     voiceService: productVoiceService,
     voiceCapture,
+    sessionChanged(session) {
+      voiceCapture?.cancelSession(session.id);
+      productVoiceService.sessionChanged(session.id, session.generation);
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.sessionChangedEvent, { session });
+    },
     async pickMediaPaths(_input, signal) {
       signal?.throwIfAborted();
       if (!mainWindow || mainWindow.isDestroyed()) return null;

@@ -1356,6 +1356,7 @@ export interface AevorenBotApi {
     }): Promise<ApiResult<ToolApprovalResult>>;
   };
   sessions: {
+    onChanged(listener: (event: { session: Session }) => void): () => void;
     getMain(botId: string): Promise<ApiResult<Session>>;
   };
   rooms: {
