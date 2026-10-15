@@ -400,7 +400,7 @@ function taskCapability(capability: CapabilityDescriptor, policy: TaskSessionPol
     ? { ...capability, description: `本任务仅使用 ${policy.memories.length} 条明确选择的固定记忆；不动态继承 user、Bot 或 Workspace 记忆。` }
     : denied();
   const groups: Record<string, string[]> = {
-    "media.documents": ["media."], "media.audio-video": ["media."], "media.tool-images": ["media.read", "media.preview"],
+    "media.documents": ["media."], "media.audio-video": ["media."], "media.tool-images": ["media.read", "media.preview", "bots.readImageAvatar"],
     "library.documents": ["library."], "skills.text": ["library.", "skills.load"], "skills.scripts": ["skills.runScript"],
     "voice.transcription": ["voice.transcribe"], "voice.speech": ["voice.speak"], "voice.realtime": ["voice.realtime."],
     "mcp.scoped-tools": ["mcp."], "apps.read": ["connectors.", "drafts."], "apps.write": ["outbound."],
