@@ -234,7 +234,7 @@ test("flushes a dirty profile after an embedded frame loads and is removed", asy
 
 for (const navigation of ["same-document", "main-document"] as const) {
   test(`flushes a dirty profile after ${navigation} navigation`, async () => {
-    // Windows restart verification includes several roughly two-second navigation clicks.
+    // Windows took 22.58s through the first close; restart navigation exhausted 30s.
     if (process.platform === "win32" && navigation === "main-document") test.setTimeout(60_000);
     const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-navigation-"));
     let application: ElectronApplication | undefined;
