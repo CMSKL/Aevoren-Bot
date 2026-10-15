@@ -1,3 +1,5 @@
+import { SearchDialog } from "./components/SearchDialog";
+import type { SearchSourceReference } from "@shared/search-contracts";
 import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent, type ProductViewRequest } from "@shared/product-view";
 import { useEffectEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_PROJECT_ID } from "@shared/contracts";
@@ -126,6 +128,8 @@ export function App(): React.JSX.Element {
   const [selectedTask, setSelectedTask] = useState<TaskDetail | null>(null);
   const [taskForm, setTaskForm] = useState<{ parentSessionId: string; task?: TaskDetail } | null>(null);
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
+  const [searchOpen,setSearchOpen]=useState(false);
+  const [searchFocus,setSearchFocus]=useState<{sessionId:string;entryId:string;nonce:number}|null>(null);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [runs, setRuns] = useState<RuntimeRun[]>([]);
   const [toolInvocations, setToolInvocations] = useState<ToolInvocation[]>([]);
@@ -716,6 +720,22 @@ export function App(): React.JSX.Element {
     }
     return false;
   }, [openBot, openRoom]);
+
+  const openSearchSource=useCallback(async(source:SearchSourceReference):Promise<boolean>=>{
+    if(!(await flushActive()))return false;
+    const targetSessionId=source.type==="message"?source.originSessionId??source.sessionId:source.sessionId;
+    const snapshot=await window.aevorenBot.conversations.list();if(!snapshot.ok)return false;
+    const target=snapshot.data.find(item=>item.sessionId===targetSessionId);if(!target)return false;
+    let opened=false;
+    if(target.kind==="TASK")opened=await openTask(target.sessionId,false);
+    else if(target.botId){const listed=await window.aevorenBot.bots.list();const bot=listed.ok?listed.data.find(item=>item.id===target.botId):undefined;if(bot)opened=await openBot(bot,false);}
+    else if(target.roomId){const detail=await window.aevorenBot.rooms.get(target.roomId);if(detail.ok)opened=(await openRoom(detail.data.room,false)).status==="opened";}
+    if(!opened||sessionIdRef.current!==targetSessionId)return false;
+    if(source.type==="message"&&sessionGenerationRef.current!==source.generation)return false;
+    setSidebarTab("chats");setSettingsOpen(false);setMobilePanel(null);
+    if(source.type==="message")setSearchFocus({sessionId:targetSessionId,entryId:source.id,nonce:Date.now()});
+    return true;
+  },[flushActive,openTask,openBot,openRoom]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1665,6 +1685,7 @@ export function App(): React.JSX.Element {
           setCreationMode("room");
           setNewBotOpen(true);
         }}
+        onOpenSearch={()=>setSearchOpen(true)}
         onOpenSettings={() => {
           void flushActive().then((saved) => {
             if (!saved) return;
@@ -1696,6 +1717,7 @@ export function App(): React.JSX.Element {
         onOpenRestoredRoom={openRestoredRoom}
         onDismissRestore={dismissRestore}
       />
+      {searchOpen?<SearchDialog sessionId={session?.id} projectId={activeProjectId} projects={projects} onClose={()=>setSearchOpen(false)} onNavigate={openSearchSource}/>:null}
       {taskForm ? <TaskSessionDialog key={`${taskForm.parentSessionId}:${taskForm.task?.version ?? "new"}`} {...taskForm} onClose={() => setTaskForm(null)} onSaved={detail => { setTaskForm(null); mergeConversation(detail.conversation); void refreshConversations(); void openTask(detail.session.id); }} /> : null}
       {taskDetailOpen && selectedTask ? <TaskDetailDialog key={selectedTask.session.id} task={selectedTask} onClose={() => setTaskDetailOpen(false)} onRevise={() => { setTaskDetailOpen(false); setTaskForm({ parentSessionId: selectedTask.parentSessionId ?? selectedTask.session.id, task: selectedTask }); }} onChanged={detail => { setSelectedTask(current => current?.session.id === detail.session.id && current.version <= detail.version ? detail : current); mergeConversation(detail.conversation); }} onDeleted={sessionId => { composerDraftsRef.current.delete(sessionId); setConversations(current => current.filter(item => item.sessionId !== sessionId)); if (sessionIdRef.current === sessionId) { setTaskDetailOpen(false); clearSelection(); } }} /> : null}
       <div className="app-main">
@@ -1728,9 +1750,10 @@ export function App(): React.JSX.Element {
         sessionId={session?.id}
         sessionGeneration={session?.generation}
         taskTitle={selectedTask?.title}
+        searchFocus={searchFocus&&searchFocus.sessionId===session?.id?searchFocus:undefined}
         onCreateTask={session ? () => { void flushActive().then(saved => { if (saved && sessionIdRef.current === session.id) setTaskForm({ parentSessionId: session.id }); }); } : undefined}
         onOpenTaskDetails={selectedTask ? () => { void window.aevorenBot.sessions.getTask({ sessionId: selectedTask.session.id }).then(result => { if (sessionIdRef.current !== selectedTask.session.id) return; if (result.ok) { setSelectedTask(current => current?.session.id === result.data.session.id && current.version > result.data.version ? current : result.data); setTaskDetailOpen(true); } else setError(result.error); }); } : undefined}
-        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile" && clearTarget === null && taskForm === null && !taskDetailOpen}
+        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile" && clearTarget === null && taskForm === null && !taskDetailOpen && !searchOpen}
         userProfile={userProfile}
         key={session ? `${session.id}:${session.generation}` : selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
         initialDraft={session ? composerDraftsRef.current.get(session.id) : undefined}

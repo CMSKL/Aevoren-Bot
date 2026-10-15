@@ -1,3 +1,4 @@
+import { SEARCH_CHANNELS } from "@shared/search-channels";
 import type { TaskSessionChanged } from "@shared/task-session-contracts";
 import { TASK_SESSION_CHANNELS, TASK_SESSION_CHANGED_CHANNEL } from "@shared/task-session-channels";
 import { REALTIME_CHANNELS, REALTIME_CHANGED_CHANNEL } from "@shared/realtime-channels";
@@ -35,6 +36,7 @@ function onBrowserChanged(listener: (event: BrowserChangedEvent) => void): () =>
 }
 
 const api: AevorenBotApi = {
+  search: {query: input=>ipcRenderer.invoke(SEARCH_CHANNELS.query,input),open: input=>ipcRenderer.invoke(SEARCH_CHANNELS.open,input)},
   mcpWrites: {
     toolCatalog: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.toolCatalog, input),
     toolGrants: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.toolGrants, input),

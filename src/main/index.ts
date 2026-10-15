@@ -1,3 +1,4 @@
+import { SearchService } from "./search-service";
 import { TaskSessionService } from "./task-session-service";
 import { registerTaskMcpAuthority } from "./task-mcp-authority";
 import { TASK_SESSION_CHANGED_CHANNEL } from "@shared/task-session-channels";
@@ -532,6 +533,7 @@ app.whenReady().then(async () => {
     voiceService: productVoiceService,
     realtimeService: productRealtimeService,
     taskSessionService,
+    searchService:new SearchService(repository,repository.search,productVoiceService),
     voiceCapture,
     sessionChanged(session) {
       voiceCapture?.cancelSession(session.id);

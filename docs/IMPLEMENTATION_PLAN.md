@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.38**。阶段 5.1 已通过本地源码与真实未签名 macOS 包；Windows 检出字节一致性修复仍需 CI。阶段 5.2 的语音及音视频专项／安装包检查通过，但完整源码验收发现默认语音面板挤占聊天区，正修复后重新验收。阶段 5.3 已实现受控实时语音与普通 Runtime 委派，专项及首轮隐藏音频场景通过，最终整轮、安装包和跨平台尚未通过。阶段 4 的 [beta.32](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.32) 已公开，beta.33 晋级 PR #43 仍在正常检查。master 不晋级；阶段 6 尚未实施。
+当前开发候选为 **v0.3.0-beta.40**。阶段 6A 已实现 MAIN/TASK 隔离、固定上下文、权限、独立线程与共用业务入口，三项不同源码场景和真实未签名 macOS 包四项本地验收通过；普通回归原整轮 1,777 通过／9 失败／45 跳过，九项旧迁移断言修正后七文件 72 项定向通过，累计 1,786 个不同通过场景，不记为单轮全绿。阶段 6B 全资源搜索的 11 项 SQLite、2 项产品传输及2项实际界面场景通过，当前安装包和跨平台仍待验收。6C–6F 继续实施。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，后续版本按正常顺序晋级；master 不晋级。真实第三方账号、音频硬件及 Windows Docker 未验证。
 
 ## 已确定的方案
 
@@ -31,8 +31,8 @@
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
 | 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 开发组合候选四项 CI 通过，分单元晋级中 | `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
-| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1–5.3 源码已实现，布局修复及最终验收中 | 本地媒体源码／包与语音专项已有证据；实时协议、真实 Worklet 和普通 Runtime 来源已验证；完整门禁／云账号／硬件分开记录 |
-| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
+| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1–5.3 源码及本地包证据完成，跨平台／签名发行待通过 | beta.38 源码累计 159 个不同通过、32 条件跳过；保留完整运行 3 项失败及定向 3/3，通过真实 Worklet／受控协议／普通 Runtime；云账号／硬件另行验证 |
+| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 6A TASK 源码与专项检查完成，6B–6F 待实施 | beta.39 的迁移／授权／UI 身份与能力专项已有证据；完整构建与三个不同隐藏场景分轮通过，保留失败，真实未签名 macOS 包 4 项通过，跨平台／签名待完成 |
 
 ## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
 
@@ -212,6 +212,10 @@ Frozen SHA-256: main `51d6738f71a2d1f164dd7b7ab46d16da6e5f9ca83a3d98055422406b54
 
 审查发现已发布示范的缓存回执可能在资料解绑／删除后仍带旧正文；修复为复核原资源、原版本及当前 Scope，拒绝已解绑／删除资源，原发布 Skill 不重复创建或自动启用。产品网关 37 项通过，含后续修改资料后仍返回原版本、解绑／删除后拒绝两项回归。修复源码重新通过四配置 TypeScript 与构建并冻结未签名 macOS beta.33 包；该包原生连接 2、外发 5 通过，typed API 1 项更正为源码 fixture 证据；示范 1 在纠正测试读取随包指南的方式后通过，实查 isPackaged、版本与指南正文。最初指南测试在 Electron evaluate 内动态 import 不被支持，改为查询实际 Resources 路径后读取；应用和包均未为此重建或修改。
 
+> 同步 dev 保留的历史记录；不覆盖本文开头的最新候选与验证状态。
+
+审查发现已发布示范的缓存回执可能在资料解绑／删除后仍带旧正文；修复为复核原资源、原版本及当前 Scope，拒绝已解绑／删除资源，原发布 Skill 不重复创建或自动启用。产品网关 37 项通过，含后续修改资料后仍返回原版本、解绑／删除后拒绝两项回归。修复源码重新通过四配置 TypeScript 与构建并冻结未签名 macOS beta.33 包；该包原生连接 2、外发 5、typed API 1 通过，示范 1 在纠正测试读取随包指南的方式后通过，实查 isPackaged、版本与指南正文。最初指南测试在 Electron evaluate 内动态 import 不被支持，改为查询实际 Resources 路径后读取；应用和包均未为此重建或修改。
+
 最终完整普通测试记录为 1,540 通过、45 跳过、6 失败：五项原有 5 秒超时（CDP 1 MiB、群聊 20 轮、FIFO 20 轮、工具混合指令循环、诊断参数循环），一项 lead-room 在轮询期限内仍为 running。对应未修改的六个文件单 Worker 复核 128／128 通过，未提高超时或减少断言；保留完整失败证据，远端完整 CI 仍须独立通过，不能把分次复核改记为一次完整全绿。
 
 真实 Linux Docker 集成测试已加入现有浏览器套件，走实际 x11vnc 的 RFB 握手、页面点击、文字／剪贴板脱敏、断线封存、容器重启、旧 epoch 拒绝和归还后重新观察。该测试将在 Linux CI 的真实容器门禁执行；本机 Docker daemon 未启动，本机结果为跳过，不算真实 Docker 已验收。示范单元不代表阶段 4 全部完成，可写 MCP／交互 Apps 以及阶段 5–6 仍待交付。
@@ -266,6 +270,13 @@ ASAR SHA-256 is `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf
 
 `65437c8` 仅在显式开启时写入固定诊断文件，记录焦点／文档版本前后、epoch、布尔状态和有界耗时，不记录 DOM、URL、图片、Cookie、路径或能力令牌。所有 409 校验和捕获顺序保持不变。六个负向用例及相关 26 项、Node／浏览器 Worker 类型、lint、Worker 构建通过。Worker 字节／镜像 context 摘要会变化；前述包 30 项先于此补丁，补丁后的真实 Docker／安装包仍待验证。下一轮真实 Linux CI 用于确定拒绝阶段。
 
+
+> 同步 dev 保留的历史记录；不覆盖本文开头的最新候选与验证状态。
+
+后续原生 Linux [CI 38666108922](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38666108922/job/116198324472) 在 12288fd 通过完整 Validate：普通 1,547 通过、45 跳过；真实 Docker／Host 7 文件 41／41 通过。新增实际桌面 RFB 示范用例 3.239 秒通过，包含输入脱敏、断线／重启封存和归还后观察边界。该证据来自 Linux 容器，不改变本机 daemon 未启动和真实 Windows Docker 未验证的记录。
+
+## Windows TCP 录制夹具验收更正
+
 最新 TCP 录制夹具更正：MCP34 Windows 运行 38675963129 的五项进程清理通过，但普通测试 1,550 通过／60 跳过／1 失败；录制事件数先更新，接收端 TCP data 回调尚未交付 28 字节，后续构建／包验收未运行。真实 socket 暂停确定性复现旧断言失败；现先登记接收等待，再恢复并等待完整字节，保留原录制／控制和精确字节断言。相关 9 项、Node／浏览器 Worker 类型和 lint 通过。仅测试改变，安装包业务代码和既有本机回执不变；修正后的跨平台 CI 待验证。
 
 ## Beta.31 晋级收尾：主页面关闭与测试进程生命周期
@@ -308,6 +319,26 @@ The retained trace shows the nested-frame click returned, the initialized inner 
 The test now registers a real page response waiter before the same UI click, matching only POST to that controlled view's exact RPC endpoint with the unsupported method. It verifies HTTP 200, the matching numeric JSON-RPC ID and error -32601 before retaining the original five-second DOM assertion. The 90-second case limit and existing Playwright deadlines are unchanged; no direct/fake RPC, forced click, retry or application change was added. A bounded attachment records only handler entry, trusted-input status, request posting, response receipt, HTTP status, ID-match boolean and numeric error code; URLs, capability tokens, request/response contents and credentials are excluded.
 
 The updated fixture passed all three source MCP cases in 10.63 seconds and all three cases against the existing actual unsigned macOS arm64 beta.35 package in 10.07 seconds, with no skips, flaky results or forced-cleanup warnings. Both receipts show a trusted click, posted request, real HTTP 200, matching ID, -32601 and inner response receipt. The packaged fixture checked genuine `isPackaged`, version `0.3.0-beta.35` and its bundled MCP guide. No rebuild was needed: ASAR remains `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf3`, and compiled Main remains `627d2e5c89eccd164d5e60240bb41d70ea42894146be9c59852c467a772ca78b`. Node TypeScript, targeted lint, documentation links and diff checks passed. These local macOS checks do not replace the retained Windows failure or establish a new complete cross-platform gate; stages 5/6 remain unimplemented.
+
+> 同步 dev 保留的历史记录；不覆盖本文开头的最新候选与验证状态。
+
+示范 beta.33 基线合并准备：本分支纳入已通过四项 CI 的 dev `4f24f15`（PR #40），保留原生连接 38、外发 39、示范 40 的实际迁移顺序与 Browser Worker 1.1.0。上述计数保留为各次验收记录，不代表本次合并后的源码／安装包已经重新验证；当前仅完成合并准备，尚未推送或构建，可写 MCP／交互 Apps、Notion 页面更新／追加和阶段 5 功能不进入本单元。
+
+### 示范 beta.33 合并后本机复验（2026-10-15 UTC）
+
+冻结源码 `14046f04aec88ae7096f1aa1b0fffa32fa1269d2` 完成本次验证，应用版本保持 `0.3.0-beta.33`。验证前后工作树干净，所有重任务以 `nice -n 10` 串行执行，未启动本机 Docker、麦克风或真实第三方账号，也未操作用户已安装应用。
+
+| 本次检查 | 实际结果 |
+| --- | --- |
+| 定向业务单测 | 8 文件／110 项通过：Skill 包 10、数据库 25、项目工具 25、示范宿主 4、示范桥 2、Browser Worker 示范 3、RFB 解析 4、共享产品网关 37；包含真实暂停 TCP 接收再等待完整转发字节的回归。未重跑完整普通套件 |
+| 静态与构建 | 四套 TypeScript、lint、build、215 包／7 类许可、33 份文档链接和开源检查通过 |
+| 隐藏源码验收 | 示范 1、原生读取 2、外发 5、关闭握手 8、typed API 1，共 17 项通过 |
+| 新构建实际 macOS arm64 包 | 直接使用本次 out 构建未签名目录包；上述 17 项加资料库 8，共 25 项通过，0 项跳过、0 次强制夹具清理，无遗留本次 Electron 进程 |
+| 随包内容与身份 | 34 份实际运行记录确认 `isPackaged=true`／`0.3.0-beta.33`；6 份功能指南、Execution Worker 1.2.0 与 Browser Worker 1.1.0 全部逐字节匹配源码构建产物；未签名包不包含更新源 |
+
+本次 Main SHA-256 为 `f4041c76e81762ee105d66244188627c436f3f1364620982ff9cffb847cfc80a`，源 out 与包内 Main 一致；app.asar SHA-256 为 `9796aa2438ccc19613f437f6ae815d0e7adf950f0c3d68d6f032fa1a6aa7384c`。本机临时证据为 `/tmp/aevoren-demo33-final-evidence.json`；单测／构建日志为 `/tmp/aevoren-demo33-final-units.log`、`/tmp/aevoren-demo33-final-build.log`，源码验收为 `/tmp/aevoren-demo33-final-source-smoke.log` 与 `/tmp/aevoren-demo33-final-source-typed.log`，包验收为 `/tmp/aevoren-demo33-final-package-smoke.log` 与 `/tmp/aevoren-demo33-final-package-typed.log`，四份对应 Playwright JSON 保存在同名前缀的 `.json` 文件。临时路径不是仓库内可下载附件。
+
+历史完整套件失败、旧 Windows TCP 竞态和旧包 CSP 阻止 iframe 的记录继续保留；本次定向复验不将它们改记为完整 CI 全绿。合并后提交仍须通过当前跨平台 CI，未签名 macOS 本机包不代替签名发行、Windows 安装包或真实 Windows Docker 验收。可写 MCP／交互 Apps、Notion 页面更新／追加未进入此单元，阶段 5–6 仍未实现。
 
 ## Beta.32 同步 dev 后的验收
 
@@ -355,6 +386,14 @@ The updated fixture passed all three source MCP cases in 10.63 seconds and all t
 [Beta PR #39](https://github.com/CMSKL/Aevoren-Bot/pull/39) 的八项检查在 dev `4f24f153` 全部通过后，正常合入 beta `7989bf6d2bd42efa0525dee84377bbcf3b1ab860`。实际合并树 `80479d1062a51b3f63ad85ebdff73b6c40d024a5` 与已测试 PR 合并树逐字节相同；同名不可变标签指向该 beta 提交。[macOS 签名工作流 38684641775](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38684641775) 成功并公开 [v0.3.0-beta.31](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.31)，标签／标题严格一致，包含签名、公证 DMG／ZIP、两个 blockmap、Beta 更新清单、SHA256 和 SBOM，共七项资产。小型清单下载及 GitHub 资产摘要复核通过；完整产物的下载校验由发行工作流完成。
 
 该发行提供脚本 Skill、Gmail／Drive／Notion 原生读取及本地草稿，包含主页面正常关闭与脚本快照发布修复；不包括后续原生外发、示范录制、可写 MCP／Apps、Notion 页面更新或阶段 5–6。发行校验中普通测试 1,488 通过／44 跳过，源码界面 128 通过／33 跳过，真实签名包资料／原生读取 10 项及关闭 8 项全部通过。Windows 签名工作流因当前配置跳过，没有公开签名 Windows 包。master 未晋级。旧 PR #18（beta → master）自动触发的 Windows 源码检查出现 Skill 工具往返的五秒捕获等待失败；该轮不是 PR #39 或直接 beta 分支检查。保留失败及此前同树八项成功证据，PR #18 按用户要求暂不推进，旧标签和发行不移动。
+
+> 同步 dev 保留的历史记录；不覆盖本文开头的最新候选与验证状态。
+
+### 示范 beta.33 再次同步已验证 dev
+
+示范提交 `b46a92143b647f355c4b771f84ed4b1bf2b63a17` 的[CI 38681547433](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38681547433) 四项全部通过：Windows 源码与 NSIS 安装后的功能、八项关闭握手均通过，未重复先前的初始化或复合关闭超时。随后合入固定 dev `36a48730002a5a8bd7115891a99a18a7cffa792c`，保留 beta.33、实际迁移 38→39→40、Browser Worker 1.1.0、示范扩展 CI 数组及原八项关闭夹具。公开安装包基线仍为 beta.31。
+
+本次相较 `b46a921` 的生产差异仅为 Browser Engine 的显式启用、无敏感内容的旧画面诊断；Main、业务契约、版本和关闭夹具不变，未纳入 MCP34、Notion35 或阶段 5。定向 frame 诊断 6 项与 CDP 下载 10 项（含本机符号链接边界）全部通过，Browser Worker TypeScript、目标 lint、Worker 构建、文档链接、三份工作流 YAML 及 diff 检查通过；日志和源文件／Worker 摘要保存在本机临时 `/tmp/aevoren-demo33-dev36-merge-evidence.json`，YAML／生产差异核验为 `/tmp/aevoren-demo33-dev36-merge-yaml-diff.json`。没有重跑完整套件或重新打包，前述 25 项包验收仍对应原冻结构建；新 Worker 的跨平台结果须由本次合并提交的 CI 单独验证。
 
 
 ### beta.32 Windows 关闭阶段诊断（未发布）
@@ -422,3 +461,81 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 ### beta.33 晋级 Windows 失败（不发布）
 
 晋级 PR #43 的运行 38707578493：Linux、macOS 与密钥检查通过，Windows 源码选择 34 项通过、1 项失败。失败为 `native-outbound.spec.ts` 的未知结果重启场景，`closeTestApplication` 在拥有的 Electron 进程／stdio 收尾阶段报错；该场景含中途重启，尚不能据终端错误断定全部业务断言已完成。Windows 后续关闭、打包和安装验证均未执行，因此当前不合并或发布 beta.33。原始日志 `/tmp/aevoren-beta33-windows-promotion-failure.log` 已保留，正分析 trace 与关闭诊断，未通过盲目重跑或增加期限掩盖失败。
+
+
+### beta.38 当前冻结源码覆盖与宿主休眠证据（2026-10-15）
+
+在 `65e497d3ba18f17ca682a144ac08cc9c777fbfbf`、Node 24.19.0 下直接使用现有构建，单 worker、nice 10、隐藏 Electron、独立临时数据目录及禁用更新执行完整 191 项源码 smoke。结果为 **156 通过、32 条件跳过、3 失败**，25.1 分钟，退出码 1；没有修改产品、fixture、原有期限或重建产物。受控 HTTP 在三个 Runtime 阶段跨 15 次 Renderer 重载保持响应屏障的修正已在该轮通过（1.3 分钟）；真实 Chromium AudioWorklet／生成音频、受控 WebSocket 和普通 Runtime 委派界面亦通过。
+
+失败分别是三十秒 stale／取消、关闭超时提示、未绑定聊天工作区入口。独立读取系统电源记录确认宿主在 08:04:13 −0500 进入 Idle Sleep 586 秒，08:13:59 DarkWake；08:14:43 再进入 Maintenance Sleep 354 秒，08:20:37 用户活动唤醒。关闭提示的 trace 在 close 请求后停顿约 589 秒，未绑定聊天在 firstWindow 阶段停顿约 352 秒，与两段系统休眠对应。stale 场景则在约 19.2 秒时页面关闭，未到三十秒断言边界；没有独立记录证明这次页面关闭的根因，不将其直接归因为产品或休眠。三项原始失败与 trace 保留。
+
+仅对上述三项使用有限子进程 `/usr/bin/caffeinate -i` 防止该轮空闲系统休眠，不唤醒屏幕、不改变电源设置或操作用户应用；冻结代码、构建及 45／20／30 秒原期限均保持不变。定向 **3/3 通过（44.7 秒，退出码 0）**，所属 Electron 均 exitCode=0、signal=null，无强制清理警告。当前累计覆盖 **159 个不同通过场景、32 项条件跳过**，**不是一次完整全绿运行**。随后误启动的完整重跑已按范围收敛要求在 8 项后中止（退出码 130），不计入成功门禁。
+
+只读复核确认包版本为 `0.3.0-beta.38`，Main／Preload／Renderer 共 17 个 out 文件与现有真实未签名 macOS 包逐字节一致；解析资产校验通过 207 项清单资产、231 个资源文件与 9,556 个 ASAR 文件。Main SHA-256 为 `faa97cfb320b2b951982e8d6cf27f06e94aa835b2272774900d355bab56ae7bc`，Preload 为 `1e984f697c82447ea2c6b68faefbb73819c0cf86ad86ac184522b0ee35fb27ca`，Renderer 为 `45092d7bd13fbe6e0a1623f30f41909ee71589c2c8e24cd7d0b9f86b534f7828`，ASAR 为 `c88639591fad72fad6c7509537e59dc5ec99ea8880f19155612acb38987532a3`，parser 清单为 `c3849e73366654ababa5a7aebe47e053201dacc40b2c6c03918a549c8bba1fa1`。麦克风用途声明及四个 Helper 存在；此轮未执行签名 entitlement 验证或物理麦克风测试。
+
+新证据持久保存于本机 `$CODEX_HOME/aevoren-evidence/2026-10-15/`：`voice38-final-source191.log`、对应 metadata JSON、`voice38-final-source191-test-results/`、四行 `voice38-final-source191-power-transitions.log`、`voice38-focused-awake-three.log` 及对应 metadata、`voice38-final-out-package-hashes.json`、`voice38-final-package-assets.json` 与 `voice38-final-microphone-declaration.json`。这些本地证据不是仓库附件。环境重启前部分历史 `/tmp` 证据已不存在，前文仍按历史结果保留，不能宣称那些临时文件当前可用。此前真实未签名包 40 项为既有验收结果，本轮未重复该套场景。跨平台、签名发行、真实云账号、物理设备与 Windows 恢复仍待验证；阶段 6 尚未交付。
+
+
+## 阶段 6A：TASK 数据、授权与线程界面（beta.39，门禁待通过）
+
+- 迁移 45 保留 MAIN、旧聊天／Runtime／Memory／媒体及入向外键，TASK 可与相同 Bot／群的 MAIN 和其他 TASK 并存。任务标题／版本与历史 generation 分开。
+- 通过 taskOptions 读取精确来源范围版本，默认不选择执行者、上下文或权限。每个执行者明确选择固定 Memory、引用历史、资料／Skill 版本、媒体摘要、Workspace 读写／自动化上限、read-only MCP 身份、产品动作、联网和剪贴板。目录／同 Bot／同项目不产生授权。
+- 原 Runtime 与重试固定最初选择，修订不动态扩权。成员／资源／MCP 撤销和 ABA 不复活旧授权；任务能力快照只描述当前执行者与实际选择，不泄露其他连接元信息。
+- 新建 Task 只打开独立聊天。Task 侧栏按 sessionId 识别，联系人及原群继续打开 MAIN；历史、运行事件、草稿缓存、迟到请求和 Room 快照分别按实际 session 过滤。任务标题 CAS 冲突保留用户草稿；授权修订另行审阅。
+- 停止仅作用于此 Task 的活动 Runtime／批次；删除要求空闲并保留 owner Bot／群。独立后台服务仍使用其生命周期控制。
+- 八项 sessions.* 共享业务动作及可信 onTasksChanged 生命周期已实现，模型不能伪造执行者或通过权限修订自授新访问。
+
+本地已运行的具体增量证据：Renderer 身份／空默认值和设置合计 8 项通过，能力注册专项 10 项通过（含原 Runtime 重试快照、独立联网／剪贴板、精确 MCP 及旧 MAIN 行为）；Node／Web 类型与定向 ESLint 通过。日志在 `$CODEX_HOME/aevoren-evidence/2026-10-15/task39-ui-focused.log`、`task39-capability-tests.log` 及同前缀 types／lint 日志。另有 SQLite、宿主 Runtime/MCP 专项由对应交付记录汇总，当前不填尚未冻结的整轮总数。
+
+三项 `tests/smoke/task-sessions.spec.ts` 已通过静态发现（3 项）并开始执行，覆盖真实 Preload／SQLite、受控 HTTP／MCP、独立草稿／重启历史、CAS、任务级删除、六成员／兄弟线程并行、actor 查询与撤销。**三个不同隐藏场景现已分轮通过，不是单轮 3/3 全绿**；参数规范化修复后的冻结完整构建通过，当前没有 beta.39 真实包、Windows 或签名发行通过记录。6B 搜索、6C 整理与偏好、6D 群 Routine、6E 事件／Webhook、6F 模板／离线导出仍待实施，不能将 6A 视为全部六阶段完成。
+
+当前公开基线为 v0.3.0-beta.33。前文 beta.33 Windows 晋级失败保留为历史，不代表现有发行未发布；之后的正常验证与签名发行已完成。beta.34 起按单元继续 dev → beta → 安装包验收 → 同版本 Beta Release，标签和标题都严格等于 v<package.json version>，master 暂不晋级。
+
+
+### beta.39 隐藏验收前两轮失败（保留，尚未通过）
+
+首轮三项均在 Electron 启动前失败：fixture 的连续大写 Memory 标记触发既有 MEMORY_SENSITIVE_CONTENT 校验。只把种子改为普通带空格的私有测试句子，未修改产品敏感内容检查；精确清理三个本轮拥有的临时目录，失败日志／trace 保留。第二轮三个 Electron 均正常退出，但场景仍失败：两个 fixture 分别使用不符合已有规则的中文 MCP 连接名和 Everyone 空目标列表，现已改为合法 slug 与明确成员 ID。第三项已完成实际产品工具往返，发现 Task 产品输入在宿主注入范围之前被 normalizeProductRequest 的严格 UI schema 拒绝；Task 专用产品 schema 现允许省略宿主 session 字段，再由既有宿主校验注入，可信 UI schema 保持严格。对应规范化专项通过，新的完整构建及三项隐藏回归待验证，不把先前 INVALID_REQUEST 当作查询成功。
+
+本机持久证据为 `$CODEX_HOME/aevoren-evidence/2026-10-15/task39-hidden-first-three*` 和 `task39-hidden-second-three*`（完整日志、metadata 与 artifacts）；第二轮清理前未保存私有 Tool Journal，因此不能声称这些行仍可读取。后续 fixture 在失败时附上有界真实请求／工具回执、Runtime/Tool API 快照及自有 SQLite，避免再次丢失诊断。没有增加原 90 秒场景期限、绕过审批或放宽产品权限。
+
+
+### beta.39 受控源码场景累计通过（未验证安装包）
+
+参数规范化修复后的完整构建 `dec880c` 通过五个 TypeScript 项目及 Electron／Worker／parser 构建。后续运行继续保留失败：第三轮 MCP fixture 在实际 probe 前请求信任工具，被已有规则拒绝；并行场景把尚未收到响应头的 dispatching 错当 running；撤销场景收到正确的 LIBRARY_NOT_BOUND，但断言只接受泛化范围错误。只修正测试的实际 probe／信任流程、SSE 响应头屏障与精确拒绝码，不放宽产品校验。
+
+第四轮六成员／兄弟线程并行及 actor 查询／撤销场景 **2 项通过**；UI 场景已通过空默认值、两个草稿、真实发送与正文隔离、标题 CAS 冲突保留、改名、页面重载及应用重启，但删除步骤错误复用了重启前的 Page Locator。只更新 Locator 后，对此失败场景定向 **1/1 通过（10.1 秒）**，包括删除线程并保留 Bot／MAIN 及兄弟线程。当前三个不同场景全部覆盖，**不能记为单轮三项全绿**。所有所属 Electron 均正常 exitCode=0、signal=null，无强制清理警告。
+
+冻结 Main SHA-256 为 `dfed4ba9dd78f1039b6627e1d90afc2ffa453a348415a1699202b9b59964e501`，Preload 为 `6e330d432392704231efc98ec191c16527d9100515ee8bc973dd2f0a4155c6b4`，以上测试修正没有重建或改变业务字节。持久日志／metadata 位于 `$CODEX_HOME/aevoren-evidence/2026-10-15/task39-hidden-third-three*`、`task39-hidden-fourth-three*` 与 `task39-hidden-first-case-final*`；失败 trace、有界真实 HTTP／Tool Journal／Runtime 快照及自有关闭 SQLite 已保留在对应 artifacts。完整普通测试正在单 worker、原有期限下执行；实际未签名包、跨平台及签名发行仍待验收。
+
+
+### beta.39 普通回归与真实未签名 macOS 包验收
+
+完整普通测试以 Node24、单 worker、原期限运行一次，结果为 **1,777 通过、45 跳过、9 失败（7 个文件）**，137.28 秒。失败均由新增 Task 结构触发旧 fixture 的范围／字段假设：V5/V9 逻辑哈希额外包含新 Session 列，MAIN 摘要增加 kind，原生 Runtime 范围增加三个空 Task 字段，两个媒体／实时迁移测试遇到刻意变更的 MAIN 谓词、Task 索引和 Runtime 触发器，诊断 fixture 的无列名 Session INSERT 仍给八个值。只修正测试：保留每个原字段／行的精确比较，另核对 Task 默认值和 MAIN 的三个 NULL 范围字段；逐一比对原外键与明确新增的 parent 自引用；只有具体的 MAIN 谓词／Task 索引／完整声明的 Runtime 触发器采用明确新期望。诊断 CLI 本身未修改。七个失败文件定向 **72/72 通过（5.33 秒）**。累计 **1,786 个不同普通测试通过、45 条件跳过**，**不是一次完整全绿运行**；原九项失败保留。完整 ESLint、Node 类型、41 文件文档链接和开源准备检查均通过。
+
+使用 pnpm11.19 的 electron-builder 直接打包已有冻结 out，没有重建业务源码、签名、公证或触发发布。真实未签名 macOS arm64 包在同一轮通过 **Task3 与 typed API 共 4/4（28.6 秒）**，每个相关 fixture 验证 packaged=true/version39；全部自有进程正常 exitCode=0、signal=null，无强制清理。验证包含空权限／真实 Prompt 排除私有上下文、独立草稿和发送、标题冲突／改名、重载／重启、删除线程而保留 owner、七个并发 HTTP 请求、单成员停止、actor 查询及撤销／重绑后零传输，并明确断言全部 11 个 sessions Preload 方法和八项非法请求拒绝。
+
+Main／Preload／Renderer 的 17 个 ASAR 文件及执行 Worker／Browser Worker／parser 的 216 个资源文件与冻结 out 逐字节一致，Task 指南已随包复制。资源校验为 207 项 parser 清单资产、232 个资源文件、9,556 个 ASAR 文件，无禁止资产。ASAR SHA-256 为 `7ffcff2fcefcf5fb8f9040f1a32c9ed03446409e0aa18f673260fde7dfd2c7c9`；Main／Preload 与上方冻结值一致，Renderer 为 `422c5905e22d2012a62e9c9de0b1a659316f349003f9c599489e221a9772c0e9`，parser 清单为 `6de64fb986756e666d7fe1a4c0d20c77f91beae33bb7ac1e3633a44947477ef8`。未签名麦克风用途声明和四个 Helper 检查通过；signedEntitlementsVerified=false、physicalMicrophoneVerified=false，不能作为签名或硬件证据。
+
+持久日志与 JSON 位于 `$CODEX_HOME/aevoren-evidence/2026-10-15/` 的 `task39-full-unit-serial*`、`task39-legacy-fixture-focused.log`、`task39-full-eslint.log`、`task39-unsigned-mac-package.log`、`task39-actual-package-four*`、`task39-frozen-package-hashes.json`、`task39-package-assets.json` 和 `task39-package-microphone.json`。包内指南记录打包时的验证边界；本次后续文档更新不改变上述冻结业务字节。CI 的 macOS 实包、Windows 源码及 Windows 安装后清单现都包含 Task3，保留原有场景。跨平台检查、dev／beta 晋级及签名发行仍待完成，master 暂不晋级；阶段 6B–6F 尚未交付。
+
+> 同步 dev 保留的历史记录；不覆盖本文开头的最新候选与验证状态。
+
+### beta.33 外发重启关闭诊断（未发布）
+
+PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38707578493) 在源码 35 项中通过 34 项；外发未知结果场景已确认一次提交和 unknown 状态，但首次重启的关闭夹具失败，第二次启动及只读核验尚未到达。原 trace 只有关闭调用和夹具错误，没有该进程的退出／管道状态或 Main 关闭阶段，不能确定是产品关闭、进程退出还是继承管道未释放。
+
+本次仅在外发测试夹具增加有界诊断，缓存其确切 ChildProcess，记录 PID、exit／close 事件、退出码、信号和 stdio destroyed 状态，并复用已有的 Main flush／可信确认／窗口关闭阶段；每个进程最多 120 条，重启和清理调用无论成功或失败均附 JSON，随后移除监听。没有修改产品、关闭辅助函数、时限或业务断言，也没有重跑原失败任务。
+
+新构建的本机隐藏 beta.33 源码场景 1／1 通过，第一次关闭约 191 ms、最终清理约 52 ms，均有可信 flush 确认、exit 0、全部管道关闭且未强制终止。四套 TypeScript、正常构建和定向 lint 通过；没有重跑完整套件或打包。该本机成功不证明 Windows 根因已解决，新的正常 CI 将提供该平台的诊断证据。
+
+
+### beta.39 同步最新 dev 与检查清单
+
+本候选已合并同步最新 dev `a2207e58b4eaaf093a3c4cd43dbef7aff08b33d8` 的历史与有界外发重启关闭诊断。冲突保留 beta.39 的较新功能／检查清单与两侧历史验收记录；本次合并对 src、共享合同、版本、依赖、Worker、构建配置和所有业务字节均无差异，没有重建产品或重跑已通过的 UI 场景。Node 类型、定向 lint、文档／开源检查及工作流 YAML 通过。macOS／Windows 的 CI 源码／实包列表，以及之后的签名发行功能列表均加入 Task3，原有场景与正常关闭门禁完整保留。当前只准备正常开发 PR，不合入 dev／beta 或发布新标签，master 不变。
+
+
+## 阶段 6B：全资源搜索（beta.40，本地源码验收）
+
+实现 `search.query/open` 共用业务入口、当前会话／项目／全部本地资源界面、七类资源与已保存语音转录、固定来源与分页游标。AI 固定 Runtime 会话和执行 Bot，TASK 使用原始选定版本与历史；来源撤销、重绑、世代清空和内容变化会重新校验。私有标题／片段不进入持久工具回执，实际模型发送前检查私有附件授权。
+
+本地十一项 SQLite、两项产品传输、两项隐藏 Electron 界面和二十四项组合回归通过，完整类型与构建通过。两项界面场景同轮通过，应用拥有进程正常退出。证据标签：`$CODEX_HOME/aevoren-evidence/2026-10-15/search40-*`。未验证当前实际安装包、Windows、签名或真实云账号。详见 [搜索说明](SEARCH.md)。

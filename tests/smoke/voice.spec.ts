@@ -239,19 +239,29 @@ test("plays actual scoped WAV output through an explicit blocked-play action and
     const audio = unwrap(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.voice.audio(input), { sessionId: f.bots[0]!.sessionId, id: spoken.id }));
     const bytes = Buffer.from(audio.dataBase64, "base64"); expect(bytes.toString("ascii", 0, 4)).toBe("RIFF"); expect(bytes.toString("ascii", 8, 12)).toBe("WAVE"); expect(bytes.readUInt32LE(24)).toBe(24_000); expect(bytes.length).toBe(audio.reference.size);
     await f.page.getByRole("button", { name: "播放语音", exact: true }).click(); expect(await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.plays)).toBe(2);
-    await f.page.getByRole("button", { name: `朗读 ${f.bots[0]!.name} 的回复`, exact: true }).click(); await f.page.getByRole("button", { name: "关闭语音控制", exact: true }).click();
+    // Queue through the visible control instead of clicking a message behind the open popover.
+    const queueCompleted = async (id: string): Promise<void> => {
+      const panel = f.page.getByRole("region", { name: "语音任务", exact: true }), toggle = panel.getByRole("button", { name: /^语音任务 ·/u });
+      if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+      await panel.getByRole("article", { name: `朗读任务 ${id}`, exact: true }).getByRole("button", { name: "加入朗读队列", exact: true }).click();
+      await expect(f.page.getByRole("region", { name: "语音朗读", exact: true }).getByRole("status")).toContainText("队列 2");
+    };
+    await queueCompleted(spoken.id); await f.page.getByRole("button", { name: "关闭语音控制", exact: true }).click();
     expect(f.speeches).toHaveLength(1); expect(await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.pauses)).toBe(1);
     await f.page.getByRole("button", { name: `朗读 ${f.bots[0]!.name} 的回复`, exact: true }).click(); await expect.poll(() => f.speeches.length).toBe(2);
     await f.page.getByRole("button", { name: "停止朗读", exact: true }).click(); await expect.poll(() => f.speeches[1]!.aborted).toBe(true); f.completeSpeech(1);
     await expect.poll(async () => (await tasks(f.page, f.bots[0]!.sessionId)).filter(task => task.kind === "speech" && task.state === "cancelled").length).toBe(1);
     expect(await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.players.length)).toBe(1);
     await select(f, 1); await select(f, 0); await openVoice(f); await expect(f.page.getByLabel("自动朗读本会话新回复", { exact: true })).not.toBeChecked(); expect(f.speeches).toHaveLength(2);
+    await f.page.getByRole("button", { name: "关闭语音控制", exact: true }).click();
     await f.page.getByRole("button", { name: `朗读 ${f.bots[0]!.name} 的回复`, exact: true }).click(); await expect.poll(() => f.speeches.length).toBe(3);
     await holdNextTaskRead(f, VOICE_CHANNELS.audio); f.completeSpeech(2); await expect.poll(() => f.application.evaluate(() => Boolean((globalThis as MainFixture).voiceUiRead?.entered))).toBe(true);
     await f.page.getByRole("button", { name: "停止朗读", exact: true }).click(); await f.application.evaluate(() => (globalThis as MainFixture).voiceUiRead?.release?.());
     await expect(f.page.getByRole("button", { name: "停止朗读", exact: true })).toHaveCount(0); expect(await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.players.length)).toBe(1);
+    await f.page.getByRole("button", { name: "关闭语音控制", exact: true }).click();
     await f.page.getByRole("button", { name: `朗读 ${f.bots[0]!.name} 的回复`, exact: true }).click(); await expect.poll(() => f.speeches.length).toBe(4); f.completeSpeech(3);
-    await expect.poll(() => f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.players.length)).toBe(2); await f.page.getByRole("button", { name: `朗读 ${f.bots[0]!.name} 的回复`, exact: true }).click();
+    await expect.poll(() => f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.players.length)).toBe(2);
+    const latestSpeech = (await tasks(f.page, f.bots[0]!.sessionId)).find(task => task.kind === "speech" && task.state === "completed")!; await queueCompleted(latestSpeech.id);
     await f.page.getByLabel("消息", { exact: true }).fill("清空时保留的草稿");
     // Call the same committed mutation used by AI, without the UI clear dialog
     // or an explicit reopen. The typed Session event must stop local playback.

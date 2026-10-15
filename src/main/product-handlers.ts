@@ -1,3 +1,6 @@
+import type { SearchService } from "./search-service";
+import { SEARCH_CHANNELS } from "@shared/search-channels";
+import { searchOpenSchema, searchQuerySchema } from "@shared/search-schemas";
 import { z } from "zod";
 import { TASK_SESSION_PRODUCT_OPERATIONS } from "@shared/task-session-product";
 import type { TaskSessionService } from "./task-session-service";
@@ -101,6 +104,7 @@ export type ProductDependencies = VoiceProductDependencies & MediaProductDepende
   exportLibraryResource?(input: { sessionId: string; id: string; revisionId?: string }, signal?: AbortSignal): Promise<LibraryExportResult | null>;
   realtimeService?: RealtimeService;
   taskSessionService?: TaskSessionService;
+  searchService?: SearchService;
   productChanged?(): void;
   sessionChanged?(session: import("@shared/contracts").Session): void;
   requestUpdateAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
@@ -150,6 +154,8 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   };
 
   const handlers = new Map<string, (input?: unknown) => unknown>();
+  handlers.set(SEARCH_CHANNELS.query,input=>{if(!dependencies.searchService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.searchService.query(searchQuerySchema.parse(input),libraryContext);});
+  handlers.set(SEARCH_CHANNELS.open,input=>{if(!dependencies.searchService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.searchService.open(searchOpenSchema.parse(input),libraryContext);});
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
   addMediaProductHandlers(handlers, dependencies, commit, libraryContext);
   addVoiceProductHandlers(handlers, dependencies, commit);

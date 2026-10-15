@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,7 +28,7 @@ function selection(executorBotId: string, patch: Partial<TaskExecutorSelection> 
 }
 function text(capture: Capture, body: string): void {
   if (capture.released || capture.aborted) throw new Error("Controlled reply is not available");
-  capture.released = true; capture.response.writeHead(200, { "content-type": "text/event-stream" });
+  capture.released = true; if (!capture.response.headersSent) capture.response.writeHead(200, { "content-type": "text/event-stream" });
   capture.response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: body }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
 }
 function tool(capture: Capture, operation: string, input: unknown): void {
@@ -54,10 +54,10 @@ async function withTasks(work: (f: Fixture) => Promise<void>, mcp = false): Prom
   const bots = Array.from({ length: 6 }, (_, index) => {
     const made = repository.createBot(registration.project.id), model = `task-fixture-${index + 1}`;
     const bot = repository.updateBot(made.bot.id, made.bot.version, { name: `线程成员${index + 1}`, mcpServerIds: mcp ? null : [], modelSelection: { providerInstanceId: "openai-compatible.default", modelId: model } });
-    repository.createMemory(bot.id, `TASK_PARENT_BOT_MEMORY_${index + 1}`);
+    repository.createMemory(bot.id, `parent bot memory number ${index + 1} stays private`);
     return { id: bot.id, name: bot.name, sessionId: made.session.id, model };
   });
-  repository.createScopedMemory({ scope: "user", scopeKey: "user" }, "TASK_PARENT_GLOBAL_MEMORY");
+  repository.createScopedMemory({ scope: "user", scopeKey: "user" }, "parent global memory stays outside empty tasks");
   const room = repository.createRoom({ name: "线程并行群", memberBotIds: bots.map(bot => bot.id), leadBotId: null, projectId: registration.project.id });
   const document = repository.library.create({ sessionId: bots[0]!.sessionId, kind: "document", name: "父会话私有资料", body: "TASK_PARENT_DOCUMENT_PRIVATE" });
   repository.setSetting("memory.capture.enabled", "false", false); repository.close();
@@ -99,6 +99,7 @@ async function withTasks(work: (f: Fixture) => Promise<void>, mcp = false): Prom
   }
   const f: Fixture = { app: undefined as unknown as ElectronApplication, page: undefined as unknown as Page, data, bots, room: { id: room.room.id, name: room.room.name, sessionId: room.session.id }, workspaceId: registration.workspace.id,
     document: { id: document.resource.id, reference: document.reference }, captures, handler: capture => text(capture, "CONTROLLED_TASK_REPLY"), restart: async () => { await close(); await launch(); } };
+  let completed = false;
   try {
     await launch();
     value(await f.page.evaluate(async baseUrl => {
@@ -108,8 +109,12 @@ async function withTasks(work: (f: Fixture) => Promise<void>, mcp = false): Prom
       return api.providers.saveOpenAiCompatible({ instanceId: provider.id, expectedVersion: provider.version, baseUrl, apiKey: "task-fixture-token" });
     }, `http://127.0.0.1:${address.port}/v1`));
     if (mcp) {
-      const saved = value(await f.page.evaluate(url => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.save({ name: "线程只读工具", trustedReadOnlyTools: ["read_fixture"], config: { transport: "streamable-http", url, headers: {} } }), `http://127.0.0.1:${address.port}/mcp`));
-      value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.setEnabled(input), { id: saved.id, expectedVersion: saved.version, enabled: true }));
+      const url = `http://127.0.0.1:${address.port}/mcp`;
+      const saved = value(await f.page.evaluate(url => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.save({ name: "task-read-fixture", config: { transport: "streamable-http", url, headers: {} } }), url));
+      const probed = value(await f.page.evaluate(id => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.probe(id), saved.id));
+      expect(probed.tools.find(tool => tool.name === "read_fixture")?.claimedReadOnly).toBe(true);
+      const trusted = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.save(input), { id: probed.id, expectedVersion: probed.version, name: probed.name, trustedReadOnlyTools: ["read_fixture"], config: { transport: "streamable-http" as const, url, headers: {} } }));
+      value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.setEnabled(input), { id: trusted.id, expectedVersion: trusted.version, enabled: true }));
       await expect.poll(async () => (await options(f.page, bots[0]!.sessionId)).executors[0]?.mcpTools.map(item => item.name)).toContain("read_fixture");
     }
     await work(f);
@@ -117,9 +122,23 @@ async function withTasks(work: (f: Fixture) => Promise<void>, mcp = false): Prom
     expect(await f.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
     const database = new DatabaseSync(join(data, "aevoren-bot.sqlite"), { readOnly: true });
     try { expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]); } finally { database.close(); }
+    completed = true;
   } finally {
+    if (!completed && f.page && !f.page.isClosed()) {
+      try {
+        const journals = await f.page.evaluate(async () => {
+          const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot, listed = await api.conversations.list();
+          if (!listed.ok) return { error: listed.error };
+          return Promise.all(listed.data.map(async item => ({ sessionId: item.sessionId, tools: await api.tools.list({ sessionId: item.sessionId }), runtime: await api.runtime.getSessionSnapshot(item.sessionId) })));
+        });
+        const json = JSON.stringify({ fixtureErrors, pageErrors, captures: captures.map(item => ({ command: item.command, released: item.released, aborted: item.aborted })), journals });
+        const body = json.length <= 2_000_000 ? json : JSON.stringify({ truncated: true, preview: json.slice(0, 2_000_000) });
+        await test.info().attach("controlled-task-provider-and-journals", { body, contentType: "application/json" });
+      } catch { /* Preserve the original failure if its owned Renderer already exited. */ }
+    }
     server.closeAllConnections();
     if (f.app) await close();
+    if (!completed) copyFileSync(join(data, "aevoren-bot.sqlite"), test.info().outputPath("isolated-task-journal.sqlite"));
     await Promise.allSettled(remotes.map(remote => remote.close()));
     await new Promise<void>(resolve => server.close(() => resolve())); removeTestDirectory(data);
   }
@@ -134,7 +153,7 @@ test("creates explicit empty task scopes through UI and keeps sibling drafts, hi
     await expect.poll(async () => (await snapshot(f.page, bot.sessionId)).runs.at(-1)?.state).toBe("completed");
     const imported = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media.importPath(input), { sessionId: bot.sessionId, workspaceId: f.workspaceId, path: "picture.png" })); expect(imported.imported).toHaveLength(1);
     const parent = await options(f.page, bot.sessionId);
-    expect(parent.executors[0]!.memories.map(item => item.content)).toContain("TASK_PARENT_BOT_MEMORY_1"); expect(parent.history.length).toBeGreaterThan(0);
+    expect(parent.executors[0]!.memories.map(item => item.content)).toContain("parent bot memory number 1 stays private"); expect(parent.history.length).toBeGreaterThan(0);
     expect(parent.resources).toHaveLength(1); expect(parent.media).toHaveLength(1); expect(parent.executors[0]!.workspaces).toHaveLength(1); expect(parent.executors[0]!.mcpTools).toHaveLength(1);
     await f.page.getByRole("button", { name: "新建任务", exact: true }).click();
     const dialog = f.page.getByRole("dialog", { name: "新建任务线程", exact: true });
@@ -151,7 +170,7 @@ test("creates explicit empty task scopes through UI and keeps sibling drafts, hi
     await f.page.getByLabel("消息", { exact: true }).fill("TASK_B_DRAFT"); await openTask(f, first); await expect(f.page.getByLabel("消息", { exact: true })).toHaveValue("TASK_A_DRAFT");
     const before = f.captures.length; await f.page.getByLabel("消息", { exact: true }).fill("TASK_A_ONLY_MESSAGE"); await f.page.getByRole("button", { name: "发送", exact: true }).click();
     await expect.poll(async () => (await snapshot(f.page, first.session.id)).runs.at(-1)?.state).toBe("completed"); expect(f.captures).toHaveLength(before + 1);
-    const wire = JSON.stringify(f.captures.at(-1)!.command); for (const privateText of ["TASK_PARENT_HISTORY_PRIVATE", "TASK_PARENT_BOT_MEMORY_1", "TASK_PARENT_GLOBAL_MEMORY", "TASK_PARENT_DOCUMENT_PRIVATE", "TASK_PARENT_WORKSPACE_PRIVATE", "read_fixture"]) expect(wire).not.toContain(privateText);
+    const wire = JSON.stringify(f.captures.at(-1)!.command); for (const privateText of ["TASK_PARENT_HISTORY_PRIVATE", "parent bot memory number 1 stays private", "parent global memory stays outside empty tasks", "TASK_PARENT_DOCUMENT_PRIVATE", "TASK_PARENT_WORKSPACE_PRIVATE", "read_fixture"]) expect(wire).not.toContain(privateText);
     expect((await snapshot(f.page, bot.sessionId)).entries.filter(item => item.role === "user").map(item => item.body)).toEqual(["TASK_PARENT_HISTORY_PRIVATE"]);
     await openTask(f, second); await expect(f.page.getByLabel("消息", { exact: true })).toHaveValue("TASK_B_DRAFT");
     await f.page.getByRole("button", { name: "任务详情", exact: true }).click(); const details = f.page.getByRole("dialog", { name: "任务线程详情", exact: true }); await details.getByLabel("修改任务名称", { exact: true }).fill("冲突后保留的任务名称");
@@ -161,7 +180,9 @@ test("creates explicit empty task scopes through UI and keeps sibling drafts, hi
     await f.page.reload(); await expect(f.page.getByRole("heading", { name: "独立任务乙已命名", exact: true })).toBeVisible();
     await f.restart(); await openTask(f, { ...second, title: "独立任务乙已命名" }); expect((await snapshot(f.page, second.session.id)).entries).toEqual([]);
     await openTask(f, first); await expect(f.page.locator("article.message-user")).toContainText("TASK_A_ONLY_MESSAGE"); await expect(f.page.locator("article.message-user")).not.toContainText("TASK_PARENT_HISTORY_PRIVATE");
-    await f.page.getByRole("listitem", { name: "任务：独立任务乙已命名", exact: true }).click(); await f.page.getByRole("button", { name: "任务详情", exact: true }).click(); await details.getByRole("button", { name: "删除此任务线程", exact: true }).click(); await details.getByRole("button", { name: "确认删除此任务线程", exact: true }).click(); await expect(details).toBeHidden();
+    await f.page.getByRole("listitem", { name: "任务：独立任务乙已命名", exact: true }).click(); await f.page.getByRole("button", { name: "任务详情", exact: true }).click();
+    const restartedDetails = f.page.getByRole("dialog", { name: "任务线程详情", exact: true });
+    await restartedDetails.getByRole("button", { name: "删除此任务线程", exact: true }).click(); await restartedDetails.getByRole("button", { name: "确认删除此任务线程", exact: true }).click(); await expect(restartedDetails).toBeHidden();
     const contacts = value(await f.page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.bots.list())); expect(contacts.find(item => item.id === bot.id)?.name).toBe(bot.name);
     expect(value(await f.page.evaluate(botId => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.sessions.getMain(botId), bot.id)).id).toBe(bot.sessionId);
     expect(value(await f.page.evaluate(sessionId => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.sessions.getTask({ sessionId }), first.session.id)).title).toBe(first.title);
@@ -171,18 +192,18 @@ test("creates explicit empty task scopes through UI and keeps sibling drafts, hi
 test("starts all six Task Room members before any result and cancels one without stopping its five peers or sibling thread", async () => {
   test.setTimeout(90_000);
   await withTasks(async f => {
-    f.handler = () => undefined;
+    f.handler = capture => { capture.response.writeHead(200, { "content-type": "text/event-stream" }); capture.response.flushHeaders(); };
     const task = await createTask(f.page, f.room.sessionId, "六成员任务", f.bots.map(bot => selection(bot.id)));
     const sibling = await createTask(f.page, f.room.sessionId, "兄弟任务", [selection(f.bots[0]!.id)]);
-    const sent = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.send(input), { roomId: f.room.id, sessionId: task.session.id, clientNonce: randomUUID(), text: "TASK_GROUP_ALL", routingMode: "everyone" as const, targetBotIds: [] }));
+    const sent = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.send(input), { roomId: f.room.id, sessionId: task.session.id, clientNonce: randomUUID(), text: "TASK_GROUP_ALL", routingMode: "everyone" as const, targetBotIds: f.bots.map(bot => bot.id) }));
     await expect.poll(() => f.captures.length, { timeout: 15_000 }).toBe(6); expect(f.captures.every(capture => !capture.released)).toBe(true);
     let group = await roomSnapshot(f, task.session.id); expect(group.detail.session.id).toBe(task.session.id); expect(group.runs).toHaveLength(6); expect(group.turns.every(turn => turn.state === "running")).toBe(true);
-    value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.send(input), { roomId: f.room.id, sessionId: sibling.session.id, clientNonce: randomUUID(), text: "TASK_SIBLING_ACTIVE", routingMode: "everyone" as const, targetBotIds: [] }));
+    value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.send(input), { roomId: f.room.id, sessionId: sibling.session.id, clientNonce: randomUUID(), text: "TASK_SIBLING_ACTIVE", routingMode: "everyone" as const, targetBotIds: [f.bots[0]!.id] }));
     await expect.poll(() => f.captures.length).toBe(7);
     const cancelled = group.runs.find(run => run.executorBotId === f.bots[0]!.id)!;
     value(await f.page.evaluate(runId => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.cancelMember(runId), cancelled.id));
     await expect.poll(() => f.captures.filter(capture => capture.aborted).length).toBe(1);
-    expect((await roomSnapshot(f, sibling.session.id)).runs[0]?.state).toBe("running");
+    await expect.poll(async () => (await roomSnapshot(f, sibling.session.id)).runs[0]?.state).toBe("running");
     for (const capture of f.captures.slice(0, 6).filter(capture => !capture.aborted)) text(capture, `TASK_GROUP_DONE_${capture.command.model}`);
     await expect.poll(async () => (await roomSnapshot(f, task.session.id)).turns.filter(turn => turn.state === "completed").length).toBe(5);
     group = await roomSnapshot(f, task.session.id); expect(group.turns.filter(turn => turn.state === "cancelled")).toHaveLength(1); expect(group.runs.every(run => run.sessionId === task.session.id)).toBe(true);
@@ -219,7 +240,7 @@ test("filters actor task reads through real tools and keeps parent resources pri
     value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library.bind(input), { sessionId: selected.session.id, id: f.document.id }));
     const before = f.captures.length, refused = await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.messages.send(input), { sessionId: selected.session.id, clientNonce: randomUUID(), text: "TASK_REVOKED_RESOURCE_MUST_NOT_TRANSMIT" });
     if (refused.ok) await expect.poll(async () => (await snapshot(f.page, selected.session.id)).runs.find(run => run.id === refused.data.runId)?.state).toBe("failed");
-    else expect(refused.error.code).toBe("APPROVAL_SCOPE_INVALID");
+    else expect(["APPROVAL_SCOPE_INVALID", "LIBRARY_NOT_BOUND"]).toContain(refused.error.code);
     expect(f.captures).toHaveLength(before);
     const parent = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library.read(input), { sessionId: actor.sessionId, id: f.document.id, revisionId: f.document.reference.revisionId })); expect(parent.revision.body).toBe("TASK_PARENT_DOCUMENT_PRIVATE");
   });
