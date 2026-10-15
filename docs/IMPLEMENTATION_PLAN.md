@@ -170,3 +170,14 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 ## 发布
 
 开发从 dev 或其功能分支开始，验证后进入 beta，安装包验收后发布下一可用 Beta。标签和标题都为 v<package.json version>。master 暂不晋级。每次发布同步中英文 README、用户指南、功能矩阵、Changelog、许可与能力边界。首轮不实施宿主 Shell/GUI、现有浏览器 Cookie 复制和远端部署；公共分享、完整画布和逆向未确认候选另立后续计划。
+
+## Beta.31 晋级收尾：主页面关闭与测试进程生命周期
+
+[PR #33](https://github.com/CMSKL/Aevoren-Bot/pull/33) 在 `51196b5` 四项 CI 全通过后合入 dev `80586fd`。[Beta PR #39](https://github.com/CMSKL/Aevoren-Bot/pull/39) 暂不合并：其中一项 Windows 旧库备份测试达到 60 秒上限。随后 [PR #40](https://github.com/CMSKL/Aevoren-Bot/pull/40) 的首轮出现另一项审批测试的一秒轮询超时；失败记录保留，未提高测试超时或放宽审批断言。
+
+- 实际 iframe 复现了产品关闭停滞：子页面加载错误清空主 Renderer 的 ready 状态，关闭无法发出保存请求。最终仅在主文档提交时清除 ready，加载期间延后请求，并由真实 ready 与停止加载恢复；保留取消导航、Hash 和重载边界。未绕过保存确认或增加生产强制退出。
+- Windows 的另一处测试进程退出问题由 Playwright 的 shell 包装和父进程单独强杀造成。现仅清理确定归属的 PID 树／已核验的 POSIX 进程组，等待退出和管道关闭；真实父子进程负向用例修复前失败、修复后通过，兄弟进程始终存活。
+- 旧库测试夹具按生产方式逐迁移事务建库，保留外键、版本、回滚和失败关闭；生产迁移不变。审批测试改为等待真实 Runtime／审批事件，并在关闭数据库前排空 Worker，保留实际状态与资源数量断言。
+- 当前普通测试 1,488 通过、44 跳过；四套 TypeScript、完整 lint、构建、文档和许可检查通过（215 包／7 类）。进程清理五项无跳过通过，包含已关闭通道的幂等回归。同一冻结未签名 macOS beta.31 包完成 19 项真实检查：资料库 8、原生读取 2、关闭 8、typed API 1，均核验实际包与版本。首次 17／18 的失败由测试 loopback iframe 被该版本现有 CSP 阻止造成；保留失败，改用真实 sandboxed srcdoc 并验证子页面 DOM／Preload 后，八项关闭重跑通过，未扩展 CSP。旧 Main 的同一 srcdoc 负向用例明确关闭失败。此后仅补充测试清理幂等修复，应用安装包未改变。
+
+现仍是开发候选，跨平台修复检查、Beta 晋级及签名发行未完成；master 不晋级。真实第三方账号和 Windows Linux Docker 继续标为未验证。后续阶段 5–6 尚未实现。
