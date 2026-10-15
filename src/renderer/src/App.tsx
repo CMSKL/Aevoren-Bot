@@ -1697,7 +1697,7 @@ export function App(): React.JSX.Element {
         onDismissRestore={dismissRestore}
       />
       {taskForm ? <TaskSessionDialog key={`${taskForm.parentSessionId}:${taskForm.task?.version ?? "new"}`} {...taskForm} onClose={() => setTaskForm(null)} onSaved={detail => { setTaskForm(null); mergeConversation(detail.conversation); void refreshConversations(); void openTask(detail.session.id); }} /> : null}
-      {taskDetailOpen && selectedTask ? <TaskDetailDialog key={selectedTask.session.id} task={selectedTask} onClose={() => setTaskDetailOpen(false)} onRevise={() => { setTaskDetailOpen(false); setTaskForm({ parentSessionId: selectedTask.parentSessionId ?? selectedTask.session.id, task: selectedTask }); }} onChanged={detail => { setSelectedTask(detail); mergeConversation(detail.conversation); }} onDeleted={sessionId => { composerDraftsRef.current.delete(sessionId); setTaskDetailOpen(false); setConversations(current => current.filter(item => item.sessionId !== sessionId)); if (sessionIdRef.current === sessionId) clearSelection(); }} /> : null}
+      {taskDetailOpen && selectedTask ? <TaskDetailDialog key={selectedTask.session.id} task={selectedTask} onClose={() => setTaskDetailOpen(false)} onRevise={() => { setTaskDetailOpen(false); setTaskForm({ parentSessionId: selectedTask.parentSessionId ?? selectedTask.session.id, task: selectedTask }); }} onChanged={detail => { setSelectedTask(current => current?.session.id === detail.session.id && current.version <= detail.version ? detail : current); mergeConversation(detail.conversation); }} onDeleted={sessionId => { composerDraftsRef.current.delete(sessionId); setConversations(current => current.filter(item => item.sessionId !== sessionId)); if (sessionIdRef.current === sessionId) { setTaskDetailOpen(false); clearSelection(); } }} /> : null}
       <div className="app-main">
       {closeNotice && (settingsOpen || sidebarTab === "contacts") ? <div className="dialog-error app-close-notice" role="alert">{closeNotice}</div> : null}
       <div className="app-surface" hidden={settingsOpen || sidebarTab !== "contacts"}>
@@ -1729,7 +1729,7 @@ export function App(): React.JSX.Element {
         sessionGeneration={session?.generation}
         taskTitle={selectedTask?.title}
         onCreateTask={session ? () => { void flushActive().then(saved => { if (saved && sessionIdRef.current === session.id) setTaskForm({ parentSessionId: session.id }); }); } : undefined}
-        onOpenTaskDetails={selectedTask ? () => { void window.aevorenBot.sessions.getTask({ sessionId: selectedTask.session.id }).then(result => { if (sessionIdRef.current !== selectedTask.session.id) return; if (result.ok) { setSelectedTask(result.data); setTaskDetailOpen(true); } else setError(result.error); }); } : undefined}
+        onOpenTaskDetails={selectedTask ? () => { void window.aevorenBot.sessions.getTask({ sessionId: selectedTask.session.id }).then(result => { if (sessionIdRef.current !== selectedTask.session.id) return; if (result.ok) { setSelectedTask(current => current?.session.id === result.data.session.id && current.version > result.data.version ? current : result.data); setTaskDetailOpen(true); } else setError(result.error); }); } : undefined}
         approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile" && clearTarget === null && taskForm === null && !taskDetailOpen}
         userProfile={userProfile}
         key={session ? `${session.id}:${session.generation}` : selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
