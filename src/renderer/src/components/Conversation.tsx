@@ -397,7 +397,7 @@ const TranscriptItem = memo(function TranscriptItem({
             className={`message-avatar message-avatar-with-bot${groupedWithPrevious ? " message-avatar-placeholder" : ""}`}
             aria-hidden="true"
           >
-            {groupedWithPrevious ? null : <BotAvatarIcon shape={speakerBot?.avatarShape} color={speakerBot?.avatarColor} size={48} />}
+            {groupedWithPrevious ? null : <BotAvatarIcon botId={speakerBot?.id} image={speakerBot?.avatarImage} shape={speakerBot?.avatarShape} color={speakerBot?.avatarColor} size={48} />}
           </span>
         ) : null}
         <div className="message-stack">
@@ -1229,10 +1229,10 @@ export function Conversation({
       <header className="conversation-header">
         {room ? (
           <span className="conversation-group-avatar" aria-label={`${room.members.length} 位 Agent 和你`}>
-            {room.members.slice(0, 3).map((member) => <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={24} key={member.botId} />)}
+            {room.members.slice(0, 3).map((member) => <BotAvatarIcon botId={member.bot.id} image={member.bot.avatarImage} shape={member.bot.avatarShape} color={member.bot.avatarColor} size={24} key={member.botId} />)}
             <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={24} />
           </span>
-        ) : bot ? <span className="conversation-bot-avatar"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span> : null}
+        ) : bot ? <span className="conversation-bot-avatar"><BotAvatarIcon botId={bot.id} image={bot.avatarImage} shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span> : null}
         <div className="conversation-title">
           <h1>{subjectName}</h1>
           {taskTitle ? <p className="conversation-header-counts">任务线程 · {room ? `${room.members.length} 位 Agent` : bot?.name}</p> : room ? <p className="conversation-header-counts">{room.members.length} 位 Agent</p> : bot ? <p className="conversation-header-counts">Bot</p> : null}
@@ -1515,7 +1515,7 @@ export function Conversation({
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => selectMention(item.id)}
                   >
-                    <span className="mention-option-icon bot-avatar-container"><BotAvatarIcon shape={mentionBot?.avatarShape} color={mentionBot?.avatarColor} size={24} /></span>
+                    <span className="mention-option-icon bot-avatar-container"><BotAvatarIcon botId={mentionBot?.id} image={mentionBot?.avatarImage} shape={mentionBot?.avatarShape} color={mentionBot?.avatarColor} size={24} /></span>
                     <span className="mention-option-copy">
                       <strong>{item.label}</strong>
                       <small>{item.id === EVERYONE_MENTION_ID ? "Bot · 群聊中的全部成员" : "Bot"}</small>

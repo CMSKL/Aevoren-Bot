@@ -1,3 +1,5 @@
+import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
+import { ORGANIZATION_CHANNELS,ORGANIZATION_CHANGED_CHANNEL } from "@shared/organization-channels";
 import { SEARCH_CHANNELS } from "@shared/search-channels";
 import type { TaskSessionChanged } from "@shared/task-session-contracts";
 import { TASK_SESSION_CHANNELS, TASK_SESSION_CHANGED_CHANNEL } from "@shared/task-session-channels";
@@ -36,6 +38,8 @@ function onBrowserChanged(listener: (event: BrowserChangedEvent) => void): () =>
 }
 
 const api: AevorenBotApi = {
+  botImages:{cancel:requestId=>ipcRenderer.invoke(BOT_IMAGE_CHANNELS.cancel,requestId),set:input=>ipcRenderer.invoke(BOT_IMAGE_CHANNELS.set,input),clear:input=>ipcRenderer.invoke(BOT_IMAGE_CHANNELS.clear,input),read:input=>ipcRenderer.invoke(BOT_IMAGE_CHANNELS.read,input)},
+  organization:{snapshot:()=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.snapshot),createSection:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.createSection,input),renameSection:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.renameSection,input),deleteSection:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.deleteSection,input),reorderSections:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.reorderSections,input),moveSession:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.moveSession,input),savePreferences:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.savePreferences,input),onChanged:listener=>{const handler=(_event:Electron.IpcRendererEvent,payload:import("@shared/organization-contracts").OrganizationChanged):void=>listener(payload);ipcRenderer.on(ORGANIZATION_CHANGED_CHANNEL,handler);return()=>ipcRenderer.removeListener(ORGANIZATION_CHANGED_CHANNEL,handler);}},
   search: {query: input=>ipcRenderer.invoke(SEARCH_CHANNELS.query,input),open: input=>ipcRenderer.invoke(SEARCH_CHANNELS.open,input)},
   mcpWrites: {
     toolCatalog: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.toolCatalog, input),

@@ -18,7 +18,7 @@ import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import type { ModelImageAttachment, ModelTextAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
-  "search.query","search.open",
+  "search.query","search.open","organization.snapshot","bots.readImageAvatar",
   "sessions.taskOptions", "sessions.listTasks", "sessions.getTask", "voice.realtime.snapshot", "voice.configurations", "voice.get", "voice.list", "voice.audio",
   "media.list", "media.metadata", "media.read", "media.preview",
   "mcp.toolCatalog", "mcp.toolGrants", "mcp.toolResult", "mcp.listToolIntents",
@@ -40,7 +40,8 @@ const nativeScopedOperation = (operation: string): boolean => operation.startsWi
 const mcpWriteOperation = (operation: string): boolean => MCP_WRITE_PRODUCT_OPERATIONS.some(item => item.name === operation);
 const mediaOperation = (operation: string): boolean => operation.startsWith("media.");
 const voiceOperation = (operation: string): boolean => operation.startsWith("voice.");
-const scopedOperation = (operation: string): boolean => voiceOperation(operation) || mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
+const botImageOperation=(operation:string):boolean=>["bots.setImageAvatar","bots.clearImageAvatar","bots.readImageAvatar"].includes(operation);
+const scopedOperation = (operation: string): boolean => botImageOperation(operation) || voiceOperation(operation) || mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
 type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[]; modelText?: ModelTextAttachment };
 
 /** Both transports use these handlers; only the host can supply execution identity. */
@@ -240,6 +241,18 @@ export class ProductOperationService {
   private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<ProductExecutionResult> {
     this.validate(tool, invocation.runtimeRunId);
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
+    if(tool.action==="execute"&&tool.operation==="bots.setImageAvatar"){
+      const service=this.dependencies.botImageService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
+      const input=this.libraryInput(tool.operation,tool.input,runtime) as import("@shared/bot-image-contracts").BotImageSetInput;
+      const result=await service.set(input,{executorBotId:runtime.executorBotId,runtimeRunId:runtime.id,signal,assertCurrent:()=>this.validate(tool,runtime.id)});
+      return this.result({status:"completed",operation:tool.operation,result});
+    }
+    if(tool.action==="execute"&&tool.operation==="bots.readImageAvatar"){
+      const service=this.dependencies.botImageService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
+      const image=await service.image(tool.input as import("@shared/bot-image-contracts").BotImageReadInput,{signal,assertCurrent:()=>this.validate(tool,runtime.id)});
+      const supported=runtime.route!=="fake"&&this.dependencies.providers.getCapabilities({providerInstanceId:runtime.providerInstanceId,modelId:runtime.providerModelId}).toolImageInput===true;
+      return {...this.result({status:"completed",operation:tool.operation,result:image?{reference:image.reference,imageTransfer:supported?"prepared_real_pixels":"adapter_unsupported"}:null}),...(image&&supported?{images:[image]}:{})};
+    }
     if(tool.action==="execute"&&["search.query","search.open"].includes(tool.operation)){
       const service=this.dependencies.searchService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
       const input=PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(tool.input),context={sessionId:runtime.sessionId,executorBotId:runtime.executorBotId,runtimeRunId:runtime.id};
@@ -580,6 +593,11 @@ export class ProductOperationService {
   private libraryInput(operation: string, value: unknown, runtime: Pick<RuntimeRun, "id" | "sessionId" | "clientNonce" | "executorBotId">): unknown {
     const input = value === null ? undefined : value;
     const taskPolicy=this.dependencies.repository.tasks.runtimeTaskPolicy(runtime.id);
+    if(["bots.clearImageAvatar","bots.readImageAvatar"].includes(operation))return input;
+    if(operation==="bots.setImageAvatar"){
+      if(!input||typeof input!=="object"||Array.isArray(input))throw new AevorenBotError("INVALID_REQUEST");const supplied=input as Record<string,unknown>;
+      if(supplied.sessionId!==undefined&&supplied.sessionId!==runtime.sessionId)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");return {...supplied,sessionId:runtime.sessionId};
+    }
     if(Object.hasOwn(TASK_SESSION_OPERATION_SCHEMAS,operation)){
       if(input!==undefined&&(!input||typeof input!=="object"||Array.isArray(input)))throw new AevorenBotError("INVALID_REQUEST");
       const supplied=(input??{}) as Record<string,unknown>;

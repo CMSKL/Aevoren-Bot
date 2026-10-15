@@ -1,6 +1,6 @@
 # Task threads
 
-Source candidate `v0.3.0-beta.39` implements independent private/group TASK conversations. Focused unit and static checks have passed. Build, hidden Electron, actual-package and cross-platform acceptance are still pending; this page does not describe the published beta.33 installer.
+Source candidate `v0.3.0-beta.39` implements independent private/group TASK conversations. The full source build, focused checks and three distinct hidden Electron scenarios have passed across separate recorded runs. The actual unsigned macOS arm64 package passed all three Task scenarios plus typed API (4/4). Cross-platform and signed publication are still pending; this page does not describe the published beta.33 installer.
 
 ## Create and open a task
 
@@ -28,6 +28,6 @@ The user controls selection changes in the trusted interface. Connected AI uses 
 
 ## Verification and later work
 
-Migration and authority regressions use real SQLite. Focused UI identity tests and capability tests cover empty defaults, MAIN separation, exact MCP identity, independent network/clipboard flags and original Runtime snapshots. Three controlled hidden acceptance cases are under validation for real Preload/provider transport and UI effects. Failed attempts are retained in the implementation record; no passing hidden gate is claimed at this checkpoint. No live cloud account, physical audio device or Windows Docker result is inferred from these fixtures.
+Migration and authority regressions use real SQLite. Focused UI identity tests and capability tests cover empty defaults, MAIN separation, exact MCP identity, independent network/clipboard flags and original Runtime snapshots. Three controlled hidden acceptance cases are under validation for real Preload/provider transport and UI effects. All three distinct scenarios have now passed: the six-member/sibling and actor/revocation scenarios passed together, then the locator-only corrected UI/restart scenario passed separately. This is not a single 3/3 all-green run; failed attempts are retained in the implementation record. No live cloud account, physical audio device or Windows Docker result is inferred from these fixtures.
 
 Task threads are Phase 6A. Cross-resource search (6B), sidebar sections/default assistant/custom Bot images/notifications (6C), group Routines (6D), events/Webhooks (6E), and versioned templates/selective offline exports (6F) remain pending. Releases follow verified `dev → beta`; tag and title must both equal `v<package.json version>`. `master` promotion remains deferred. See the [implementation record](IMPLEMENTATION_PLAN.md).

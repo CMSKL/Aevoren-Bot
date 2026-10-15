@@ -41,6 +41,9 @@ import type { MessageMediaReference } from "@shared/media-contracts";
 import type { ResourceReference } from "@shared/library-contracts";
 import { ContactDetail, type ContactDetailHandle } from "./components/ContactDetail";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { OrganizationDialog } from "./components/OrganizationDialog";
+import type { OrganizationSnapshot } from "@shared/organization-contracts";
+import { defaultAssistantFallback } from "./organization-state";
 import { NewBotChooser } from "./components/NewBotChooser";
 import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspector";
 import { Sidebar, type RoomRestoreState } from "./components/Sidebar";
@@ -88,6 +91,17 @@ export function App(): React.JSX.Element {
   const roomRestoreInFlightRef = useRef(new Set<string>());
   const [projects, setProjects] = useState<Project[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [organization, setOrganization] = useState<OrganizationSnapshot | null>(null);
+  const [organizationOpen, setOrganizationOpen] = useState(false);
+  const organizationRequestRef = useRef(0);
+  const acceptOrganization = useCallback((next: OrganizationSnapshot): void => { setOrganization(current => current && current.version > next.version ? current : next); }, []);
+  const refreshOrganization = useCallback(async (): Promise<OrganizationSnapshot | null> => {
+    const request = ++organizationRequestRef.current;
+    try { const result = await window.aevorenBot.organization.snapshot(); if (result.ok) { acceptOrganization(result.data); return result.data; } if (request === organizationRequestRef.current) setCloseNotice(result.error.safeMessage); }
+    catch { if (request === organizationRequestRef.current) setCloseNotice("暂时无法读取聊天整理设置，请重试。"); }
+    return null;
+  }, [acceptOrganization]);
+  useEffect(() => window.aevorenBot.organization.onChanged(() => { void refreshOrganization(); }), [refreshOrganization]);
   const [sidebarTab, setSidebarTab] = useState<"chats" | "contacts" | "workspace">("chats");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [contactLibraryScope, setContactLibraryScope] = useState<{ botId: string; sessionId: string } | null>(null);
@@ -744,7 +758,8 @@ export function App(): React.JSX.Element {
       window.aevorenBot.rooms.list({ includeArchived: true }),
       window.aevorenBot.projects.list(),
       window.aevorenBot.conversations.list(),
-    ]).then(async ([botResult, roomResult, projectResult, conversationResult]) => {
+      window.aevorenBot.organization.snapshot(),
+    ]).then(async ([botResult, roomResult, projectResult, conversationResult, organizationResult]) => {
       if (cancelled) return;
       if (!botResult.ok) {
         setError(botResult.error);
@@ -766,6 +781,7 @@ export function App(): React.JSX.Element {
       setProjects(projectResult.data);
       if (!conversationResult.ok) { setError(conversationResult.error); setLoading(false); return; }
       setConversations(conversationResult.data);
+      if (organizationResult.ok) acceptOrganization(organizationResult.data);
       const visible = new Set(mainConversationSummaries(conversationResult.data).filter((item) => !item.hiddenAt).map((item) => item.botId ?? item.roomId));
       const rememberedProjectId = sessionStorage.getItem("aevoren-bot:project");
       const activeProject = projectResult.data.find((project) => project.id === rememberedProjectId)
@@ -780,9 +796,12 @@ export function App(): React.JSX.Element {
         ? botResult.data.find((bot) => bot.id === selected.slice(4) && visible.has(bot.id))
         : undefined;
       const firstVisibleBot = botResult.data.find((bot) => visible.has(bot.id));
-      if (selected?.startsWith("session:") && conversationResult.data.some(item => item.sessionId === selected.slice(8) && item.kind === "TASK" && !item.hiddenAt)) await openTask(selected.slice(8), false);
+      const selectedTaskValid = !!selected?.startsWith("session:") && conversationResult.data.some(item => item.sessionId === selected.slice(8) && item.kind === "TASK" && !item.hiddenAt);
+      const defaultBot = defaultAssistantFallback(botResult.data, organizationResult.ok ? organizationResult.data.preferences.defaultAssistantBotId : null, selectedTaskValid || !!selectedRoom || !!selectedBot);
+      if (selectedTaskValid) await openTask(selected!.slice(8), false);
       else if (selectedRoom) await openRoom(selectedRoom, false);
       else if (selectedBot) await openBot(selectedBot, false);
+      else if (defaultBot) await openBot(defaultBot, false);
       else if (firstVisibleBot) await openBot(firstVisibleBot, false);
       else {
         const firstActiveRoom = roomResult.data.find((room) => room.archivedAt === null && visible.has(room.id));
@@ -791,7 +810,12 @@ export function App(): React.JSX.Element {
       }
     });
     return () => { cancelled = true; };
-  }, [openBot, openRoom, openTask]);
+  }, [acceptOrganization, openBot, openRoom, openTask]);
+
+  async function openOrganization(): Promise<void> {
+    if (!(await flushActive())) return;
+    if (await refreshOrganization()) { setOrganizationOpen(true); setMobilePanel(null); }
+  }
 
   const closeMobilePanel = useCallback(async (): Promise<void> => {
     if (mobilePanel === "profile" && !(await flushActive())) return;
@@ -1628,6 +1652,8 @@ export function App(): React.JSX.Element {
         bots={bots}
         rooms={rooms}
         conversations={conversations}
+        organization={organization}
+        onOpenOrganization={() => { void openOrganization(); }}
         tab={sidebarTab}
         settingsActive={settingsOpen}
         onTabChange={(tab) => { void flushActive().then((saved) => {
@@ -1718,6 +1744,7 @@ export function App(): React.JSX.Element {
         onDismissRestore={dismissRestore}
       />
       {searchOpen?<SearchDialog sessionId={session?.id} projectId={activeProjectId} projects={projects} onClose={()=>setSearchOpen(false)} onNavigate={openSearchSource}/>:null}
+      {organizationOpen && organization ? <OrganizationDialog snapshot={organization} bots={bots} rooms={rooms} conversations={conversations} onAccepted={acceptOrganization} onClose={() => setOrganizationOpen(false)} /> : null}
       {taskForm ? <TaskSessionDialog key={`${taskForm.parentSessionId}:${taskForm.task?.version ?? "new"}`} {...taskForm} onClose={() => setTaskForm(null)} onSaved={detail => { setTaskForm(null); mergeConversation(detail.conversation); void refreshConversations(); void openTask(detail.session.id); }} /> : null}
       {taskDetailOpen && selectedTask ? <TaskDetailDialog key={selectedTask.session.id} task={selectedTask} onClose={() => setTaskDetailOpen(false)} onRevise={() => { setTaskDetailOpen(false); setTaskForm({ parentSessionId: selectedTask.parentSessionId ?? selectedTask.session.id, task: selectedTask }); }} onChanged={detail => { setSelectedTask(current => current?.session.id === detail.session.id && current.version <= detail.version ? detail : current); mergeConversation(detail.conversation); }} onDeleted={sessionId => { composerDraftsRef.current.delete(sessionId); setConversations(current => current.filter(item => item.sessionId !== sessionId)); if (sessionIdRef.current === sessionId) { setTaskDetailOpen(false); clearSelection(); } }} /> : null}
       <div className="app-main">
@@ -1753,7 +1780,7 @@ export function App(): React.JSX.Element {
         searchFocus={searchFocus&&searchFocus.sessionId===session?.id?searchFocus:undefined}
         onCreateTask={session ? () => { void flushActive().then(saved => { if (saved && sessionIdRef.current === session.id) setTaskForm({ parentSessionId: session.id }); }); } : undefined}
         onOpenTaskDetails={selectedTask ? () => { void window.aevorenBot.sessions.getTask({ sessionId: selectedTask.session.id }).then(result => { if (sessionIdRef.current !== selectedTask.session.id) return; if (result.ok) { setSelectedTask(current => current?.session.id === result.data.session.id && current.version > result.data.version ? current : result.data); setTaskDetailOpen(true); } else setError(result.error); }); } : undefined}
-        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile" && clearTarget === null && taskForm === null && !taskDetailOpen && !searchOpen}
+        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile" && clearTarget === null && taskForm === null && !taskDetailOpen && !searchOpen && !organizationOpen}
         userProfile={userProfile}
         key={session ? `${session.id}:${session.generation}` : selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
         initialDraft={session ? composerDraftsRef.current.get(session.id) : undefined}
@@ -1922,6 +1949,7 @@ export function App(): React.JSX.Element {
         }}
       /> : null}
       <SettingsDialog
+        onOpenOrganization={() => { void openOrganization(); }}
         open={settingsOpen}
         theme={appearanceTheme}
         resolvedTheme={resolvedTheme}

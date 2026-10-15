@@ -1,3 +1,8 @@
+import { BotImageService } from "./bot-image-service";
+import { OrganizationService } from "./organization-service";
+import { ORGANIZATION_CHANGED_CHANNEL } from "@shared/organization-channels";
+import type { OrganizationNotifications } from "@shared/organization-contracts";
+import { notificationOptions } from "./notification-policy";
 import { SearchService } from "./search-service";
 import { TaskSessionService } from "./task-session-service";
 import { registerTaskMcpAuthority } from "./task-mcp-authority";
@@ -24,7 +29,7 @@ import "./identity";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
-import { app, BrowserWindow, clipboard, dialog, nativeTheme, Notification, safeStorage, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, nativeTheme, nativeImage, Notification, safeStorage, shell } from "electron";
 import { valid } from "semver";
 import { IPC } from "@shared/channels";
 import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateState } from "@shared/contracts";
@@ -83,6 +88,7 @@ if (process.env.AEVOREN_BOT_TEST_HIDDEN === "0") {
 
 let mainWindow: BrowserWindow | null = null;
 let repository: AppRepository | null = null;
+let organizationService:OrganizationService|null=null;
 let runtimeCoordinator: SendWorker | null = null;
 let roomCoordinator: RoomCoordinator | null = null;
 let updateService: UpdateService | null = null;
@@ -139,22 +145,28 @@ function emitRuntime(event: RuntimeEvent): void {
   if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void browserService?.cancelRuntime(event.run.id).catch(() => undefined);
   if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void environmentService?.cancelRuntime(event.run.id).catch(() => undefined);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.runtimeEvent, event);
+  if(event.run.state==="completed"&&!event.run.promptManifest.sourceTurnId)showNotification("任务已完成","本次对话任务已完成。","taskCompletion");
+  if(["failed","interrupted"].includes(event.run.state)&&!event.run.promptManifest.sourceTurnId)showNotification("任务需要处理","本次对话任务未完成，可在应用中查看原因。","taskFailure");
 }
 
 function emitRoomRuntime(event: RoomRuntimeEvent): void {
   realtimeBusiness?.changed();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.roomRuntimeEvent, event);
+  if(event.batch.state==="completed")showNotification("群任务已完成","本次群任务已完成。","taskCompletion");
+  if(["failed","partial","interrupted"].includes(event.batch.state))showNotification("群任务需要处理","本次群任务有尚未完成的内容。","taskFailure");
 }
 
 function emitTool(event: ToolEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.toolEvent, event);
-  if (event.approval.state === "pending") showNotification("Aevoren Bot 等待确认", "有一项工具调用需要你的批准。");
+  if (event.approval.state === "pending") showNotification("Aevoren Bot 等待确认", "有一项工具调用需要你的批准。","approvals");
 }
 
-function showNotification(title: string, body: string): void {
-  if (hideTestWindow) return;
-  if (!Notification.isSupported()) return;
-  const notification = new Notification({ title, body, silent: false });
+function showNotification(title: string, body: string,category:keyof OrganizationNotifications): void {
+  if(hideTestWindow||!organizationService)return;
+  let options:{silent:boolean}|null;
+  try{options=notificationOptions(organizationService.snapshot().preferences,category,hideTestWindow,Notification.isSupported());}catch{return;}
+  if(!options)return;
+  const notification = new Notification({ title, body, ...options });
   notification.on("click", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.show();
@@ -464,7 +476,7 @@ app.whenReady().then(async () => {
   runtimeCoordinator = sendWorker;
   routineService = new RoutineService(repository, sendWorker, (run) => {
     const title = run.state === "completed" ? "定时任务已完成" : run.state === "missed" ? "定时任务已错过" : "定时任务需要关注";
-    showNotification(title, `${run.routineName} · ${run.state}`);
+    showNotification(title, `${run.routineName} · ${run.state}`,"routines");
   });
   roomCoordinator = new RoomCoordinator(repository, sendWorker.executor, {
     transcript: emitTranscript,
@@ -488,6 +500,7 @@ app.whenReady().then(async () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(REALTIME_CHANGED_CHANNEL, event);
   } });
   realtimeService = productRealtimeService;
+  organizationService=new OrganizationService(repository.organization);
   const taskSessionService=new TaskSessionService(repository,sendWorker,roomCoordinator,mcpService,event=>{
     if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send(TASK_SESSION_CHANGED_CHANNEL,event);
   },environmentService??undefined);
@@ -533,6 +546,9 @@ app.whenReady().then(async () => {
     voiceService: productVoiceService,
     realtimeService: productRealtimeService,
     taskSessionService,
+    organizationService,
+    botImageService:new BotImageService(repository,productMediaService,bytes=>{const image=nativeImage.createFromBuffer(Buffer.from(bytes));if(image.isEmpty())throw new Error("Avatar cannot be decoded");const size=image.getSize(),side=Math.min(size.width,size.height);return image.crop({x:Math.floor((size.width-side)/2),y:Math.floor((size.height-side)/2),width:side,height:side}).resize({width:256,height:256,quality:"best"}).toPNG();}),
+    organizationChanged:event=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send(ORGANIZATION_CHANGED_CHANNEL,event);},
     searchService:new SearchService(repository,repository.search,productVoiceService),
     voiceCapture,
     sessionChanged(session) {

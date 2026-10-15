@@ -23,6 +23,7 @@ export type Bot = {
   modelSelection: ModelSelection;
   avatarShape: BotAvatarShape;
   avatarColor: BotAvatarColor;
+  avatarImage?:import("./library-contracts").MediaRef;
   mcpServerIds?: string[] | null;
   memoryWorkspaceIds?: string[];
   pinnedAt: string | null;
@@ -1273,6 +1274,8 @@ export type UserProfile = {
 };
 
 export interface AevorenBotApi {
+  botImages:import("./bot-image-contracts").BotImageApi;
+  organization:import("./organization-contracts").OrganizationApi;
   search: import("./search-contracts").SearchApi;
   mcpWrites: import("./mcp-write-contracts").McpWriteApi;
   browser: import("./browser-contracts").BrowserApi;

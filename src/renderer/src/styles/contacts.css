@@ -94,3 +94,5 @@
   .contact-detail .contact-profile-tabs { gap: 4px; }
   .contact-detail .contact-profile-tabs > button { padding-inline: 4px; }
 }
+
+.contact-avatar-actions{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 16px}.bot-avatar-dialog{width:min(760px,calc(100vw - 28px));max-height:calc(100dvh - 40px);overflow:auto;padding:20px;border:1px solid var(--border);border-radius:14px;background:var(--panel-bg);color:var(--text)}.bot-avatar-dialog>header{display:flex;justify-content:space-between;align-items:center;gap:12px}.bot-avatar-dialog h2{font-size:18px;margin:0}.bot-avatar-dialog>p{color:var(--text-muted);line-height:1.6;font-size:13px}.bot-avatar-dialog .media-library-panel{padding:0}
