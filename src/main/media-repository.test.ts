@@ -14,7 +14,7 @@ function fixture(filename = ":memory:") { const repository = new AppRepository(f
 function content(text = "PRIVATE_EXTRACTION"): StoredMediaImport {
   const id = randomUUID(), sourceSha256 = createHash("sha256").update(text).digest("hex"), parsed = { sourceSha256, parserName: "fixture", parserVersion: "1", text,
     spans: [{ kind: "page" as const, index: 0, start: 0, end: text.length }], warningCodes: [] };
-  return { asset: { reference: { id, name: "document.pdf", mimeType: "application/pdf", sha256: sourceSha256, size: 30 }, kind: "pdf", width: null, height: null },
+  return { asset: { reference: { id, name: "document.pdf", mimeType: "application/pdf", sha256: sourceSha256, size: 30 }, kind: "pdf", width: null, height: null, durationMs: null },
     extraction: { id: randomUUID(), mediaId: id, ...parsed, digest: mediaExtractionDigest(parsed) } };
 }
 function start(f: ReturnType<typeof fixture>, refs: MessageMediaReference[] = [], nonce: string = randomUUID()) {

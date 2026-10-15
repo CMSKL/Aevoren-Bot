@@ -75,7 +75,7 @@ export const MEDIA_MIGRATION = { version: 42, sql: `
 ` } as const;
 
 type AssetRow = { id: string; name: string; size: number; mime_type: string; sha256: string; kind: MediaAsset["kind"];
-  version: number; enabled: number; width: number | null; height: number | null; deleted_at: string | null; created_at: string };
+  version: number; enabled: number; width: number | null; height: number | null; duration_ms: number | null; deleted_at: string | null; created_at: string };
 type ExtractionRow = { id: string; media_id: string; source_sha256: string; parser_name: string; parser_version: string;
   digest: string; body: string; spans_json: string; warning_codes_json: string; created_at: string };
 type BindingRow = { session_id: string; media_id: string; version: number; incarnation: string; created_at: string; revoked_at: string | null };
@@ -92,7 +92,7 @@ export function mediaExtractionDigest(input: { sourceSha256: string; parserName:
 }
 function asset(row: AssetRow): MediaAsset {
   return { reference: { id: row.id, name: row.name, size: row.size, mimeType: row.mime_type, sha256: row.sha256 }, kind: row.kind,
-    version: row.version, enabled: Boolean(row.enabled), width: row.width, height: row.height, deletedAt: row.deleted_at, createdAt: row.created_at };
+    version: row.version, enabled: Boolean(row.enabled), width: row.width, height: row.height, durationMs: row.duration_ms ?? null, deletedAt: row.deleted_at, createdAt: row.created_at };
 }
 function extraction(row: ExtractionRow): MediaExtraction {
   return { id: row.id, mediaId: row.media_id, sourceSha256: row.source_sha256, parserName: row.parser_name, parserVersion: row.parser_version,
@@ -219,8 +219,8 @@ export class MediaRepository {
       const at = new Date().toISOString();
       return values.map(value => {
         const a = value.asset, r = a.reference;
-        this.database.prepare("INSERT INTO media_assets(id,name,size,mime_type,sha256,kind,version,enabled,width,height,deleted_at,created_at) VALUES (?,?,?,?,?,?,1,1,?,?,NULL,?)")
-          .run(r.id, r.name, r.size, r.mimeType, r.sha256, a.kind, a.width, a.height, at);
+        this.database.prepare("INSERT INTO media_assets(id,name,size,mime_type,sha256,kind,version,enabled,width,height,duration_ms,deleted_at,created_at) VALUES (?,?,?,?,?,?,1,1,?,?,?,NULL,?)")
+          .run(r.id, r.name, r.size, r.mimeType, r.sha256, a.kind, a.width, a.height, a.durationMs, at);
         if (value.extraction) { const e = value.extraction;
           this.database.prepare("INSERT INTO media_extractions(id,media_id,source_sha256,parser_name,parser_version,digest,body,spans_json,warning_codes_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
             .run(e.id, r.id, r.sha256, e.parserName, e.parserVersion, e.digest, e.text, JSON.stringify(e.spans), JSON.stringify(e.warningCodes), at);
