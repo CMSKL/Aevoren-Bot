@@ -16,6 +16,8 @@ Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bo
 
 [v0.3.0-beta.29](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.29) is the published signed macOS baseline for the Library, Docker environments, isolated Chromium, desktop takeover, screenshot transport and registered service previews. Script Skills and native connections are subsequent deliveries. Real Windows Docker and real third-party account validation remain unverified; see the [implementation record](docs/IMPLEMENTATION_PLAN.md).
 
+The latest beta.34 unsigned macOS candidate passed 28 actual packaged checks, including embedded-frame save/close behavior and the typed API. Cross-platform checks and signed publication remain pending; detailed failures, corrections and validation boundaries are retained in the implementation record.
+
 > **Maintainer and project records:** Allen and GitHub CMSKL are the same person. Allen leads Aevoren Bot; AI performs development. The [personal project record](https://www.minimalstudio.cn/allen/projects/aevoren.html) documents this role statement, its fixed Beta version and the boundaries of the available evidence.
 
 ## Highlights

@@ -16,6 +16,8 @@ Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联�
 
 [v0.3.0-beta.29](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.29) 已公开发布签名 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输和登记服务预览。脚本 Skill 与原生应用连接作为后续单元验收。真实 Windows Docker、真实第三方账号仍未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
 
+最新 beta.34 未签名 macOS 候选包已完成 28 项真实安装包检查，包含内嵌页面后的保存／关闭和 typed API。跨平台检查及签名发行仍待完成，完整失败、修正与验收边界保留在实施记录中。
+
 > **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 
 示范技能开发单元支持由用户明确开始隔离电脑录制，只保留脱敏坐标与导航按键；停止后生成可编辑草稿，审阅并发布固定版本后仍为停用 Skill，不授权脚本或自动执行。使用、隐私与待验收边界见[示范 Skill 说明](docs/SKILL_DEMONSTRATIONS.md)。
