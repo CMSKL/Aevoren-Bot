@@ -232,7 +232,9 @@ export class WorkspaceToolExecutor {
     }
     if (tool.kind === "mcp-call") {
       if (!this.mcpTools) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
-      return this.mcpTools.run(tool, signal);
+      return this.repository.getSession(invocation.sessionId).kind === "TASK"
+        ? this.mcpTools.runTask(tool, signal, invocation.runtimeRunId)
+        : this.mcpTools.run(tool, signal);
     }
     if (tool.kind === "clipboard-read") {
       if (!this.deviceTools) throw new AevorenBotError("TOOL_EXECUTION_FAILED");

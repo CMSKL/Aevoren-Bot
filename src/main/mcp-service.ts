@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createHash } from "node:crypto";
 import type { McpScopedTool } from "@shared/mcp-write-contracts";
 import { mcpDigest } from "./mcp-write-repository";
+import { taskMcpIdentity } from "./task-mcp-authority";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
@@ -291,6 +292,53 @@ export class McpService {
       .filter((tool) => tool.readOnly);
   }
 
+  availableTaskTools(runtimeRunId: string): McpToolInfo[] {
+    const policy = this.repository.tasks.runtimeTaskPolicy(runtimeRunId);
+    if (!policy) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+    return this.availableTools(policy.executorBotId).filter(tool => policy.selection.mcp.some(selection => selection.serverId === tool.serverId && selection.toolNames.includes(tool.name)));
+  }
+
+  async runTask(tool: McpToolRequest, signal: AbortSignal, runtimeRunId: string): Promise<McpExecutionResult> {
+    const current = () => {
+      signal.throwIfAborted();
+      const policy = this.repository.tasks.runtimeTaskPolicy(runtimeRunId);
+      const selection = policy?.selection.mcp.find(item => item.serverId === tool.serverId && item.toolNames.includes(tool.toolName));
+      const definition = policy && this.availableTaskTools(runtimeRunId).find(item => item.serverId === tool.serverId && item.name === tool.toolName);
+      if (!policy || !selection || !definition || !tool.readOnly) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      const identity = taskMcpIdentity(this.repository, this, policy.executorBotId, selection);
+      if (policy.mcpIdentities[selection.serverId]?.identityDigest !== identity.identityDigest) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      return { policy, selection, definition };
+    };
+    const admitted = current();
+    const connection = await this.openScoped(tool.serverId, admitted.selection.expectedVersion, signal, () => { current(); });
+    let output: McpExecutionResult;
+    try {
+      const { definition } = current(); connection.assertCurrent();
+      const remote = connection.tools.find(item => item.name === tool.toolName);
+      if (!remote?.readOnlyClaim || !remote.visibility.includes("model") || mcpDigest(remote.inputSchema) !== mcpDigest(definition.inputSchema)) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      const result = await connection.call(tool.toolName, tool.arguments);
+      current(); connection.assertCurrent();
+      if (result.isError) throw new AevorenBotError("MCP_RESULT_INVALID");
+      const normalized = (Array.isArray(result.content) ? result.content : []).map(raw => {
+        const block = object(raw), resource = object(block?.resource);
+        if (block?.type === "text" && typeof block.text === "string") return { type: "text", text: block.text.slice(0, MAX_RESULT_CHARACTERS) };
+        if (block?.type === "resource" && resource && typeof resource.uri === "string" && typeof resource.text === "string") return { type: "resource", uri: resource.uri, text: resource.text.slice(0, MAX_RESULT_CHARACTERS) };
+        return { type: typeof block?.type === "string" ? block.type : "unknown", omitted: true };
+      });
+      const retrievedAt = new Date().toISOString();
+      const content = JSON.stringify({ untrusted: true, server: connection.server.name, tool: definition.name, retrievedAt, content: boundedJson(normalized), ...(result.structuredContent ? { structuredContent: boundedJson(result.structuredContent) } : {}) });
+      current();
+      output = { content, metadata: { kind: "mcp-call", server: connection.server.name, tool: definition.name, retrievedAt } };
+    } catch (error) {
+      if (signal.aborted) throw new AevorenBotError("TOOL_EXECUTION_CANCELLED");
+      current();
+      if (error instanceof AevorenBotError) throw error;
+      throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
+    } finally { await connection.close(); }
+    current();
+    return output;
+  }
+
   async run(tool: McpToolRequest, signal: AbortSignal): Promise<McpExecutionResult> {
     const server = this.repository.getMcpServerConfig(tool.serverId);
     if (!server.enabled) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
@@ -352,10 +400,10 @@ export class McpService {
   ])).digest("hex");}
 
   /** A fresh session with captured credentials and no SDK OAuth replay path. */
-  async openScoped(id:string,expectedVersion:number,signal:AbortSignal){
+  async openScoped(id:string,expectedVersion:number,signal:AbortSignal,assertAuthority?:()=>void){
     const server=this.repository.getMcpServerConfig(id),credentialDigest=this.scopedCredentialDigest(id);
     if(!server.enabled||server.version!==expectedVersion||this.authorizingIds.has(id))throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
-    const assertCurrent=()=>{signal.throwIfAborted();const current=this.repository.getMcpServerConfig(id);
+    const assertCurrent=()=>{signal.throwIfAborted();assertAuthority?.();const current=this.repository.getMcpServerConfig(id);
       if(!current.enabled||current.version!==expectedVersion||this.scopedCredentialDigest(id)!==credentialDigest)throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");};
     const client=new Client({name:"Aevoren Bot",version:this.appVersion},{capabilities:{extensions:{"io.modelcontextprotocol/ui":{mimeTypes:["text/html;profile=mcp-app"]}}}});
     const clients=this.scopedClients.get(id)??new Set<Client>();clients.add(client);this.scopedClients.set(id,clients);
@@ -363,8 +411,10 @@ export class McpService {
     const close=async()=>{signal.removeEventListener("abort",abort);clients.delete(client);if(!clients.size)this.scopedClients.delete(id);
       await client.close().catch(()=>undefined);await prepared?.dispatcher?.close().catch(()=>undefined);};
     const abort=()=>{void client.close().catch(()=>undefined);};signal.addEventListener("abort",abort,{once:true});
-    try{const safeTarget=server.transport==="streamable-http"&&typeof server.config.url==="string"?await resolveSafeNetworkUrl(server.config.url,true):null;
-      assertCurrent();prepared=this.transport(server,safeTarget,undefined,false,true);await client.connect(prepared.transport,{signal,timeout:CONNECT_TIMEOUT_MS,maxTotalTimeout:CONNECT_TIMEOUT_MS});
+    try{assertCurrent();const safeTarget=server.transport==="streamable-http"&&typeof server.config.url==="string"?await resolveSafeNetworkUrl(server.config.url,true):null;
+      assertCurrent();prepared=this.transport(server,safeTarget,undefined,false,true,assertCurrent);
+      const send=prepared.transport.send.bind(prepared.transport);prepared.transport.send=async(message,options)=>{assertCurrent();return send(message,options);};
+      await client.connect(prepared.transport,{signal,timeout:CONNECT_TIMEOUT_MS,maxTotalTimeout:CONNECT_TIMEOUT_MS});
       const listed=await client.listTools(undefined,{signal,timeout:CONNECT_TIMEOUT_MS,maxTotalTimeout:CONNECT_TIMEOUT_MS});assertCurrent();
       const tools:McpScopedTool[]=listed.tools.flatMap(tool=>{if(!SAFE_TOOL_NAME.test(tool.name)||Buffer.byteLength(JSON.stringify(tool.inputSchema))>20000)return [];
         const ui=object(object(tool._meta)?.ui),visibility=toolVisibility(tool._meta);
@@ -455,6 +505,7 @@ export class McpService {
     authProvider?: OAuthClientProvider,
     allowLoopbackAuthorization = false,
     capturedCredentialsOnly = false,
+    assertAuthority?: () => void,
   ): Pick<Connection, "transport" | "dispatcher"> {
     const secrets = this.readSecrets(server.id);
     if (server.transport === "stdio") {
@@ -488,6 +539,7 @@ export class McpService {
         }
         return fetchPinnedBuffered(target, { ...(init ?? {}), headers }, allowLoopbackAuthorization);
       }
+      assertAuthority?.();
       const response = await undiciFetch(target, {
         ...(init ?? {}),
         redirect: "error",

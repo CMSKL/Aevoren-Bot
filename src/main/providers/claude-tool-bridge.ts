@@ -55,13 +55,14 @@ export class ClaudeToolBridge {
     };
     const definitions = structuredModelToolDefinitions(this.scopedContext);
     this.toolNames = definitions.map(({ name }) => `mcp__aevoren_host__${name}`);
-    this.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: definitions.map((tool) => ({ ...tool, inputSchema: tool.inputSchema as { type: "object" }, annotations: { readOnlyHint: !["workspace_write", "bot_create", "room_create", "product_execute"].includes(tool.name), destructiveHint: tool.name === "product_execute", openWorldHint: tool.name.startsWith("web_") } })) }));
+    this.server.setRequestHandler(ListToolsRequestSchema, () => { this.scopedContext.assertAuthority?.(); return { tools: definitions.map((tool) => ({ ...tool, inputSchema: tool.inputSchema as { type: "object" }, annotations: { readOnlyHint: !["workspace_write", "bot_create", "room_create", "product_execute"].includes(tool.name), destructiveHint: tool.name === "product_execute", openWorldHint: tool.name.startsWith("web_") } })) }; });
     this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => {
+      this.scopedContext.assertAuthority?.();
       if (this.closed || parentSignal.aborted) return errorResult("TOOL_EXECUTION_CANCELLED");
       const key = String(extra.requestId);
       const signature = createHash("sha256").update(JSON.stringify({ name: request.params.name, arguments: request.params.arguments })).digest("hex");
       const previous = this.calls.get(key);
-      if (previous) return previous.signature === signature ? previous.result.then(render => render()) : errorResult("TOOL_IDEMPOTENCY_CONFLICT");
+      if (previous) return previous.signature === signature ? previous.result.then(render => { const value = render(); this.scopedContext.assertAuthority?.(); return value; }) : errorResult("TOOL_IDEMPOTENCY_CONFLICT");
       if (this.calls.size >= MAX_TOOL_CALLS) return errorResult("TOOL_ROUND_LIMIT_EXCEEDED");
       const toolCallId = `claude_${createHash("sha256").update(`${context.executionKey}:${this.token}:${key}`).digest("hex")}`;
       let event: ReturnType<typeof parseStructuredModelToolCall>;
@@ -90,11 +91,12 @@ export class ClaudeToolBridge {
         this.emit({ ...event, toolSignal, respond: async (content, images, modelText) => finish(() => toolResult(content, images, modelText)) });
       });
       this.calls.set(key, { signature, result });
-      return result.then(render => render());
+      return result.then(render => { const value = render(); this.scopedContext.assertAuthority?.(); return value; });
     });
   }
 
   async start(cwd: string): Promise<void> {
+    this.scopedContext.assertAuthority?.();
     if (this.parentSignal.aborted) throw new DOMException("Aborted", "AbortError");
     await this.server.connect(this.transport);
     this.listener = createServer({ maxHeaderSize: 8_192 }, (request, response) => {
@@ -132,6 +134,16 @@ export class ClaudeToolBridge {
       }
       try { parsedBody = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { response.writeHead(400).end(); return; }
     }
+    // The SDK may await after a fresh or cached handler result. Guard the actual
+    // HTTP body write as well, so a revoked task cannot disclose that result.
+    const write = response.write.bind(response), end = response.end.bind(response);
+    const authorized = (): boolean => {
+      try { this.scopedContext.assertAuthority?.(); return true; }
+      catch { response.destroy(); return false; }
+    };
+    response.write = ((...args: Parameters<typeof response.write>) => authorized() ? write(...args) : false) as typeof response.write;
+    response.end = ((...args: Parameters<typeof response.end>) => authorized() ? end(...args) : response) as typeof response.end;
+    this.scopedContext.assertAuthority?.();
     await this.transport.handleRequest(request, response, parsedBody);
   }
 
