@@ -17,6 +17,8 @@ type Options={requestAndWait:(intent:McpWriteIntent,signal:AbortSignal)=>Promise
 const rpcError=(id:Rpc["id"],code:number,message:string,data?:unknown)=>({jsonrpc:"2.0",id:id??null,error:{code,message,...(data?{data}:{})}});
 export class McpAppsBridge{
  private server:Server|null=null;
+ private listening:Promise<void>|null=null;
+ private readonly lifetime=new AbortController();
  private origin="";
  private readonly viewers=new Map<string,Viewer>();
  private readonly watcher:ReturnType<typeof setInterval>;
@@ -33,7 +35,8 @@ export class McpAppsBridge{
  if(grant.serverId!==viewer.view.serverId||grant.serverVersion!==viewer.view.serverVersion||this.mcp.scopedCredentialDigest(grant.serverId)!==viewer.credentialDigest)
  throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");}
  private retire(viewer:Viewer){viewer.controller.abort();this.viewers.delete(viewer.view.id);for(const response of viewer.events){response.write(`data: ${JSON.stringify({closed:true})}\n\n`);response.end();}viewer.events.clear();}
- private async listen(){if(this.server)return;const server=createServer((request,response)=>{void(async()=>{
+ private async listen(){this.lifetime.signal.throwIfAborted();if(this.server)return;if(this.listening)return this.listening;const task=this.listenOnce();this.listening=task;try{await task;}finally{this.listening=null;}}
+ private async listenOnce(){const server=createServer((request,response)=>{void(async()=>{
  const url=new URL(request.url??"/","http://127.0.0.1"),match=/^\/view\/([a-f0-9-]{36})\/([a-f0-9]{64})(?:\/(rpc|events|inner))?$/u.exec(url.pathname);
  const viewer=match?this.viewers.get(match[1]!):undefined;
  if(!viewer||viewer.token!==match?.[2]||url.search){response.writeHead(404).end();return;}
@@ -54,7 +57,7 @@ export class McpAppsBridge{
  })().catch(()=>{if(!response.headersSent)response.writeHead(500);response.end();});});
  await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));const address=server.address();if(!address||typeof address==="string")throw new Error("MCP Apps bridge did not bind");
  this.server=server;this.origin=`http://127.0.0.1:${address.port}`;}
- async openApp(input:McpWriteIdInput):Promise<McpAppView>{await this.listen();const resource=await this.writes.appResource(input);
+ async openApp(input:McpWriteIdInput):Promise<McpAppView>{await this.listen();this.lifetime.signal.throwIfAborted();const resource=await this.writes.appResource(input,{signal:this.lifetime.signal});this.lifetime.signal.throwIfAborted();
  for(const old of this.viewers.values())if(old.view.sessionId===input.sessionId&&old.view.executorBotId===input.executorBotId)this.retire(old);
  const id=randomUUID(),token=randomBytes(32).toString("hex"),view:McpAppView={...this.scope(input),id,intentId:resource.intent.id,serverId:resource.tool.serverId,serverVersion:resource.tool.serverVersion,
  resourceUri:resource.tool.uiResourceUri!,epoch:1,proxyUrl:`${this.origin}/view/${id}/${token}`,title:resource.tool.name,
@@ -109,5 +112,5 @@ export class McpAppsBridge{
  const ready={jsonrpc:'2.0',method:'ui/notifications/sandbox-proxy-ready',params:{viewId:config.viewId,epoch:config.epoch}};
  parent.postMessage(ready,'*');void send(ready).catch(close);
  </script></body></html>`;}
- async dispose(){clearInterval(this.watcher);this.unsubscribe();this.unsubscribeGrants();for(const viewer of this.viewers.values())this.retire(viewer);const server=this.server;this.server=null;if(server){server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}}
+ async dispose(){this.lifetime.abort();await this.listening?.catch(()=>{});clearInterval(this.watcher);this.unsubscribe();this.unsubscribeGrants();for(const viewer of this.viewers.values())this.retire(viewer);const server=this.server;this.server=null;if(server){server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}}
 }
