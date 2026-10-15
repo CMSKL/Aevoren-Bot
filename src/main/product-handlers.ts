@@ -1,3 +1,6 @@
+import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
+import { botImageSetSchema,botImageClearSchema,botImageReadSchema } from "@shared/bot-image-schemas";
+import type { BotImageService } from "./bot-image-service";
 import { ORGANIZATION_PRODUCT_OPERATIONS } from "@shared/organization-product";
 import type { OrganizationChanged } from "@shared/organization-contracts";
 import type { OrganizationService } from "./organization-service";
@@ -109,6 +112,7 @@ export type ProductDependencies = VoiceProductDependencies & MediaProductDepende
   taskSessionService?: TaskSessionService;
   searchService?: SearchService;
   organizationService?:OrganizationService;
+  botImageService?:BotImageService;
   organizationChanged?(event:OrganizationChanged):void;
   productChanged?(): void;
   sessionChanged?(session: import("@shared/contracts").Session): void;
@@ -159,6 +163,9 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   };
 
   const handlers = new Map<string, (input?: unknown) => unknown>();
+  handlers.set(BOT_IMAGE_CHANNELS.set,input=>{if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.botImageService.set(botImageSetSchema.parse(input),libraryContext);});
+  handlers.set(BOT_IMAGE_CHANNELS.clear,input=>{if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");return commit(()=>dependencies.botImageService!.clear(botImageClearSchema.parse(input),libraryContext));});
+  handlers.set(BOT_IMAGE_CHANNELS.read,input=>{if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.botImageService.read(botImageReadSchema.parse(input));});
   for(const definition of ORGANIZATION_PRODUCT_OPERATIONS)handlers.set(definition.channel,input=>{
     const service=dependencies.organizationService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
     if(definition.name==="organization.snapshot")return service.snapshot(libraryContext);

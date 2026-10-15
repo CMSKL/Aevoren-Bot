@@ -5,6 +5,7 @@ import { organizationContextSchema, organizationCreateSectionSchema, organizatio
 import { AevorenBotError } from "./errors";
 
 export const ORGANIZATION_MIGRATION = { version: 46, sql: `
+  ALTER TABLE bots ADD COLUMN avatar_image_json TEXT;
   CREATE TABLE organization_sections (
     id TEXT PRIMARY KEY,name TEXT NOT NULL CHECK(length(name)>0 AND length(name)<=80),position INTEGER NOT NULL CHECK(position>=0)
   );

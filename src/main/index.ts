@@ -1,3 +1,4 @@
+import { BotImageService } from "./bot-image-service";
 import { OrganizationService } from "./organization-service";
 import { ORGANIZATION_CHANGED_CHANNEL } from "@shared/organization-channels";
 import type { OrganizationNotifications } from "@shared/organization-contracts";
@@ -28,7 +29,7 @@ import "./identity";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
-import { app, BrowserWindow, clipboard, dialog, nativeTheme, Notification, safeStorage, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, nativeTheme, nativeImage, Notification, safeStorage, shell } from "electron";
 import { valid } from "semver";
 import { IPC } from "@shared/channels";
 import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateState } from "@shared/contracts";
@@ -546,6 +547,7 @@ app.whenReady().then(async () => {
     realtimeService: productRealtimeService,
     taskSessionService,
     organizationService,
+    botImageService:new BotImageService(repository,productMediaService,bytes=>{const image=nativeImage.createFromBuffer(Buffer.from(bytes));if(image.isEmpty())throw new Error("Avatar cannot be decoded");const size=image.getSize(),side=Math.min(size.width,size.height);return image.crop({x:Math.floor((size.width-side)/2),y:Math.floor((size.height-side)/2),width:side,height:side}).resize({width:256,height:256,quality:"best"}).toPNG();}),
     organizationChanged:event=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send(ORGANIZATION_CHANGED_CHANNEL,event);},
     searchService:new SearchService(repository,repository.search,productVoiceService),
     voiceCapture,

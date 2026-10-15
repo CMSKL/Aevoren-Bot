@@ -1,3 +1,4 @@
+import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
 import { REALTIME_CHANNELS } from "@shared/realtime-channels";
 import { realtimeStartSchema, realtimeAppendSchema, realtimeCommitSchema, realtimePlaybackSchema, realtimeInputSchema } from "@shared/realtime-schemas";
 import type { RealtimeService } from "./realtime-service";
@@ -35,6 +36,7 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
   const { window } = dependencies;
   const view = new ProductViewService(window);
   const product = new ProductOperationService({ ...dependencies, requestView: (input) => view.request(input) });
+  ipcMain.handle(BOT_IMAGE_CHANNELS.cancel,(event,input:unknown)=>apiResult(()=>{assertTrusted(event,window);if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");dependencies.botImageService.cancelUI(z.string().uuid().parse(input));}));
   ipcMain.handle(REALTIME_CHANNELS.start, (event, input: unknown) => apiResult(async () => {
     assertTrusted(event, window);
     const service = dependencies.realtimeService, capture = dependencies.voiceCapture;

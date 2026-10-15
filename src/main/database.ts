@@ -2119,6 +2119,7 @@ type ConversationRow = {
 };
 
 type BotRow = ConversationSidebarRow & {
+  avatar_image_json?:string|null;
   id: string;
   project_id: string;
   name: string;
@@ -2607,6 +2608,7 @@ function toBot(row: BotRow): Bot {
     },
     avatarShape: normalizeBotAvatarShape(row.avatar_shape),
     avatarColor: normalizeBotAvatarColor(row.avatar_color),
+    ...(row.avatar_image_json?{avatarImage:JSON.parse(row.avatar_image_json) as import("@shared/library-contracts").MediaRef}:{}),
     mcpServerIds,
     memoryWorkspaceIds,
     ...conversationSidebar(row),
@@ -4991,6 +4993,11 @@ export class AppRepository {
     return this.getBot(id);
   }
 
+  setBotImageAvatar(id:string,expectedVersion:number,reference:import("@shared/library-contracts").MediaRef|null):Bot{
+    this.getBot(id);const changed=this.database.prepare("UPDATE bots SET avatar_image_json=?,version=version+1,updated_at=? WHERE id=? AND version=? AND deleted_at IS NULL").run(reference?JSON.stringify(reference):null,now(),id,expectedVersion);
+    if(!changed.changes)throw new AevorenBotError("BOT_VERSION_CONFLICT");return this.getBot(id);
+  }
+
   duplicateBot(id: string): { bot: Bot; session: Session } {
     const source = this.getBot(id);
     const timestamp = now();
@@ -5029,6 +5036,11 @@ export class AppRepository {
            VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
         )
         .run(sessionId, botId, timestamp, timestamp);
+      if(source.avatarImage){
+        try{const media=this.media.metadata({sessionId:this.getMainSession(source.id).id,id:source.avatarImage.id});
+          if(media.asset.enabled&&!media.asset.deletedAt&&media.asset.reference.sha256===source.avatarImage.sha256){const copy=this.media.publishImport(sessionId,[{asset:{...media.asset,reference:{...media.asset.reference,id:randomUUID()}},extraction:null}])[0]!;this.database.prepare("UPDATE bots SET avatar_image_json=? WHERE id=?").run(JSON.stringify(copy.asset.reference),botId);}
+        }catch(error){if(!(error instanceof AevorenBotError)||!["MEDIA_NOT_GRANTED","MEDIA_NOT_FOUND"].includes(error.code))throw error;}
+      }
     });
     return { bot: this.getBot(botId), session: this.getMainSession(botId) };
   }

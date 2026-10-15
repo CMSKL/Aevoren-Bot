@@ -108,7 +108,7 @@ function RoomAvatar({ bots, userProfile }: { bots: readonly Bot[] | undefined; u
   return (
     <span className={`conversation-room-avatar${members.length > 0 ? " is-collage" : ""}`} data-member-count={members.length > 0 ? members.length + 1 : 0} aria-hidden="true">
       {members.length === 0 ? <RoomIcon /> : members.map((bot) => (
-        <BotAvatarIcon key={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={23} />
+        <BotAvatarIcon key={bot.id} botId={bot.id} image={bot.avatarImage} shape={bot.avatarShape} color={bot.avatarColor} size={23} />
       ))}
       {members.length > 0 ? <UserAvatar name={userProfile?.name} avatarUrl={userProfile?.avatarUrl} size={23} /> : null}
     </span>
@@ -734,7 +734,7 @@ export function Sidebar({
     if (renamingId === bot.id) {
       return (
         <div className={`bot-row conversation-row renaming${selected ? " selected" : ""}`} key={bot.id} role="listitem">
-          <span className="bot-icon bot-avatar-container conversation-avatar"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span>
+          <span className="bot-icon bot-avatar-container conversation-avatar"><BotAvatarIcon botId={bot.id} image={bot.avatarImage} shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span>
           <input
             ref={renameRef}
             className="bot-rename-input"
@@ -789,7 +789,7 @@ export function Sidebar({
         data-multi-selected={multiSelected ? "true" : undefined}
       >
         <span className={`bot-icon conversation-avatar${multiSelected ? "" : " bot-avatar-container"}`}>
-          {multiSelected ? <CheckIcon /> : <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} />}
+          {multiSelected ? <CheckIcon /> : <BotAvatarIcon botId={bot.id} image={bot.avatarImage} shape={bot.avatarShape} color={bot.avatarColor} size={48} />}
         </span>
         <span className="bot-copy">
           <strong>{identity.primary}</strong>

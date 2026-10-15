@@ -26,7 +26,7 @@ function invalidAvatar(): never {
 }
 
 /** Only the small PNG produced by the local canvas may cross the IPC boundary. */
-function validateAvatar(avatarUrl: string): void {
+export function validateAvatar(avatarUrl: string): void {
   if (!avatarUrl.startsWith(PNG_PREFIX)) invalidAvatar();
   const encoded = avatarUrl.slice(PNG_PREFIX.length);
   if (!encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) invalidAvatar();
