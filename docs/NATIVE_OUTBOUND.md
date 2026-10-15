@@ -1,6 +1,6 @@
 # Approved external drafts
 
-This guide accompanies the v0.3.0-beta.35 development candidate. The latest combined build passed 1,587 ordinary tests, 22 hidden source scenarios and 30 actual unsigned macOS-package scenarios, including both Notion updates and normal application exit. Earlier receipts remain separately recorded. Cross-platform CI and signed publication remain pending. This page does not imply a published installer or verified access to a real third-party account. Configure reads and local drafts using [Native connections](NATIVE_CONNECTORS.md).
+This guide accompanies the v0.3.0-beta.35 development candidate. The current diagnostic candidate passed Linux CI with 1,593 ordinary tests (45 skipped) and 41 real Docker checks; its rebuilt unsigned macOS package passed 30 scenarios including both Notion updates and normal exit. Earlier source-interface receipts remain separately recorded. Earlier receipts remain separately recorded. Cross-platform CI and signed publication remain pending. This page does not imply a published installer or verified access to a real third-party account. Configure reads and local drafts using [Native connections](NATIVE_CONNECTORS.md).
 
 ## Separate writing permission
 

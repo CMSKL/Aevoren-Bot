@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.35**。阶段 4 的正常关闭修复基线已完成本机验收：全量 1,587 项、源码界面 22 项、真实未签名 macOS 安装包 30 项通过。后续 Linux 六环境截图被现有新鲜度规则拒绝，当前 Worker 仅增加脱敏阶段诊断，基线包回执先于该补丁。跨平台／真实 Docker／签名门禁仍待完成，不能据此宣布阶段整体完成。阶段 5–6 尚未实施；最新状态以本表及末尾更正为准。
+当前开发候选为 **v0.3.0-beta.35**。包含脱敏截图诊断的 `b811747` 已重新构建并通过真实未签名 macOS 包 30 项；其 Linux PR 合并检查通过普通测试 1,593 项／45 跳过及真实 Docker 41 项，含六 Scope 实际画面。此前 409 拒绝及失败记录保留，本轮成功不确定其根因。完整跨平台、Beta 晋级和签名门禁仍待完成，不能据此宣布阶段整体完成。阶段 5–6 尚未实施；最新状态以本表及末尾更正为准。
 
 ## 已确定的方案
 
@@ -30,7 +30,7 @@
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 已纳入 v0.3.0-beta.29 签名发行 | 开发与跨平台安装包验证通过，之前签名 fixture 失败保留为历史记录 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
-| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 关闭修复基线本机验收完成；Linux 截图诊断及跨平台／发行待完成 | 基线普通 1,587／45 跳过、源码 22、真实 macOS 包 30；后续诊断补丁 26 项及类型／构建通过，真实 Docker 重验待完成 |
+| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 诊断版本机真实包与 Linux 验收通过；完整跨平台／晋级／签名待完成 | `b811747` 真实 macOS 包 30；Linux 合并检查普通 1,593／45 跳过、实际 Docker 41／41；旧拒绝记录保留 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
 
@@ -278,3 +278,15 @@ ASAR SHA-256 is `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf
 - 当前普通测试 1,488 通过、44 跳过；四套 TypeScript、完整 lint、构建、文档和许可检查通过（215 包／7 类）。进程清理五项无跳过通过，包含已关闭通道的幂等回归。同一冻结未签名 macOS beta.31 包完成 19 项真实检查：资料库 8、原生读取 2、关闭 8、typed API 1，均核验实际包与版本。首次 17／18 的失败由测试 loopback iframe 被该版本现有 CSP 阻止造成；保留失败，改用真实 sandboxed srcdoc 并验证子页面 DOM／Preload 后，八项关闭重跑通过，未扩展 CSP。旧 Main 的同一 srcdoc 负向用例明确关闭失败。此后仅补充测试清理幂等修复，应用安装包未改变。
 
 现仍是开发候选，跨平台修复检查、Beta 晋级及签名发行未完成；master 不晋级。真实第三方账号和 Windows Linux Docker 继续标为未验证。后续阶段 5–6 尚未实现。
+
+## Diagnostic beta.35 rebuild and fresh Linux acceptance
+
+Source `b81174717ae16afdaf543d8cc2eed2d21f72c95c`, containing the opt-in sanitized frame diagnostics, was rebuilt and packaged locally with reduced process priority. The actual unsigned macOS arm64 application passed **30/30** distinct checks in **1.8 minutes**: close 8 (including ten immediate startup close attempts), Library 8, native reads 2, outbound 7, demonstrations 1, MCP Apps 3 and actual packaged typed API 1. No forced-cleanup warning occurred. Fixtures checked genuine packaged metadata and beta.35; no installed user application, personal profile, microphone, real credentials or local Docker was used.
+
+Archive metadata, compiled/package-extracted Main, both complete Worker resource directories and all seven bundled guides matched at build time. ASAR SHA-256 remains `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf3`; Main remains `627d2e5c89eccd164d5e60240bb41d70ea42894146be9c59852c467a772ca78b`. The ASAR excludes the separately bundled Workers: the diagnostic Browser Worker 1.1.0 index now hashes to `41e2318a05a29e20c1b0777f2d28d2871ecad5505b553ff9d2970d7b55898a73`, its engine to `9788e576cc351bcfea9e380484b33df8456582b143d0c7fac271662e1ded6e7d`; Execution Worker 1.2.0 index hashes to `3ec6b2072432c77b904b363b2afad4929e6568115e513ff08304f4dd1055570e`. Worker bytes exactly matched this build output. Subsequent documentation edits do not change those tested application bytes.
+
+Fresh [Linux run 38680254801 / job 116243117780](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38680254801/job/116243117780) checked PR merge `ef1beefb0320145713c60cd6f4e495fdc28bc8f2` (b811747 into dev 4f24f153). One ordinary run passed **1,593 tests, 45 skipped**, across 131 passing and 8 skipped files in 77.29 seconds. The six frame-diagnostic unit tests are already included in that total. TypeScript, lint, build, 215-package / 7-group license checks, 34-document checks and security/backport checks passed.
+
+The opt-in real Linux Docker gate separately passed **41/41**, seven files, in 125.27 seconds: Chromium/desktop 10, host browser 4, environment gateway 4, host environment 5, host Skill execution 4, Worker execution 12 and registered preview 2. Six isolated scopes with private cookies/profiles and real frames passed in 7.999 seconds; sanitized human RFB recording with disconnect/restart passed in 4.153 seconds; six approved Room scripts passed in 5.439 seconds. Both diagnostic flags were enabled. This successful run emitted no failed capture-phase record; it does not identify the cause of the prior `BROWSER_OBSERVATION_STALE` rejection, relax provenance/freshness checks or erase another run's failure.
+
+The earlier pre-diagnostic 30-case package/source receipts and negative runs remain historical. This is fresh diagnostic-code Linux and unsigned macOS-package evidence, not complete cross-platform acceptance or signed publication. Windows Linux Docker, real third-party account actions and cloud inference remain unverified; phase 5/6 are not implemented and master does not advance.
