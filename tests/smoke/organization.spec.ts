@@ -42,7 +42,7 @@ test("organizes MAIN and TASK rows by session, preserves concurrent edits and re
     let state = await organization(page!); const research = state.sections.find(item => item.name === "研究")!, delivery = state.sections.find(item => item.name === "交付")!;
     await dialog().getByRole("button", { name: "上移分区 交付", exact: true }).click(); await expect.poll(async () => (await organization(page!)).sections.map(item => item.id)).toEqual([delivery.id, research.id]);
     async function move(label: string, sectionName: string): Promise<void> {
-      const select = dialog().getByLabel(`移动聊天 ${label}`, { exact: true }), row = dialog().locator(".organization-chat-row").filter({ has: select });
+      const select = dialog().getByLabel(`移动聊天 ${label}`, { exact: true }), row = dialog().locator(".organization-chat-row").filter({ has: page!.getByLabel(`移动聊天 ${label}`, { exact: true }) });
       await select.selectOption({ label: sectionName }); await row.getByRole("button", { name: "保存归属", exact: true }).click(); await expect(row.getByRole("button", { name: "保存归属", exact: true })).toBeDisabled();
     }
     await move(firstBot.name, "研究"); await move(`任务：${firstTask.title}`, "研究"); await move(`任务：${secondTask.title}`, "交付");
