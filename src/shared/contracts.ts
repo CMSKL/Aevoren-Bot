@@ -378,7 +378,7 @@ export type SaveCliProviderInput = {
   cliPath: string;
 };
 
-export type RuntimeRoute = "fake" | "host-outbound" | ProviderDriverKind;
+export type RuntimeRoute = "fake" | "host-outbound" | "host-mcp" | ProviderDriverKind;
 export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "user" | "assistant";
 
 export type PromptManifestBlock = {

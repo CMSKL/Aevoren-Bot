@@ -200,6 +200,7 @@ export class ProductOperationService {
       if (!this.dependencies.mcpWriteService) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
       const input = mcpWriteIdSchema.parse(this.libraryInput(tool.operation, tool.input, runtime));
       const result = await this.dependencies.mcpWriteService.executeTool(input, invocation.approvalRequestId, { signal, runtimeRunId: runtime.id }, runtime.route === "host-mcp" ? "user" : "model");
+      this.dependencies.mcpWriteService.ledger.assertRuntime(input, runtime.id);
       return this.result({ status: result.state === "unknown" ? "interrupted_unknown" : result.state, operation: tool.operation, result });
     }
     if (tool.action === "execute" && tool.operation === "outbound.send") {

@@ -19,9 +19,11 @@ export class McpAppsBridge{
  private server:Server|null=null;
  private origin="";
  private readonly viewers=new Map<string,Viewer>();
+ private readonly watcher:ReturnType<typeof setInterval>;
  private readonly unsubscribe:()=>void;
  private readonly unsubscribeGrants:()=>void;
  constructor(private readonly writes:McpWriteService,private readonly mcp:McpService,private readonly options:Options){
+ this.watcher=setInterval(()=>{for(const viewer of this.viewers.values())try{this.assertCurrent(viewer);}catch{this.retire(viewer);}},250);this.watcher.unref();
  this.unsubscribeGrants=writes.onGrantInvalidation(id=>{for(const viewer of this.viewers.values())if(viewer.grantId===id)this.retire(viewer);});
  this.unsubscribe=mcp.onScopedInvalidation(id=>{for(const viewer of this.viewers.values())if(viewer.view.serverId===id)this.retire(viewer);});}
  private scope(input:EnvironmentScope){return {sessionId:input.sessionId,executorBotId:input.executorBotId};}
@@ -106,5 +108,5 @@ export class McpAppsBridge{
  const ready={jsonrpc:'2.0',method:'ui/notifications/sandbox-proxy-ready',params:{viewId:config.viewId,epoch:config.epoch}};
  parent.postMessage(ready,'*');void send(ready).catch(close);
  </script></body></html>`;}
- async dispose(){this.unsubscribe();this.unsubscribeGrants();for(const viewer of this.viewers.values())this.retire(viewer);const server=this.server;this.server=null;if(server){server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}}
+ async dispose(){clearInterval(this.watcher);this.unsubscribe();this.unsubscribeGrants();for(const viewer of this.viewers.values())this.retire(viewer);const server=this.server;this.server=null;if(server){server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}}
 }

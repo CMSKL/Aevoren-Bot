@@ -5,7 +5,52 @@ import type { McpScopedTool,McpToolGrant,McpToolGrantInput,McpWriteIdInput,McpWr
 import { environmentScopeSchema } from "@shared/environment-schemas";
 import { mcpToolGrantSchema,mcpWriteIdSchema,mcpWritePrepareSchema,mcpWriteReviewSchema } from "@shared/mcp-write-schemas";
 import { AevorenBotError } from "./errors";
-export const MCP_WRITE_MIGRATION={version:41,sql:`
+export const MCP_WRITE_MIGRATION={version:41,foreignKeysOff:true,sql:`
+      CREATE TABLE runtime_runs_v41 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        execution_key TEXT NOT NULL,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE RESTRICT,
+        attempt_no INTEGER NOT NULL CHECK (attempt_no > 0),
+        state TEXT NOT NULL CHECK (state IN (
+          'created', 'dispatching', 'running', 'streaming', 'cancel-requested',
+          'completed', 'failed', 'cancelled', 'interrupted'
+        )),
+        route TEXT NOT NULL CHECK (route IN ('fake', 'openai-compatible', 'codex-cli', 'claude-cli', 'ollama-cli', 'acp-cli','host-outbound','host-mcp')),
+        provider_instance_id TEXT NOT NULL,
+        provider_model_id TEXT NOT NULL,
+        input_generation INTEGER NOT NULL,
+        input_seq INTEGER NOT NULL,
+        prompt_cutoff_seq INTEGER NOT NULL,
+        assistant_entry_id TEXT REFERENCES transcript_entries(id) ON DELETE SET NULL,
+        provider_request_id TEXT,
+        prompt_manifest_json TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        last_error_code TEXT,
+        created_at TEXT NOT NULL,
+        accepted_at TEXT,
+        last_activity_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (execution_key, attempt_no)
+      );
+      INSERT INTO runtime_runs_v41
+      SELECT id, session_id, client_nonce, execution_key, executor_bot_id, attempt_no, state, route,
+             provider_instance_id, provider_model_id, input_generation, input_seq, prompt_cutoff_seq,
+             assistant_entry_id, provider_request_id, prompt_manifest_json, version, last_error_code,
+             created_at, accepted_at, last_activity_at, finished_at
+      FROM runtime_runs;
+      DROP TABLE runtime_runs;
+      ALTER TABLE runtime_runs_v41 RENAME TO runtime_runs;
+
+  CREATE UNIQUE INDEX runtime_one_active_per_executor ON runtime_runs(session_id,executor_bot_id)
+    WHERE state IN ('created','dispatching','running','streaming','cancel-requested');
+  CREATE TRIGGER initialize_runtime_scope AFTER INSERT ON runtime_runs BEGIN
+    INSERT INTO runtime_session_scopes(runtime_run_id,scope_version)
+      SELECT NEW.id,version FROM conversation_scope_versions WHERE session_id=NEW.session_id;
+  END;
+
+
  CREATE TABLE mcp_tool_grants(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,executor_bot_id TEXT NOT NULL,server_id TEXT NOT NULL,server_version INTEGER NOT NULL,
  tool_name TEXT NOT NULL,schema_digest TEXT NOT NULL,credential_digest TEXT NOT NULL,version INTEGER NOT NULL,created_at TEXT NOT NULL,revoked_at TEXT,
  UNIQUE(session_id,executor_bot_id,server_id,tool_name));
