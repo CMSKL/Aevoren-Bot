@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.39**。阶段 6A 的 MAIN/TASK 数据、固定成员上下文、明确权限上限、独立线程界面及共享业务操作已实现，并通过专项单元／静态检查；构建、隐藏界面、真实安装包与跨平台门禁仍待通过。阶段 5 已有本地源码与真实未签名 macOS 包证据，beta.38 实时语音累计 159 个不同场景通过、32 条件跳过，包含休眠影响的失败和随后定向通过，不记为单轮完整全绿。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，beta.34 及后续单元按正常顺序等待晋级；master 不晋级。6B–6F、真实第三方账号／音频硬件及 Windows Docker 均未完成验收。
+当前开发候选为 **v0.3.0-beta.39**。阶段 6A 的 MAIN/TASK 数据、固定成员上下文、明确权限上限、独立线程界面及共享业务操作已实现，并通过专项单元／静态检查；完整源码构建与三个不同受控隐藏场景已分轮通过，真实未签名 macOS 包 Task3＋typed API 共 4 项通过，跨平台及签名发行仍待完成。阶段 5 已有本地源码与真实未签名 macOS 包证据，beta.38 实时语音累计 159 个不同场景通过、32 条件跳过，包含休眠影响的失败和随后定向通过，不记为单轮完整全绿。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，beta.34 及后续单元按正常顺序等待晋级；master 不晋级。6B–6F、真实第三方账号／音频硬件及 Windows Docker 均未完成验收。
 
 ## 已确定的方案
 
@@ -32,7 +32,7 @@
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
 | 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 开发组合候选四项 CI 通过，分单元晋级中 | `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1–5.3 源码及本地包证据完成，跨平台／签名发行待通过 | beta.38 源码累计 159 个不同通过、32 条件跳过；保留完整运行 3 项失败及定向 3/3，通过真实 Worklet／受控协议／普通 Runtime；云账号／硬件另行验证 |
-| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 6A TASK 源码与专项检查完成，6B–6F 待实施 | beta.39 的迁移／授权／UI 身份与能力专项已有证据；三项隐藏 fixture 验收中，保留失败，最新构建与包门禁待通过 |
+| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 6A TASK 源码与专项检查完成，6B–6F 待实施 | beta.39 的迁移／授权／UI 身份与能力专项已有证据；完整构建与三个不同隐藏场景分轮通过，保留失败，真实未签名 macOS 包 4 项通过，跨平台／签名待完成 |
 
 ## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
 
@@ -448,7 +448,7 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 
 本地已运行的具体增量证据：Renderer 身份／空默认值和设置合计 8 项通过，能力注册专项 10 项通过（含原 Runtime 重试快照、独立联网／剪贴板、精确 MCP 及旧 MAIN 行为）；Node／Web 类型与定向 ESLint 通过。日志在 `$CODEX_HOME/aevoren-evidence/2026-10-15/task39-ui-focused.log`、`task39-capability-tests.log` 及同前缀 types／lint 日志。另有 SQLite、宿主 Runtime/MCP 专项由对应交付记录汇总，当前不填尚未冻结的整轮总数。
 
-三项 `tests/smoke/task-sessions.spec.ts` 已通过静态发现（3 项）并开始执行，覆盖真实 Preload／SQLite、受控 HTTP／MCP、独立草稿／重启历史、CAS、任务级删除、六成员／兄弟线程并行、actor 查询与撤销。**隐藏门禁尚未通过**；已有一次冻结完整构建通过记录，参数规范化修复后的新构建与隐藏场景仍待验收，当前没有 beta.39 真实包、Windows 或签名发行通过记录。6B 搜索、6C 整理与偏好、6D 群 Routine、6E 事件／Webhook、6F 模板／离线导出仍待实施，不能将 6A 视为全部六阶段完成。
+三项 `tests/smoke/task-sessions.spec.ts` 已通过静态发现（3 项）并开始执行，覆盖真实 Preload／SQLite、受控 HTTP／MCP、独立草稿／重启历史、CAS、任务级删除、六成员／兄弟线程并行、actor 查询与撤销。**三个不同隐藏场景现已分轮通过，不是单轮 3/3 全绿**；参数规范化修复后的冻结完整构建通过，当前没有 beta.39 真实包、Windows 或签名发行通过记录。6B 搜索、6C 整理与偏好、6D 群 Routine、6E 事件／Webhook、6F 模板／离线导出仍待实施，不能将 6A 视为全部六阶段完成。
 
 当前公开基线为 v0.3.0-beta.33。前文 beta.33 Windows 晋级失败保留为历史，不代表现有发行未发布；之后的正常验证与签名发行已完成。beta.34 起按单元继续 dev → beta → 安装包验收 → 同版本 Beta Release，标签和标题都严格等于 v<package.json version>，master 暂不晋级。
 
@@ -458,3 +458,23 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 首轮三项均在 Electron 启动前失败：fixture 的连续大写 Memory 标记触发既有 MEMORY_SENSITIVE_CONTENT 校验。只把种子改为普通带空格的私有测试句子，未修改产品敏感内容检查；精确清理三个本轮拥有的临时目录，失败日志／trace 保留。第二轮三个 Electron 均正常退出，但场景仍失败：两个 fixture 分别使用不符合已有规则的中文 MCP 连接名和 Everyone 空目标列表，现已改为合法 slug 与明确成员 ID。第三项已完成实际产品工具往返，发现 Task 产品输入在宿主注入范围之前被 normalizeProductRequest 的严格 UI schema 拒绝；Task 专用产品 schema 现允许省略宿主 session 字段，再由既有宿主校验注入，可信 UI schema 保持严格。对应规范化专项通过，新的完整构建及三项隐藏回归待验证，不把先前 INVALID_REQUEST 当作查询成功。
 
 本机持久证据为 `$CODEX_HOME/aevoren-evidence/2026-10-15/task39-hidden-first-three*` 和 `task39-hidden-second-three*`（完整日志、metadata 与 artifacts）；第二轮清理前未保存私有 Tool Journal，因此不能声称这些行仍可读取。后续 fixture 在失败时附上有界真实请求／工具回执、Runtime/Tool API 快照及自有 SQLite，避免再次丢失诊断。没有增加原 90 秒场景期限、绕过审批或放宽产品权限。
+
+
+### beta.39 受控源码场景累计通过（未验证安装包）
+
+参数规范化修复后的完整构建 `dec880c` 通过五个 TypeScript 项目及 Electron／Worker／parser 构建。后续运行继续保留失败：第三轮 MCP fixture 在实际 probe 前请求信任工具，被已有规则拒绝；并行场景把尚未收到响应头的 dispatching 错当 running；撤销场景收到正确的 LIBRARY_NOT_BOUND，但断言只接受泛化范围错误。只修正测试的实际 probe／信任流程、SSE 响应头屏障与精确拒绝码，不放宽产品校验。
+
+第四轮六成员／兄弟线程并行及 actor 查询／撤销场景 **2 项通过**；UI 场景已通过空默认值、两个草稿、真实发送与正文隔离、标题 CAS 冲突保留、改名、页面重载及应用重启，但删除步骤错误复用了重启前的 Page Locator。只更新 Locator 后，对此失败场景定向 **1/1 通过（10.1 秒）**，包括删除线程并保留 Bot／MAIN 及兄弟线程。当前三个不同场景全部覆盖，**不能记为单轮三项全绿**。所有所属 Electron 均正常 exitCode=0、signal=null，无强制清理警告。
+
+冻结 Main SHA-256 为 `dfed4ba9dd78f1039b6627e1d90afc2ffa453a348415a1699202b9b59964e501`，Preload 为 `6e330d432392704231efc98ec191c16527d9100515ee8bc973dd2f0a4155c6b4`，以上测试修正没有重建或改变业务字节。持久日志／metadata 位于 `$CODEX_HOME/aevoren-evidence/2026-10-15/task39-hidden-third-three*`、`task39-hidden-fourth-three*` 与 `task39-hidden-first-case-final*`；失败 trace、有界真实 HTTP／Tool Journal／Runtime 快照及自有关闭 SQLite 已保留在对应 artifacts。完整普通测试正在单 worker、原有期限下执行；实际未签名包、跨平台及签名发行仍待验收。
+
+
+### beta.39 普通回归与真实未签名 macOS 包验收
+
+完整普通测试以 Node24、单 worker、原期限运行一次，结果为 **1,777 通过、45 跳过、9 失败（7 个文件）**，137.28 秒。失败均由新增 Task 结构触发旧 fixture 的范围／字段假设：V5/V9 逻辑哈希额外包含新 Session 列，MAIN 摘要增加 kind，原生 Runtime 范围增加三个空 Task 字段，两个媒体／实时迁移测试遇到刻意变更的 MAIN 谓词、Task 索引和 Runtime 触发器，诊断 fixture 的无列名 Session INSERT 仍给八个值。只修正测试：保留每个原字段／行的精确比较，另核对 Task 默认值和 MAIN 的三个 NULL 范围字段；逐一比对原外键与明确新增的 parent 自引用；只有具体的 MAIN 谓词／Task 索引／完整声明的 Runtime 触发器采用明确新期望。诊断 CLI 本身未修改。七个失败文件定向 **72/72 通过（5.33 秒）**。累计 **1,786 个不同普通测试通过、45 条件跳过**，**不是一次完整全绿运行**；原九项失败保留。完整 ESLint、Node 类型、41 文件文档链接和开源准备检查均通过。
+
+使用 pnpm11.19 的 electron-builder 直接打包已有冻结 out，没有重建业务源码、签名、公证或触发发布。真实未签名 macOS arm64 包在同一轮通过 **Task3 与 typed API 共 4/4（28.6 秒）**，每个相关 fixture 验证 packaged=true/version39；全部自有进程正常 exitCode=0、signal=null，无强制清理。验证包含空权限／真实 Prompt 排除私有上下文、独立草稿和发送、标题冲突／改名、重载／重启、删除线程而保留 owner、七个并发 HTTP 请求、单成员停止、actor 查询及撤销／重绑后零传输，并明确断言全部 11 个 sessions Preload 方法和八项非法请求拒绝。
+
+Main／Preload／Renderer 的 17 个 ASAR 文件及执行 Worker／Browser Worker／parser 的 216 个资源文件与冻结 out 逐字节一致，Task 指南已随包复制。资源校验为 207 项 parser 清单资产、232 个资源文件、9,556 个 ASAR 文件，无禁止资产。ASAR SHA-256 为 `7ffcff2fcefcf5fb8f9040f1a32c9ed03446409e0aa18f673260fde7dfd2c7c9`；Main／Preload 与上方冻结值一致，Renderer 为 `422c5905e22d2012a62e9c9de0b1a659316f349003f9c599489e221a9772c0e9`，parser 清单为 `6de64fb986756e666d7fe1a4c0d20c77f91beae33bb7ac1e3633a44947477ef8`。未签名麦克风用途声明和四个 Helper 检查通过；signedEntitlementsVerified=false、physicalMicrophoneVerified=false，不能作为签名或硬件证据。
+
+持久日志与 JSON 位于 `$CODEX_HOME/aevoren-evidence/2026-10-15/` 的 `task39-full-unit-serial*`、`task39-legacy-fixture-focused.log`、`task39-full-eslint.log`、`task39-unsigned-mac-package.log`、`task39-actual-package-four*`、`task39-frozen-package-hashes.json`、`task39-package-assets.json` 和 `task39-package-microphone.json`。包内指南记录打包时的验证边界；本次后续文档更新不改变上述冻结业务字节。CI 的 macOS 实包、Windows 源码及 Windows 安装后清单现都包含 Task3，保留原有场景。跨平台检查、dev／beta 晋级及签名发行仍待完成，master 暂不晋级；阶段 6B–6F 尚未交付。
