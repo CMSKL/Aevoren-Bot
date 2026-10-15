@@ -54,6 +54,7 @@
 - PDF `getDocument` 只收字节及固定本地资源 URL，设置 `stopAtErrors:true`、`enableXfa:false` 和像素预算；不实例化脚本管理器/通用 Viewer。6.4.299 已无 `isEvalSupported`，不能沿用旧参数。[PDF.js API](https://mozilla.github.io/pdf.js/api/draft/api.js.html)
 - CSP 只开放必要本地脚本/Worker/字体；若使用打包 WASM，使用 `wasm-unsafe-eval` 而非 JavaScript `unsafe-eval`。取消调用 loading task `destroy()` 并销毁所属解析窗口/Worker。
 - 保留 PDF.js 主许可、`cmaps/LICENSE`、`standard_fonts/LICENSE_*`、`wasm/LICENSE_*`；许可生成器补充内嵌资产说明，正常生成 notices/SBOM，不把 npm 包标识当作全部资产许可。
+- 安装前核验 PDF.js 的 Node 可选 canvas 依赖：本方案只使用隔离 Renderer 的浏览器构建，不引入宿主原生 canvas 解码。明确锁定依赖和打包清单，避免 Electron 包意外携带未使用的原生二进制；若采用 pnpm 的定向可选依赖排除，先核验当前版本支持，再检查实际安装包。不能为省包体遗漏已打包浏览器代码的许可／SBOM。
 
 ### DOCX 的 ZIP/XML 边界
 
