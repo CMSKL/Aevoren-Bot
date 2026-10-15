@@ -276,3 +276,10 @@ At `a5d674999d215a837e29101434060b6eddb78c91`, [Windows CI 38689015680](https://
 The test-only correction gives the compound demonstration case a 60-second total budget on Windows, retaining 30 seconds on macOS. Only the observed Library completion poll is replaced: subscribe to the production RoomRuntime event before querying current state, match room/session/batch IDs, accept only `completed`, reject other terminal states and unsubscribe on settlement. Its existing 90-second whole-case budget and all business assertions remain unchanged; no sleep, retry or polling-timeout increase was added. Product code and the existing beta.34 package were not rebuilt or changed.
 
 Limited local macOS validation passed both affected source cases (2/2, 10.3 seconds) and the same cases in the existing actual unsigned beta.34 package (2/2, 8.7 seconds). Packaged identity/version checks passed, and package Main matched source out (`c8cd5865fd452e50dcfc074c2269eebbb111d574aae64e892085e0474524f746`); the ASAR digest was unchanged before/after. Targeted ESLint, documentation links and diff checks passed. Evidence is stored locally at `/tmp/aevoren-mcp34-windows-fixtures-evidence.json`, with separate `source` and `package` logs/JSON under the same prefix. Original log/artifacts and trace timing are retained at `/tmp/aevoren-mcp34-a5d6749-windows-failure-summary.json`. These are temporary local files, not repository attachments. This limited macOS rerun does not establish Windows success, a full-suite pass or a signed release; fresh cross-platform CI remains required.
+
+
+### beta.32 Windows 关闭阶段诊断（未发布）
+
+PR #41 的一个完整跨平台检查已通过；另一个 Windows 检查的首次关闭及随后一次不改代码的重跑仍出现失败。重跑通过源代码业务场景后，在主文档重载后的关闭断言失败，重启持久化校验未到达。保留失败记录，不能用另一轮成功替代。
+
+关闭 smoke 现在只在其自有进程内记录主文档加载、可信 Renderer-ready、flush 请求、可信确认、窗口关闭和进程退出阶段；失败时附上有界 JSON。记录不含 URL、页面内容、密钥或用户文件路径，不修改产品代码、关闭时限或启动参数。新增诊断的本机隐藏主文档重载／修改／关闭／重启用例已通过；下一次 Windows 检查用于定位停在哪个阶段，尚不能据此确认根因或发布。
