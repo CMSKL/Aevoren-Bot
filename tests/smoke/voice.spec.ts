@@ -173,6 +173,7 @@ test("saves three independent editable voice configurations without echoing keys
     const close = f.page.getByRole("button", { name: "关闭语音控制", exact: true }); await expect(close).toBeFocused(); await f.page.keyboard.press("Shift+Tab"); await f.page.keyboard.press("Tab"); await expect(close).toBeFocused();
     await f.application.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]!; window.setMinimumSize(320, 300); window.setSize(720, 520); window.webContents.setZoomFactor(2); });
     await expect.poll(() => f.page.getByRole("dialog", { name: "语音控制", exact: true }).evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1; })).toBe(true);
+    await f.page.screenshot({ path: test.info().outputPath("voice-controls-200-percent.png") });
     await f.page.keyboard.press("Escape"); await expect(trigger).toBeFocused(); await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await f.application.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]!; window.webContents.setZoomFactor(1); window.setSize(1182, 804); });
     await openVoice(f); await f.page.locator(".transcript").click({ position: { x: 4, y: 4 } }); await expect(trigger).toHaveAttribute("aria-expanded", "false"); expect(await f.page.locator(".voice-controls-popover").evaluate(element => element.contains(document.activeElement))).toBe(false);
@@ -286,6 +287,11 @@ test("queues group speech by live member completion while all six model requests
     const snapshot = unwrap(await f.page.evaluate(id => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.getSnapshot(id), f.room.id)) as RoomRuntimeSnapshot;
     expect(snapshot.turns).toHaveLength(6); expect(snapshot.turns.every(turn => turn.state === "completed")).toBe(true);
     f.completeSpeech(0); await expect.poll(async () => f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.players.length)).toBe(1);
+    await input.fill("@"); await expect(f.page.getByRole("option").filter({ hasText: "所有人" })).toBeVisible();
+    await f.page.screenshot({ path: test.info().outputPath("voice-chooser-playback.png") });
+    await f.page.getByRole("option").filter({ hasText: "所有人" }).click();
+    await expect(f.page.getByLabel("自动朗读本会话新回复", { exact: true })).toBeChecked();
+    expect(f.speeches[0]!.aborted).toBe(false); expect(await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.pauses)).toBe(0);
     await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.players[0]!.onended?.()); await expect.poll(() => f.speeches.length).toBe(2); expect(JSON.parse(f.speeches[1]!.body).input).toBe(`${f.bots[3]!.name}完成`);
     await f.page.getByRole("button", { name: "停止朗读", exact: true }).click(); await expect.poll(() => f.speeches[1]!.aborted).toBe(true); f.completeSpeech(1); expect(f.speeches).toHaveLength(2);
     await expect(f.page.getByLabel("自动朗读本会话新回复", { exact: true })).not.toBeChecked();
