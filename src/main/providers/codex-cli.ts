@@ -67,6 +67,7 @@ class CodexRpcClient {
   private notificationListeners = new Set<(message: JsonObject) => void>();
   private serverRequestHandler: ((method: string, params: unknown) => Promise<unknown>) | null = null;
   private closed = false;
+  private disposal: Promise<void> | null = null;
 
   constructor(
     private readonly cliPath: string,
@@ -155,7 +156,11 @@ class CodexRpcClient {
     this.serverRequestHandler = handler;
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    return this.disposal ??= this.closeOwnedProcess();
+  }
+
+  private async closeOwnedProcess(): Promise<void> {
     const child = this.child;
     this.closed = true;
     this.failAll(new AevorenBotError("MODEL_TRANSPORT_ERROR"));
@@ -544,7 +549,7 @@ export class CodexCliProvider implements ModelProvider {
       resolve(value: unknown): void;
       reject(error: unknown): void;
     }> = [];
-    let settleCompletion: (() => void) | null = null;
+    let settleCompletion!: () => void;
     const completion = new Promise<void>((resolve) => { settleCompletion = resolve; });
 
     const consume = (message: JsonObject): void => {
@@ -642,7 +647,7 @@ export class CodexCliProvider implements ModelProvider {
       return handleToolCall(method, rawParams);
     });
 
-    void (async () => {
+    const lifecycle = (async () => {
       try {
         context?.assertAuthority?.();
         client.start();
@@ -699,7 +704,16 @@ export class CodexCliProvider implements ModelProvider {
       }
     })();
 
-    yield* queue.iterate();
+    try {
+      yield* queue.iterate();
+    } finally {
+      settleCompletion?.();
+      // Error delivery must not race teardown of an owned CLI cwd or pipes.
+      // Disposal also rejects pending startup RPCs, so early iterator return
+      // cannot wait indefinitely for a provider response.
+      await client.dispose();
+      await lifecycle;
+    }
   }
 
   async testConnection(signal: AbortSignal): Promise<void> {
