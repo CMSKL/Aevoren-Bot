@@ -2,7 +2,7 @@
 
 This guide covers the v0.3.0-beta.35 development candidate: documents and text/script Skills, isolated Docker execution and browser/computer use, reviewable demonstration Skills, native connections, approved external drafts and scoped MCP Apps. Native reads and writes require explicit conversation/Bot permissions; credentials remain in the host. See [Native connections](NATIVE_CONNECTORS.md), [External drafts](NATIVE_OUTBOUND.md) and [MCP Apps](MCP_APPS.md) for setup and exact boundaries.
 
-The published signed macOS baseline is [v0.3.0-beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33). Source beta.39 adds Task threads; focused unit checks are complete, while its build, hidden UI, cross-platform and installer gates are pending. Phase 5 has local source/unsigned-package evidence, including 159 distinct Realtime source passes and 32 conditional skips across separate runs; it is not a single all-green full run. Real cloud accounts, physical audio devices and Windows Docker remain unverified. See the [implementation record](IMPLEMENTATION_PLAN.md) for exact evidence, failures and release boundaries. Search, organization, group automation, events/Webhooks and templates/exports remain separate Phase 6 work.
+The published signed macOS baseline is [v0.3.0-beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33). Source beta.39 adds Task threads; focused unit checks are complete, while its build, hidden UI, cross-platform and installer gates are pending. Phase 5 has local source/unsigned-package evidence, including 159 distinct Realtime source passes and 32 conditional skips across separate runs; it is not a single all-green full run. Real cloud accounts, physical audio devices and Windows Docker remain unverified. See the [implementation record](IMPLEMENTATION_PLAN.md) for exact evidence, failures and release boundaries. Source beta.40 adds [all-resource search](SEARCH.md), with local SQLite/transport and two hidden UI cases passed; its installation and platform gates are pending. Organization, group automation, events/Webhooks and templates/exports remain under implementation.
 
 ## First run
 
@@ -154,3 +154,8 @@ The beta.35 candidate retains the beta.34 [scoped MCP tools and isolated Apps](M
 
 聊天面板选择业务 Bot 后主动连接，逐轮开始说话／结束并提交。停止语音与停止已委派业务任务分开；重新连接需要用户操作，不自动复播未知请求。详细流程、采样打断、授权和未验证边界见[实时语音](REALTIME_VOICE.md)。
 
+
+
+## Search saved resources
+
+Use the search icon beside the chat/contact filter to open **全资源搜索**. Choose the current conversation, current project or all local resources, enter a literal keyword and search. Results open their original message, immutable document/Skill revision or saved media/transcript source. A revoked or cleared source cannot redirect to another similar item. Connected AI searches only its actual current conversation and explicitly selected Task context. See [Search](SEARCH.md) for supported sources and verification limits.

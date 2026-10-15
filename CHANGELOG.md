@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.0-beta.40 (development candidate)
+
+- Search saved messages, immutable document/Skill versions, media/transcripts, Task threads, routines and authorized local drafts from one scoped interface.
+- Recheck exact source identity, generation, version and grants; preserve original Task Runtime selections and prevent same-text replacements after history is cleared.
+- Share search with connected AI through host-scoped product operations. Keep private titles/snippets outside durable tool receipts and reauthorize text before provider serialization.
+- Local SQLite, guarded transport and two controlled UI cases pass. Current package, platform and signed-release gates remain pending.
+
+
 ## v0.3.0-beta.39 (development candidate)
 
 - Add multiple independent TASK conversations beside each Bot/group's MAIN chat, migration 45, separate session identities and explicit executor admission.

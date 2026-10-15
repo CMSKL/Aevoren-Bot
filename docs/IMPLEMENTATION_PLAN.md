@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.39**。阶段 6A 的 MAIN/TASK 数据、固定成员上下文、明确权限上限、独立线程界面及共享业务操作已实现，并通过专项单元／静态检查；构建、隐藏界面、真实安装包与跨平台门禁仍待通过。阶段 5 已有本地源码与真实未签名 macOS 包证据，beta.38 实时语音累计 159 个不同场景通过、32 条件跳过，包含休眠影响的失败和随后定向通过，不记为单轮完整全绿。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，beta.34 及后续单元按正常顺序等待晋级；master 不晋级。6B–6F、真实第三方账号／音频硬件及 Windows Docker 均未完成验收。
+当前开发候选为 **v0.3.0-beta.40**。阶段 6A 已实现 MAIN/TASK 隔离、固定上下文、权限、独立线程与共用业务入口，三项不同源码场景和真实未签名 macOS 包四项本地验收通过；普通回归原整轮 1,777 通过／9 失败／45 跳过，九项旧迁移断言修正后七文件 72 项定向通过，累计 1,786 个不同通过场景，不记为单轮全绿。阶段 6B 全资源搜索的 11 项 SQLite、2 项产品传输及2项实际界面场景通过，当前安装包和跨平台仍待验收。6C–6F 继续实施。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，后续版本按正常顺序晋级；master 不晋级。真实第三方账号、音频硬件及 Windows Docker 未验证。
 
 ## 已确定的方案
 
@@ -458,3 +458,10 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 首轮三项均在 Electron 启动前失败：fixture 的连续大写 Memory 标记触发既有 MEMORY_SENSITIVE_CONTENT 校验。只把种子改为普通带空格的私有测试句子，未修改产品敏感内容检查；精确清理三个本轮拥有的临时目录，失败日志／trace 保留。第二轮三个 Electron 均正常退出，但场景仍失败：两个 fixture 分别使用不符合已有规则的中文 MCP 连接名和 Everyone 空目标列表，现已改为合法 slug 与明确成员 ID。第三项已完成实际产品工具往返，发现 Task 产品输入在宿主注入范围之前被 normalizeProductRequest 的严格 UI schema 拒绝；Task 专用产品 schema 现允许省略宿主 session 字段，再由既有宿主校验注入，可信 UI schema 保持严格。对应规范化专项通过，新的完整构建及三项隐藏回归待验证，不把先前 INVALID_REQUEST 当作查询成功。
 
 本机持久证据为 `$CODEX_HOME/aevoren-evidence/2026-10-15/task39-hidden-first-three*` 和 `task39-hidden-second-three*`（完整日志、metadata 与 artifacts）；第二轮清理前未保存私有 Tool Journal，因此不能声称这些行仍可读取。后续 fixture 在失败时附上有界真实请求／工具回执、Runtime/Tool API 快照及自有 SQLite，避免再次丢失诊断。没有增加原 90 秒场景期限、绕过审批或放宽产品权限。
+
+
+## 阶段 6B：全资源搜索（beta.40，本地源码验收）
+
+实现 `search.query/open` 共用业务入口、当前会话／项目／全部本地资源界面、七类资源与已保存语音转录、固定来源与分页游标。AI 固定 Runtime 会话和执行 Bot，TASK 使用原始选定版本与历史；来源撤销、重绑、世代清空和内容变化会重新校验。私有标题／片段不进入持久工具回执，实际模型发送前检查私有附件授权。
+
+本地十一项 SQLite、两项产品传输、两项隐藏 Electron 界面和二十四项组合回归通过，完整类型与构建通过。两项界面场景同轮通过，应用拥有进程正常退出。证据标签：`$CODEX_HOME/aevoren-evidence/2026-10-15/search40-*`。未验证当前实际安装包、Windows、签名或真实云账号。详见 [搜索说明](SEARCH.md)。

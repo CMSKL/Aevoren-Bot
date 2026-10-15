@@ -12,7 +12,7 @@
 
 Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联系人组织长期使用的 Bot 与群协作，通过按会话授权的工作区访问本地项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
 
-> **源码版本：v0.3.0-beta.39（开发候选）。** 当前候选增加 MAIN/TASK 独立任务线程、按执行成员明确选择的上下文及权限上限，保留实时语音、转写／朗读、媒体、MCP／Apps、示范 Skill 与原生外发。Task 源码与专项单测已完成，构建、隐藏界面及安装包验收仍待通过。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
+> **源码版本：v0.3.0-beta.40（开发候选）。** 当前候选增加全资源搜索、MAIN/TASK 独立任务线程、按执行成员明确选择的上下文及权限上限，保留实时语音、转写／朗读、媒体、MCP／Apps、示范 Skill 与原生外发。TASK 已通过本地源码及真实未签名 macOS 包验收；搜索已通过 SQLite、私有传输及两项实际界面测试，当前安装包与平台门禁仍待通过。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
 [v0.3.0-beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开发布签名公证 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输、登记服务预览、脚本 Skill、Gmail／Drive／Notion 原生读取、本地草稿，以及独立审批的 Gmail 发信、Drive 普通文本文件写入和 Notion 页面创建，并包含明确开始的示范录制与待审阅 Skill 草稿。可写 MCP／Apps、Notion 页面更新及后续媒体／语音仍属源码候选。真实 Windows Docker、真实第三方账号未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
 
@@ -25,7 +25,8 @@ Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联�
 ## 核心能力
 
 - 基于 SQLite Transcript、Send Journal、稳定 Nonce、幂等重试、取消和崩溃恢复的流式对话。
-- 开发候选新增[独立任务线程](docs/TASK_THREADS.md)：默认空上下文与权限，明确选择执行成员及固定版本，历史和草稿分开，停止／删除只作用于该线程；源码整体验收待通过。
+- 开发候选新增[全资源搜索](docs/SEARCH.md)：AI 会话范围、固定来源、分页及原消息定位；当前安装包／平台门禁待通过。
+- 开发候选新增[独立任务线程](docs/TASK_THREADS.md)：默认空上下文与权限，明确选择执行成员及固定版本，历史和草稿分开，停止／删除只作用于该线程；本地源码及真实未签名 macOS 包验收通过。
 - 单 Bot 对话和 2–6 个成员的 Room，支持显式 `@Bot`、自动 owner 选择、边界内 handoff、speaker 身份和循环抑制。
 - 支持 API、Claude Code、Codex CLI，自动扫描两种 CLI 的安装、登录与模型信息。
 - 文本/代码附件、经过校验的内容读取，以及在任务详情中集中查看的真实 Markdown/CSV 交付物。
@@ -97,7 +98,7 @@ AI 操作与界面共用宿主校验和权限规则。创建 Bot 或群聊支持
 
 文本 Skill 可创建、导入并按需加载到明确授权的会话。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用。Bash、Python、Node 脚本先授权固定版本、入口和环境镜像，再确认每次运行参数，见[脚本 Skill](docs/SCRIPT_SKILLS.md)。明确开始的[人类示范](docs/SKILL_DEMONSTRATIONS.md)产生可审阅草稿，发布审阅固定保存版本并创建停用 Skill，不授予执行权限。
 
-[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权与固定草稿审批，Notion 仅改标题和末尾追加保留已有正文。[MCP 工具与 Apps](docs/MCP_APPS.md)共用同一授权审批层，并明确区分服务器回执与外部实际效果。阶段 4 组合候选的四项 CI 门禁已通过，含源码及真实 macOS／Windows 安装包；阶段 5.1 [媒体与文档](docs/MEDIA.md)已有本地源码／安装包证据；阶段 5.2 [语音与音视频](docs/VOICE.md)及阶段 5.3 [实时语音](docs/REALTIME_VOICE.md)已有本地源码和未签名 macOS 包证据。实时语音累计 159 个不同场景通过、32 项条件跳过，包含宿主休眠影响的完整运行与随后 3 项定向通过，不能记为单轮完整全绿。阶段 6A [任务线程](docs/TASK_THREADS.md)源码与专项单测已完成，构建／隐藏界面／安装包门禁待通过；搜索、分区与偏好、群自动化、事件／Webhook、模板及导出（6B–6F）待实施。公开安装包和真实第三方账号另行验证。受限界面动作操作 Aevoren 自身界面。
+[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权与固定草稿审批，Notion 仅改标题和末尾追加保留已有正文。[MCP 工具与 Apps](docs/MCP_APPS.md)共用同一授权审批层，并明确区分服务器回执与外部实际效果。阶段 4 组合候选的四项 CI 门禁已通过，含源码及真实 macOS／Windows 安装包；阶段 5.1 [媒体与文档](docs/MEDIA.md)已有本地源码／安装包证据；阶段 5.2 [语音与音视频](docs/VOICE.md)及阶段 5.3 [实时语音](docs/REALTIME_VOICE.md)已有本地源码和未签名 macOS 包证据。实时语音累计 159 个不同场景通过、32 项条件跳过，包含宿主休眠影响的完整运行与随后 3 项定向通过，不能记为单轮完整全绿。阶段 6A [任务线程](docs/TASK_THREADS.md)本地源码及真实未签名 macOS 包验收通过；6B [全资源搜索](docs/SEARCH.md)通过 SQLite／私有传输及两项源码界面验收，当前安装包和平台门禁待通过；分区与偏好、群自动化、事件／Webhook、模板及导出（6C–6F）继续实施。公开安装包和真实第三方账号另行验证。受限界面动作操作 Aevoren 自身界面。
 
 ## 资料库与文本 Skill
 
@@ -179,3 +180,4 @@ Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac
 ## 许可证
 
 Aevoren Bot 使用 [Apache License 2.0](LICENSE) 开源。项目名称和图标仍受独立的[商标说明](TRADEMARKS.md)约束。
+
