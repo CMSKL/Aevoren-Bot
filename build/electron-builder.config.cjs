@@ -30,6 +30,7 @@ module.exports = {
     { from: "docs/MEDIA.md", to: "docs/MEDIA.md" },
     { from: "docs/VOICE.md", to: "docs/VOICE.md" },
     { from: "docs/REALTIME_VOICE.md", to: "docs/REALTIME_VOICE.md" },
+    { from: "docs/TASK_THREADS.md", to: "docs/TASK_THREADS.md" },
     { from: "NOTICE", to: "NOTICE" },
     { from: "out/worker", to: "environment-worker" },
     { from: "out/browser-worker", to: "browser-worker" },

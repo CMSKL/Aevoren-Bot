@@ -41,8 +41,9 @@ export function verifyMediaParserPackage(target, expectedManifestPath = resolve(
   }
   scan(resources);
   for (const path of asar.listPackage(archive)) {
-    const normalized = path.replaceAll("\\", "/").replace(/^\/+/, ""), stat = asar.statFile(archive, normalized);
-    checkForbidden(normalized, normalized.toLowerCase().endsWith(".ttf") ? asar.extractFile(archive, normalized) : new Uint8Array());
+    const normalized = path.replaceAll("\\", "/").replace(/^\/+/, "");
+    const nativePath = path.replace(/^[/\\]+/, ""), stat = asar.statFile(archive, nativePath);
+    checkForbidden(normalized, normalized.toLowerCase().endsWith(".ttf") ? asar.extractFile(archive, nativePath) : new Uint8Array());
     if (stat.link) checkForbidden(stat.link.replaceAll("\\", "/"), new Uint8Array());
     if (!stat.files) asarFiles += 1;
   }

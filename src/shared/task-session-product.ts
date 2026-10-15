@@ -3,8 +3,8 @@ import type { ProductOperationDefinition } from "./product-operations";
 import { TASK_SESSION_CHANNELS } from "./task-session-channels";
 import { taskCreateSchema, taskListSchema, taskScopeSchema, taskUpdateSchema, taskSelectionUpdateSchema, taskCancelSchema } from "./task-session-schemas";
 export const TASK_SESSION_OPERATION_SCHEMAS: Record<string,z.ZodType>={
-  "sessions.taskOptions":taskScopeSchema,"sessions.createTask":taskCreateSchema,
-  "sessions.listTasks":taskListSchema,"sessions.getTask":taskScopeSchema,"sessions.updateTask":taskUpdateSchema,
+  "sessions.taskOptions":taskScopeSchema.partial().default({}),"sessions.createTask":taskCreateSchema.partial({parentSessionId:true}),
+  "sessions.listTasks":taskListSchema.partial({parentSessionId:true}).default({}),"sessions.getTask":taskScopeSchema,"sessions.updateTask":taskUpdateSchema,
   "sessions.reviseTaskSelection":taskSelectionUpdateSchema,"sessions.cancelTask":taskCancelSchema,"sessions.deleteTask":taskCancelSchema,
 };
 const descriptions={taskOptions:"查看当前会话可明确选择的任务上下文及授权范围版本，不自动继承",createTask:"创建独立 TASK 线程，仅复制明确选择的固定上下文和权限上限，不启动任务",

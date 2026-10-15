@@ -135,7 +135,7 @@ export class ProductOperationService {
     const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
     if (!this.dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
     const input = skillRunSchema.omit({ clientNonce: true }).parse(this.libraryInput(tool.operation, tool.input, runtime));
-    return this.dependencies.skillExecutionService.approvalReview(input, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId });
+    return this.dependencies.skillExecutionService.approvalReview(input, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId },runtime.id);
   }
 
   validate(tool: ProductToolRequest, runtimeRunId: string): void {
@@ -346,7 +346,7 @@ export class ProductOperationService {
       const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
       const review = this.dependencies.repository.getApprovalReview({ ...scope, id: approval.id, expectedVersion: approval.version });
       if (review.snapshot?.kind !== "skill-script" || !this.dependencies.skillExecutionService) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
-      this.dependencies.skillExecutionService.assertApprovalReview(review.snapshot, scope);
+      this.dependencies.skillExecutionService.assertApprovalReview(review.snapshot, scope,runtime.id);
     }
     if (tool.operation === "demonstrations.publish") {
       const approval = this.dependencies.repository.getApprovalRequest(invocation.approvalRequestId), scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };

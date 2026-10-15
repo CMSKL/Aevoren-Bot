@@ -1,10 +1,18 @@
 # Changelog
 
+## v0.3.0-beta.39 (development candidate)
+
+- Add multiple independent TASK conversations beside each Bot/group's MAIN chat, migration 45, separate session identities and explicit executor admission.
+- Default all task context and permissions to empty. Capture selected per-member Memory/history/resource/media versions, Workspace ceilings, exact read-only MCP identities and product/network/clipboard permissions; Runtime retries retain their original snapshot.
+- Add task creation, separate sidebar rows, session-specific history/drafts, conflict-preserving titles, explicit authorization revision and task-only stop/delete controls. Preserve the owner Bot/group and ordinary MAIN entry points.
+- Scope capability metadata, model tools and live events to the actual task/executor, without inheriting global connection state or unselected authority.
+- Focused unit/static checks pass. Build, hidden Electron, actual-package and cross-platform acceptance remain pending; search and the remaining Phase 6B–6F deliveries are not included.
+
 ## v0.3.0-beta.38 (development candidate)
 
 - Add user-initiated, manually committed Realtime voice turns with host-owned credentials, final human transcript provenance, ordinary Runtime delegation and independent speech/task stop controls.
 - Add persistent turn/call journals, fixed resource and member admissions, actual rendered-sample interrupt acknowledgements and fail-closed disconnect/recovery.
-- Local controlled integration and cross-platform/package acceptance are pending. Physical devices and a live cloud account remain unverified.
+- Local controlled source coverage totals 159 distinct passes and 32 conditional skips: preserve the sleep-affected full run's 156 passes/3 failures and the subsequent focused 3/3 passes separately. This is not one all-green full run. Existing unsigned macOS-package evidence remains separate; cross-platform and signed publication are pending. Physical devices and a live cloud account remain unverified.
 
 ## v0.3.0-beta.37 (development candidate)
 
@@ -34,11 +42,11 @@
 - Share one Apps approval owner across native and MCP actions, preserving six-member execution and exact Stop/revoke.
 - Retain read-only MCP compatibility, existing themes and icons. External App domains and device permissions are disabled; real accounts and final package acceptance remain separate verification gates.
 
-## v0.3.0-beta.33 (development candidate)
+## v0.3.0-beta.33 (published Beta)
 
 - Added explicit isolated-computer demonstration recording and scoped editable text Skill drafts; publication reviews a fixed saved version and creates a disabled Skill.
 - Browser Worker 1.1.0 redacts printable keys and clipboard input, and seals captures on disconnect or control change.
-- Native connector and outbound features from beta.31/beta.32 are retained. Real Docker and cross-platform candidate checks are pending.
+- Native connector and outbound features from beta.31/beta.32 are retained. The signed/notarized macOS release is published; real Windows Docker and live third-party accounts remain separate, unverified boundaries.
 
 
 ## v0.3.0-beta.32 (development candidate)
