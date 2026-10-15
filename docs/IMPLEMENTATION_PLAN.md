@@ -324,3 +324,10 @@ The updated fixture passed all three source MCP cases in 10.63 seconds and all t
 诊断候选 `1ca624d` 的本机补充验收：截图诊断／控制专项 15 项、Browser Worker TypeScript 与定向 lint、Worker 构建通过。重新打包的真实未签名 macOS arm64 beta.32 完成 23 项场景（原生读取 2、外发 5、关闭 8、Runtime 8），包括 15 次重载恢复、失败后重试、SIGKILL 恢复、关闭阻塞提示及 typed API；全部通过。两套 Worker 共八个文件及五份指南与构建输出逐字节相同。ASAR SHA-256 为 `f095741de56104676e8854fcf9d2472a4887ed0164945bb850dbdd3d035cff0a`，Browser engine 为 `9788e576cc351bcfea9e380484b33df8456582b143d0c7fac271662e1ded6e7d`。新一轮跨平台／Docker 检查仍需完成；本机没有启动 Docker 或连接真实账号。
 
 当前 beta.35 合入已验证 dev `36a48730002a5a8bd7115891a99a18a7cffa792c`，保留上述两版独立验收记录。相较合并前 `15ac2b8`，源码、测试、工作流、构建配置、package 和锁文件字节均未改变；只合并实施历史，不重记既有失败为成功。版本仍为 beta.35，新的合并提交仍须完成正常跨平台 CI。
+
+
+### beta.32 Windows 关闭阶段诊断（未发布）
+
+PR #41 的一个完整跨平台检查已通过；另一个 Windows 检查的首次关闭及随后一次不改代码的重跑仍出现失败。重跑通过源代码业务场景后，在主文档重载后的关闭断言失败，重启持久化校验未到达。保留失败记录，不能用另一轮成功替代。
+
+关闭 smoke 现在只在其自有进程内记录主文档加载、可信 Renderer-ready、flush 请求、可信确认、窗口关闭和进程退出阶段；失败时附上有界 JSON。记录不含 URL、页面内容、密钥或用户文件路径，不修改产品代码、关闭时限或启动参数。新增诊断的本机隐藏主文档重载／修改／关闭／重启用例已通过；下一次 Windows 检查用于定位停在哪个阶段，尚不能据此确认根因或发布。
