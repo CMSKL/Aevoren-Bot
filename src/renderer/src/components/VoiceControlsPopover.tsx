@@ -36,10 +36,16 @@ export function VoiceControlsPopover({ id, open, trigger, onClose, children }: {
   return createPortal(<section id={id} ref={panel} hidden={!open} className="voice-controls-popover" role="dialog" aria-label="语音控制" style={bounds} onKeyDown={event => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
     if (event.key === "Tab") {
-      const controls = [...(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]') ?? [])].filter(element => element.getClientRects().length > 0);
-      const first = controls[0], last = controls.at(-1);
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      const controls = [...(panel.current?.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex], [contenteditable="true"]') ?? [])].filter(element => {
+        const style = getComputedStyle(element);
+        return element.tabIndex >= 0 && !element.matches(':disabled, [aria-disabled="true"]') && !element.closest('[hidden], [inert]') && element.getClientRects().length > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
+      });
+      // Choose every step explicitly: platform keyboard preferences can skip
+      // buttons even though they remain valid programmatic focus targets.
+      event.preventDefault();
+      const current = controls.indexOf(document.activeElement as HTMLElement);
+      const next = current < 0 ? (event.shiftKey ? controls.length - 1 : 0) : (current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
+      controls[next]?.focus();
     }
   }}><header><strong>语音</strong><button ref={close} className="text-button" type="button" aria-label="关闭语音控制" onClick={() => onClose()}>关闭</button></header>{children}</section>, document.body);
 }
