@@ -142,6 +142,11 @@ describe("versioned portable templates with real SQLite and owned CAS",()=>{
     await expect(f.service.commitCapture({preparedId:own.id,expectedDigest:own.digest},{...context,runtimeRunId:retry.id})).rejects.toMatchObject({code:"APPROVAL_SCOPE_INVALID"});expect(f.service.list()).toEqual([]);
     expect(f.service.reviewPrepared(trusted.id,trusted.digest).name).toBe("Portable team");
   });
+  it("binds an import nonce receipt to its originating executor within a shared Room",async()=>{
+    const f=await fixture(),{artifact}=await exported(f),room=f.app.createRoom({memberBotIds:[f.owner.bot.id,f.other.bot.id]}),contextA={sessionId:room.session.id,executorBotId:f.owner.bot.id},contextB={sessionId:room.session.id,executorBotId:f.other.bot.id};
+    const preview=await f.service.preflightImport(artifact.bytes,contextA),input={preparedId:preview.id,expectedDigest:preview.digest,clientNonce:randomUUID()},result=await f.service.commitImport(input,contextA);
+    expect(await f.service.commitImport(input,contextA)).toEqual(result);await expect(f.service.commitImport(input,contextB)).rejects.toMatchObject({code:"APPROVAL_SCOPE_INVALID"});expect(await f.service.commitImport(input)).toEqual(result);
+  });
   it("reopens saved CAS files and persistent import receipts without a live preflight cache",async()=>{
     const f=await fixture(),{record,artifact}=await exported(f),preview=await f.service.preflightImport(artifact.bytes),input={preparedId:preview.id,expectedDigest:preview.digest,clientNonce:randomUUID()},result=await f.service.commitImport(input);await f.close();
     const reopened=await open(f.directory,false);expect(await reopened.service.commitImport(input)).toEqual(result);expect(Buffer.from((await reopened.service.prepareTemplateExport({id:record.template.id})).bytes)).toEqual(Buffer.from(artifact.bytes));

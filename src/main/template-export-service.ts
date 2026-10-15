@@ -95,11 +95,11 @@ export class TemplateExportService{
   }
   async commitImport(input:TemplateImportInput,context?:TemplateContext,signal?:AbortSignal):Promise<TemplateImportResult>{
     const parsed=templateImportSchema.parse(input);this.check(context,parsed.targetSessionId,signal);const intent=templateDigest({digest:parsed.expectedDigest,targetSessionId:parsed.targetSessionId??null});
-    const previous=this.templates.importReceipt(parsed.clientNonce,intent,context?.sessionId);if(previous)return previous;
+    const previous=this.templates.importReceipt(parsed.clientNonce,intent,context?.sessionId,context?.executorBotId);if(previous)return previous;
     const value=this.fromPreview(parsed.preparedId,parsed.expectedDigest,context);this.validateFiles(value.manifest,value.files);
     if(!value.manifest.bots.length&&!parsed.targetSessionId)throw invalid();
     for(const bytes of value.files.values()){await this.libraryBlobs.put(bytes,signal??context?.signal);value.assertCurrent();this.check(context,undefined,signal);}this.check(context,parsed.targetSessionId,signal);
-    return this.app.demonstrationsTransaction(()=>this.templates.importAtomic(parsed.clientNonce,intent,value.digest,context?.sessionId??null,()=>{
+    return this.app.demonstrationsTransaction(()=>this.templates.importAtomic(parsed.clientNonce,intent,value.digest,context?.sessionId??null,context?.executorBotId??null,()=>{
       value.assertCurrent();const bots=new Map<string,ReturnType<AppRepository["createBot"]>>();
       for(const profile of value.manifest.bots){const created=this.app.createBot();this.app.updateBot(created.bot.id,created.bot.version,{name:profile.name,label:profile.label,description:profile.description,instructions:profile.instructions,avatarShape:profile.avatarShape,avatarColor:profile.avatarColor,mcpServerIds:[],memoryWorkspaceIds:[]});this.app.setConversationProject(created.session.id,null,this.app.getConversation(created.session.id).version);bots.set(profile.key,created);}
       const room=value.manifest.room?this.app.createRoom({name:value.manifest.room.name,description:value.manifest.room.description,memberBotIds:value.manifest.room.memberKeys.map(key=>bots.get(key)!.bot.id),leadBotId:value.manifest.room.leadBotKey?bots.get(value.manifest.room.leadBotKey)!.bot.id:null}):null;

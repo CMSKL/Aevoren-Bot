@@ -18,7 +18,7 @@ export const TEMPLATE_EXPORT_MIGRATION={version:48,sql:`
       THEN COALESCE((SELECT a.templates_json FROM runtime_runs r LEFT JOIN portable_runtime_admissions a ON a.runtime_run_id=r.id WHERE r.client_nonce=NEW.client_nonce AND r.executor_bot_id=NEW.executor_bot_id AND r.id<>NEW.id ORDER BY r.rowid LIMIT 1),'[]')
       ELSE (SELECT json_group_array(json_object('id',t.id,'revisionId',v.id,'digest',v.digest)) FROM portable_templates t JOIN portable_template_revisions v ON v.id=t.current_revision_id WHERE t.owner_session_id=NEW.session_id) END);
   END;
-  CREATE TABLE portable_template_imports(client_nonce TEXT PRIMARY KEY,intent_digest TEXT NOT NULL,bundle_digest TEXT NOT NULL,actor_session_id TEXT,result_json TEXT NOT NULL CHECK(json_valid(result_json)),created_at TEXT NOT NULL);
+  CREATE TABLE portable_template_imports(client_nonce TEXT PRIMARY KEY,intent_digest TEXT NOT NULL,bundle_digest TEXT NOT NULL,actor_session_id TEXT,actor_executor_bot_id TEXT,result_json TEXT NOT NULL CHECK(json_valid(result_json)),created_at TEXT NOT NULL);
 `} as const;
 export function stableTemplateJson(value:unknown):string{if(Array.isArray(value))return `[${value.map(stableTemplateJson).join(",")}]`;if(value&&typeof value==="object")return "{"+Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,item])=>`${JSON.stringify(key)}:${stableTemplateJson(item)}`).join(",")+"}";return JSON.stringify(value);}
 export const templateDigest=(value:unknown)=>createHash("sha256").update(stableTemplateJson(value)).digest("hex");
@@ -62,12 +62,12 @@ export class TemplateExportRepository{
     }else{if(expectedVersion!==undefined)throw new AevorenBotError("INVALID_REQUEST");this.database.prepare("INSERT INTO portable_templates VALUES(?,?,?,1,?,?,?,?)").run(templateId,checked.name,checked.description,revisionId,ownerSessionId,timestamp,timestamp);}
     this.database.prepare("INSERT INTO portable_template_revisions VALUES(?,?,?,?,?,?,?)").run(revisionId,templateId,number,templateDigest(checked),stableTemplateJson(checked),JSON.stringify(origins),timestamp);return this.read({id:templateId});
   });}
-  importReceipt(clientNonce:string,intentDigest:string,actorSessionId?:string):TemplateImportResult|null{
-    const row=this.database.prepare("SELECT intent_digest,actor_session_id,result_json FROM portable_template_imports WHERE client_nonce=?").get(clientNonce) as {intent_digest:string;actor_session_id:string|null;result_json:string}|undefined;
-    if(!row)return null;if(row.intent_digest!==intentDigest)throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");if(actorSessionId!==undefined&&row.actor_session_id!==actorSessionId)throw new AevorenBotError("APPROVAL_SCOPE_INVALID");return JSON.parse(row.result_json) as TemplateImportResult;
+  importReceipt(clientNonce:string,intentDigest:string,actorSessionId?:string,actorExecutorBotId?:string):TemplateImportResult|null{
+    const row=this.database.prepare("SELECT intent_digest,actor_session_id,actor_executor_bot_id,result_json FROM portable_template_imports WHERE client_nonce=?").get(clientNonce) as {intent_digest:string;actor_session_id:string|null;actor_executor_bot_id:string|null;result_json:string}|undefined;
+    if(!row)return null;if(row.intent_digest!==intentDigest)throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");if(actorSessionId!==undefined&&(row.actor_session_id!==actorSessionId||row.actor_executor_bot_id!==actorExecutorBotId))throw new AevorenBotError("APPROVAL_SCOPE_INVALID");return JSON.parse(row.result_json) as TemplateImportResult;
   }
-  importAtomic(clientNonce:string,intentDigest:string,bundleDigest:string,actorSessionId:string|null,work:()=>TemplateImportResult):TemplateImportResult{return this.transaction(()=>{
-    const previous=this.importReceipt(clientNonce,intentDigest,actorSessionId??undefined);if(previous)return previous;const result=work();
-    this.database.prepare("INSERT INTO portable_template_imports VALUES(?,?,?,?,?,?)").run(clientNonce,intentDigest,bundleDigest,actorSessionId,JSON.stringify(result),new Date().toISOString());return result;
+  importAtomic(clientNonce:string,intentDigest:string,bundleDigest:string,actorSessionId:string|null,actorExecutorBotId:string|null,work:()=>TemplateImportResult):TemplateImportResult{return this.transaction(()=>{
+    const previous=this.importReceipt(clientNonce,intentDigest,actorSessionId??undefined,actorExecutorBotId??undefined);if(previous)return previous;const result=work();
+    this.database.prepare("INSERT INTO portable_template_imports VALUES(?,?,?,?,?,?,?)").run(clientNonce,intentDigest,bundleDigest,actorSessionId,actorExecutorBotId,JSON.stringify(result),new Date().toISOString());return result;
   });}
 }
