@@ -6,8 +6,6 @@
 
 ## 已确定的方案
 
-最新 TCP 录制夹具更正：MCP34 Windows 运行 38675963129 的五项进程清理通过，但普通测试 1,550 通过／60 跳过／1 失败；录制事件数先更新，接收端 TCP data 回调尚未交付 28 字节，后续构建／包验收未运行。真实 socket 暂停确定性复现旧断言失败；现先登记接收等待，再恢复并等待完整字节，保留原录制／控制和精确字节断言。相关 9 项、Node／浏览器 Worker 类型和 lint 通过。仅测试改变，安装包业务代码和既有本机回执不变；修正后的跨平台 CI 待验证。
-
 - 电脑首期使用本机 Docker 隔离 Linux 环境，自托管服务器后置。
 - 云语音使用用户自带密钥，转写、朗读、实时语音独立配置。
 - 首批内置连接为 Gmail、Google Drive、Notion，保留通用 MCP。
@@ -261,3 +259,7 @@ The clean tested source is `93e5e17b18c400d75dafe6873d80454853dc2614`. A single 
 Hidden source acceptance passed **22/22**. The rebuilt actual unsigned macOS arm64 beta.35 application passed **30 unique scenarios**: Library 8, native reads 2, outbound 7 (including both Notion updates), demonstration 1, MCP Apps 3, normal close 8 and actual packaged typed API 1. Source and package UI logs contain **zero forced-cleanup warnings**. Genuine `isPackaged`, version, seven guides and Execution Worker 1.2.0 / Browser Worker 1.1.0 were checked; packaged Worker bytes match the build output.
 
 ASAR SHA-256 is `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf3`. Compiled Main and package-extracted Main both hash to `627d2e5c89eccd164d5e60240bb41d70ea42894146be9c59852c467a772ca78b`. Subsequent documentation-only commits do not change these application bytes. Cross-platform CI, validated Beta promotion and signed publication remain pending; these local results do not establish real external-account or Windows Docker behavior.
+
+## Windows TCP 录制夹具验收更正
+
+最新 TCP 录制夹具更正：MCP34 Windows 运行 38675963129 的五项进程清理通过，但普通测试 1,550 通过／60 跳过／1 失败；录制事件数先更新，接收端 TCP data 回调尚未交付 28 字节，后续构建／包验收未运行。真实 socket 暂停确定性复现旧断言失败；现先登记接收等待，再恢复并等待完整字节，保留原录制／控制和精确字节断言。相关 9 项、Node／浏览器 Worker 类型和 lint 通过。仅测试改变，安装包业务代码和既有本机回执不变；修正后的跨平台 CI 待验证。
