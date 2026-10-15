@@ -44,7 +44,7 @@ import { RoomInspector, type RoomInspectorHandle } from "./components/RoomInspec
 import { Sidebar, type RoomRestoreState } from "./components/Sidebar";
 import { TaskSessionDialog } from "./components/TaskSessionDialog";
 import { TaskDetailDialog } from "./components/TaskDetailDialog";
-import type { TaskDetail } from "@shared/task-session-contracts";
+import type { TaskDetail, TaskSessionChanged } from "@shared/task-session-contracts";
 import { mainConversationSummaries, taskConversationKey } from "./task-session-state";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { UpdateStatusNotice } from "./components/UpdateStatusNotice";
@@ -1004,6 +1004,28 @@ export function App(): React.JSX.Element {
     setRoomHandoffRejections([]);
     setLiveState(null);
   }
+
+  const tasksChanged = useEffectEvent((event: TaskSessionChanged): void => {
+    void refreshConversations();
+    if (sessionIdRef.current !== event.sessionId) return;
+    if (event.deleted) {
+      openRequestRef.current += 1;
+      composerDraftsRef.current.delete(event.sessionId);
+      clearSelection();
+      return;
+    }
+    const request = openRequestRef.current;
+    void window.aevorenBot.sessions.getTask({ sessionId: event.sessionId }).then(async result => {
+      if (request !== openRequestRef.current || sessionIdRef.current !== event.sessionId || !result.ok) return;
+      setSelectedTask(current => current?.session.id === event.sessionId && current.version <= result.data.version ? result.data : current);
+      mergeConversation(result.data.conversation);
+      if (result.data.session.roomId) {
+        const snapshot = await window.aevorenBot.roomRuntime.getSnapshot({ roomId: result.data.session.roomId, sessionId: event.sessionId });
+        if (request === openRequestRef.current && sessionIdRef.current === event.sessionId && snapshot.ok) setSelectedRoom(snapshot.data.detail);
+      }
+    }).catch(() => { if (request === openRequestRef.current && sessionIdRef.current === event.sessionId) setCloseNotice("任务状态已变化，暂时无法同步详情；当前草稿仍保留。"); });
+  });
+  useEffect(() => window.aevorenBot.sessions.onTasksChanged(event => tasksChanged(event)), []);
 
   async function openFallback(nextBots: Bot[], nextRooms: Room[]): Promise<void> {
     const visible = new Set(mainConversationSummaries(conversations).filter((item) => !item.hiddenAt).map((item) => item.botId ?? item.roomId));
