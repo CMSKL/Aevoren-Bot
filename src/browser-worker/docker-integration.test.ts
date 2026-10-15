@@ -41,6 +41,8 @@ async function withContainer(callback: (fixture: Fixture) => Promise<void>): Pro
     await callback(fixture);
   } catch (error) {
     if (process.env.AEVOREN_BROWSER_DIAGNOSTICS === "1") {
+      const nativeFocus = await docker(["exec", "--user", "1000", "--env", "DISPLAY=:99", name, "node", "-e", `const {spawnSync}=require('node:child_process');const read=args=>{const result=spawnSync('xdotool',args,{encoding:'utf8',timeout:1000});const values=String(result.stdout||'').trim().split(/\\s+/).filter(value=>/^\\d+$/.test(value)).map(Number).filter(Number.isSafeInteger).slice(0,20);return {code:result.status,timedOut:result.error?.code==='ETIMEDOUT',values}};const active=read(['getactivewindow']),focus=read(['getwindowfocus']);console.log(JSON.stringify({active,focus,activePid:active.values[0]?read(['getwindowpid',String(active.values[0])]):null,visibleChrome:read(['search','--onlyvisible','--class','chromium'])}))`]).catch(() => "Native focus diagnostic unavailable");
+      console.error("Controlled browser native focus diagnostic:", nativeFocus);
       const diagnostic = await docker(["exec", "--user", "1000", name, "node", "-e", "try{console.log(require('fs').readFileSync('/tmp/aevoren-ffmpeg-diagnostics.json','utf8'))}catch{console.log('No ffmpeg failure diagnostic')}" ]).catch(() => "Diagnostic container unavailable");
       console.error("Controlled browser capture diagnostic:", diagnostic);
       const frameDiagnostic = await docker(["exec", "--user", "1000", name, "node", "-e", "try{console.log(require('fs').readFileSync('/tmp/aevoren-frame-diagnostics.json','utf8'))}catch{console.log('No stale frame diagnostic')}" ]).catch(() => "Diagnostic container unavailable");
