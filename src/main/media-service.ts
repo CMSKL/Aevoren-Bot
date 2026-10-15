@@ -151,6 +151,18 @@ export class MediaService {
       ...structuredClone(e), digest: mediaExtractionDigest({ sourceSha256: sha256, parserName: parsed.parserName, parserVersion: parsed.parserVersion, ...e }) } : null;
     return { asset: { reference: { id, name, size: bytes.length, mimeType: canonical, sha256 }, kind: parsed.kind, width: parsed.width, height: parsed.height, durationMs: parsed.durationMs }, extraction };
   }
+  /** Host-only staging lets profile updates publish owned image bytes and metadata atomically. */
+  prepareImageBytes(input:{sessionId:string;bytes:Uint8Array;name:string},context:MediaExecutionContext={}):Promise<PreparedMediaImport>{
+    const {sessionId}=mediaScopeSchema.parse({sessionId:input.sessionId});
+    if(!(input.bytes instanceof Uint8Array)||!input.bytes.length||input.bytes.length>MEDIA_IMAGE_MAX_BYTES)throw new AevorenBotError("MEDIA_IMPORT_TOO_LARGE");
+    return this.track(sessionId,undefined,context,async current=>{
+      const check=():void=>this.check(sessionId,current),value=await this.stageBytes(nameFor(input.name),Buffer.from(input.bytes),current,check,"image/png");check();
+      if(value.asset.kind!=="image")throw new AevorenBotError("MEDIA_CONTENT_INVALID");
+      const token:PreparedMediaImport=Object.freeze({sessionId,accepted:[value.asset.reference],failed:[]});
+      this.prepared.set(token,{sessionId,values:[value],failed:[],context:current});return token;
+    });
+  }
+
   /** Private capture/voice publisher. No host path or caller-declared duration is accepted. */
   importBytes(input: { sessionId: string; bytes: Uint8Array; mimeType: string; name: string; requiredKind?: "audio" }, context: MediaExecutionContext = {}): Promise<MediaImportResult> {
     const { sessionId } = mediaScopeSchema.parse({ sessionId: input.sessionId });

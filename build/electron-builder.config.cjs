@@ -31,6 +31,8 @@ module.exports = {
     { from: "docs/VOICE.md", to: "docs/VOICE.md" },
     { from: "docs/REALTIME_VOICE.md", to: "docs/REALTIME_VOICE.md" },
     { from: "docs/TASK_THREADS.md", to: "docs/TASK_THREADS.md" },
+    { from: "docs/SEARCH.md", to: "docs/SEARCH.md" },
+    { from: "docs/GROUP_ROUTINES.md", to: "docs/GROUP_ROUTINES.md" },
     { from: "NOTICE", to: "NOTICE" },
     { from: "out/worker", to: "environment-worker" },
     { from: "out/browser-worker", to: "browser-worker" },

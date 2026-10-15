@@ -89,7 +89,7 @@ jobs:
         run: |
           export AEVOREN_PACKAGED_APP_PATH="$PWD/dist/mac-arm64/Aevoren Bot.app/Contents/MacOS/Aevoren Bot"
           test -f "$AEVOREN_PACKAGED_APP_PATH"
-          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts tests/smoke/media.spec.ts tests/smoke/media-av-ui.spec.ts tests/smoke/voice.spec.ts tests/smoke/realtime-voice.spec.ts
+          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts tests/smoke/media.spec.ts tests/smoke/media-av-ui.spec.ts tests/smoke/voice.spec.ts tests/smoke/realtime-voice.spec.ts tests/smoke/task-sessions.spec.ts tests/smoke/search.spec.ts tests/smoke/group-routines.spec.ts
       - name: Validate close handshakes in the packaged macOS app
         env:
           AEVOREN_PACKAGED_APP_PATH: "${{ github.workspace }}/dist/mac-arm64/Aevoren Bot.app/Contents/MacOS/Aevoren Bot"
@@ -129,7 +129,7 @@ jobs:
           # GitHub-hosted Windows runners have no interactive desktop. The
           # Playwright Electron connection still exercises the full Renderer.
           AEVOREN_BOT_TEST_HIDDEN: "1"
-        run: pnpm exec playwright test tests/smoke/media-parser.spec.ts tests/smoke/media-av.spec.ts tests/smoke/windows-ci.spec.ts tests/smoke/p0-navigation.spec.ts tests/smoke/ui-redesign-acceptance.spec.ts tests/smoke/product-view.spec.ts tests/smoke/project-tools-followup.spec.ts tests/smoke/contact-focus.spec.ts tests/smoke/room-parallel.spec.ts tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts tests/smoke/media.spec.ts tests/smoke/media-av-ui.spec.ts tests/smoke/voice.spec.ts tests/smoke/realtime-voice.spec.ts
+        run: pnpm exec playwright test tests/smoke/media-parser.spec.ts tests/smoke/media-av.spec.ts tests/smoke/windows-ci.spec.ts tests/smoke/p0-navigation.spec.ts tests/smoke/ui-redesign-acceptance.spec.ts tests/smoke/product-view.spec.ts tests/smoke/project-tools-followup.spec.ts tests/smoke/contact-focus.spec.ts tests/smoke/room-parallel.spec.ts tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts tests/smoke/media.spec.ts tests/smoke/media-av-ui.spec.ts tests/smoke/voice.spec.ts tests/smoke/realtime-voice.spec.ts tests/smoke/task-sessions.spec.ts tests/smoke/search.spec.ts tests/smoke/group-routines.spec.ts
       - name: Validate Windows close handshakes
         run: pnpm exec playwright test tests/smoke/close-handshake.spec.ts
       - run: pnpm package:win
@@ -176,7 +176,7 @@ jobs:
           AEVOREN_BOT_TEST_HIDDEN: "1"
         run: |
           $env:AEVOREN_PACKAGED_APP_PATH = Join-Path $env:RUNNER_TEMP "Aevoren Bot/Aevoren Bot.exe"
-          pnpm exec playwright test tests/smoke/ui-redesign-acceptance.spec.ts tests/smoke/product-view.spec.ts tests/smoke/project-tools-followup.spec.ts tests/smoke/contact-focus.spec.ts tests/smoke/room-parallel.spec.ts tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts tests/smoke/media.spec.ts tests/smoke/media-av-ui.spec.ts tests/smoke/voice.spec.ts tests/smoke/realtime-voice.spec.ts
+          pnpm exec playwright test tests/smoke/ui-redesign-acceptance.spec.ts tests/smoke/product-view.spec.ts tests/smoke/project-tools-followup.spec.ts tests/smoke/contact-focus.spec.ts tests/smoke/room-parallel.spec.ts tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts tests/smoke/media.spec.ts tests/smoke/media-av-ui.spec.ts tests/smoke/voice.spec.ts tests/smoke/realtime-voice.spec.ts tests/smoke/task-sessions.spec.ts tests/smoke/search.spec.ts tests/smoke/group-routines.spec.ts
           if ($LASTEXITCODE -ne 0) { throw "Installed Windows UI acceptance failed" }
       - name: Validate close handshakes in the installed Windows package
         env:

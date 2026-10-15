@@ -223,6 +223,8 @@ function logicalV5Hash(database: DatabaseSync): string {
   const snapshot = Object.fromEntries(tables.map((table) => {
     const columns = table === "bots"
       ? "id, name, label, description, instructions, version, created_at, updated_at"
+      : table === "sessions"
+        ? "id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at"
       : table === "transcript_entries"
         ? "id, session_id, generation, seq, client_nonce, role, body, status, updated_seq, speaker_bot_id, speaker_name_snapshot, source_turn_id, created_at, updated_at"
       : table === "runtime_runs"
@@ -266,6 +268,9 @@ describe("multi-agent RoomRun journal", () => {
 
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(logicalV5Hash(inspected)).toBe(beforeHash);
+    for (const row of inspected.prepare("SELECT task_title,task_parent_id,task_version,task_client_nonce,task_request_digest FROM sessions").all()) {
+      expect(row).toEqual({ task_title: "", task_parent_id: null, task_version: 1, task_client_nonce: null, task_request_digest: null });
+    }
     expect(inspected.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual(
       MIGRATIONS.map((migration) => ({ version: migration.version })),
     );

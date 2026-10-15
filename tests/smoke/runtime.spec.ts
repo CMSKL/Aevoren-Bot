@@ -420,8 +420,21 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "library", "mcp", "mcpWrites", "media", "memories", "messages", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "voice", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "botImages", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "library", "mcp", "mcpWrites", "media", "memories", "messages", "organization", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "search", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "voice", "workspaces",
     ]);
+    expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.sessions).toSorted())).toEqual([
+      "cancelTask", "createTask", "deleteTask", "getMain", "getTask", "listTasks", "onChanged", "onTasksChanged", "reviseTaskSelection", "taskOptions", "updateTask",
+    ]);
+    const taskValidation = await launched.page.evaluate(async () => {
+      const sessions = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.sessions;
+      const scope = { sessionId: "not-a-uuid" }, versioned = { ...scope, expectedVersion: 1 };
+      return Promise.all([
+        sessions.taskOptions(scope), sessions.getTask(scope), sessions.listTasks({ parentSessionId: scope.sessionId }),
+        sessions.createTask({ parentSessionId: scope.sessionId, expectedScopeVersion: 1, clientNonce: "not-a-uuid", title: "Invalid task", selections: [] }),
+        sessions.updateTask({ ...versioned, title: "Invalid task" }), sessions.reviseTaskSelection({ ...versioned, selections: [] }), sessions.cancelTask(versioned), sessions.deleteTask(versioned),
+      ]);
+    });
+    for (const result of taskValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media,
     ).toSorted())).toEqual(["available", "bind", "delete", "importPath", "list", "metadata", "onChanged", "pickImport", "preview", "read", "restore", "setEnabled", "unbind"]);
@@ -545,13 +558,15 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     ).toSorted())).toEqual(["authorize", "cancelAuthorization", "clearAuthorization", "delete", "list", "probe", "save", "setEnabled"]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.routines,
-    ).toSorted())).toEqual(["create", "delete", "list", "listRuns", "runNow", "setEnabled", "update"]);
+    ).toSorted())).toEqual(["cancelRun", "create", "delete", "list", "listRuns", "runNow", "setEnabled", "update"]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.updates,
     ).toSorted())).toEqual(["check", "getState", "installAndRestart", "retry"]);
     expect(await launched.page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).toBe("undefined");
     expect(await launched.page.evaluate(() => typeof (window as unknown as { process?: unknown }).process)).toBe("undefined");
+    const owned = application.process();
     await application.close();
+    expect({ code: owned.exitCode, signal: owned.signalCode }).toEqual({ code: 0, signal: null });
     application = undefined;
   } finally {
     if (application) application.process().kill("SIGKILL");

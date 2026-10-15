@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
@@ -9,14 +9,23 @@ import { closeInspector, openConversationMenu, openInspector } from "./navigatio
 test("keeps compact header controls visible at 150 and 200 percent zoom", async () => {
   test.setTimeout(30_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-responsive-edge-"));
+  const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH ?? process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE;
   const application = await electron.launch({
-    args: ["."],
+    ...(executablePath ? { executablePath } : {}),
+    args: executablePath ? [] : ["."],
     cwd: process.cwd(),
     env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
+  if (executablePath) {
+    const runtime = await application.evaluate(({ app }) => ({ isPackaged: app.isPackaged, version: app.getVersion() }));
+    expect(runtime.isPackaged).toBe(true);
+    expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
+    await test.info().attach("actual-zoom-package", { body: JSON.stringify(runtime), contentType: "application/json" });
+  }
 
   try {
     const page = await application.firstWindow();
+    await expect(page).toHaveTitle("Aevoren Bot");
     const consoleErrors: string[] = [];
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
@@ -34,7 +43,8 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
       }, zoomFactor);
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(Math.ceil(390 / zoomFactor));
       await expect(page.locator(".conversation:not(.contact-detail) .conversation-header").getByRole("button", { name: "聊天选项", exact: true })).toBeVisible();
-      await expect(page.locator(".conversation:not(.contact-detail) .conversation-header button")).toHaveCount(1);
+      await expect(page.locator(".conversation:not(.contact-detail) .conversation-header").getByRole("button", { name: "新建任务", exact: true })).toBeVisible();
+      await expect(page.locator(".conversation:not(.contact-detail) .conversation-header button")).toHaveCount(2);
 
       const layout = await page.evaluate(() => {
         const header = document.querySelector<HTMLElement>(".conversation:not(.contact-detail) .conversation-header");
@@ -58,6 +68,7 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
           composerContained: composerRect.left >= 0 && composerRect.right <= window.innerWidth,
         };
       });
+      await test.info().attach(`compact-header-${zoomFactor}`, { body: JSON.stringify(layout), contentType: "application/json" });
       expect(layout).toEqual({
         headerContained: true,
         titleWidth: expect.any(Number),
@@ -90,14 +101,23 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
 test("keeps contact editing, model configuration and settings usable at 200 percent zoom", async () => {
   test.setTimeout(30_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-responsive-panels-"));
+  const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH ?? process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE;
   const application = await electron.launch({
-    args: ["."],
+    ...(executablePath ? { executablePath } : {}),
+    args: executablePath ? [] : ["."],
     cwd: process.cwd(),
     env: { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" },
   });
+  if (executablePath) {
+    const runtime = await application.evaluate(({ app }) => ({ isPackaged: app.isPackaged, version: app.getVersion() }));
+    expect(runtime.isPackaged).toBe(true);
+    expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
+    await test.info().attach("actual-zoom-package", { body: JSON.stringify(runtime), contentType: "application/json" });
+  }
 
   try {
     const page = await application.firstWindow();
+    await expect(page).toHaveTitle("Aevoren Bot");
     const consoleErrors: string[] = [];
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
@@ -191,8 +211,18 @@ test("keeps contact editing, model configuration and settings usable at 200 perc
         return Math.min(rect.right, other.right) - Math.max(rect.left, other.left) > 1
           && Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top) > 1;
       }));
-      return { inputWidth: search.getBoundingClientRect().width, overlap };
+      const searchBox = search.closest<HTMLElement>(".sidebar-search")!.getBoundingClientRect();
+      const inner = [...header.querySelectorAll<HTMLElement>(".sidebar-search input, .sidebar-search button")].map(control => control.getBoundingClientRect());
+      return { inputWidth: search.getBoundingClientRect().width, overlap,
+        contained: inner.every(rect => rect.left >= searchBox.left && rect.right <= searchBox.right),
+        innerOverlap: inner.some((rect, index) => inner.slice(index + 1).some(other => Math.min(rect.right, other.right) - Math.max(rect.left, other.left) > 1 && Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top) > 1)),
+      };
     });
+    await test.info().attach("compact-search-200", { body: JSON.stringify(sidebarHeader), contentType: "application/json" });
+    await expect(page.getByRole("button", { name: "打开全资源搜索", exact: true })).toBeVisible();
+    await expect(page.locator(".sidebar-search").getByRole("button", { name: "未读", exact: true })).toBeVisible();
+    expect(sidebarHeader.contained).toBe(true);
+    expect(sidebarHeader.innerOverlap).toBe(false);
     expect(sidebarHeader.inputWidth).toBeGreaterThan(30);
     expect(sidebarHeader.overlap).toBe(false);
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));

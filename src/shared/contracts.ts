@@ -23,6 +23,7 @@ export type Bot = {
   modelSelection: ModelSelection;
   avatarShape: BotAvatarShape;
   avatarColor: BotAvatarColor;
+  avatarImage?:import("./library-contracts").MediaRef;
   mcpServerIds?: string[] | null;
   memoryWorkspaceIds?: string[];
   pinnedAt: string | null;
@@ -1273,6 +1274,8 @@ export type UserProfile = {
 };
 
 export interface AevorenBotApi {
+  botImages:import("./bot-image-contracts").BotImageApi;
+  organization:import("./organization-contracts").OrganizationApi;
   search: import("./search-contracts").SearchApi;
   mcpWrites: import("./mcp-write-contracts").McpWriteApi;
   browser: import("./browser-contracts").BrowserApi;
@@ -1316,10 +1319,11 @@ export interface AevorenBotApi {
   routines: {
     list(): Promise<ApiResult<Routine[]>>;
     listRuns(routineId?: string): Promise<ApiResult<RoutineRun[]>>;
-    create(input: { name: string; prompt: string; botId: string; schedule: RoutineSchedule; enabled?: boolean }): Promise<ApiResult<Routine>>;
-    update(input: { id: string; expectedVersion: number; patch: Partial<Pick<Routine, "name" | "prompt" | "schedule">> }): Promise<ApiResult<Routine>>;
+    create(input: import("./routine-contracts").RoutineCreateInput): Promise<ApiResult<Routine>>;
+    update(input: { id: string; expectedVersion: number; patch: import("./routine-contracts").RoutineUpdatePatch }): Promise<ApiResult<Routine>>;
     setEnabled(input: { id: string; expectedVersion: number; enabled: boolean }): Promise<ApiResult<Routine>>;
-    runNow(id: string): Promise<ApiResult<RoutineRun>>;
+    runNow(input: import("./routine-contracts").RoutineRunNowInput): Promise<ApiResult<RoutineRun>>;
+    cancelRun(input: import("./routine-contracts").RoutineRunCancelInput): Promise<ApiResult<RoutineRun>>;
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<void>>;
   };
   conversations: {

@@ -126,7 +126,7 @@ export class RoutineRepository {
     }
     if (session.roomId !== target.roomId || session.botId) throw stale();
     const detail = this.host.getRoomDetail(target.roomId, target.sessionId);
-    if (detail.room.archivedAt) throw stale();
+    if (detail.room.archivedAt || detail.room.membershipVersion !== target.expectedMembershipVersion) throw stale();
     const ids = detail.members.map(member => member.botId);
     if (target.targetBotIds.some(id => !ids.includes(id)) || target.routingMode === "everyone" && (ids.length !== target.targetBotIds.length || ids.some(id => !target.targetBotIds.includes(id)))) throw stale();
     return { target, actors: [...target.targetBotIds].sort(), membershipVersion: detail.room.membershipVersion };

@@ -1,4 +1,5 @@
 import { RoutineRepository, GROUP_ROUTINE_MIGRATION } from "./routine-repository";
+import { OrganizationRepository,ORGANIZATION_MIGRATION } from "./organization-repository";
 import { SearchRepository } from "./search-repository";
 import { McpWriteRepository, MCP_WRITE_MIGRATION } from "./mcp-write-repository";
 import { normalizeProductRequest } from "./product-request";
@@ -2090,6 +2091,7 @@ export const MIGRATIONS = [
   VOICE_MIGRATION,
   REALTIME_MIGRATION,
   TASK_SESSION_MIGRATION,
+  ORGANIZATION_MIGRATION,
   GROUP_ROUTINE_MIGRATION,
 ] as const;
 
@@ -2118,6 +2120,7 @@ type ConversationRow = {
 };
 
 type BotRow = ConversationSidebarRow & {
+  avatar_image_json?:string|null;
   id: string;
   project_id: string;
   name: string;
@@ -2574,6 +2577,7 @@ function toBot(row: BotRow): Bot {
     },
     avatarShape: normalizeBotAvatarShape(row.avatar_shape),
     avatarColor: normalizeBotAvatarColor(row.avatar_color),
+    ...(row.avatar_image_json?{avatarImage:JSON.parse(row.avatar_image_json) as import("@shared/library-contracts").MediaRef}:{}),
     mcpServerIds,
     memoryWorkspaceIds,
     ...conversationSidebar(row),
@@ -3208,6 +3212,7 @@ export class AppRepository {
   readonly tasks: TaskSessionRepository;
   readonly routineTargets: RoutineRepository;
   readonly search: SearchRepository;
+  readonly organization:OrganizationRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
   readonly demonstrations: DemonstrationRepository;
@@ -3252,6 +3257,7 @@ export class AppRepository {
         (scope, reference, runtimeRunId) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId, runtimeRunId)[0]!);
       this.tasks = new TaskSessionRepository(this.database, this);
       this.search = new SearchRepository(this.database);
+      this.organization=new OrganizationRepository(this.database,{assertSession:id=>{this.getSession(id);},assertBot:id=>{this.getBot(id);},assertContext:context=>{this.assertSessionExecutor(context.sessionId,context.executorBotId);if(context.runtimeRunId){const run=this.getRuntimeRun(context.runtimeRunId);if(run.sessionId!==context.sessionId||run.executorBotId!==context.executorBotId||!["running","streaming"].includes(run.state))throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");this.tasks.assertTaskRuntime(run.id);}}});
       this.library.setTaskReferenceReader((sessionId, executor, runtimeId) => this.tasks.libraryReferences(sessionId, executor, runtimeId));
       this.media.setTaskRuntimeReferencesReader(runtimeId => this.tasks.runtimeTaskPolicy(runtimeId)?.selection.mediaRefs ?? null);
       this.routineTargets = new RoutineRepository(this.database, this);
@@ -4923,6 +4929,11 @@ export class AppRepository {
     return this.getBot(id);
   }
 
+  setBotImageAvatar(id:string,expectedVersion:number,reference:import("@shared/library-contracts").MediaRef|null):Bot{
+    this.getBot(id);const changed=this.database.prepare("UPDATE bots SET avatar_image_json=?,version=version+1,updated_at=? WHERE id=? AND version=? AND deleted_at IS NULL").run(reference?JSON.stringify(reference):null,now(),id,expectedVersion);
+    if(!changed.changes)throw new AevorenBotError("BOT_VERSION_CONFLICT");return this.getBot(id);
+  }
+
   duplicateBot(id: string): { bot: Bot; session: Session } {
     const source = this.getBot(id);
     const timestamp = now();
@@ -4961,6 +4972,11 @@ export class AppRepository {
            VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
         )
         .run(sessionId, botId, timestamp, timestamp);
+      if(source.avatarImage){
+        try{const media=this.media.metadata({sessionId:this.getMainSession(source.id).id,id:source.avatarImage.id});
+          if(media.asset.enabled&&!media.asset.deletedAt&&media.asset.reference.sha256===source.avatarImage.sha256){const copy=this.media.publishImport(sessionId,[{asset:{...media.asset,reference:{...media.asset.reference,id:randomUUID()}},extraction:null}])[0]!;this.database.prepare("UPDATE bots SET avatar_image_json=? WHERE id=?").run(JSON.stringify(copy.asset.reference),botId);}
+        }catch(error){if(!(error instanceof AevorenBotError)||!["MEDIA_NOT_GRANTED","MEDIA_NOT_FOUND"].includes(error.code))throw error;}
+      }
     });
     return { bot: this.getBot(botId), session: this.getMainSession(botId) };
   }
