@@ -134,7 +134,10 @@ export class MediaService {
       for (const supplied of paths) {
         check(); const name = nameFor(supplied);
         try {
-          const path = resolve(supplied), canonical = join(await realpath(dirname(path)), basename(path)); check();
+          const path = resolve(supplied);
+          // WorkspaceService already returned a contained canonical target. Do
+          // not follow a parent link swapped after that authorization check.
+          const canonical = checkAccess ? path : join(await realpath(dirname(path)), basename(path)); check();
           const bytes = await readMediaSource(canonical, check); check();
           total += bytes.length;
           const mimeType = mimeFor(bytes);

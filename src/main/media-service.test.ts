@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -105,6 +105,27 @@ describe("media staging, reads and owned parsing jobs", () => {
     const next = (await f.service.importPaths(f.session.id, [f.source("new.pdf")], context)).imported[0]!;
     expect(next.asset.reference.id).not.toBe(item.asset.reference.id); expect(next.reference.sha256).toBe(item.reference.sha256);
     expect((await f.service.read({ sessionId: f.session.id, id: next.asset.reference.id }, context)).modelText?.isAuthorized()).toBe(true);
+  });
+  it("rejects a Workspace parent replaced by an outside link after target resolution", async () => {
+    const f = fixture(), sourceRoot = join(f.root, "authorized"), outside = join(f.root, "outside");
+    mkdirSync(sourceRoot); mkdirSync(outside);
+    writeFileSync(join(sourceRoot, "brief.pdf"), "%PDF-1.7 authorized");
+    writeFileSync(join(outside, "brief.pdf"), "%PDF-1.7 outside grant");
+    const workspaceService = new WorkspaceService(f.repository);
+    const project = f.repository.createProject("Parent identity"), registration = await workspaceService.registerRoot(sourceRoot, project.id);
+    f.repository.setConversationProject(f.session.id, project.id, f.repository.getConversation(f.session.id).version);
+    const original = workspaceService.resolveExistingTarget.bind(workspaceService);
+    vi.spyOn(workspaceService, "resolveExistingTarget").mockImplementation(async (...args) => {
+      const target = await original(...args);
+      renameSync(sourceRoot, `${sourceRoot}-moved`); symlinkSync(outside, sourceRoot, process.platform === "win32" ? "junction" : "dir");
+      return target;
+    });
+    const service = new MediaService(f.repository, join(f.root, "guard-owned"), f.parser, { workspaceService });
+    try {
+      const result = await service.importPath({ sessionId: f.session.id, workspaceId: registration.workspace.id, path: "brief.pdf" });
+      expect(result.imported).toEqual([]); expect(result.failed).toMatchObject([{ code: "MEDIA_CONTENT_INVALID" }]);
+      expect(f.parser.parse).not.toHaveBeenCalled(); expect(service.list({ sessionId: f.session.id })).toEqual([]);
+    } finally { await service.shutdown(); }
   });
   it("rechecks the actual Workspace grant at commit and rejects path traversal", async () => {
     const f = fixture(), sourceRoot = join(f.root, "project"); mkdirSync(sourceRoot); writeFileSync(join(sourceRoot, "brief.pdf"), "%PDF-1.7\nfixture");
