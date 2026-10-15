@@ -28,7 +28,9 @@ addEventListener('message',async event=>{const value=event.data;if(value?.id&&re
 let parentBlocked=false;try{void parent.document.body;}catch{parentBlocked=true;}document.body.dataset.parentBlocked=String(parentBlocked);
 document.body.dataset.preload=String(typeof window.aevorenBot);
 document.querySelector('#write').onclick=async()=>{document.body.dataset.write=JSON.stringify(await request('tools/call',{name:'change',arguments:{target:'app-target',value:'from-app'}}));};
-document.querySelector('#unknown').onclick=async()=>{document.body.dataset.unknown=JSON.stringify(await request('host/read-file',{path:'/etc/passwd'}));};
+document.querySelector('#unknown').onclick=async event=>{document.body.dataset.unknownHandlerEntered='true';document.body.dataset.unknownTrusted=String(event.isTrusted);
+ const response=request('host/read-file',{path:'/etc/passwd'});document.body.dataset.unknownRequestPosted='true';
+ const result=await response;document.body.dataset.unknownResponseReceived='true';document.body.dataset.unknown=JSON.stringify(result);};
 void request('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'Fixture App',version:'1'},appCapabilities:{}}).then(result=>{document.body.dataset.initialized=String(Boolean(result.result));parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}},'*');});
 </script>`;
 
@@ -162,8 +164,45 @@ test("MCP fixed operation uses a real approval and an opaque App sandbox with sc
     await expect(inner.locator("body")).toHaveAttribute("data-preload", "undefined");
     await expect(inner.locator("#status")).toContainText("fixed-target");
     await expect(inner.locator("body")).toHaveAttribute("data-result", "received");
-    await inner.getByRole("button", { name: "Request unsupported capability", exact: true }).click();
-    await expect(inner.locator("body")).toHaveAttribute("data-unknown", /-32601/u);
+    const proxyUrl = await f.page.locator('iframe[title^="MCP App："]').getAttribute("src");
+    if (!proxyUrl) throw new Error("Missing controlled App proxy");
+    const phases: { httpResponseReceived: boolean; httpStatus: number | null; responseIdMatches: boolean; errorCode: number | null } = {
+      httpResponseReceived: false, httpStatus: null, responseIdMatches: false, errorCode: null,
+    };
+    const unsupportedResponse = f.page.waitForResponse(response => {
+      const request = response.request();
+      if (request.method() !== "POST" || response.url() !== `${proxyUrl}/rpc`) return false;
+      try { return request.postDataJSON()?.method === "host/read-file"; } catch { return false; }
+    });
+    try {
+      const [response] = await Promise.all([
+        unsupportedResponse,
+        inner.getByRole("button", { name: "Request unsupported capability", exact: true }).click(),
+      ]);
+      phases.httpResponseReceived = true;
+      phases.httpStatus = response.status();
+      expect(phases.httpStatus).toBe(200);
+      let result: { jsonrpc?: unknown; id?: unknown; error?: { code?: unknown } } | null;
+      try { result = await response.json(); } catch { throw new Error("Controlled App RPC response was not JSON"); }
+      const requestId = response.request().postDataJSON()?.id;
+      phases.responseIdMatches = Number.isSafeInteger(requestId) && result?.id === requestId;
+      const errorCode = result?.error?.code;
+      phases.errorCode = typeof errorCode === "number" && Number.isSafeInteger(errorCode) ? errorCode : null;
+      expect(result?.jsonrpc === "2.0").toBe(true);
+      expect(phases.responseIdMatches).toBe(true);
+      expect(phases.errorCode).toBe(-32601);
+      await expect(inner.locator("body")).toHaveAttribute("data-unknown", /-32601/u);
+    } finally {
+      const fixture = await inner.locator("body").evaluate(body => ({
+        handlerEntered: body.dataset.unknownHandlerEntered === "true",
+        isTrusted: body.dataset.unknownTrusted === "true" ? true : body.dataset.unknownTrusted === "false" ? false : null,
+        requestPosted: body.dataset.unknownRequestPosted === "true",
+        responseReceived: body.dataset.unknownResponseReceived === "true",
+      }), undefined, { timeout: 1_000 }).catch(() => null);
+      await test.info().attach("mcp-unsupported-rpc-phases", {
+        body: JSON.stringify({ ...phases, fixture }), contentType: "application/json",
+      });
+    }
     expect(f.writes()).toBe(1);
     await inner.getByRole("button", { name: "Change fixture target", exact: true }).click();
     await expect(approval).toHaveCount(1);
