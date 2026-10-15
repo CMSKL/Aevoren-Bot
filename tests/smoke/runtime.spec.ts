@@ -1,6 +1,6 @@
 import { removeTestDirectory } from "./test-cleanup";
 import { closeInspector } from "./navigation";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -23,11 +23,19 @@ async function launch(
   userDataDir: string,
   overrides: Record<string, string> = {},
 ): Promise<{ application: ElectronApplication; page: Page }> {
+  const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH ?? process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE;
   const application = await electron.launch({
-    args: ["."],
+    ...(executablePath ? { executablePath } : {}),
+    args: executablePath ? [] : ["."],
     cwd: process.cwd(),
     env: environment(userDataDir, overrides),
   });
+  if (executablePath) {
+    const runtime = await application.evaluate(({ app }) => ({ isPackaged: app.isPackaged, version: app.getVersion() }));
+    expect(runtime.isPackaged).toBe(true);
+    expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
+    await test.info().attach("actual-runtime-package", { body: JSON.stringify(runtime), contentType: "application/json" });
+  }
   return { application, page: await application.firstWindow() };
 }
 
@@ -354,7 +362,9 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     const launched = await launch(userDataDir);
     application = launched.application;
     expect(await application.evaluate(({ app }) => app.getName())).toBe("Aevoren Bot");
-    expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("use-mock-keychain"))).toBe(true);
+    if (!process.env.AEVOREN_PACKAGED_APP_PATH && !process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE) {
+      expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("use-mock-keychain"))).toBe(true);
+    }
     const result = await launched.page.evaluate(() =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.runtime.cancel("not-a-uuid"),
     );
@@ -391,7 +401,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "drafts", "environments", "events", "execution", "library", "mcp", "memories", "messages", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "drafts", "environments", "events", "execution", "library", "mcp", "memories", "messages", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
     ]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.connectors,
@@ -399,10 +409,15 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.drafts,
     ).toSorted())).toEqual(["create", "delete", "list", "read", "update", "versions"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.outbound,
+    ).toSorted())).toEqual(["cancel", "enableSend", "get", "grantWrite", "list", "prepare", "reconcile", "reject", "requestApproval", "revokeWrite", "writeGrants"]);
     const connectorValidation = await launched.page.evaluate(async () => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       return Promise.all([api.connectors.bindings({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid" }),
-        api.drafts.read({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", id: "not-a-uuid" })]);
+        api.drafts.read({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", id: "not-a-uuid" }),
+        api.outbound.writeGrants({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid" }),
+        api.outbound.requestApproval({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", id: "not-a-uuid", expectedVersion: 1 })]);
     });
     for (const result of connectorValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(

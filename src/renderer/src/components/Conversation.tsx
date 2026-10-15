@@ -506,6 +506,7 @@ const TranscriptItem = memo(function TranscriptItem({
                 <RunFailureCard
                   step={speakerName}
                   errorCode={run?.lastErrorCode}
+                  hostOutbound={run?.route === "host-outbound"}
                   invocations={toolInvocations}
                   canRetry={canRetryRoomTurn}
                   onRetry={() => onRetryRoomTurn(entry.sourceTurnId!)}
@@ -514,11 +515,12 @@ const TranscriptItem = memo(function TranscriptItem({
             ) : isSuperseded ? (
               <details className="superseded-attempt-details" data-testid={entry.sourceTurnId ? undefined : "direct-attempt-history"}>
                 <summary>查看较早失败详情</summary>
-                <RunFailureCard step={speakerName} errorCode={run?.lastErrorCode} invocations={toolInvocations} canRetry={false} onRetry={() => undefined} />
+                <RunFailureCard step={speakerName} errorCode={run?.lastErrorCode} hostOutbound={run?.route === "host-outbound"} invocations={toolInvocations} canRetry={false} onRetry={() => undefined} />
               </details>
             ) : <RunFailureCard
               step={speakerName}
               errorCode={run?.lastErrorCode}
+              hostOutbound={run?.route === "host-outbound"}
               invocations={toolInvocations}
               canRetry={Boolean(canRegenerate && run)}
               onRetry={() => { if (canRegenerate && run) onRetryRun(run.id); }}
@@ -538,6 +540,7 @@ const TranscriptItem = memo(function TranscriptItem({
 
 type ConversationProps = {
   sessionId?: string;
+  approvalVisible?: boolean;
   userProfile?: ConversationUserProfile;
   bot: Bot | null;
   room: RoomDetail | null;
@@ -578,6 +581,7 @@ type ConversationProps = {
 
 export function Conversation({
   sessionId,
+  approvalVisible = true,
   userProfile = defaultUserProfile,
   bot,
   room,
@@ -767,7 +771,7 @@ export function Conversation({
   );
   const latestFailedRun = latestFailedTurn?.runtimeRunId ? runsById.get(latestFailedTurn.runtimeRunId) ?? null : null;
   const latestRetryRun = !room
-    ? [...latestAttempts.values()].find((run) => ["failed", "cancelled", "interrupted"].includes(run.state) && run.clientNonce === latestUserNonce) ?? null
+    ? [...latestAttempts.values()].find((run) => run.route !== "host-outbound" && ["failed", "cancelled", "interrupted"].includes(run.state) && run.clientNonce === latestUserNonce) ?? null
     : null;
   const retryableUserEntry = entries.toReversed().find((entry) => entry.role === "user" && entry.sendState === "failed-before-acceptance" && entry.clientNonce === latestUserNonce) ?? null;
   const latestFailedTools = latestFailedRun ? toolInvocations.filter((invocation) => invocation.runtimeRunId === latestFailedRun.id) : [];
@@ -1174,7 +1178,7 @@ export function Conversation({
           const run = runsByAssistant.get(entry.id) ?? null;
           const canRegenerate = Boolean(
             !room &&
-            run &&
+            run && run.route !== "host-outbound" &&
             latestAttempts.get(runtimeTaskKey(run))?.id === run.id &&
             ["failed", "cancelled", "interrupted"].includes(run.state) &&
             run.clientNonce === latestUserNonce &&
@@ -1247,7 +1251,7 @@ export function Conversation({
         })}
       </section>
 
-      {pendingTool ? <ToolPermissionDialog
+      {approvalVisible && pendingTool ? <ToolPermissionDialog
         key={pendingTool.approval.id}
         {...pendingTool}
         botName={permissionBotName}

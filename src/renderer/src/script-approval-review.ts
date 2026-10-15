@@ -7,7 +7,7 @@ export function isScriptRun(invocation: ToolInvocation): boolean {
 }
 export function scriptReviewMatches(invocation: ToolInvocation, review: ApprovalReviewResult): boolean {
   if (!isScriptRun(invocation)) return true;
-  if (!review.executable || !review.snapshot || invocation.arguments.kind !== "product-call" || invocation.arguments.action !== "execute") return false;
+  if (!review.executable || review.snapshot?.kind !== "skill-script" || invocation.arguments.kind !== "product-call" || invocation.arguments.action !== "execute") return false;
   const input = invocation.arguments.input;
   if (!input || typeof input !== "object" || Array.isArray(input)) return false;
   const args = input as Record<string, unknown>; const target = review.snapshot.target;

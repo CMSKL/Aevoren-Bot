@@ -31,3 +31,9 @@
 .contact-detail .contact-profile-tabs { overflow-x: auto; }
 .contact-detail .contact-profile-tabs > button { flex: 0 0 auto; }
 .inspector > .library-tabs { flex: 0 0 auto; }
+.connector-outbound-list { display: grid; gap: 10px; margin: 16px 0; }
+.connector-outbound-review h3 { font-size: 15px; margin: 0 0 10px; }
+.connector-outbound-review dl { display: grid; grid-template-columns: minmax(85px, auto) minmax(0, 1fr); gap: 8px 12px; margin: 12px 0; font-size: 13px; }
+.connector-outbound-review dt { color: var(--text-muted); }
+.connector-outbound-review dd { margin: 0; overflow-wrap: anywhere; }
+.connector-outbound-review pre, .connector-confirm pre { max-height: 260px; overflow: auto; padding: 10px; border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: 13px; line-height: 1.7; }

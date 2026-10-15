@@ -1,10 +1,8 @@
 # Aevoren 功能扩展实施计划
 
-## 已公开发行：v0.3.0-beta.31
+> beta.32 当前补充：CI `38680943010` 的 Linux 普通检查通过，真实 Docker 为 39／40；六 Scope 电脑截图被原有 `BROWSER_OBSERVATION_STALE` 规则拒绝。本轮未取得成功画面，不能记为完整 Linux 门禁通过。当前补入同仓 beta.35 已验证的脱敏截图阶段诊断，保持原有焦点、版本和接管检查及调用顺序；该补丁不表示已修复错误。此前本机安装包记录先于该 Worker 补丁，后续须分别核验。
 
-[Beta PR #39](https://github.com/CMSKL/Aevoren-Bot/pull/39) 的八项检查在 dev `4f24f153` 全部通过后，正常合入 beta `7989bf6d2bd42efa0525dee84377bbcf3b1ab860`。实际合并树 `80479d1062a51b3f63ad85ebdff73b6c40d024a5` 与已测试 PR 合并树逐字节相同；同名不可变标签指向该 beta 提交。[macOS 签名工作流 38684641775](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38684641775) 成功并公开 [v0.3.0-beta.31](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.31)，标签／标题严格一致，包含签名、公证 DMG／ZIP、两个 blockmap、Beta 更新清单、SHA256 和 SBOM，共七项资产。小型清单下载及 GitHub 资产摘要复核通过；完整产物的下载校验由发行工作流完成。
-
-该发行提供脚本 Skill、Gmail／Drive／Notion 原生读取及本地草稿，包含主页面正常关闭与脚本快照发布修复；不包括后续原生外发、示范录制、可写 MCP／Apps、Notion 页面更新或阶段 5–6。发行校验中普通测试 1,488 通过／44 跳过，源码界面 128 通过／33 跳过，真实签名包资料／原生读取 10 项及关闭 8 项全部通过。Windows 签名工作流因当前配置跳过，没有公开签名 Windows 包。master 未晋级。旧 PR #18（beta → master）自动触发的 Windows 源码检查出现 Skill 工具往返的五秒捕获等待失败；该轮不是 PR #39 或直接 beta 分支检查。保留失败及此前同树八项成功证据，PR #18 按用户要求暂不推进，旧标签和发行不移动。
+诊断候选 `1ca624d` 的本机补充验收：截图诊断／控制专项 15 项、Browser Worker TypeScript 与定向 lint、Worker 构建通过。重新打包的真实未签名 macOS arm64 beta.32 完成 23 项场景（原生读取 2、外发 5、关闭 8、Runtime 8），包括 15 次重载恢复、失败后重试、SIGKILL 恢复、关闭阻塞提示及 typed API；全部通过。两套 Worker 共八个文件及五份指南与构建输出逐字节相同。ASAR SHA-256 为 `f095741de56104676e8854fcf9d2472a4887ed0164945bb850dbdd3d035cff0a`，Browser engine 为 `9788e576cc351bcfea9e380484b33df8456582b143d0c7fac271662e1ded6e7d`。新一轮跨平台／Docker 检查仍需完成；本机没有启动 Docker 或连接真实账号。
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
@@ -176,3 +174,36 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 ## 发布
 
 开发从 dev 或其功能分支开始，验证后进入 beta，安装包验收后发布下一可用 Beta。标签和标题都为 v<package.json version>。master 暂不晋级。每次发布同步中英文 README、用户指南、功能矩阵、Changelog、许可与能力边界。首轮不实施宿主 Shell/GUI、现有浏览器 Cookie 复制和远端部署；公共分享、完整画布和逆向未确认候选另立后续计划。
+
+## 阶段 4 外发交付：v0.3.0-beta.32 实施中
+
+从 dev 创建 `codex/native-outbound`，纳入 beta.31 原生读取与本地草稿基础。实现独立写授权、固定账号／目标／草稿版本的审批快照与持久外发账本；派发前登记、未知结果只读核验，不自动重发。当前尚在编码，测试和发行未完成。真实第三方写操作仍需用户批准的具体测试目标；受控 HTTP 不替代真实账号验收。示范录制、可写 MCP／交互 Apps 是阶段 4 后续单元，阶段 5–6 尚未开始。
+
+脚本 Skill 晋级记录：PR #30 在精确提交 a7d9ac6 的四项检查通过后合入 dev 79a6a68。PR #32 的八项 push／PR 检查全部通过并合入 beta 93bd211bed9fd01598a8140bc95a784f5c1d0bd9，package.json 为 0.3.0-beta.30；Beta 合并提交验证与同名签名发行仍在执行。此前 Windows a7d9ac6 首次启动页面五秒断言失败；同一源码的定向重跑通过，保留失败证据，未提高超时或声称已确定系统原因。master 保持不晋级。
+
+外发 beta.32 本机验收：普通测试 1,528 通过、44 跳过；TypeScript、lint、构建、许可 215 包／7 类、文档、开源和安全检查通过。真实 SQLite／Coordinator 网关覆盖有效审批正向回执、固定草稿、已确认／未知结果经过新工具调用查询而不再次审批／派发、六成员全部先启动、单成员停止、同步校验失败清理与移出再加入的不可恢复正文边界。迁移 39 以真实旧库验证历史各表、待处理审批／工具、环境／进程／日志／端口、外键、索引和触发器保留。
+
+隐藏源码外发五项与 typed API 一项共 6／6 通过；最终未签名 macOS beta.32 包为连接 2、外发 5、typed API 1 共 8／8 通过，实查 isPackaged、版本和随包指南。实际本机 HTTP／IPC／SQLite 的 Notion 503 已提交提示保存 unknown，重启后仅 GET 核验确认且 POST 总数为 1；审批前编辑／撤权禁用允许按钮且零外发，六群成员停止一个后另外五个完成，已经打开群聊时新宿主任务仍能精确停止。接管用户应用未参与这些测试，所有 Electron 窗口隐藏。
+
+首次外发隐藏场景复现严格 Scope 额外参数拒绝，修正为仅会话／执行者后暴露隐藏聊天和应用页的重复审批 portal；修复实际显示归属后重跑通过，没有改用第 n 个匹配或强制点击。外发仍只验证受控服务，真实第三方账号、真实 Windows Docker、签名包另行验收；示范、可写 MCP／Apps 和阶段 5–6 尚未完成。
+
+原生 beta.31 跨平台 fixture 收尾：新增应用设置入口后的六项导航假设修正为实际七项并保留键盘焦点断言；后一轮 Windows 两个场景在末尾诊断截图等待 30 秒失败，业务回调断言已到末尾，后续隐藏窗口断言尚未执行。仅对 Windows 不采集两张装饰性诊断截图，业务／错误／隐藏窗口断言全保留，修正 ed8675f 后仍需跨平台 CI 全通过。不能将原失败或未取得的 Windows 像素记为验收成功。
+
+## Beta.31 晋级收尾：主页面关闭与测试进程生命周期
+
+[PR #33](https://github.com/CMSKL/Aevoren-Bot/pull/33) 在 `51196b5` 四项 CI 全通过后合入 dev `80586fd`。[Beta PR #39](https://github.com/CMSKL/Aevoren-Bot/pull/39) 暂不合并：其中一项 Windows 旧库备份测试达到 60 秒上限。随后 [PR #40](https://github.com/CMSKL/Aevoren-Bot/pull/40) 的首轮出现另一项审批测试的一秒轮询超时；失败记录保留，未提高测试超时或放宽审批断言。
+
+- 实际 iframe 复现了产品关闭停滞：子页面加载错误清空主 Renderer 的 ready 状态，关闭无法发出保存请求。最终仅在主文档提交时清除 ready，加载期间延后请求，并由真实 ready 与停止加载恢复；保留取消导航、Hash 和重载边界。未绕过保存确认或增加生产强制退出。
+- Windows 的另一处测试进程退出问题由 Playwright 的 shell 包装和父进程单独强杀造成。现仅清理确定归属的 PID 树／已核验的 POSIX 进程组，等待退出和管道关闭；真实父子进程负向用例修复前失败、修复后通过，兄弟进程始终存活。
+- 旧库测试夹具按生产方式逐迁移事务建库，保留外键、版本、回滚和失败关闭；生产迁移不变。审批测试改为等待真实 Runtime／审批事件，并在关闭数据库前排空 Worker，保留实际状态与资源数量断言。
+- 当前普通测试 1,488 通过、44 跳过；四套 TypeScript、完整 lint、构建、文档和许可检查通过（215 包／7 类）。进程清理五项无跳过通过，包含已关闭通道的幂等回归。同一冻结未签名 macOS beta.31 包完成 19 项真实检查：资料库 8、原生读取 2、关闭 8、typed API 1，均核验实际包与版本。首次 17／18 的失败由测试 loopback iframe 被该版本现有 CSP 阻止造成；保留失败，改用真实 sandboxed srcdoc 并验证子页面 DOM／Preload 后，八项关闭重跑通过，未扩展 CSP。旧 Main 的同一 srcdoc 负向用例明确关闭失败。此后仅补充测试清理幂等修复，应用安装包未改变。
+
+现仍是开发候选，跨平台修复检查、Beta 晋级及签名发行未完成；master 不晋级。真实第三方账号和 Windows Linux Docker 继续标为未验证。后续阶段 5–6 尚未实现。
+
+## Beta.32 同步 dev 后的验收
+
+`e83e91dd67ca665f2045fc378a3989605d87bb97` 合入已验证 dev `4f24f15`，保留版本 beta.32。相较原 `b922ca8`，生产代码仅增加主文档关闭修复与 Skill 私有 staging 发布修复，原生外发业务及 API 未改，也未引入示范或 MCP Apps。
+
+专项 96／96（快照 10、数据库 25、项目审批 25、外发 36），四套 TypeScript、目标 lint 和完整构建通过。隐藏源码 16／16；实际未签名 macOS arm64 包 24／24：资料库 8、原生读取 2、外发 5、关闭 8、真实包 typed API 1。源码／包界面日志均无强制清理或关闭超时警告，实查版本、isPackaged 和 Resources。
+
+随包 Execution Worker 1.2.0 含私有发布修复，与构建输出字节相同，SHA-256 为 `572b1b355fa653ff37957750aeab7c4aa8af6c1aa77d40fd0b6d05b13056321b`；脚本指南字节一致。未重复整套普通测试，新的跨平台 CI 与签名发行仍待完成；未将此记录称为真实账号或 Windows Docker 验收。

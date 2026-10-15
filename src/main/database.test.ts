@@ -32,17 +32,34 @@ function manifest(sessionId: string, botId: string): PromptManifest {
 
 function createDatabaseAtVersion(filename: string, version: number, lastOpenedVersion = "0.1.0"): void {
   const database = new DatabaseSync(filename);
-  database.exec("PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);");
-  for (const migration of MIGRATIONS.filter((candidate) => candidate.version <= version)) {
-    const foreignKeysOff = "foreignKeysOff" in migration && migration.foreignKeysOff;
-    if (foreignKeysOff) database.exec("PRAGMA foreign_keys = OFF;");
-    database.exec(migration.sql);
-    database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(migration.version, "2026-09-16T00:00:00.000Z");
-    if (foreignKeysOff) database.exec("PRAGMA foreign_keys = ON;");
+  try {
+    database.exec("PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);");
+    for (const migration of MIGRATIONS.filter((candidate) => candidate.version <= version)) {
+      const foreignKeysOff = "foreignKeysOff" in migration && migration.foreignKeysOff;
+      if (foreignKeysOff) database.exec("PRAGMA foreign_keys = OFF;");
+      try {
+        database.exec("BEGIN IMMEDIATE;");
+        try {
+          database.exec(migration.sql);
+          if (foreignKeysOff && database.prepare("PRAGMA foreign_key_check").all().length > 0) {
+            throw new Error("Migration produced foreign-key violations");
+          }
+          database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+            .run(migration.version, "2026-09-16T00:00:00.000Z");
+          database.exec("COMMIT;");
+        } catch (error) {
+          database.exec("ROLLBACK;");
+          throw error;
+        }
+      } finally {
+        if (foreignKeysOff) database.exec("PRAGMA legacy_alter_table = OFF; PRAGMA foreign_keys = ON;");
+      }
+    }
+    database.prepare("INSERT INTO app_settings(key, value, encrypted, updated_at) VALUES (?, ?, 0, ?)")
+      .run("app.lastOpenedVersion", lastOpenedVersion, "2026-09-16T00:00:00.000Z");
+  } finally {
+    database.close();
   }
-  database.prepare("INSERT INTO app_settings(key, value, encrypted, updated_at) VALUES (?, ?, 0, ?)")
-    .run("app.lastOpenedVersion", lastOpenedVersion, "2026-09-16T00:00:00.000Z");
-  database.close();
 }
 
 afterEach(() => {

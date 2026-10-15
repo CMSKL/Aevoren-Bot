@@ -135,7 +135,11 @@ jobs:
           node scripts/fixture-keychain.mjs create "$signed_fixture_snapshot"
           export AEVOREN_PACKAGED_APP_PATH="$PWD/dist/mac-arm64/Aevoren Bot.app/Contents/MacOS/Aevoren Bot"
           test -f "$AEVOREN_PACKAGED_APP_PATH"
-          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts
+          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts
+      - name: Validate close handshakes in the signed macOS app
+        env:
+          AEVOREN_PACKAGED_APP_PATH: "${{ github.workspace }}/dist/mac-arm64/Aevoren Bot.app/Contents/MacOS/Aevoren Bot"
+        run: pnpm exec playwright test tests/smoke/close-handshake.spec.ts
       - name: Preserve failed signed app diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

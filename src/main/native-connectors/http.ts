@@ -5,7 +5,7 @@ function permittedEndpoint(url: URL): boolean {
   if (url.hostname === "oauth2.googleapis.com") return url.pathname === "/token";
   if (url.hostname === "openidconnect.googleapis.com") return url.pathname === "/v1/userinfo";
   if (url.hostname === "gmail.googleapis.com") return /^\/gmail\/v1\/users\/me\/(?:profile|messages(?:\/[A-Za-z0-9_-]{1,256})?)$/u.test(url.pathname);
-  if (url.hostname === "www.googleapis.com") return /^\/drive\/v3\/(?:about|files(?:\/[A-Za-z0-9_-]{1,256}(?:\/export)?)?)$/u.test(url.pathname);
+  if (url.hostname === "www.googleapis.com") return /^\/drive\/v3\/(?:about|files(?:\/generateIds|\/[A-Za-z0-9_-]{1,256}(?:\/export)?)?)$/u.test(url.pathname);
   if (url.hostname === "api.notion.com") return /^\/v1\/(?:users\/me|search|pages\/[A-Fa-f0-9-]{32,36}|blocks\/[A-Fa-f0-9-]{32,36}\/children)$/u.test(url.pathname);
   return false;
 }

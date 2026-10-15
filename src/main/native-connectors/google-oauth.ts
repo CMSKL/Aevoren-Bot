@@ -4,6 +4,7 @@ import { bearerToken, NativeHttpClient, object, optionalText, resourceId, text }
 import { NativeConnectorError, type GoogleCredentials, type NativeIdentity } from "./types";
 
 export const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 export const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const GOOGLE_EMAIL_SCOPE = "https://www.googleapis.com/auth/userinfo.email";
 const GMAIL_SCOPES = ["openid", "email", GMAIL_READ_SCOPE];
@@ -83,17 +84,17 @@ function validateClient(clientId: string, clientSecret?: string): void {
 function normalizedScopes(value: string): string[] {
   return [...new Set(value.split(/\s+/u).filter(Boolean).map(scope => scope === GOOGLE_EMAIL_SCOPE ? "email" : scope))].sort();
 }
-function validateScopes(provider: "gmail" | "drive", scopes: string[]): void {
-  const expected = provider === "gmail" ? GMAIL_SCOPES : [DRIVE_FILE_SCOPE];
+function validateScopes(provider: "gmail" | "drive", scopes: string[], expectedScopes?: string[]): void {
+  const expected = expectedScopes ?? (provider === "gmail" ? [...GMAIL_SCOPES, ...(scopes.includes(GMAIL_SEND_SCOPE) ? [GMAIL_SEND_SCOPE] : [])] : [DRIVE_FILE_SCOPE]);
   if (expected.length !== scopes.length || !expected.every(scope => scopes.includes(scope))) throw new NativeConnectorError("AUTH_INVALID");
 }
-function tokenCredentials(body: Record<string, unknown>, previous: Pick<GoogleCredentials, "provider" | "clientId" | "clientSecret"> & Partial<GoogleCredentials>, now: number): GoogleCredentials {
+function tokenCredentials(body: Record<string, unknown>, previous: Pick<GoogleCredentials, "provider" | "clientId" | "clientSecret"> & Partial<GoogleCredentials>, now: number, expectedScopes?: string[]): GoogleCredentials {
   const accessToken = text(body.access_token, 16_384);
   if (!accessToken || /[\r\n\0]/u.test(accessToken) || text(body.token_type, 16).toLowerCase() !== "bearer") throw new NativeConnectorError("AUTH_INVALID");
   const expiresIn = body.expires_in;
   if (typeof expiresIn !== "number" || !Number.isFinite(expiresIn) || expiresIn <= 0 || expiresIn > 86_400) throw new NativeConnectorError("AUTH_INVALID");
   const scopes = body.scope === undefined && previous.scopes ? previous.scopes : normalizedScopes(text(body.scope, 4_096));
-  validateScopes(previous.provider, scopes);
+  validateScopes(previous.provider, scopes, expectedScopes ?? previous.scopes);
   const refreshToken = optionalText(body.refresh_token, 16_384) ?? previous.refreshToken;
   if (refreshToken !== undefined && (!refreshToken || /[\r\n\0]/u.test(refreshToken))) throw new NativeConnectorError("AUTH_INVALID");
   return { kind: "google", provider: previous.provider, clientId: previous.clientId, clientSecret: previous.clientSecret, accessToken, refreshToken,
@@ -104,6 +105,16 @@ export class GoogleNativeOAuth {
   constructor(private readonly http = new NativeHttpClient(), private readonly now: () => number = Date.now) {}
 
   async authorize(options: { provider: "gmail" | "drive"; clientId: string; clientSecret?: string; openExternal(url: string): Promise<void>; signal?: AbortSignal }): Promise<{ credentials: GoogleCredentials; identity: NativeIdentity; selectedFileIds: string[] }> {
+    return this.authorizeScopes(options, options.provider === "gmail" ? GMAIL_SCOPES : [DRIVE_FILE_SCOPE]);
+  }
+
+  async authorizeSend(options: { clientId: string; clientSecret?: string; expectedAccountId: string; openExternal(url: string): Promise<void>; signal?: AbortSignal }): Promise<{ credentials: GoogleCredentials; identity: NativeIdentity; selectedFileIds: string[] }> {
+    const result = await this.authorizeScopes({ ...options, provider: "gmail" }, [...GMAIL_SCOPES, GMAIL_SEND_SCOPE]);
+    if (result.identity.accountId !== options.expectedAccountId) throw new NativeConnectorError("AUTH_INVALID");
+    return result;
+  }
+
+  private async authorizeScopes(options: { provider: "gmail" | "drive"; clientId: string; clientSecret?: string; openExternal(url: string): Promise<void>; signal?: AbortSignal }, scopes: string[]): Promise<{ credentials: GoogleCredentials; identity: NativeIdentity; selectedFileIds: string[] }> {
     validateClient(options.clientId, options.clientSecret);
     options.signal?.throwIfAborted();
     const state = randomBytes(32).toString("base64url"), verifier = randomBytes(64).toString("base64url");
@@ -115,7 +126,7 @@ export class GoogleNativeOAuth {
       options.signal?.throwIfAborted();
       const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
       authUrl.search = new URLSearchParams({ client_id: options.clientId, redirect_uri: callback.redirectUrl.toString(), response_type: "code",
-        scope: (options.provider === "gmail" ? GMAIL_SCOPES : [DRIVE_FILE_SCOPE]).join(" "), access_type: "offline", prompt: "consent", state,
+        scope: scopes.join(" "), access_type: "offline", prompt: "consent", state,
         code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256",
         ...(options.provider === "drive" ? { trigger_onepick: "true", allow_multiple: "true" } : {}) }).toString();
       await options.openExternal(authUrl.toString());
@@ -125,7 +136,7 @@ export class GoogleNativeOAuth {
         redirect_uri: callback.redirectUrl.toString(), grant_type: "authorization_code", ...(options.clientSecret ? { client_secret: options.clientSecret } : {}) });
       const body = await this.http.json(new URL("https://oauth2.googleapis.com/token"), {
         method: "POST", signal: options.signal, headers: { "content-type": "application/x-www-form-urlencoded" }, body: form.toString() });
-      const credentials = tokenCredentials(body, options, this.now());
+      const credentials = tokenCredentials(body, options, this.now(), scopes);
       const identity = await this.identity(credentials, options.signal);
       options.signal?.throwIfAborted();
       return { credentials, identity, selectedFileIds: result.selectedFileIds };

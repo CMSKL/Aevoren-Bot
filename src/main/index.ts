@@ -1,3 +1,7 @@
+import { NativeOutboundAdapter } from "./native-connectors/outbound";
+import { NativeWriteHttpClient } from "./native-connectors/write-http";
+import type { NativeFetch } from "./native-connectors/http";
+import { NativeOutboundService } from "./native-outbound-service";
 import "./identity";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -67,6 +71,7 @@ let environmentService: EnvironmentService | null = null;
 let browserService: BrowserService | null = null;
 let skillExecutionService: SkillExecutionService | null = null;
 let nativeConnectorService: NativeConnectorService | null = null;
+let nativeOutboundService: NativeOutboundService | null = null;
 let routineService: RoutineService | null = null;
 let allowClose = false;
 let closeRequested = false;
@@ -161,6 +166,7 @@ async function finishClose(): Promise<void> {
   }
   roomCoordinator?.beginShutdown();
   shutdownPromise ??= (async () => {
+    await nativeOutboundService?.shutdown();
     await nativeConnectorService?.shutdown();
     await skillExecutionService?.shutdown();
     await runtimeCoordinator?.shutdown();
@@ -188,7 +194,7 @@ async function finishClose(): Promise<void> {
 
 function requestRendererFlush(window: BrowserWindow): void {
   if (closeRequested) return;
-  if (!rendererReady) {
+  if (!rendererReady || window.webContents.isLoadingMainFrame()) {
     pendingClose = true;
     armCloseConfirmationTimer();
     return;
@@ -230,13 +236,19 @@ function createWindow(showOnCreate = !hideTestWindow): BrowserWindow {
     const currentUrl = window.webContents.getURL();
     if (url !== currentUrl) event.preventDefault();
   });
-  window.webContents.on("did-start-loading", () => {
+  window.webContents.on("did-navigate", () => {
     rendererReady = false;
+  });
+  window.webContents.on("did-start-loading", () => {
+    if (!window.webContents.isLoadingMainFrame()) return;
     if (!closeRequested) return;
     clearCloseConfirmationTimer();
     closeRequested = false;
     pendingClose = true;
     armCloseConfirmationTimer();
+  });
+  window.webContents.on("did-stop-loading", () => {
+    if (pendingClose && rendererReady) requestRendererFlush(window);
   });
   window.on("close", (event) => {
     if (allowClose) return;
@@ -319,16 +331,18 @@ app.whenReady().then(async () => {
   });
   skillExecutionService = productSkillExecutionService;
   let nativeHttp: NativeHttpClient | undefined;
+  let nativeTestFetch: NativeFetch | undefined;
   const nativeTestOrigin = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_NATIVE_TEST_ORIGIN : undefined;
   if (nativeTestOrigin) {
     const origin = new URL(nativeTestOrigin);
     if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.pathname !== "/" || origin.username || origin.password || origin.search || origin.hash) throw new AevorenBotError("INVALID_REQUEST");
-    nativeHttp = new NativeHttpClient((url, input) => {
+    nativeTestFetch = (url, input) => {
       const destination = new URL(url.pathname + url.search, origin);
       const headers = new Headers(input.headers);
       headers.set("x-aevoren-native-host", url.hostname);
       return fetch(destination, { ...input, headers, redirect: "error" });
-    });
+    };
+    nativeHttp = new NativeHttpClient(nativeTestFetch);
   }
   const productNativeConnectorService = new NativeConnectorService(repository, electronSecretCodec, {
     openExternal: url => shell.openExternal(url),
@@ -336,6 +350,8 @@ app.whenReady().then(async () => {
       drive: new DriveNativeAdapter(nativeHttp), notion: new NotionNativeAdapter(nativeHttp) } : {}),
   });
   nativeConnectorService = productNativeConnectorService;
+  const productNativeOutboundService = new NativeOutboundService(repository, productNativeConnectorService, nativeHttp && nativeTestFetch ? new NativeOutboundAdapter(nativeHttp,new NativeWriteHttpClient(nativeTestFetch)) : undefined);
+  nativeOutboundService = productNativeOutboundService;
   browserService = new BrowserService(repository, electronSecretCodec,
     app.isPackaged ? join(process.resourcesPath, "browser-worker") : join(app.getAppPath(), "out", "browser-worker"),
     join(app.getPath("userData"), "browser-media"), environmentService, event => {
@@ -427,6 +443,7 @@ app.whenReady().then(async () => {
     browserService,
     skillExecutionService: productSkillExecutionService,
     nativeConnectorService: productNativeConnectorService,
+    nativeOutboundService: productNativeOutboundService,
     async saveBrowserDownload(input, context) {
       const file = await browserService!.downloadData(input, context);
       let path = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_BROWSER_DOWNLOAD_TEST_PATH : undefined;

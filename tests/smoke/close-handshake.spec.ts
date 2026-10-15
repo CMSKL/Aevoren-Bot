@@ -1,7 +1,8 @@
-import { removeTestDirectory } from "./test-cleanup";
+import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { openInspector } from "./navigation";
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,11 +12,18 @@ function environment(userDataDir: string): Record<string, string> {
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
-  return { ...inherited, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" };
+  return { ...inherited, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1", AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1" };
 }
 
 async function launch(userDataDir: string): Promise<{ application: ElectronApplication; page: Page }> {
-  const application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment(userDataDir) });
+  const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
+  const application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: environment(userDataDir) });
+  if (executablePath) {
+    const runtime = await application.evaluate(({ app }) => ({ isPackaged: app.isPackaged, version: app.getVersion() }));
+    expect(runtime.isPackaged).toBe(true);
+    expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
+    await test.info().attach("actual-close-package", { body: JSON.stringify(runtime), contentType: "application/json" });
+  }
   return { application, page: await application.firstWindow() };
 }
 
@@ -40,7 +48,7 @@ async function requestWindowClose(application: ElectronApplication, timeoutMs = 
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
   ]);
   if (!didExit) {
-    process.kill("SIGKILL");
+    await closeTestApplication(application);
     await exited;
   }
   return didExit;
@@ -55,7 +63,7 @@ async function requestAppQuit(application: ElectronApplication, timeoutMs = 3_00
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
   ]);
   if (!didExit) {
-    process.kill("SIGKILL");
+    await closeTestApplication(application);
     await exited;
   }
   return didExit;
@@ -122,7 +130,7 @@ test("flushes a dirty profile and preserves its database hash across three resta
       application = undefined;
     }
   } finally {
-    if (application) application.process().kill("SIGKILL");
+    if (application) await closeTestApplication(application);
     removeTestDirectory(userDataDir);
   }
 });
@@ -153,7 +161,7 @@ test("keeps the window open when a dirty profile cannot be saved, then closes af
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
   } finally {
-    if (application) application.process().kill("SIGKILL");
+    if (application) await closeTestApplication(application);
     removeTestDirectory(userDataDir);
   }
 });
@@ -179,7 +187,136 @@ test("flushes a dirty profile through the application quit path", async () => {
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
   } finally {
-    if (application) application.process().kill("SIGKILL");
+    if (application) await closeTestApplication(application);
+    removeTestDirectory(userDataDir);
+  }
+});
+
+test("flushes a dirty profile after an embedded frame loads and is removed", async () => {
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-frame-"));
+  let application: ElectronApplication | undefined;
+  try {
+    let launched = await launch(userDataDir);
+    application = launched.application;
+    let page = launched.page;
+    await createBot(page);
+    await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+    await page.evaluate(async () => {
+      const frame = document.createElement("iframe");
+      frame.title = "Close handshake fixture";
+      frame.sandbox.add("allow-scripts");
+      const loaded = new Promise<void>(resolve => frame.addEventListener("load", () => resolve(), { once: true }));
+      frame.srcdoc = "<!doctype html><title>Close frame fixture</title><p>Real embedded content</p>";
+      document.body.append(frame);
+      await loaded;
+    });
+    const frame = page.frameLocator('iframe[title="Close handshake fixture"]');
+    await expect(frame.getByText("Real embedded content", { exact: true })).toBeVisible();
+    expect(await frame.locator("body").evaluate(() => typeof (window as unknown as { aevorenBot?: unknown }).aevorenBot)).toBe("undefined");
+    await page.locator('iframe[title="Close handshake fixture"]').evaluate(element => element.remove());
+    expect(await page.locator('iframe[title="Close handshake fixture"]').count()).toBe(0);
+    await page.getByLabel("描述").fill("嵌入内容关闭后仍需保存未移焦的修改");
+    expect(await requestAppQuit(application)).toBe(true);
+    application = undefined;
+
+    launched = await launch(userDataDir);
+    application = launched.application;
+    page = launched.page;
+    await openInspector(page);
+    await expect(page.getByLabel("描述")).toHaveValue("嵌入内容关闭后仍需保存未移焦的修改");
+    expect(await requestWindowClose(application)).toBe(true);
+    application = undefined;
+  } finally {
+    if (application) await closeTestApplication(application);
+    removeTestDirectory(userDataDir);
+  }
+});
+
+for (const navigation of ["same-document", "main-document"] as const) {
+  test(`flushes a dirty profile after ${navigation} navigation`, async () => {
+    // Windows took 22.58s through the first close; restart navigation exhausted 30s.
+    if (process.platform === "win32" && navigation === "main-document") test.setTimeout(60_000);
+    const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-navigation-"));
+    let application: ElectronApplication | undefined;
+    const description = `关闭前保存 ${navigation} 后的修改`;
+    try {
+      let launched = await launch(userDataDir);
+      application = launched.application;
+      let page = launched.page;
+      await createBot(page);
+      await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+      if (navigation === "same-document") {
+        await page.evaluate(() => { window.location.hash = "close-navigation-fixture"; });
+        await expect(page).toHaveURL(/#close-navigation-fixture$/u);
+      } else {
+        await page.reload();
+        await openInspector(page);
+      }
+      await page.getByLabel("描述").fill(description);
+      expect(await requestWindowClose(application)).toBe(true);
+      application = undefined;
+
+      launched = await launch(userDataDir);
+      application = launched.application;
+      page = launched.page;
+      await openInspector(page);
+      await expect(page.getByLabel("描述")).toHaveValue(description);
+      expect(await requestWindowClose(application)).toBe(true);
+      application = undefined;
+    } finally {
+      if (application) await closeTestApplication(application);
+      removeTestDirectory(userDataDir);
+    }
+  });
+}
+
+test("flushes a dirty profile after a main-frame navigation is blocked", async () => {
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-blocked-navigation-"));
+  let application: ElectronApplication | undefined;
+  let requests = 0;
+  const server = createServer((_request, response) => {
+    requests += 1;
+    response.end("Blocked main-frame fixture");
+  });
+  try {
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing blocked-navigation fixture port");
+    let launched = await launch(userDataDir);
+    application = launched.application;
+    let page = launched.page;
+    await createBot(page);
+    await page.getByLabel("描述").fill("被阻止的导航不能阻止关闭保存");
+    const originalUrl = page.url();
+    await application.evaluate(({ BrowserWindow }) => {
+      (globalThis as typeof globalThis & { blockedCloseNavigation?: Promise<boolean> }).blockedCloseNavigation = new Promise(resolve => {
+        BrowserWindow.getAllWindows()[0]!.webContents.once("will-navigate", details => resolve(details.defaultPrevented));
+      });
+    });
+    await page.evaluate(url => {
+      const link = document.createElement("a");
+      link.href = url;
+      document.body.append(link);
+      link.click();
+      link.remove();
+    }, `http://127.0.0.1:${address.port}/blocked`);
+    expect(await application.evaluate(() => (globalThis as typeof globalThis & { blockedCloseNavigation?: Promise<boolean> }).blockedCloseNavigation)).toBe(true);
+    expect(page.url()).toBe(originalUrl);
+    expect(requests).toBe(0);
+    expect(await requestWindowClose(application)).toBe(true);
+    application = undefined;
+
+    launched = await launch(userDataDir);
+    application = launched.application;
+    page = launched.page;
+    await openInspector(page);
+    await expect(page.getByLabel("描述")).toHaveValue("被阻止的导航不能阻止关闭保存");
+    expect(await requestWindowClose(application)).toBe(true);
+    application = undefined;
+  } finally {
+    if (application) await closeTestApplication(application);
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
     removeTestDirectory(userDataDir);
   }
 });
