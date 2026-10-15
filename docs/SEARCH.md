@@ -1,6 +1,6 @@
 # 全资源搜索
 
-开发候选：v0.3.0-beta.40。本地搜索业务、真实 SQLite 和隐藏 Electron 界面已验证；当前安装包、跨平台 CI 和签名发行仍是独立门禁。公开可下载版本请查看 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases)。
+开发候选：v0.3.0-beta.40。本地搜索业务、真实 SQLite 和隐藏 Electron 界面已验证；真实未签名 macOS 包五项检查通过；跨平台 CI 和签名发行仍是独立门禁。公开可下载版本请查看 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases)。
 
 ## 使用界面
 
@@ -26,3 +26,5 @@ AI 通过 `product_catalog → product_describe → product_execute` 调用 `sea
 - 两项产品传输测试检查私有标题／片段不进入持久回执，以及 MAIN 撤权和 TASK 原始版本的发送前检查。
 - 两项隐藏 Electron 场景验证界面分页、历史版本预览、撤权、原消息定位、TASK 所选历史和清空后相同文字不替代原来源，拥有的应用进程均正常退出。
 - 受控数据测试不证明真实云账号、物理设备或第三方写操作已验证。安装包和发行证据见 [实施计划](IMPLEMENTATION_PLAN.md)。
+
+实际未签名 macOS 包同轮 Search2＋Task3 五项全部通过，所有拥有进程正常退出。17 项 ASAR 业务输出与 216 项 Worker／parser 资源和构建逐字节相同；207 项 parser 资产校验通过，麦克风声明及四个 Helper 存在。没有验证物理麦克风、真实云账号或签名公证。

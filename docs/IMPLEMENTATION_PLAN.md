@@ -539,3 +539,7 @@ PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/act
 实现 `search.query/open` 共用业务入口、当前会话／项目／全部本地资源界面、七类资源与已保存语音转录、固定来源与分页游标。AI 固定 Runtime 会话和执行 Bot，TASK 使用原始选定版本与历史；来源撤销、重绑、世代清空和内容变化会重新校验。私有标题／片段不进入持久工具回执，实际模型发送前检查私有附件授权。
 
 本地十一项 SQLite、两项产品传输、两项隐藏 Electron 界面和二十四项组合回归通过，完整类型与构建通过。两项界面场景同轮通过，应用拥有进程正常退出。证据标签：`$CODEX_HOME/aevoren-evidence/2026-10-15/search40-*`。未验证当前实际安装包、Windows、签名或真实云账号。详见 [搜索说明](SEARCH.md)。
+
+### beta.40 真实未签名 macOS 包验收
+
+Search2 与继承的 Task3 同轮 **5/5 通过（40.3 秒）**，实际 app.isPackaged=true、版本 0.3.0-beta.40，拥有进程均正常退出。Main SHA-256 `56d0a85414736fb5aefa9b1bdee86a84fd2935c4fa669a8a79b82bd0028c9319`；已验收 ASAR `b613e598efaab4bf519cad53d54361dbb83729aae57eca10dc2ec36db03fd12e`。17 项 ASAR 输出与216项Worker/parser输出逐字节匹配；207 parser资产／233资源文件／9556 ASAR条目校验通过，四Helper麦克风声明存在，未验证真实硬件。后续合入39的正常dev同步仅修改历史文档、工作流和七项旧迁移测试，无业务代码差异，不重记为新的模型／设备证据。当前跨平台CI和签名发行仍待完成。
