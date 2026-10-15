@@ -8,6 +8,7 @@ import { afterEach,describe,expect,it,vi } from "vitest";
 import { AppRepository } from "./database";
 import { McpService } from "./mcp-service";
 import { McpWriteRepository,mcpDigest } from "./mcp-write-repository";
+import { McpAppsBridge } from "./mcp-apps-bridge";
 import { McpWriteService } from "./mcp-write-service";
 import { ProductOperationService } from "./product-operation-service";
 import type { ProductDependencies } from "./product-handlers";
@@ -17,8 +18,9 @@ import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { IPC } from "@shared/channels";
 import type { ProductToolRequest } from "@shared/contracts";
 vi.mock("electron", () => ({ clipboard: { writeText: vi.fn() } }));
+const bridges:McpAppsBridge[]=[];
 const fixtures:{repository:AppRepository;mcp:McpService;service:McpWriteService;server:Server;remotes:McpServer[]}[]=[];
-afterEach(async()=>{for(const f of fixtures.splice(0)){await f.service.shutdown();await f.mcp.dispose();await Promise.all(f.remotes.map(value=>value.close()));f.server.closeAllConnections();await new Promise<void>(resolve=>f.server.close(()=>resolve()));f.repository.close();}});
+afterEach(async()=>{for(const bridge of bridges.splice(0))await bridge.dispose();for(const f of fixtures.splice(0)){await f.service.shutdown();await f.mcp.dispose();await Promise.all(f.remotes.map(value=>value.close()));f.server.closeAllConnections();await new Promise<void>(resolve=>f.server.close(()=>resolve()));f.repository.close();}});
 async function fixture(){const repository=new AppRepository(":memory:"),database=(repository as unknown as{database:DatabaseSync}).database;
 const ledger=new McpWriteRepository(database,scope=>repository.assertSessionExecutor(scope.sessionId,scope.executorBotId));
  let writes=0,writePosts=0,unauthorized=false,schemaExtra=false,held=false;const releases:(()=>void)[]=[];const remotes:McpServer[]=[],transports=new Map<string,StreamableHTTPServerTransport>(),capabilities:unknown[]=[];
@@ -32,7 +34,7 @@ const ledger=new McpWriteRepository(database,scope=>repository.assertSessionExec
  const remote=new McpServer({name:"write-fixture",version:"1"});remotes.push(remote);
  remote.registerTool("change",{description:"Change a specific fixture object",inputSchema:{target:z.string(),value:z.string(),extra:schemaExtra?z.string():z.string().optional()},
  annotations:{readOnlyHint:false},_meta:{ui:{resourceUri:"ui://fixture/editor",visibility:["model","app"]}}},async(args:{target:string;value:string;extra?:string})=>{writes++;if(held)await new Promise<void>(resolve=>releases.push(resolve));return {content:[{type:"text" as const,text:JSON.stringify(args)}],structuredContent:{changed:true,token:"STATIC_PRIVATE"}};});
- remote.registerTool("app_only",{inputSchema:{},_meta:{ui:{visibility:["app"]}}},async()=>({content:[]}));
+ remote.registerTool("app_only",{inputSchema:{},annotations:{readOnlyHint:true},_meta:{ui:{visibility:["app"]}}},async()=>({content:[],structuredContent:{appOnly:true}}));
  remote.registerTool("hidden",{inputSchema:{},_meta:{ui:{visibility:[]}}},async()=>({content:[]}));
  remote.registerResource("editor","ui://fixture/editor",{mimeType:"text/html;profile=mcp-app"},async()=>({contents:[{uri:"ui://fixture/editor",mimeType:"text/html;profile=mcp-app",text:"<!doctype html><title>Fixture App</title><button id='change'>Change</button>"}]}));
  const transport:StreamableHTTPServerTransport=new StreamableHTTPServerTransport({sessionIdGenerator:randomUUID,onsessioninitialized:(id:string):void=>{transports.set(id,transport);}});
@@ -79,6 +81,30 @@ describe("MCP scoped write foundation with a real local SDK server",()=>{
  const members=Array.from({length:3},()=>f.repository.createBot()),room=f.repository.createRoom({memberBotIds:members.map(value=>value.bot.id)}),scope={sessionId:room.session.id,executorBotId:members[0]!.bot.id},memberIntent=await f.intentFor(scope);
  const removed=f.repository.removeRoomMember(room.room.id,members[0]!.bot.id,room.room.membershipVersion);f.repository.addRoomMember(room.room.id,members[0]!.bot.id,removed.room.membershipVersion);expect(()=>f.ledger.current(scope,memberIntent.intent.id)).toThrow();expect(f.ledger.list(scope)).toEqual([]);expect(f.ledger.grants(scope)[0]?.revokedAt).not.toBeNull();
  });
+ it("does not advertise or call app-only read tools on either legacy or product model paths",async()=>{
+ const f=await fixture(),old=f.repository.getMcpServerConfig(f.enabled.id),saved=f.repository.updateMcpServerConfig(old.id,old.version,old.name,old.transport,{...old.config,trustedReadOnlyTools:["app_only"]}),enabled=await f.mcp.setEnabled(saved.id,saved.version,true);
+ expect(enabled.tools.map(tool=>tool.name)).not.toContain("app_only");expect(f.mcp.availableTools().map(tool=>tool.name)).not.toContain("app_only");await expect(f.mcp.run({kind:"mcp-call",serverId:enabled.id,toolName:"app_only",arguments:{},readOnly:true},new AbortController().signal)).rejects.toMatchObject({code:"MCP_TOOL_NOT_FOUND"});
+ const tools=await f.service.toolCatalog({...f.scope,serverId:enabled.id,expectedServerVersion:enabled.version},{},"user"),app=tools.find(tool=>tool.name==="app_only")!;
+ expect(app.visibility).toEqual(["app"]);const grant=await f.service.grantTool({...f.scope,serverId:enabled.id,expectedServerVersion:enabled.version,toolName:app.name,schemaDigest:app.schemaDigest},{},"user");
+ await expect(f.service.prepareTool({...f.scope,grantId:grant.id,expectedGrantVersion:grant.version,arguments:{},targetPreview:"App-only read",clientNonce:randomUUID()},{},"model")).rejects.toMatchObject({code:"MCP_TOOL_NOT_FOUND"});expect(f.writePosts()).toBe(0);
+ });
+ it("uses one loopback Apps origin for concurrent opens, negotiates real RPC and routes an app-only call through approval",async()=>{
+ const f=await fixture(),value=await f.intentFor(),prepared=await f.service.requestApproval({...f.scope,id:value.intent.id,expectedVersion:1},f.coordinator);await f.coordinator.resolve(f.scope.sessionId,prepared.approval.id,prepared.approval.version,"allow-once");await vi.waitFor(()=>expect(f.repository.getRuntimeRun(prepared.approval.runtimeRunId).state).toBe("completed"));
+ const app=(await f.service.toolCatalog({...f.scope,serverId:f.enabled.id,expectedServerVersion:f.enabled.version},{},"user")).find(tool=>tool.name==="app_only")!;
+ await f.service.grantTool({...f.scope,serverId:app.serverId,expectedServerVersion:app.serverVersion,toolName:app.name,schemaDigest:app.schemaDigest},{},"user");
+ const bridge=new McpAppsBridge(f.service,f.mcp,{requestAndWait:(intent,signal)=>f.service.requestAndWait({...f.scope,id:intent.id,expectedVersion:intent.version},f.coordinator,signal)});bridges.push(bridge);
+ const views=await Promise.all([bridge.openApp({...f.scope,id:value.intent.id,expectedVersion:3}),bridge.openApp({...f.scope,id:value.intent.id,expectedVersion:3})]);expect(new URL(views[0]!.proxyUrl).origin).toBe(new URL(views[1]!.proxyUrl).origin);
+ const view=views[1]!,origin=new URL(view.proxyUrl).origin;expect((await fetch(views[0]!.proxyUrl)).status).toBe(404);const html=await fetch(view.proxyUrl);expect(html.headers.get("permissions-policy")).toContain("camera=()");expect(await html.text()).toContain("inner.sandbox='allow-scripts'");
+ const rpc=(body:unknown,source=origin)=>fetch(`${view.proxyUrl}/rpc`,{method:"POST",headers:{"content-type":"application/json",origin:source},body:JSON.stringify(body)});
+ expect((await rpc({jsonrpc:"2.0",id:0,method:"ping"},"http://evil.invalid")).status).toBe(403);
+ expect(await (await rpc({jsonrpc:"2.0",id:1,method:"ui/initialize",params:{protocolVersion:"2026-01-26",appCapabilities:{}}})).json()).toMatchObject({result:{protocolVersion:"2026-01-26"}});
+ expect(await (await rpc({jsonrpc:"2.0",method:"ui/notifications/initialized"})).json()).toMatchObject({notifications:[{method:"ui/notifications/tool-input"},{method:"ui/notifications/tool-result"}]});
+ expect(await (await rpc({jsonrpc:"2.0",id:2,method:"unsupported"})).json()).toMatchObject({error:{code:-32601}});
+ const action=rpc({jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"app_only",arguments:{}}});await vi.waitFor(()=>expect(f.repository.listPendingApprovalRequests(f.scope.sessionId)).toHaveLength(1));expect(f.writePosts()).toBe(1);
+ const approval=f.repository.listPendingApprovalRequests(f.scope.sessionId)[0]!;await f.coordinator.resolve(f.scope.sessionId,approval.id,approval.version,"allow-once");expect(await (await action).json()).toMatchObject({result:{structuredContent:{appOnly:true}}});expect(f.writePosts()).toBe(2);
+ const repeat=await rpc({jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"app_only",arguments:{}}});expect(await repeat.json()).toMatchObject({result:{structuredContent:{appOnly:true}}});expect(f.writePosts()).toBe(2);
+ f.service.revokeTool({...f.scope,id:value.grant.id,expectedVersion:value.grant.version});expect((await fetch(view.proxyUrl)).status).toBe(404);
+ },20000);
  it("negotiates Apps, filters visibility, and never treats tool metadata as a Scope grant",async()=>{const f=await fixture(),tools=await f.catalog();expect(tools.map(value=>value.name)).toEqual(["change"]);
  expect(tools[0]?.readOnlyClaim).toBe(false);expect(tools[0]?.uiResourceUri).toBe("ui://fixture/editor");expect(f.capabilities[0]).toMatchObject({extensions:{"io.modelcontextprotocol/ui":{mimeTypes:["text/html;profile=mcp-app"]}}});
  expect(f.ledger.grants(f.scope)).toEqual([]);await expect(f.service.prepareTool({...f.scope,grantId:randomUUID(),expectedGrantVersion:1,arguments:{target:"A",value:"B"},targetPreview:"Object A",clientNonce:randomUUID()})).rejects.toThrow();expect(f.writePosts()).toBe(0);});
