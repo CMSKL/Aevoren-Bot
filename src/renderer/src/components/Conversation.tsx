@@ -783,8 +783,8 @@ export function Conversation({
     updateComposer(value => ({ ...value, text }));
     return true;
   }, [sessionId, readVoiceDraft, updateComposer]);
-  const readAloud = useCallback((entry: TranscriptEntry): void => { setPendingReadAloud(entry); setVoiceOpen(true); }, []);
-  const playVoiceTask = useCallback((task: VoiceTask): void => voicePlaybackRef.current?.play(task), []);
+  const readAloud = useCallback((entry: TranscriptEntry): void => { setVoiceOpen(true); if (realtimeActive) { setResourceError("请先停止实时语音通话，再朗读这条回复。"); return; } setPendingReadAloud(entry); }, [realtimeActive]);
+  const playVoiceTask = useCallback((task: VoiceTask): void => { if (realtimeActive) { setResourceError("请先停止实时语音通话，再播放朗读。"); return; } voicePlaybackRef.current?.play(task); }, [realtimeActive]);
   const readRealtimeSelection = useCallback((executorBotId: string): Omit<RealtimeStartInput, "expectedConfigVersion"> => {
     const base = composerSnapshotRef.current;
     if (!sessionId || !composerMountedRef.current || composerSnapshotRef.current !== base) throw new Error("草稿已变化，请重新连接语音。");
@@ -798,10 +798,10 @@ export function Conversation({
     queueMicrotask(() => {
       if (cancelled) return;
       if (!approvalVisible) { setVoiceOpen(false); setPendingReadAloud(null); return; }
-      if (voiceOpen && pendingReadAloud) { voicePlaybackRef.current?.enqueue(pendingReadAloud); setPendingReadAloud(null); }
+      if (voiceOpen && pendingReadAloud) { if (!realtimeActive) voicePlaybackRef.current?.enqueue(pendingReadAloud); setPendingReadAloud(null); }
     });
     return () => { cancelled = true; };
-  }, [approvalVisible, voiceOpen, pendingReadAloud]);
+  }, [approvalVisible, voiceOpen, pendingReadAloud, realtimeActive]);
   const subjectName = bot?.name ?? room?.room.name ?? "选择对话";
   const currentDate = new Date();
   const conversationScopeId = room?.room.id ?? bot?.id ?? null;

@@ -78,6 +78,7 @@ test("real realtime UI streams generated PCM, delegates frozen ASR and stops its
     value(await page.evaluate(input=>(window as unknown as {aevorenBot:AevorenBotApi}).aevorenBot.voice.saveConfiguration(input),{kind:"realtime" as const,expectedVersion:config.version,enabled:true,model:config.model,voice:config.voice,apiKey:"realtime-fixture-key"}));
     await page.getByRole("listitem",{name:other.bot.name,exact:true}).click();
     await page.getByRole("listitem",{name:"实时语音验收",exact:true}).click();
+    await page.locator(".composer-toolbar").getByRole("button",{name:"语音",exact:true}).click();
     const panel=page.getByRole("region",{name:"实时语音",exact:true});
     await panel.getByRole("button",{name:"连接实时语音",exact:true}).click();
     await expect(panel.getByRole("button",{name:"开始说话",exact:true})).toBeEnabled();
