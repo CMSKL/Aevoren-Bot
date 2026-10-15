@@ -359,12 +359,12 @@ export class McpService {
       if(!current.enabled||current.version!==expectedVersion||this.scopedCredentialDigest(id)!==credentialDigest)throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");};
     const client=new Client({name:"Aevoren Bot",version:this.appVersion},{capabilities:{extensions:{"io.modelcontextprotocol/ui":{mimeTypes:["text/html;profile=mcp-app"]}}}});
     const clients=this.scopedClients.get(id)??new Set<Client>();clients.add(client);this.scopedClients.set(id,clients);
-    const safeTarget=server.transport==="streamable-http"&&typeof server.config.url==="string"?await resolveSafeNetworkUrl(server.config.url,true):null;
-    const prepared=this.transport(server,safeTarget,undefined,false,true);
+    let prepared:Pick<Connection,"transport"|"dispatcher">|undefined;
     const close=async()=>{signal.removeEventListener("abort",abort);clients.delete(client);if(!clients.size)this.scopedClients.delete(id);
-      await client.close().catch(()=>undefined);await prepared.dispatcher?.close().catch(()=>undefined);};
+      await client.close().catch(()=>undefined);await prepared?.dispatcher?.close().catch(()=>undefined);};
     const abort=()=>{void client.close().catch(()=>undefined);};signal.addEventListener("abort",abort,{once:true});
-    try{assertCurrent();await client.connect(prepared.transport,{signal,timeout:CONNECT_TIMEOUT_MS,maxTotalTimeout:CONNECT_TIMEOUT_MS});
+    try{const safeTarget=server.transport==="streamable-http"&&typeof server.config.url==="string"?await resolveSafeNetworkUrl(server.config.url,true):null;
+      assertCurrent();prepared=this.transport(server,safeTarget,undefined,false,true);await client.connect(prepared.transport,{signal,timeout:CONNECT_TIMEOUT_MS,maxTotalTimeout:CONNECT_TIMEOUT_MS});
       const listed=await client.listTools(undefined,{signal,timeout:CONNECT_TIMEOUT_MS,maxTotalTimeout:CONNECT_TIMEOUT_MS});assertCurrent();
       const tools:McpScopedTool[]=listed.tools.flatMap(tool=>{if(!SAFE_TOOL_NAME.test(tool.name)||Buffer.byteLength(JSON.stringify(tool.inputSchema))>20000)return [];
         const ui=object(object(tool._meta)?.ui),visibility=toolVisibility(tool._meta);
@@ -471,12 +471,13 @@ export class McpService {
     const url = typeof server.config.url === "string" ? server.config.url : "";
     if (!url) throw new AevorenBotError("INVALID_REQUEST");
     if (!safeTarget) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
-    const dispatcher = new Agent({ connect: { lookup: createPinnedLookup(safeTarget) } });
     const requestSecrets = { ...secrets };
     if (this.hasOAuthTokens(server.id)) {
       for (const key of Object.keys(requestSecrets)) if (key.toLowerCase() === "authorization") delete requestSecrets[key];
       if(capturedCredentialsOnly)requestSecrets.Authorization=`Bearer ${this.readOAuth(server.id).tokens!.access_token}`;
     }
+    const requestHeaders = new Headers(requestSecrets);
+    const dispatcher = new Agent({ connect: { lookup: createPinnedLookup(safeTarget) } });
     const fetchPinned = async (input: string | URL, init?: RequestInit): Promise<Response> => {
       const target = new URL(input.toString());
       if (target.origin !== safeTarget.url.origin) {
@@ -499,7 +500,7 @@ export class McpService {
       return new Response(body??null,{status:response.status,statusText:response.statusText,headers:new Headers(response.headers as unknown as HeadersInit)});
     };
     return { transport: new StreamableHTTPClientTransport(new URL(url), {
-      requestInit: { headers: new Headers(requestSecrets) },
+      requestInit: { headers: requestHeaders },
       fetch: fetchPinned,
       authProvider,
       reconnectionOptions: {
