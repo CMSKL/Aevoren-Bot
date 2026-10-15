@@ -457,3 +457,11 @@ PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/act
 本次仅在外发测试夹具增加有界诊断，缓存其确切 ChildProcess，记录 PID、exit／close 事件、退出码、信号和 stdio destroyed 状态，并复用已有的 Main flush／可信确认／窗口关闭阶段；每个进程最多 120 条，重启和清理调用无论成功或失败均附 JSON，随后移除监听。没有修改产品、关闭辅助函数、时限或业务断言，也没有重跑原失败任务。
 
 新构建的本机隐藏 beta.33 源码场景 1／1 通过，第一次关闭约 191 ms、最终清理约 52 ms，均有可信 flush 确认、exit 0、全部管道关闭且未强制终止。四套 TypeScript、正常构建和定向 lint 通过；没有重跑完整套件或打包。该本机成功不证明 Windows 根因已解决，新的正常 CI 将提供该平台的诊断证据。
+
+### beta.36 Windows ASAR verification path correction
+
+[CI 38718418892](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38718418892) at `01efdaece09e9db2fe7cee369d6e3c5f4c05393e` passed Linux, macOS and Secret scan. Windows passed **1,623 ordinary tests / 61 skipped**, **50/50 source-interface cases** (20.5 minutes), **8/8 source close cases**, and actual Windows packaging. Step 13 failed during parser asset verification with `node_modules/@hono/node-server was not found in this archive`; installation and installed scenarios were not reached. This was not a 30-minute job timeout. The failed result remains recorded.
+
+The verifier converted ASAR inventory paths to `/` before passing them to `@electron/asar.statFile`, whose directory traversal uses native `path.sep`. Windows therefore could not look up nested entries. The correction preserves native relative paths for ASAR stat/extract while retaining normalized `/` paths for whole-package forbidden-asset checks. Manifest bytes, size, SHA-256, font licenses, uppercase variants and undeclared-file checks remain unchanged. Product code, build output and deadlines were not modified.
+
+An eighth fixture runs the dependency's real Filesystem methods with the Windows path implementation against a nested ASAR. The original verifier deterministically failed with the same `@hono/node-server` error (seven passed / one failed); the corrected verifier passed **8/8**, targeted lint and diff checks. This portable local test does not establish Windows installer acceptance; fresh Windows CI must validate the complete chain. Original workflow and before/after logs are stored in the local persistent directory `/Users/machao/.codex/aevoren-evidence/2026-10-15/phase5/`, not as repository attachments.
