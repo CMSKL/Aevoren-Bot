@@ -96,7 +96,7 @@ AI 操作与界面共用宿主校验和权限规则。创建 Bot 或群聊支持
 
 文本 Skill 可创建、导入并按需加载到明确授权的会话。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用。Bash、Python、Node 脚本先授权固定版本、入口和环境镜像，再确认每次运行参数，见[脚本 Skill](docs/SCRIPT_SKILLS.md)。明确开始的[人类示范](docs/SKILL_DEMONSTRATIONS.md)产生可审阅草稿，发布审阅固定保存版本并创建停用 Skill，不授予执行权限。
 
-[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权与固定草稿审批，Notion 仅改标题和末尾追加保留已有正文。[MCP 工具与 Apps](docs/MCP_APPS.md)共用同一授权审批层，并明确区分服务器回执与外部实际效果。阶段 4 组合候选的四项 CI 门禁已通过，含源码及真实 macOS／Windows 安装包；阶段 5.1 [媒体与文档](docs/MEDIA.md)已有本地源码／安装包证据；阶段 5.2 [语音与音视频](docs/VOICE.md)正在安装包与跨平台验收，实时连接和阶段 6 待实施。公开安装包和真实第三方账号另行验证。受限界面动作操作 Aevoren 自身界面。
+[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权与固定草稿审批，Notion 仅改标题和末尾追加保留已有正文。[MCP 工具与 Apps](docs/MCP_APPS.md)共用同一授权审批层，并明确区分服务器回执与外部实际效果。阶段 4 组合候选的四项 CI 门禁已通过，含源码及真实 macOS／Windows 安装包；阶段 5.1 [媒体与文档](docs/MEDIA.md)已有本地源码／安装包证据；阶段 5.2 [语音与音视频](docs/VOICE.md)已通过本地源码与真实未签名 macOS 包验收，跨平台和签名包仍待验证，实时连接和阶段 6 待实施。公开安装包和真实第三方账号另行验证。受限界面动作操作 Aevoren 自身界面。
 
 ## 资料库与文本 Skill
 
@@ -153,7 +153,7 @@ Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac
 
 应用数据存储在 Electron 的 user-data 目录。Aevoren Bot 会在 SQLite 中保存 Bot、Room、Transcript、显式 Memory、设置、Tool Journal 元数据和 Routine 历史；密钥值通过 `safeStorage` 单独存储。
 
-资料与 Skill 的正文、版本和会话绑定保存在 SQLite；导入的辅助文件由应用内容寻址存储保存并核对摘要。开发环境／任务／浏览器元数据也在 SQLite 中，工作目录、Worker 状态与独立浏览器 profile 位于各自命名 Docker 卷；截图和下载由应用存储并核对摘要。模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远端主机控制、宿主 Shell／GUI 控制或未经审核的自动 Memory 写入。beta.37 源码通过明确的会话／执行成员授权与逐次审批调用可写 MCP 工具；公开 beta.31 尚未包含该交付。宿主 Workspace 写入只允许在明确开启的根目录中新建 UTF-8 Markdown/CSV；经过批准的 Docker 命令可以修改隔离工作目录或访问外部服务，其副作用不能自动撤销。
+资料与 Skill 的正文、版本和会话绑定保存在 SQLite；导入的辅助文件由应用内容寻址存储保存并核对摘要。开发环境／任务／浏览器元数据也在 SQLite 中，工作目录、Worker 状态与独立浏览器 profile 位于各自命名 Docker 卷；截图和下载由应用存储并核对摘要。模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远端主机控制、宿主 Shell／GUI 控制或未经审核的自动 Memory 写入。beta.37 源码通过明确的会话／执行成员授权与逐次审批调用可写 MCP 工具；公开 beta.32 尚未包含该交付。宿主 Workspace 写入只允许在明确开启的根目录中新建 UTF-8 Markdown/CSV；经过批准的 Docker 命令可以修改隔离工作目录或访问外部服务，其副作用不能自动撤销。
 
 ## 文档、贡献和支持
 
