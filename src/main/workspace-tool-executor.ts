@@ -5,7 +5,7 @@ import { join, posix } from "node:path";
 import type { Stats } from "node:fs";
 import type { ComputationToolRequest, DeviceToolRequest, NetworkToolRequest, ToolInvocation, ToolRequest, WorkspaceToolRequest } from "@shared/contracts";
 import type { AppRepository } from "./database";
-import { AevorenBotError } from "./errors";
+import { asAppError, AevorenBotError, type ErrorCode } from "./errors";
 import type { WorkspaceService } from "./workspace-service";
 import type { NetworkToolExecutor } from "./network-tool-executor";
 import type { McpService } from "./mcp-service";
@@ -79,7 +79,10 @@ function checkCancellation(signal: AbortSignal): void {
 }
 
 function stableError(error: unknown): AevorenBotError {
-  return error instanceof AevorenBotError ? error : new AevorenBotError("TOOL_EXECUTION_FAILED");
+  if (error instanceof AevorenBotError) return error;
+  const mapped = asAppError(error);
+  if (mapped.code.startsWith("CONNECTOR_") || mapped.code === "TOOL_EXECUTION_CANCELLED") return new AevorenBotError(mapped.code as ErrorCode, undefined, undefined, mapped.details);
+  return new AevorenBotError("TOOL_EXECUTION_FAILED");
 }
 
 function digestResult(content: string): string {
@@ -133,7 +136,7 @@ export class WorkspaceToolExecutor {
 
   productRequestPreview(tool: import("@shared/contracts").ProductToolRequest): string { return this.productOperations?.preview(tool) ?? "产品操作"; }
 
-  productRequestRequiresApproval(tool: import("@shared/contracts").ProductToolRequest): boolean { return this.productOperations?.requiresApproval(tool) ?? true; }
+  productRequestRequiresApproval(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId?: string): boolean { return this.productOperations?.requiresApproval(tool, runtimeRunId) ?? true; }
   productRequestApprovalReview(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined {
     return this.productOperations?.approvalReview(tool, runtimeRunId);
   }
@@ -177,6 +180,9 @@ export class WorkspaceToolExecutor {
       const result = await this.run(initial.arguments, signal, initial);
       checkCancellation(signal);
       this.assertInvocationAccess(initial);
+      const outboundResult=initial.arguments.kind==="product-call"&&initial.arguments.action==="execute"&&initial.arguments.operation==="outbound.send"
+        ? JSON.parse(result.content) as {result?:{state?:string}} : null;
+      if(outboundResult?.result?.state==="unknown")return {invocation:this.repository.interruptProductToolInvocation(id,result.content),content:result.content};
       const invocation = this.repository.getToolInvocation(id).state === "succeeded" ? this.repository.getToolInvocation(id) : initial.arguments.kind === "product-call"
         ? this.repository.completeProductToolInvocation(id, digestResult(result.content), result.content, result.metadata)
         : this.repository.completeToolInvocation(id, digestResult(result.content), result.metadata);

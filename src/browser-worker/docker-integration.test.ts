@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { WebSocket } from "ws";
 import { describe, expect, it } from "vitest";
+import type { DemonstrationCapture, DemonstrationSnapshot } from "@shared/demonstration-contracts";
 import type { BrowserObservation, BrowserPage, BrowserWorkerControl, BrowserWorkerFrame, BrowserWorkerHealth, BrowserDownloadsPage } from "@shared/browser-contracts";
 import { browserWorkerFrameSchema, browserWorkerHealthSchema, browserObservationSchema, browserWorkerDownloadSchema, browserDownloadsPageSchema } from "@shared/browser-schemas";
 
@@ -202,6 +203,57 @@ describe.skipIf(!enabled)("real isolated Chromium and desktop Worker", () => {
       } finally { rfb.close(); }
     }));
   }, 90_000);
+
+  it("records sanitized human RFB input in the actual desktop and seals captures across disconnect and restart", async () => {
+    await withSite(async (site, clicks) => withContainer(async f => {
+      const page = await navigate(f, `${site}/?focusFixture=A`);
+      await f.request("/v1/computer/takeover", "POST", mutation(1, "user"));
+      const rfb = new RfbFixture(f, 2), id = randomUUID();
+      try {
+        await rfb.handshake();
+        await expect.poll(async () => (await f.request<BrowserWorkerControl>("/v1/computer/control")).connectionState).toBe("connected");
+        expect(await f.request("/v1/demonstrations/start", "POST", { ...access(2, "user"), id })).toMatchObject({ id, epoch: 2, state: "recording", eventCount: 0 });
+        await expect(observe(f, page.id, 2)).rejects.toThrow("BROWSER_USER_CONTROL");
+        await expect(f.request("/v1/computer/screenshot", "POST", access(2))).rejects.toThrow("BROWSER_USER_CONTROL");
+        rfb.click(650, 500);
+        await expect.poll(clicks).toBe(1);
+        rfb.type("SECRET_URL_token");
+        const clipboard = Buffer.from("https://user:SECRET@example.test/?token=RAW_CLIPBOARD"), header = Buffer.alloc(8);
+        header[0] = 6; header.writeUInt32BE(clipboard.length, 4); rfb.send(Buffer.concat([header, clipboard]));
+        // A final pointer transition proves preceding text/clipboard messages reached the same real bridge.
+        rfb.click(651, 501);
+        await expect.poll(async () => (await f.request<DemonstrationCapture>("/v1/demonstrations/status")).eventCount).toBe(5);
+        rfb.close();
+        await expect.poll(async () => (await f.request<DemonstrationCapture>("/v1/demonstrations/status")).state).toBe("interrupted");
+        const snapshot = await f.request<DemonstrationSnapshot>("/v1/demonstrations/stop", "POST", { ...access(2, "user"), id });
+        expect(snapshot).toMatchObject({ id, state: "interrupted", reason: "disconnect", eventCount: 5 });
+        expect(snapshot.events).toEqual([{ kind: "pointer", x: 650, y: 500, buttons: 1 }, { kind: "pointer", x: 650, y: 500, buttons: 0 }, { kind: "redacted-text" }, { kind: "pointer", x: 651, y: 501, buttons: 1 }, { kind: "pointer", x: 651, y: 501, buttons: 0 }]);
+        expect(JSON.stringify(snapshot)).not.toMatch(/SECRET|RAW_CLIPBOARD|example/);
+        expect((await f.request<BrowserWorkerControl>("/v1/computer/control")).owner).toBe("user");
+        await expect(f.request("/v1/demonstrations/start", "POST", { ...access(2), id: randomUUID() })).rejects.toThrow("BROWSER_CONTROL_FORBIDDEN");
+      } finally { rfb.close(); }
+      const again = new RfbFixture(f, 2), interruptedId = randomUUID();
+      try {
+        await again.handshake();
+        await f.request("/v1/demonstrations/start", "POST", { ...access(2, "user"), id: interruptedId });
+        again.click(652, 502);
+        await expect.poll(async () => (await f.request<DemonstrationCapture>("/v1/demonstrations/status")).eventCount).toBe(2);
+        await docker(["restart", "--time", "10", f.name]); await f.reconnect();
+        await expect.poll(async () => { try { return (await f.request<BrowserWorkerHealth>("/v1/health")).control.controlEpoch; } catch { return null; } }, { timeout: 50_000 }).toBe(3);
+        expect((await f.request<DemonstrationCapture>("/v1/demonstrations/status"))).toMatchObject({ id: interruptedId, state: "interrupted", eventCount: 2 });
+        expect((await f.request<BrowserWorkerControl>("/v1/computer/control")).owner).toBe("user");
+        await expect(f.request("/v1/demonstrations/start", "POST", { ...access(2, "user"), id: randomUUID() })).rejects.toThrow("BROWSER_CONTROL_CHANGED");
+        await expect(f.request("/v1/computer/screenshot", "POST", access(3))).rejects.toThrow("BROWSER_USER_CONTROL");
+        const stale = new RfbFixture(f, 2); try { await expect.poll(() => stale.socket.readyState).toBe(WebSocket.CLOSED); } finally { stale.close(); }
+        await f.request("/v1/computer/return", "POST", mutation(3, "user"));
+        expect((await f.request<BrowserWorkerControl>("/v1/computer/control")).observedEpoch).toBeNull();
+        await expect(f.request(`/v1/browser/pages/${page.id}/click`, "POST", { ...mutation(4), observationId: randomUUID(), documentVersion: 1, ref: "element-1" })).rejects.toBeDefined();
+        const current = (await pages(f, 4))[0]!;
+        await observe(f, current.id, 4);
+        expect((await f.request<BrowserWorkerControl>("/v1/computer/control")).observedEpoch).toBe(4);
+      } finally { again.close(); }
+    }));
+  }, 120_000);
 
   it("transfers real screenshot pixels and bounds downloads without publishing partial resources", async () => {
     await withSite(async site => withContainer(async f => {

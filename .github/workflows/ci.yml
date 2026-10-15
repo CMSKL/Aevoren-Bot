@@ -83,7 +83,7 @@ jobs:
         run: |
           export AEVOREN_PACKAGED_APP_PATH="$PWD/dist/mac-arm64/Aevoren Bot.app/Contents/MacOS/Aevoren Bot"
           test -f "$AEVOREN_PACKAGED_APP_PATH"
-          pnpm exec playwright test tests/smoke/library.spec.ts
+          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts
       - name: Preserve failed macOS UI diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -119,7 +119,7 @@ jobs:
           # GitHub-hosted Windows runners have no interactive desktop. The
           # Playwright Electron connection still exercises the full Renderer.
           AEVOREN_BOT_TEST_HIDDEN: "1"
-        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts tests/smoke/p0-navigation.spec.ts tests/smoke/ui-redesign-acceptance.spec.ts tests/smoke/product-view.spec.ts tests/smoke/project-tools-followup.spec.ts tests/smoke/contact-focus.spec.ts tests/smoke/room-parallel.spec.ts tests/smoke/library.spec.ts
+        run: pnpm exec playwright test tests/smoke/windows-ci.spec.ts tests/smoke/p0-navigation.spec.ts tests/smoke/ui-redesign-acceptance.spec.ts tests/smoke/product-view.spec.ts tests/smoke/project-tools-followup.spec.ts tests/smoke/contact-focus.spec.ts tests/smoke/room-parallel.spec.ts tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts
       - run: pnpm package:win
       - name: Verify packaged Windows locale resources
         shell: pwsh
@@ -160,7 +160,7 @@ jobs:
           AEVOREN_BOT_TEST_HIDDEN: "1"
         run: |
           $env:AEVOREN_PACKAGED_APP_PATH = Join-Path $env:RUNNER_TEMP "Aevoren Bot/Aevoren Bot.exe"
-          pnpm exec playwright test tests/smoke/ui-redesign-acceptance.spec.ts tests/smoke/product-view.spec.ts tests/smoke/project-tools-followup.spec.ts tests/smoke/contact-focus.spec.ts tests/smoke/room-parallel.spec.ts tests/smoke/library.spec.ts
+          pnpm exec playwright test tests/smoke/ui-redesign-acceptance.spec.ts tests/smoke/product-view.spec.ts tests/smoke/project-tools-followup.spec.ts tests/smoke/contact-focus.spec.ts tests/smoke/room-parallel.spec.ts tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts
           if ($LASTEXITCODE -ne 0) { throw "Installed Windows UI acceptance failed" }
       - name: Preserve failed Windows UI diagnostics
         if: failure()

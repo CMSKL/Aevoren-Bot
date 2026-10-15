@@ -1575,6 +1575,7 @@ export function App(): React.JSX.Element {
       <div className="app-surface" hidden={settingsOpen || sidebarTab !== "contacts"}>
       <ContactDetail
         ref={contactRef}
+        active={!settingsOpen && sidebarTab === "contacts"}
         bot={selectedContact}
         rooms={rooms}
         busy={loading || creatingBot}
@@ -1596,6 +1597,7 @@ export function App(): React.JSX.Element {
       <div className="app-surface" hidden={settingsOpen || sidebarTab === "contacts"}>
       <Conversation
         sessionId={session?.id}
+        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile"}
         userProfile={userProfile}
         key={session?.id ?? selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
         initialDraft={session ? composerDraftsRef.current.get(session.id) : undefined}
@@ -1669,8 +1671,20 @@ export function App(): React.JSX.Element {
           });
         }}
         onCancelRun={(runId) => {
-          const stop = selectedRoom ? window.aevorenBot.roomRuntime.cancelMember(runId) : window.aevorenBot.runtime.cancel(runId);
-          void stop.then(result => { if (!result.ok) setError(result.error); });
+          const currentSessionId = sessionIdRef.current;
+          void (async () => {
+            let run = runtimeRunsRef.current.find(candidate => candidate.id === runId);
+            if (!run && currentSessionId) {
+              const snapshot = await window.aevorenBot.runtime.getSessionSnapshot(currentSessionId);
+              if (!snapshot.ok) { if (currentSessionId === sessionIdRef.current) setError(snapshot.error); return; }
+              run = snapshot.data.runs.find(candidate => candidate.id === runId);
+              if (!run) return;
+            }
+            const result = selectedRoom && run?.route !== "host-outbound"
+              ? await window.aevorenBot.roomRuntime.cancelMember(runId)
+              : await window.aevorenBot.runtime.cancel(runId);
+            if (!result.ok && currentSessionId === sessionIdRef.current) setError(result.error);
+          })();
         }}
         onCancelRoomBatch={(batchId) => void window.aevorenBot.roomRuntime.cancel(batchId).then((result) => { if (!result.ok) setError(result.error); })}
         onRetryRoomTurn={async (turnId) => {

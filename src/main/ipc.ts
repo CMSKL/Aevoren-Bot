@@ -1,3 +1,5 @@
+import { NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "@shared/native-outbound-channels";
+import { nativeOutboundIdSchema } from "@shared/native-outbound-schemas";
 import { z } from "zod";
 import { ProductViewService } from "./product-view-service";
 import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
@@ -5,6 +7,8 @@ import { IPC } from '@shared/channels';
 import { apiResult, AevorenBotError } from './errors';
 import { ProductOperationService } from './product-operation-service';
 import type { ProductDependencies } from './product-handlers';
+import { NATIVE_CONNECTOR_CHANNELS } from '@shared/native-connector-channels';
+import { connectorConfigureSchema } from '@shared/native-connector-schemas';
 
 type IpcDependencies = ProductDependencies & { window: BrowserWindow; rendererReady(): void; confirmClose(canClose: boolean): void };
 
@@ -22,6 +26,15 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
   const { window } = dependencies;
   const view = new ProductViewService(window);
   const product = new ProductOperationService({ ...dependencies, requestView: (input) => view.request(input) });
+  ipcMain.handle(NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL,(event,input:unknown)=>apiResult(()=>{
+    assertTrusted(event,window);if(!dependencies.nativeOutboundService)throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
+    return dependencies.nativeOutboundService.requestApproval(nativeOutboundIdSchema.parse(input),dependencies.workspaceToolCoordinator);
+  }));
+  ipcMain.handle(NATIVE_CONNECTOR_CHANNELS.configure, (event, input: unknown) => apiResult(() => {
+    assertTrusted(event, window);
+    if (!dependencies.nativeConnectorService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
+    return dependencies.nativeConnectorService.configure(connectorConfigureSchema.parse(input));
+  }));
   ipcMain.handle(IPC.productViewReply, (event, id: unknown, result: unknown) => apiResult(() => {
     assertTrusted(event, window);
     const parsed = z.object({ status: z.enum(["completed", "running", "waiting_user", "cancelled", "failed"]), result: z.unknown().optional(), reason: z.string().max(1_000).optional() }).strict().parse(result);

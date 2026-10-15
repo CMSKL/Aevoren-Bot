@@ -333,9 +333,9 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
 
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1180, 1020, 620, 390]) {
-    test(`keeps six settings pages, contacts, and navigation usable: ${theme}, ${width}px`, async () => {
+    test(`keeps seven settings pages, contacts, and navigation usable: ${theme}, ${width}px`, async () => {
       const testInfo = test.info();
-      // Hidden Windows navigation takes about 55–60s across all six pages.
+      // Hidden Windows navigation takes about 55–60s across the settings pages.
       // Keep individual action and assertion deadlines unchanged.
       test.setTimeout(process.platform === "win32" && width <= 620 ? 120_000 : 60_000);
       const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-ui-responsive-"));
@@ -377,7 +377,7 @@ for (const theme of ["light", "dark"] as const) {
             await expect.poll(() => navigation.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
           });
         }
-        for (const section of ["通用", "能力与权限", "长期记忆", "MCP", "主动服务", "版本更新"]) {
+        for (const section of ["通用", "能力与权限", "长期记忆", "应用连接", "MCP", "主动服务", "版本更新"]) {
           await test.step(`open and verify settings page: ${section}`, async () => {
             const tab = navigation.getByRole("button", { name: section, exact: true });
             await tab.click();

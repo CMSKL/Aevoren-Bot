@@ -1,3 +1,4 @@
+import { nativeOutboundIdSchema } from "@shared/native-outbound-schemas";
 import { normalizeProductRequest } from "./product-request";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -13,6 +14,8 @@ import type { ModelImageAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
   "demonstrations.status", "demonstrations.drafts", "demonstrations.readDraft",
+  "outbound.writeGrants", "outbound.get", "outbound.list", "outbound.reconcile",
+  "connectors.list", "connectors.bindings", "connectors.search", "connectors.read", "drafts.list", "drafts.read", "drafts.versions",
   "approvals.review", "skills.scripts", "skills.executionGrants", "skills.scriptExecution",
   "browser.get", "browser.tabs", "browser.read", "browser.observe", "browser.downloads", "computer.view", "computer.screenshot", "preview.list",
   "environments.probe", "environments.list", "environments.get", "execution.list", "execution.get", "execution.logs", "execution.wait", "execution.listFiles", "execution.readFile", "processes.list", "processes.listPorts",
@@ -24,7 +27,8 @@ const PINNED_LIBRARY_READS = new Set(["library.read", "library.readFile", "docum
 const environmentOperation = (operation: string): boolean => /^(environments|execution|processes)\./.test(operation);
 const browserOperation = (operation: string): boolean => /^(browser|computer|preview)\./.test(operation);
 const scriptOperation = (operation: string): boolean => ["skills.scripts", "skills.executionGrants", "skills.grantExecution", "skills.revokeExecution", "skills.runScript", "skills.scriptExecution", "approvals.review"].includes(operation);
-const scopedOperation = (operation: string): boolean => environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || operation.startsWith("demonstrations.");
+const nativeScopedOperation = (operation: string): boolean => operation.startsWith("outbound.") && operation !== "outbound.enableSend" || operation.startsWith("drafts.") || ["connectors.bindings", "connectors.bind", "connectors.unbind", "connectors.search", "connectors.read"].includes(operation);
+const scopedOperation = (operation: string): boolean => environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || operation.startsWith("demonstrations.");
 type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[] };
 
 /** Both transports use these handlers; only the host can supply execution identity. */
@@ -78,13 +82,26 @@ export class ProductOperationService {
     return label;
   }
 
-  requiresApproval(tool: ProductToolRequest): boolean {
+  requiresApproval(tool: ProductToolRequest, runtimeRunId?: string): boolean {
+    if (tool.action === "execute" && tool.operation === "outbound.send" && runtimeRunId) {
+      this.validate(tool, runtimeRunId);
+      const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
+      const input = nativeOutboundIdSchema.parse(this.libraryInput(tool.operation, tool.input, runtime));
+      return this.dependencies.repository.outbound.current(input, input.id).state === "prepared";
+    }
     return tool.action === "execute" && !PUBLIC_READS.has(tool.operation);
   }
 
   approvalReview(tool: ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined {
     if (tool.action !== "execute") return undefined;
     if (tool.operation === "demonstrations.publish") { const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId); return this.dependencies.repository.demonstrations.approvalReview(this.libraryInput(tool.operation, tool.input, runtime) as import("@shared/demonstration-contracts").DemonstrationPublishInput); }
+    if (tool.operation === "outbound.send") {
+      if (!this.dependencies.nativeOutboundService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
+      const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
+      const input = nativeOutboundIdSchema.parse(this.libraryInput(tool.operation,tool.input,runtime));
+      const intent = this.dependencies.repository.outbound.current(input, input.id);
+      return intent.state === "prepared" ? this.dependencies.nativeOutboundService.approvalReview(input) : undefined;
+    }
     if (tool.operation !== "skills.runScript") return undefined;
     const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
     if (!this.dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
@@ -103,7 +120,14 @@ export class ProductOperationService {
     const schema = PRODUCT_OPERATION_SCHEMAS[tool.operation]!;
     const input = schema.parse(this.libraryInput(tool.operation, tool.input, runtime));
     if (tool.operation === "demonstrations.publish") repository.demonstrations.assertPublish(input as import("@shared/demonstration-contracts").DemonstrationPublishInput);
+    if (nativeScopedOperation(tool.operation)) repository.connectors.assertRuntimeCurrent(runtime.id, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId });
+    if (["connectors.search", "connectors.read"].includes(tool.operation)) repository.connectors.access(input as import("@shared/native-connector-contracts").ConnectorAccessInput);
     if (tool.operation === "skills.runScript") this.approvalReview({ ...tool, input }, runtimeRunId);
+    if (tool.operation === "outbound.send") {
+      const selection = input as import("@shared/native-outbound-contracts").NativeOutboundIdInput;
+      const intent = repository.outbound.current(selection, selection.id);
+      if (intent.state === "prepared") this.approvalReview({ ...tool, input }, runtimeRunId);
+    }
     if (tool.operation === "roomRuntime.cancelMember") {
       const target = repository.getRuntimeRun(input as string);
       if (target.sessionId !== runtime.sessionId || !repository.getSession(target.sessionId).roomId || !target.promptManifest.sourceTurnId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
@@ -150,6 +174,15 @@ export class ProductOperationService {
 
   private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<ProductExecutionResult> {
     this.validate(tool, invocation.runtimeRunId);
+    const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
+    if (tool.action === "execute" && tool.operation === "outbound.send") {
+      this.validate(tool, invocation.runtimeRunId);
+      if (!this.dependencies.nativeOutboundService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
+      const input=nativeOutboundIdSchema.parse(this.libraryInput(tool.operation,tool.input,runtime));
+      const result=await this.dependencies.nativeOutboundService.send(input,invocation.approvalRequestId,{signal,
+        assertCurrent:()=>this.dependencies.repository.connectors.assertRuntimeCurrent(runtime.id,{sessionId:runtime.sessionId,executorBotId:runtime.executorBotId})});
+      return this.result({status:result.state==="unknown"?"interrupted_unknown":result.state,operation:tool.operation,result});
+    }
     if (tool.action === "catalog") {
       const query = tool.query?.trim().toLocaleLowerCase() ?? "";
       const operations = PRODUCT_OPERATIONS.filter((item) => !query || `${item.name} ${item.description}`.toLocaleLowerCase().includes(query));
@@ -173,7 +206,6 @@ export class ProductOperationService {
       const result = await this.handlers.get(definition.channel)!(tool.input);
       return this.result({ status: "completed", operation: tool.operation, result });
     }
-    const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
     if (tool.operation === "skills.runScript") {
       const approval = this.dependencies.repository.getApprovalRequest(invocation.approvalRequestId);
       const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
@@ -190,6 +222,27 @@ export class ProductOperationService {
     if (!PUBLIC_READS.has(tool.operation)) {
       const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
       if (previous) {
+        if (["drafts.create", "drafts.update"].includes(tool.operation)) {
+          if (!this.dependencies.nativeConnectorService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
+          const receipt = JSON.parse(previous) as { result?: import("@shared/native-connector-contracts").ConnectorDraftResult };
+          if (!receipt.result?.draft.id || !receipt.result.revision.id) throw new AevorenBotError("CONNECTOR_DRAFT_CONFLICT");
+          const result = this.dependencies.nativeConnectorService.readDraft({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId,
+            id: receipt.result.draft.id, revisionId: receipt.result.revision.id });
+          return this.result({ status: "previously_completed", operation: tool.operation, reused: true, result,
+            receiptNotice: "未再次创建或修改草稿；返回原保存版本并重新核验当前授权，本地草稿尚未外发。" });
+        }
+        if (["connectors.authorize", "connectors.revoke", "connectors.cancelAuthorization"].includes(tool.operation)) {
+          const id = (tool.input as { id: string }).id;
+          return this.result({ status: "previously_completed", operation: tool.operation, reused: true,
+            result: this.dependencies.repository.connectors.get(id), receiptNotice: "原操作未重跑；已重新查询当前连接状态，旧会话授权仍需单独核验。" });
+        }
+        if (["connectors.bind", "connectors.unbind"].includes(tool.operation)) {
+          const receipt = JSON.parse(previous) as { result?: { id?: string } };
+          const result = this.dependencies.repository.connectors.bindings({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, includeRevoked: true }).find(binding => binding.id === receipt.result?.id);
+          if (!result) throw new AevorenBotError("CONNECTOR_NOT_GRANTED");
+          return this.result({ status: "previously_completed", operation: tool.operation, reused: true, result,
+            receiptNotice: "原授权操作未重跑；返回当前绑定状态，撤销后不会自动恢复。" });
+        }
         if (tool.operation === "skills.runScript") {
           const receipt = JSON.parse(previous) as { result?: import("@shared/skill-execution-contracts").SkillScriptExecution };
           if (!receipt.result?.execution.id || !this.dependencies.skillExecutionService) throw new AevorenBotError("SKILL_EXECUTION_CONFLICT");

@@ -1,5 +1,7 @@
 import { ZodError } from "zod";
 import type { ApiResult, AppError, ErrorDomain } from "@shared/contracts";
+import { NativeConnectorError } from "./native-connectors/types";
+import { ConnectorStateError } from "./native-connector-repository";
 
 type ErrorDescriptor = {
   domain: ErrorDomain;
@@ -17,6 +19,22 @@ export const ERROR_REGISTRY = {
   DEMONSTRATION_INPUT_UNSUPPORTED: { domain: "tool", retryable: false, safeMessage: "当前电脑连接输入格式无法录制。录制已停止，请重新连接后明确开始示范。", allowedDetailKeys: [] },
   DEMONSTRATION_VIEWER_REQUIRED: { domain: "tool", retryable: false, safeMessage: "请先接管并连接电脑，再明确开始示范。", allowedDetailKeys: [] },
   INVALID_REQUEST: { domain: "validation", retryable: false, safeMessage: "请求参数不符合要求。", allowedDetailKeys: [] },
+  CONNECTOR_UNAVAILABLE: { domain: "provider", retryable: false, safeMessage: "应用连接服务尚未初始化。", allowedDetailKeys: [] },
+  CONNECTOR_NOT_FOUND: { domain: "provider", retryable: false, safeMessage: "没有找到这项应用连接。", allowedDetailKeys: [] },
+  CONNECTOR_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "连接状态已改变，请刷新后重新确认。", allowedDetailKeys: ["currentVersion"] },
+  CONNECTOR_NOT_GRANTED: { domain: "security", retryable: false, safeMessage: "当前会话 Bot 尚未获得这项连接的读取授权。", allowedDetailKeys: [] },
+  CONNECTOR_AUTH_CHANGED: { domain: "security", retryable: false, safeMessage: "账号或授权范围已改变，旧会话授权已经失效。", allowedDetailKeys: [] },
+  CONNECTOR_DRAFT_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到当前会话的本地草稿。", allowedDetailKeys: [] },
+  CONNECTOR_DRAFT_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "草稿版本已改变，请保留当前输入并读取最新版本。", allowedDetailKeys: ["currentVersion"] },
+  CONNECTOR_DRAFT_CONFLICT: { domain: "validation", retryable: false, safeMessage: "相同草稿标识不能用于不同账号或内容。", allowedDetailKeys: [] },
+  CONNECTOR_AUTH_REQUIRED: { domain: "provider", retryable: false, safeMessage: "请在应用连接设置中重新完成账号授权。", allowedDetailKeys: [] },
+  CONNECTOR_AUTH_INVALID: { domain: "provider", retryable: false, safeMessage: "连接凭据或账号身份未通过验证，请检查配置。", allowedDetailKeys: [] },
+  CONNECTOR_AUTH_CANCELLED: { domain: "provider", retryable: false, safeMessage: "应用授权或读取已取消。", allowedDetailKeys: [] },
+  CONNECTOR_AUTH_TIMEOUT: { domain: "provider", retryable: true, safeMessage: "账号授权已超时，请重新发起。", allowedDetailKeys: [] },
+  CONNECTOR_REQUEST_FAILED: { domain: "provider", retryable: true, safeMessage: "应用读取请求未完成，请检查连接状态后重试。", allowedDetailKeys: [] },
+  CONNECTOR_RESPONSE_INVALID: { domain: "provider", retryable: false, safeMessage: "应用响应未通过格式校验，内容未返回。", allowedDetailKeys: [] },
+  CONNECTOR_RESOURCE_NOT_ALLOWED: { domain: "security", retryable: false, safeMessage: "这项资源不在当前连接的授权范围内。", allowedDetailKeys: [] },
+  CONNECTOR_TOO_LARGE: { domain: "provider", retryable: false, safeMessage: "资源超出本次读取上限，请选择较小内容。", allowedDetailKeys: [] },
   SKILL_SCRIPT_NOT_FOUND: { domain: "tool", retryable: false, safeMessage: "这个 Skill 版本中没有找到指定脚本入口。", allowedDetailKeys: [] },
   SKILL_SCRIPT_UNSUPPORTED: { domain: "tool", retryable: false, safeMessage: "脚本需要支持该能力的隔离环境，请明确重建环境后再授权。", allowedDetailKeys: [] },
   SKILL_GRANT_NOT_FOUND: { domain: "security", retryable: false, safeMessage: "没有找到当前会话 Bot 的脚本授权。", allowedDetailKeys: [] },
@@ -260,6 +278,10 @@ export class AevorenBotError extends Error {
 
 export function asAppError(error: unknown): AppError {
   if (error instanceof AevorenBotError) return error.toAppError();
+  if (error instanceof ConnectorStateError) return new AevorenBotError(error.code, undefined, undefined,
+    error.currentVersion === undefined ? undefined : { currentVersion: error.currentVersion }).toAppError();
+  if (error instanceof NativeConnectorError) return new AevorenBotError(`CONNECTOR_${error.code}` as keyof typeof ERROR_REGISTRY).toAppError();
+  if (error instanceof DOMException && error.name === "AbortError") return new AevorenBotError("TOOL_EXECUTION_CANCELLED").toAppError();
   if (error instanceof ZodError) return new AevorenBotError("INVALID_REQUEST").toAppError();
   return new AevorenBotError("INTERNAL_ERROR").toAppError();
 }

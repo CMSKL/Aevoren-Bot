@@ -8,9 +8,10 @@ import { ProfileInspector, type ProfileInspectorHandle, type SaveStatus } from "
 import { LibraryPanel, type LibraryPanelHandle } from "./LibraryPanel";
 import { EnvironmentPanel } from "./EnvironmentPanel";
 import { ComputerPanel } from "./ComputerPanel";
+import { ConnectorPanel, type ConnectorPanelHandle } from "./ConnectorPanel";
 import "../styles/contacts.css";
 
-type ProfileTab = "profile" | "models" | "memory" | "library" | "skill" | "environment" | "browser" | "computer";
+type ProfileTab = "profile" | "models" | "memory" | "library" | "skill" | "environment" | "browser" | "computer" | "apps";
 
 export type ContactDetailHandle = {
   flush(): Promise<boolean>;
@@ -19,6 +20,7 @@ export type ContactDetailHandle = {
 
 type Props = {
   bot: Bot | null;
+  active?: boolean;
   rooms: Room[];
   busy: boolean;
   workspaceIds: string[];
@@ -39,7 +41,7 @@ type ContactProfileProps = Props & {
 };
 
 const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(function ContactProfile(
-  { bot, rooms, busy, workspaceIds, librarySessionId, onUseResource, onBotUpdated, onAddToRoom, onLocalError, onSaveStatusChange }, ref,
+  { bot, active = true, rooms, busy, workspaceIds, librarySessionId, onUseResource, onBotUpdated, onAddToRoom, onLocalError, onSaveStatusChange }, ref,
 ) {
   const [selectedRoomId, setSelectedRoomId] = useState("");
   const [pending, setPending] = useState(false);
@@ -54,6 +56,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
   const editorRef = useRef<ProfileInspectorHandle>(null);
   const documentsRef = useRef<LibraryPanelHandle>(null);
   const skillsRef = useRef<LibraryPanelHandle>(null);
+  const appsRef = useRef<ConnectorPanelHandle>(null);
   const availableRooms = rooms.filter((room) => room.archivedAt === null);
   const selectedRoom = availableRooms.find((room) => room.id === selectedRoomId);
   const disabled = busy || pending;
@@ -62,6 +65,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
     if (!(await editorRef.current?.flush() ?? true)) return false;
     if (tab === "library") return await documentsRef.current?.flush() ?? true;
     if (tab === "skill") return await skillsRef.current?.flush() ?? true;
+    if (tab === "apps") return await appsRef.current?.flush() ?? true;
     return true;
   }
 
@@ -118,9 +122,9 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
         }}>{editing ? "完成编辑" : "编辑资料"}</button> : null}
       </div>
       <div className="contact-profile-tabs" role="tablist" aria-label="联系人配置">
-        {([ ["profile", "资料"], ["models", "模型与能力"], ["memory", "记忆"], ["library", "资料库"], ["skill", "Skill"], ["environment", "执行环境"], ["browser", "浏览器"], ["computer", "电脑"] ] as const).map(([value, label]) => (
+        {([ ["profile", "资料"], ["models", "模型与能力"], ["memory", "记忆"], ["library", "资料库"], ["skill", "Skill"], ["environment", "执行环境"], ["browser", "浏览器"], ["computer", "电脑"], ["apps", "应用"] ] as const).map(([value, label]) => (
           <button key={value} id={`contact-${bot.id}-${value}-tab`} role="tab" tabIndex={tab === value ? 0 : -1} disabled={changingTab} aria-selected={tab === value} aria-controls={`contact-${bot.id}-${value}-panel`} type="button" onClick={() => void changeTab(value)} onKeyDown={(event) => {
-            const tabs: ProfileTab[] = ["profile", "models", "memory", "library", "skill", "environment", "browser", "computer"];
+            const tabs: ProfileTab[] = ["profile", "models", "memory", "library", "skill", "environment", "browser", "computer", "apps"];
             const index = tabs.indexOf(value);
             const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : null;
             if (!next) return;
@@ -129,7 +133,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
           }}>{label}</button>
         ))}
       </div>
-      <div hidden={tab === "library" || tab === "skill" || tab === "environment" || tab === "browser" || tab === "computer"}><ProfileInspector ref={editorRef} bot={bot} workspaceIds={workspaceIds} activeTab={tab === "models" || tab === "memory" ? tab : "profile"} editing={editing} onBotUpdated={onBotUpdated} onError={onLocalError} onSaveStatusChange={onSaveStatusChange} /></div>
+      <div hidden={tab === "library" || tab === "skill" || tab === "environment" || tab === "browser" || tab === "computer" || tab === "apps"}><ProfileInspector ref={editorRef} bot={bot} workspaceIds={workspaceIds} activeTab={tab === "models" || tab === "memory" ? tab : "profile"} editing={editing} onBotUpdated={onBotUpdated} onError={onLocalError} onSaveStatusChange={onSaveStatusChange} /></div>
       <div id={`contact-${bot.id}-library-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-library-tab`} hidden={tab !== "library"} className="contact-tab-panel">
         {librarySessionId ? <LibraryPanel ref={documentsRef} sessionId={librarySessionId} kind="document" active={tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊资料范围…</p>}
       </div>
@@ -142,6 +146,9 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
       {(["browser", "computer"] as const).map(mode => <div key={mode} id={`contact-${bot.id}-${mode}-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-${mode}-tab`} hidden={tab !== mode} className="contact-tab-panel">
         {librarySessionId ? <ComputerPanel sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} mode={mode} initialPageId={previewPageId} active={tab === mode} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊浏览器范围…</p>}
       </div>)}
+      <div id={`contact-${bot.id}-apps-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-apps-tab`} hidden={tab !== "apps"} className="contact-tab-panel">
+        {librarySessionId ? <ConnectorPanel key={`${librarySessionId}:${bot.id}`} ref={appsRef} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={active && tab === "apps"} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊应用范围…</p>}
+      </div>
       {tab === "profile" ? <details className="contact-section-disclosure contact-room-disclosure">
         <summary><RoomIcon /><strong>加入群聊</strong><ChevronDownIcon className="contact-disclosure-chevron" /></summary>
         <div className="contact-room-group">

@@ -1,3 +1,7 @@
+import { NativeOutboundAdapter } from "./native-connectors/outbound";
+import { NativeWriteHttpClient } from "./native-connectors/write-http";
+import type { NativeFetch } from "./native-connectors/http";
+import { NativeOutboundService } from "./native-outbound-service";
 import "./identity";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -34,6 +38,12 @@ import { EnvironmentService } from "./environment-service";
 import { DemonstrationService } from "./demonstration-service";
 import { BrowserService } from "./browser-service";
 import { SkillExecutionService } from "./skill-execution-service";
+import { NativeConnectorService } from "./native-connector-service";
+import { NativeHttpClient } from "./native-connectors/http";
+import { GoogleNativeOAuth } from "./native-connectors/google-oauth";
+import { GmailNativeAdapter } from "./native-connectors/gmail";
+import { DriveNativeAdapter } from "./native-connectors/drive";
+import { NotionNativeAdapter } from "./native-connectors/notion";
 import { SKILL_EXECUTION_EVENTS } from "@shared/skill-execution-channels";
 import { BROWSER_EVENTS } from "@shared/browser-channels";
 import { ENVIRONMENT_EVENTS } from "@shared/environment-channels";
@@ -61,6 +71,8 @@ let mcpService: McpService | null = null;
 let environmentService: EnvironmentService | null = null;
 let browserService: BrowserService | null = null;
 let skillExecutionService: SkillExecutionService | null = null;
+let nativeConnectorService: NativeConnectorService | null = null;
+let nativeOutboundService: NativeOutboundService | null = null;
 let routineService: RoutineService | null = null;
 let allowClose = false;
 let closeRequested = false;
@@ -155,6 +167,8 @@ async function finishClose(): Promise<void> {
   }
   roomCoordinator?.beginShutdown();
   shutdownPromise ??= (async () => {
+    await nativeOutboundService?.shutdown();
+    await nativeConnectorService?.shutdown();
     await skillExecutionService?.shutdown();
     await runtimeCoordinator?.shutdown();
     await roomCoordinator?.shutdown();
@@ -311,6 +325,28 @@ app.whenReady().then(async () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(SKILL_EXECUTION_EVENTS.changed, event);
   });
   skillExecutionService = productSkillExecutionService;
+  let nativeHttp: NativeHttpClient | undefined;
+  let nativeTestFetch: NativeFetch | undefined;
+  const nativeTestOrigin = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_NATIVE_TEST_ORIGIN : undefined;
+  if (nativeTestOrigin) {
+    const origin = new URL(nativeTestOrigin);
+    if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.pathname !== "/" || origin.username || origin.password || origin.search || origin.hash) throw new AevorenBotError("INVALID_REQUEST");
+    nativeTestFetch = (url, input) => {
+      const destination = new URL(url.pathname + url.search, origin);
+      const headers = new Headers(input.headers);
+      headers.set("x-aevoren-native-host", url.hostname);
+      return fetch(destination, { ...input, headers, redirect: "error" });
+    };
+    nativeHttp = new NativeHttpClient(nativeTestFetch);
+  }
+  const productNativeConnectorService = new NativeConnectorService(repository, electronSecretCodec, {
+    openExternal: url => shell.openExternal(url),
+    ...(nativeHttp ? { oauth: new GoogleNativeOAuth(nativeHttp), gmail: new GmailNativeAdapter(nativeHttp),
+      drive: new DriveNativeAdapter(nativeHttp), notion: new NotionNativeAdapter(nativeHttp) } : {}),
+  });
+  nativeConnectorService = productNativeConnectorService;
+  const productNativeOutboundService = new NativeOutboundService(repository, productNativeConnectorService, nativeHttp && nativeTestFetch ? new NativeOutboundAdapter(nativeHttp,new NativeWriteHttpClient(nativeTestFetch)) : undefined);
+  nativeOutboundService = productNativeOutboundService;
   browserService = new BrowserService(repository, electronSecretCodec,
     app.isPackaged ? join(process.resourcesPath, "browser-worker") : join(app.getAppPath(), "out", "browser-worker"),
     join(app.getPath("userData"), "browser-media"), environmentService, event => {
@@ -402,6 +438,8 @@ app.whenReady().then(async () => {
     browserService,
     demonstrationService: new DemonstrationService(repository, browserService, libraryService),
     skillExecutionService: productSkillExecutionService,
+    nativeConnectorService: productNativeConnectorService,
+    nativeOutboundService: productNativeOutboundService,
     async saveBrowserDownload(input, context) {
       const file = await browserService!.downloadData(input, context);
       let path = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_BROWSER_DOWNLOAD_TEST_PATH : undefined;

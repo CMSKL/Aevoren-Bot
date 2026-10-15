@@ -1,5 +1,7 @@
 # User guide
 
+The v0.3.0-beta.31 native-connection candidate adds **Settings → Application connections** and scoped **Contact/Room → Applications**. See [Native application connections](NATIVE_CONNECTORS.md) for Google desktop-client and Notion token setup, explicit chat/Bot grants, bounded reads and versioned local drafts. The beta.32 candidate is implementing [approved external drafts](NATIVE_OUTBOUND.md) with separate writing permission and fixed revision reviews. Real account authorization, writes and binary preview remain separate verification boundaries.
+
 This guide covers documents, text Skills, local Docker execution, browser/computer integration and the script-Skill delivery in the v0.3.0-beta.30 development candidate. Validation and signing/release are tracked separately in the [implementation record](IMPLEMENTATION_PLAN.md). Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). The app applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build; real Windows Docker execution remains unverified.
 
 ## First run

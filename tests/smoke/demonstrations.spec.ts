@@ -14,7 +14,10 @@ test("hidden demonstration UI retains conflicts and publishes only an explicitly
   repository.close(); const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
   const app = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: { ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !key.startsWith("AEVOREN_BOT_"))), AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_USER_DATA_DIR: data, AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_FAKE_PROVIDER: "1" } });
   try {
-    if (executablePath) expect(await app.evaluate(({ app }) => app.isPackaged)).toBe(true);
+    if (executablePath) {
+      expect(await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion() }))).toEqual({ packaged: true, version: "0.3.0-beta.33" });
+      expect(await app.evaluate(async () => { const fs = await import("node:fs/promises"), path = await import("node:path"); return fs.readFile(path.join(process.resourcesPath, "docs", "SKILL_DEMONSTRATIONS.md"), "utf8"); })).toContain("Browser Worker **1.1.0**");
+    }
     const page = await app.firstWindow(); const errors: string[] = []; page.on("pageerror", error => errors.push(error.message)); await expect(page.locator(".app-shell")).toBeVisible();
     await page.getByRole("listitem", { name: "示范验收 Bot", exact: true }).click();
     await expect(page.getByRole("heading", { name: "示范验收 Bot", exact: true })).toBeVisible();

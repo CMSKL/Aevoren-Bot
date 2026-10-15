@@ -1,11 +1,28 @@
 # Changelog
 
-## Development: demonstration Skill unit
+## v0.3.0-beta.33 (development candidate)
 
-- Record explicitly started human input after authenticated VNC forwarding in Browser Worker 1.1.0. Preserve bounded pointer/button and navigation-key evidence; redact text and clipboard data, and seal interrupted captures without handing control back to AI.
-- Store isolated editable Skill drafts in host SQLite. Stopping creates a draft only; explicit fixed-version publication creates a disabled Skill without execution grants or task dispatch.
-- Persist full saved Skill approval snapshots and reject changed draft versions/digests. Expose shared scoped UI and AI handlers; AI recording requests return `waiting_user`.
-- Preserve unsaved editors on Scope changes and conflicts, retain original publication on retry, and keep existing script approval checks strict. Actual Docker/noVNC and final installation validation remain separate gates.
+- Added explicit isolated-computer demonstration recording and scoped editable text Skill drafts; publication reviews a fixed saved version and creates a disabled Skill.
+- Browser Worker 1.1.0 redacts printable keys and clipboard input, and seals captures on disconnect or control change.
+- Native connector and outbound features from beta.31/beta.32 are retained. Real Docker and cross-platform candidate checks are pending.
+
+
+## v0.3.0-beta.32 (development candidate)
+
+- Add separate account/operation/target write grants and fixed saved-draft approvals for Gmail sending, ordinary Drive text-file creation/replacement and Notion page creation. Gmail sending requires explicit full-scope reauthorization.
+- Persist external intent state before dispatch; interrupted or ambiguous results remain unknown and can only be reconciled through current read authorization. Repeated calls return the original current receipt without another approval or write.
+- Preserve full immutable approval content, detect draft/authorization changes, and retire removed group members' old intent content permanently. Keep internal receipts across history clearing and Runtime removal.
+- Use genuine host-outbound Runtime records for interface actions, retain six independent group members and route Stop to the exact owned task. Existing model Runtime controls stay separate.
+- Fix duplicate approval portals in hidden surfaces and group inspectors. Migration 39 preserves existing records, pending approvals/tools, environment provenance, foreign keys, indexes and triggers.
+- Local ordinary tests: 1,528 passed, 44 skipped; TypeScript, ESLint, build, license, documentation, open-source and security gates passed. Hidden source acceptance passed six cases; the frozen unsigned macOS package passed eight. Controlled HTTP is not real third-party account verification; cross-platform CI and signed publication remain pending.
+
+## v0.3.0-beta.31 (development candidate)
+
+- Add native Gmail, selected/app-created Drive files and shared Notion-page read adapters; Google uses PKCE and a random loopback callback, with separate Drive Picker authorization. Notion uses internal tokens and API version 2026-03-11.
+- Encrypt credentials in the host, keep them outside AI metadata, and require explicit conversation/executor grants. Account/scope changes invalidate grants; token refresh does not expand permissions. Revocation and member removal block late results and old bindings.
+- Add application connection settings and Contact/Room application tabs, with local draft revisions, conflict-preserving editors and fixed-account draft provenance. This delivery has no external send/write path.
+- Keep old draft receipts pinned to their saved revision while querying current authorization; every remote read is fresh and rechecks its grant. Cancellation retains its typed outcome.
+- Controlled adapter, SQLite and hidden UI tests passed. Real third-party authorization, binary media import/preview and final installation-package acceptance remain separate verification boundaries.
 
 ## v0.3.0-beta.30 (development candidate)
 
