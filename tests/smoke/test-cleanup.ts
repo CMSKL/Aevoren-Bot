@@ -7,20 +7,22 @@ const run = promisify(execFile);
 
 /** Bound teardown of the isolated fixture; never signal an unrelated process. */
 export async function closeTestApplication(application: Pick<ElectronApplication, "close" | "process">): Promise<void> {
-  const owned = application.process();
-  const terminal = (): boolean => owned.exitCode !== null || owned.signalCode !== null;
-  let closed = terminal() && owned.stdio.every(stream => !stream || stream.destroyed);
-  let finish!: () => void;
-  const closeEvent = new Promise<void>(resolve => { finish = resolve; });
-  const onClose = (): void => { closed = true; finish(); };
-  owned.once("close", onClose);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    await Promise.race([application.close(), new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error("Isolated Electron close timed out")), 3_000);
+    })]);
+  } catch {
+    // Successful close disposes Playwright's process channel; read it only when
+    // graceful teardown failed and the owned process may still need termination.
+    const owned = application.process();
+    const terminal = (): boolean => owned.exitCode !== null || owned.signalCode !== null;
+    let closed = terminal() && owned.stdio.every(stream => !stream || stream.destroyed);
+    let finish!: () => void;
+    const closeEvent = new Promise<void>(resolve => { finish = resolve; });
+    const onClose = (): void => { closed = true; finish(); };
+    owned.once("close", onClose);
     try {
-      await Promise.race([application.close(), new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error("Isolated Electron close timed out")), 3_000);
-      })]);
-    } catch {
       console.warn("Isolated Electron close did not finish; terminating only its owned fixture process tree.");
       const pid = owned.pid;
       if (!closed && !terminal() && pid && Number.isSafeInteger(pid) && pid > 0) {
@@ -40,14 +42,15 @@ export async function closeTestApplication(application: Pick<ElectronApplication
           }
         }
       }
+      if (timer) clearTimeout(timer);
+      if (!closed) await Promise.race([closeEvent, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Owned Electron process or stdio did not close")), 2_000);
+      })]);
+    } finally {
+      owned.removeListener("close", onClose);
     }
-    if (timer) clearTimeout(timer);
-    if (!closed) await Promise.race([closeEvent, new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new Error("Owned Electron process or stdio did not close")), 2_000);
-    })]);
   } finally {
     if (timer) clearTimeout(timer);
-    owned.removeListener("close", onClose);
   }
 }
 
