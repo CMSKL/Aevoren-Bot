@@ -185,7 +185,18 @@ test("keeps streamed transcription separate from an ABA-edited draft and inserts
     await configure(f.page); await select(f, 1); await select(f, 0); await openVoice(f);
     const input = f.page.getByLabel("消息", { exact: true }); await input.fill("原草稿"); const original = await draft(f.page);
     await f.page.getByRole("button", { name: "录音转写", exact: true }).click(); await expect(f.page.getByText("正在录音 · 仅麦克风", { exact: true })).toBeVisible();
-    await f.page.getByRole("button", { name: "停止录音并转写", exact: true }).click(); await expect.poll(() => f.transcriptions.length).toBe(1);
+    await f.page.getByRole("button", { name: "停止录音并转写", exact: true }).click();
+    try { await expect.poll(() => f.transcriptions.length).toBe(1); }
+    catch (failure) {
+      const diagnostic = await f.page.evaluate(async sessionId => {
+        const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+        const [media, jobs] = await Promise.all([api.media.list({ sessionId }), api.voice.list({ sessionId })]);
+        return { capture: document.querySelector('[aria-label="录音转写"]')?.textContent?.slice(0, 2000),
+          media: media.ok ? media.data.slice(0, 20).map(item => ({ id: item.asset.reference.id, kind: item.asset.kind, mimeType: item.asset.reference.mimeType, size: item.asset.reference.size, enabled: item.asset.enabled, durationMs: item.asset.durationMs })) : media.error.code,
+          tasks: jobs.ok ? jobs.data.slice(0, 20).map(task => ({ id: task.id, kind: task.kind, state: task.state, version: task.version, lastErrorCode: task.lastErrorCode })) : jobs.error.code };
+      }, f.bots[0]!.sessionId).catch(() => ({ diagnostic: "UI metadata unavailable" }));
+      await test.info().attach("capture-before-http-diagnostic", { body: JSON.stringify(diagnostic), contentType: "application/json" }); throw failure;
+    }
     const panel = f.page.getByRole("region", { name: "语音任务", exact: true }); await expect(panel).toContainText("独立的"); await expect(input).toHaveValue("原草稿");
     f.transcriptions[0]!.response.write(`data: ${JSON.stringify({ type: "transcript.text.delta", delta: "分段文字" })}\n\n`); await expect(panel).toContainText("独立的分段文字");
     await input.fill("中间草稿"); await input.fill("原草稿"); const aba = await draft(f.page); expect(aba.digest).toBe(original.digest); expect(aba.draftVersion).toBeGreaterThan(original.draftVersion);
