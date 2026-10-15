@@ -1,5 +1,9 @@
 # Aevoren 功能扩展实施计划
 
+> beta.32 当前补充：CI `38680943010` 的 Linux 普通检查通过，真实 Docker 为 39／40；六 Scope 电脑截图被原有 `BROWSER_OBSERVATION_STALE` 规则拒绝。本轮未取得成功画面，不能记为完整 Linux 门禁通过。当前补入同仓 beta.35 已验证的脱敏截图阶段诊断，保持原有焦点、版本和接管检查及调用顺序；该补丁不表示已修复错误。此前本机安装包记录先于该 Worker 补丁，后续须分别核验。
+
+诊断候选 `1ca624d` 的本机补充验收：截图诊断／控制专项 15 项、Browser Worker TypeScript 与定向 lint、Worker 构建通过。重新打包的真实未签名 macOS arm64 beta.32 完成 23 项场景（原生读取 2、外发 5、关闭 8、Runtime 8），包括 15 次重载恢复、失败后重试、SIGKILL 恢复、关闭阻塞提示及 typed API；全部通过。两套 Worker 共八个文件及五份指南与构建输出逐字节相同。ASAR SHA-256 为 `f095741de56104676e8854fcf9d2472a4887ed0164945bb850dbdd3d035cff0a`，Browser engine 为 `9788e576cc351bcfea9e380484b33df8456582b143d0c7fac271662e1ded6e7d`。新一轮跨平台／Docker 检查仍需完成；本机没有启动 Docker 或连接真实账号。
+
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
 ## 已确定的方案
