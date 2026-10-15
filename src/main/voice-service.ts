@@ -23,14 +23,15 @@ export class VoiceService {
   private readonly lifetime=new AbortController();
   private closing:Promise<void>|undefined;
   constructor(private readonly repository:AppRepository,codec:SecretCodec,private readonly mediaReader:VoiceMediaReader,blobRoot:string,
-    private readonly options:{onChanged?:(event:VoiceEvent)=>void;fetch?:VoiceFetch}={}){
+    private readonly options:{onChanged?:(event:VoiceEvent)=>void;onConfigurationChanged?():void;fetch?:VoiceFetch}={}){
     this.settings=new VoiceSettings(repository.voice,codec);this.adapter=new VoiceHttpAdapter(options.fetch);this.blobs=new MediaBlobStore(blobRoot);
     repository.voice.recoverInterrupted();
   }
   configurations(){return this.settings.configurations();}
   saveConfiguration(input:VoiceConfigurationSave){
     assertMediaNotCancelled(this.lifetime.signal);const result=this.settings.save(input);
-    for(const job of this.jobs.values())if(job.kind===result.kind)this.cancelJob(job,"VOICE_CONFIGURATION_CONFLICT");return result;
+    for(const job of this.jobs.values())if(job.kind===result.kind)this.cancelJob(job,"VOICE_CONFIGURATION_CONFLICT");
+    if(result.kind==="realtime")this.options.onConfigurationChanged?.();return result;
   }
   private check(sessionId:string,context:VoiceContext):void {
     assertMediaNotCancelled(this.lifetime.signal);assertMediaNotCancelled(context.signal);this.repository.voice.assertScope(sessionId,context);

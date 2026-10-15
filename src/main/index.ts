@@ -1,3 +1,6 @@
+import { RealtimeService } from "./realtime-service";
+import { RealtimeBusinessHost } from "./realtime-business-host";
+import { REALTIME_CHANGED_CHANNEL } from "@shared/realtime-channels";
 import { VoiceService } from "./voice-service";
 import { installVoiceCaptureHost } from "./voice-capture-host";
 import { VOICE_CHANGED_CHANNEL } from "@shared/voice-channels";
@@ -85,6 +88,8 @@ let environmentService: EnvironmentService | null = null;
 let browserService: BrowserService | null = null;
 let mediaService: MediaService | null = null;
 let voiceService: VoiceService | null = null;
+let realtimeService: RealtimeService | null = null;
+let realtimeBusiness: RealtimeBusinessHost | null = null;
 let voiceCapture: ReturnType<typeof installVoiceCaptureHost> | null = null;
 let skillExecutionService: SkillExecutionService | null = null;
 let nativeConnectorService: NativeConnectorService | null = null;
@@ -124,12 +129,14 @@ function emitSendState(event: SendStateEvent): void {
 }
 
 function emitRuntime(event: RuntimeEvent): void {
+  realtimeBusiness?.changed();
   if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void browserService?.cancelRuntime(event.run.id).catch(() => undefined);
   if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void environmentService?.cancelRuntime(event.run.id).catch(() => undefined);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.runtimeEvent, event);
 }
 
 function emitRoomRuntime(event: RoomRuntimeEvent): void {
+  realtimeBusiness?.changed();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.roomRuntimeEvent, event);
 }
 
@@ -178,6 +185,8 @@ async function finishClose(): Promise<void> {
     clearCloseConfirmationTimer();
     closeRequested = false;
     pendingClose = false;
+    voiceCapture?.invalidate();
+    realtimeService?.stopAll();
     mainWindow.hide();
     return;
   }
@@ -188,6 +197,7 @@ async function finishClose(): Promise<void> {
     await nativeOutboundService?.shutdown();
     await nativeConnectorService?.shutdown();
     await skillExecutionService?.shutdown();
+    await realtimeService?.shutdown();
     await voiceCapture?.shutdown();
     await voiceService?.shutdown();
     await mediaService?.shutdown();
@@ -359,7 +369,7 @@ app.whenReady().then(async () => {
     voiceFetch = (url, input) => fetch(new URL(url.pathname + url.search, origin), { ...input, redirect: "error" });
   }
   const productVoiceService = new VoiceService(repository, electronSecretCodec, productMediaService,
-    join(app.getPath("userData"), "voice-blobs"), { ...(voiceFetch ? { fetch: voiceFetch } : {}), onChanged: event => {
+    join(app.getPath("userData"), "voice-blobs"), { ...(voiceFetch ? { fetch: voiceFetch } : {}), onConfigurationChanged: () => realtimeService?.configurationChanged(), onChanged: event => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(VOICE_CHANGED_CHANNEL, event);
     } });
   voiceService = productVoiceService;
@@ -453,6 +463,17 @@ app.whenReady().then(async () => {
     transcript: emitTranscript,
     roomRuntime: emitRoomRuntime,
   }, decisionService);
+  realtimeBusiness = new RealtimeBusinessHost(repository, sendWorker, roomCoordinator);
+  const business = realtimeBusiness;
+  const productRealtimeService = new RealtimeService(repository, electronSecretCodec, {
+    dispatch: (request, signal) => business.dispatch(request, signal),
+    lookup: request => business.lookup(request), wait: (link, signal) => business.wait(link, signal), cancel: link => business.cancel(link),
+  }, { onEvent: event => {
+    if (event.type === "snapshot" && ["stopped", "failed", "interrupted_unknown"].includes(event.snapshot.session.state))
+      voiceCapture?.cancel({ sessionId: event.snapshot.session.sessionId, captureId: event.snapshot.session.captureId });
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(REALTIME_CHANGED_CHANNEL, event);
+  } });
+  realtimeService = productRealtimeService;
   const updateConfigurationPath = join(process.resourcesPath, "app-update.yml");
   const updateChannel = resolveUpdateChannel({
     isPackaged: app.isPackaged,
@@ -493,10 +514,12 @@ app.whenReady().then(async () => {
     libraryService,
     mediaService: productMediaService,
     voiceService: productVoiceService,
+    realtimeService: productRealtimeService,
     voiceCapture,
     sessionChanged(session) {
       voiceCapture?.cancelSession(session.id);
       productVoiceService.sessionChanged(session.id, session.generation);
+      productRealtimeService.sessionChanged(session.id, session.generation);
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.sessionChangedEvent, { session });
     },
     async pickMediaPaths(_input, signal) {

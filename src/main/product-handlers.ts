@@ -1,3 +1,6 @@
+import { REALTIME_PRODUCT_OPERATIONS } from "@shared/realtime-product";
+import { realtimeInputSchema } from "@shared/realtime-schemas";
+import type { RealtimeService } from "./realtime-service";
 import { addVoiceProductHandlers, type VoiceProductDependencies } from "./voice-product-handlers";
 import { addMediaProductHandlers, type MediaProductDependencies } from "./media-product-handlers";
 import { addMcpWriteProductHandlers, type McpWriteProductDependencies } from "./mcp-write-product-handlers";
@@ -93,6 +96,7 @@ export type ProductDependencies = VoiceProductDependencies & MediaProductDepende
   libraryChanged?(event: LibraryChangedEvent): void;
   pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
   exportLibraryResource?(input: { sessionId: string; id: string; revisionId?: string }, signal?: AbortSignal): Promise<LibraryExportResult | null>;
+  realtimeService?: RealtimeService;
   productChanged?(): void;
   sessionChanged?(session: import("@shared/contracts").Session): void;
   requestUpdateAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
@@ -145,6 +149,12 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
   addMediaProductHandlers(handlers, dependencies, commit, libraryContext);
   addVoiceProductHandlers(handlers, dependencies, commit);
+  for (const definition of REALTIME_PRODUCT_OPERATIONS) handlers.set(definition.channel, input => {
+    const service = dependencies.realtimeService;
+    if (!service) throw new AevorenBotError("VOICE_UNSUPPORTED");
+    const parsed = realtimeInputSchema.parse(input);
+    return definition.name.endsWith("snapshot") ? service.snapshot(parsed) : definition.name.endsWith("stopTask") ? service.stopTask(parsed) : service.stop(parsed);
+  });
   addEnvironmentProductHandlers(handlers, dependencies, commit, libraryContext);
   addBrowserProductHandlers(handlers, dependencies, commit, libraryContext);
   addDemonstrationProductHandlers(handlers, dependencies, commit, libraryContext);

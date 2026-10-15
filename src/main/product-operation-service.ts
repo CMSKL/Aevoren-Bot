@@ -1,3 +1,4 @@
+import { realtimeInputSchema } from "@shared/realtime-schemas";
 import { mcpWriteIdSchema } from "@shared/mcp-write-schemas";
 import { MCP_WRITE_PRODUCT_OPERATIONS } from "@shared/mcp-write-product";
 import { nativeOutboundIdSchema } from "@shared/native-outbound-schemas";
@@ -15,7 +16,7 @@ import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import type { ModelImageAttachment, ModelTextAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
-  "voice.configurations", "voice.get", "voice.list", "voice.audio",
+  "voice.realtime.snapshot", "voice.configurations", "voice.get", "voice.list", "voice.audio",
   "media.list", "media.metadata", "media.read", "media.preview",
   "mcp.toolCatalog", "mcp.toolGrants", "mcp.toolResult", "mcp.listToolIntents",
   "demonstrations.status", "demonstrations.drafts", "demonstrations.readDraft",
@@ -218,6 +219,17 @@ export class ProductOperationService {
   private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<ProductExecutionResult> {
     this.validate(tool, invocation.runtimeRunId);
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
+    if (tool.action === "execute" && tool.operation.startsWith("voice.realtime.")) {
+      const service = this.dependencies.realtimeService;
+      if (!service) throw new AevorenBotError("VOICE_UNSUPPORTED");
+      const input = realtimeInputSchema.parse(this.libraryInput(tool.operation, tool.input, runtime));
+      const context = { executorBotId: runtime.executorBotId, runtimeRunId: runtime.id, signal };
+      const snapshot = tool.operation.endsWith("snapshot") ? service.snapshot(input, context)
+        : tool.operation.endsWith("stopTask") ? await service.stopTask(input, context) : await service.stop(input, context);
+      // Transcript text is already the task's human input; catalog receipts retain status only.
+      return this.result({ status: "completed", operation: tool.operation, result: { session: snapshot.session,
+        turns: snapshot.turns.map(({ transcript: _text, ...turn }) => turn) } });
+    }
     if (tool.action === "execute" && voiceOperation(tool.operation) && tool.operation !== "voice.configure") {
       const service = this.dependencies.voiceService!;
       const input = PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(this.libraryInput(tool.operation, tool.input, runtime));

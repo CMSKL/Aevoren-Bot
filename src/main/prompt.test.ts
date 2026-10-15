@@ -78,6 +78,16 @@ describe("buildPrompt", () => {
     updatedAt: "2026-01-02T12:00:00.000Z",
   }];
 
+  it("keeps verified final human voice input at user authority without delegation ancestry", () => {
+    const spoken = { ...entry(1, "user", "创建一个选题 Bot"), origin: { kind: "voice-input" as const,
+      voiceSessionId: "voice-session", turnId: "voice-turn", callId: "call", transcriptDigest: "a".repeat(64) } };
+    const prompt = buildPrompt(bot, session, [spoken], 1);
+    const message = prompt.messages.find(item => item.content.includes("HUMAN_VOICE_INPUT"));
+    expect(message?.role).toBe("user"); expect(message?.content).toContain("创建一个选题 Bot");
+    expect(message?.content).not.toContain("AI_DELEGATED_TASK");
+    expect(message?.content).not.toContain("fromRuntimeRunId");
+  });
+
   it("orders profile and valid transcript entries through the target user", () => {
     const prompt = buildPrompt(
       bot,

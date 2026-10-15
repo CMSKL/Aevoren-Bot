@@ -1,3 +1,4 @@
+import { REALTIME_CAPTURE_MAX_DURATION_MS } from "@shared/realtime-channels";
 import { VOICE_CAPTURE_MAX_DURATION_MS } from "@shared/voice-channels";
 import { randomUUID } from "node:crypto";
 import type { MessageMediaReference } from "@shared/media-contracts";
@@ -15,7 +16,7 @@ export type VoiceCaptureDependencies = {
   now?(): number;
 };
 type Capture = { intent: VoiceCaptureIntent; document: VoiceDocumentIdentity; generation: number; deadline: number;
-  stage: "requesting" | "issued" | "publishing"; controller: AbortController; timer?: ReturnType<typeof setTimeout> };
+  realtime: boolean; stage: "requesting" | "issued" | "publishing"; controller: AbortController; timer?: ReturnType<typeof setTimeout> };
 const permissionWindowMs = 30_000;
 
 /** One user-initiated audio capture, tied to one exact main document. */
@@ -46,7 +47,17 @@ export class VoiceCaptureGate {
       })]);
     } finally { signal.removeEventListener("abort", abort); }
   }
-  async begin(input: VoiceCaptureBegin): Promise<VoiceCaptureIntent> {
+  async begin(input: VoiceCaptureBegin): Promise<VoiceCaptureIntent> { return this.issue(input, false); }
+  async beginRealtime(sessionId: string): Promise<VoiceCaptureIntent> {
+    return this.issue({ sessionId, draftVersion: 0, baseDigest: "0".repeat(64) }, true);
+  }
+  realtimeLease(sessionId: string, captureId: string): { captureId: string; signal: AbortSignal; assertCurrent(): void } {
+    const capture = this.capture;
+    if (!capture?.realtime || capture.stage !== "issued" || capture.intent.sessionId !== sessionId || capture.intent.captureId !== captureId) throw new AevorenBotError("VOICE_CAPTURE_INVALID");
+    this.check(capture);
+    return { captureId, signal: capture.controller.signal, assertCurrent: () => this.check(capture) };
+  }
+  private async issue(input: VoiceCaptureBegin, realtime: boolean): Promise<VoiceCaptureIntent> {
     const parsed = voiceCaptureBeginSchema.parse(input);
     if (this.closed) throw new AevorenBotError("VOICE_CAPTURE_INVALID");
     const session = this.repository.getSession(parsed.sessionId);
@@ -54,7 +65,7 @@ export class VoiceCaptureGate {
     this.invalidate();
     const capture: Capture = { intent: { ...parsed, captureId: randomUUID(), expiresAt: new Date(this.now() + permissionWindowMs).toISOString() },
       document: this.dependencies.identity(), generation: session.generation, deadline: this.now() + 150_000,
-      stage: "requesting", controller: new AbortController() };
+      realtime, stage: "requesting", controller: new AbortController() };
     this.capture = capture;
     try {
       if (!await this.wait(this.dependencies.hasUserActivation(), capture)) throw new AevorenBotError("VOICE_CAPTURE_INVALID");
@@ -62,9 +73,10 @@ export class VoiceCaptureGate {
       if (!await this.wait(this.dependencies.requestMicrophone(), capture)) throw new AevorenBotError("VOICE_PERMISSION_DENIED");
       this.check(capture);
       capture.intent.expiresAt = new Date(this.now() + permissionWindowMs).toISOString();
-      capture.deadline = this.now() + VOICE_CAPTURE_MAX_DURATION_MS + permissionWindowMs;
+      const duration = realtime ? REALTIME_CAPTURE_MAX_DURATION_MS : VOICE_CAPTURE_MAX_DURATION_MS;
+      capture.deadline = this.now() + duration + permissionWindowMs;
       capture.stage = "issued";
-      capture.timer = setTimeout(() => { if (this.capture === capture) this.invalidate(); }, VOICE_CAPTURE_MAX_DURATION_MS + permissionWindowMs);
+      capture.timer = setTimeout(() => { if (this.capture === capture) this.invalidate(); }, duration + permissionWindowMs);
       return { ...capture.intent };
     } catch (error) { if (this.capture === capture) this.invalidate(); throw error; }
   }
@@ -79,7 +91,7 @@ export class VoiceCaptureGate {
   }
   async commit(input: VoiceCaptureCommit): Promise<MessageMediaReference> {
     const parsed = voiceCaptureCommitSchema.parse(input), capture = this.capture;
-    if (!capture || capture.stage !== "issued" || parsed.sessionId !== capture.intent.sessionId || parsed.captureId !== capture.intent.captureId
+    if (!capture || capture.realtime || capture.stage !== "issued" || parsed.sessionId !== capture.intent.sessionId || parsed.captureId !== capture.intent.captureId
       || parsed.baseDigest !== capture.intent.baseDigest || parsed.draftVersion !== capture.intent.draftVersion) throw new AevorenBotError("VOICE_CAPTURE_INVALID");
     this.check(capture);
     const mimeType = parsed.mimeType.toLowerCase().split(";")[0]!.trim();

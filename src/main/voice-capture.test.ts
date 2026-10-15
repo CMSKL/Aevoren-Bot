@@ -66,3 +66,13 @@ describe("explicit microphone capture gate", () => {
     await started; await gate.shutdown(); await rejected;
   });
 });
+
+it("realtime capture has its own expiring document lease and cannot publish a recording", async () => {
+  const f = fixture(), intent = await f.gate.beginRealtime(f.input.sessionId);
+  const lease = f.gate.realtimeLease(f.input.sessionId, intent.captureId);
+  f.advance(121_000); expect(() => lease.assertCurrent()).not.toThrow();
+  await expect(f.gate.commit({ ...f.input, draftVersion: 0, baseDigest: "0".repeat(64), captureId: intent.captureId,
+    mimeType: "audio/webm", dataBase64: Buffer.from("not a recording").toString("base64") })).rejects.toMatchObject({ code: "VOICE_CAPTURE_INVALID" });
+  f.navigate(); expect(() => lease.assertCurrent()).toThrow();
+  f.gate.invalidate(); expect(lease.signal.aborted).toBe(true); expect(f.publish).not.toHaveBeenCalled();
+});

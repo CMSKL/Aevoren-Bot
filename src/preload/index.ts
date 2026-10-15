@@ -1,3 +1,5 @@
+import { REALTIME_CHANNELS, REALTIME_CHANGED_CHANNEL } from "@shared/realtime-channels";
+import type { RealtimeEvent } from "@shared/realtime-contracts";
 import { VOICE_CHANNELS, VOICE_CHANGED_CHANNEL } from "@shared/voice-channels";
 import type { VoiceEvent } from "@shared/voice-contracts";
 import { MCP_WRITE_CHANNELS } from "@shared/mcp-write-channels";
@@ -193,6 +195,21 @@ const api: AevorenBotApi = {
     },
   },
   voice: {
+    realtime: {
+      start: input => ipcRenderer.invoke(REALTIME_CHANNELS.start, input),
+      append: input => ipcRenderer.invoke(REALTIME_CHANNELS.append, input),
+      commitTurn: input => ipcRenderer.invoke(REALTIME_CHANNELS.commitTurn, input),
+      playbackAck: input => ipcRenderer.invoke(REALTIME_CHANNELS.playbackAck, input),
+      interrupt: input => ipcRenderer.invoke(REALTIME_CHANNELS.interrupt, input),
+      stop: input => ipcRenderer.invoke(REALTIME_CHANNELS.stop, input),
+      snapshot: input => ipcRenderer.invoke(REALTIME_CHANNELS.snapshot, input),
+      stopTask: input => ipcRenderer.invoke(REALTIME_CHANNELS.stopTask, input),
+      onChanged: listener => {
+        const handler = (_event: Electron.IpcRendererEvent, event: RealtimeEvent): void => listener(event);
+        ipcRenderer.on(REALTIME_CHANGED_CHANNEL, handler);
+        return () => ipcRenderer.removeListener(REALTIME_CHANGED_CHANNEL, handler);
+      },
+    },
     configurations: () => ipcRenderer.invoke(VOICE_CHANNELS.configurations),
     saveConfiguration: input => ipcRenderer.invoke(VOICE_CHANNELS.saveConfiguration, input),
     beginCapture: input => ipcRenderer.invoke(VOICE_CHANNELS.beginCapture, input),

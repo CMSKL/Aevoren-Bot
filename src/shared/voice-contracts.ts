@@ -1,3 +1,4 @@
+import type { RealtimeApi } from "./realtime-contracts";
 import type { ApiResult, MediaRef } from "./contracts";
 import type { MessageMediaReference } from "./media-contracts";
 
@@ -36,6 +37,7 @@ export type VoiceTaskListInput = VoiceScope & { limit?: number };
 export type VoiceAudio = { task: VoiceTask; reference: MediaRef; dataBase64: string };
 export type VoiceEvent = { task: VoiceTask; delta?: string };
 export type VoiceApi = {
+  realtime: RealtimeApi;
   configurations(): Promise<ApiResult<VoiceConfiguration[]>>;
   saveConfiguration(input: VoiceConfigurationSave): Promise<ApiResult<VoiceConfiguration>>;
   beginCapture(input: VoiceCaptureBegin): Promise<ApiResult<VoiceCaptureIntent>>;

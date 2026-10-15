@@ -1,3 +1,4 @@
+import { REALTIME_OPERATION_SCHEMAS } from "@shared/realtime-product";
 import { VOICE_OPERATION_SCHEMAS } from "@shared/voice-product";
 import { MCP_WRITE_OPERATION_SCHEMAS } from "@shared/mcp-write-product";
 import { DEMONSTRATION_OPERATION_SCHEMAS } from "@shared/demonstration-product";
@@ -18,6 +19,7 @@ import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema
 export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...MEDIA_OPERATION_SCHEMAS,
   ...VOICE_OPERATION_SCHEMAS,
+  ...REALTIME_OPERATION_SCHEMAS,
   ...LIBRARY_OPERATION_SCHEMAS,
   ...ENVIRONMENT_OPERATION_SCHEMAS,
   ...BROWSER_OPERATION_SCHEMAS,

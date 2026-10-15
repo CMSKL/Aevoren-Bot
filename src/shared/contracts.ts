@@ -514,10 +514,18 @@ export type ProductToolRequest =
   | { kind: "product-call"; action: "describe"; operation: string }
   | { kind: "product-call"; action: "execute"; operation: string; input?: unknown };
 
-export type DelegationOrigin = {
+export type AgentDelegationOrigin = {
   ancestorRunIds?: string[];
   kind: "ai-delegation" | "routine"; routineId?: string; routineRunId?: string; fromBotNameSnapshot?: string; fromBotId: string; fromSessionId: string; fromRuntimeRunId: string; rootClientNonce: string; depth: number;
 };
+
+/** Final human speech provenance, verified against the host's durable turn journal. */
+export type VoiceMessageOrigin = {
+  kind: "voice-input"; voiceSessionId: string; turnId: string; callId: string; transcriptDigest: string;
+  fromRuntimeRunId?: never; fromSessionId?: never; fromBotId?: never; fromBotNameSnapshot?: never;
+  rootClientNonce?: never; depth?: never; ancestorRunIds?: never;
+};
+export type DelegationOrigin = AgentDelegationOrigin | VoiceMessageOrigin;
 
 export type ProjectToolRequest =
   | ProductToolRequest

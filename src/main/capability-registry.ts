@@ -36,13 +36,13 @@ type SnapshotContext = {
   browserUserControlled: boolean;
   voiceSttReady: boolean;
   voiceTtsReady: boolean;
+  voiceRealtimeReady: boolean;
 };
 
 const unsupported: Array<Pick<CapabilityDescriptor, "id" | "name" | "category" | "description" | "effectClass" | "adapterKind">> = [
   { id: "device.location", name: "定位", category: "device", description: "读取用户授权的位置。", effectClass: "read-local", adapterKind: "none" },
   { id: "device.personal-data", name: "设备个人数据", category: "device", description: "访问相册、日历或通讯录。", effectClass: "read-local", adapterKind: "none" },
   { id: "external.actions", name: "其他外部操作", category: "external", description: "尚未适配的订票、下单或其他服务操作；原生应用草稿另按具体授权提供。", effectClass: "write-external", adapterKind: "none" },
-  { id: "voice.realtime", name: "实时语音", category: "multimodal", description: "实时语音连接、打断和宿主委派尚未实现，配置可独立保存。", effectClass: "read-remote", adapterKind: "none" },
   { id: "multimodal.video-understanding", name: "模型视频理解", category: "multimodal", description: "当前视频只提供本地预览；未接入模型视频传输或视频理解。", effectClass: "read-local", adapterKind: "none" },
 ];
 
@@ -121,6 +121,13 @@ function capabilityDescriptors(
       id: "media.audio-video", name: "音视频引用与预览", category: "multimodal", effectClass: "read-local", adapterKind: "core",
       description: "保存并预览实际可解码的有界音视频，按会话授权和原始摘要引用；音频可另行转写，视频不会直接传入模型。",
       availability: executionTools ? "available" : "unavailable", reason: executionTools ? null : "当前来源未接入宿主工具。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "voice.realtime", name: "实时语音", category: "multimodal", effectClass: "read-remote", adapterKind: "core",
+      description: "用户主动开启麦克风，逐轮提交实时语音；实际播放采样支持打断，工具委派进入普通 Runtime 与审批。停止语音不自动取消已接受的业务任务。",
+      availability: executionTools && context.voiceRealtimeReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前来源未接入宿主工具。" : context.voiceRealtimeReady ? "已配置；账号、模型与物理设备以实际连接结果为准。麦克风只能由用户主动开启。" : "请独立启用并配置实时语音服务。",
       permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
@@ -435,7 +442,7 @@ export class CapabilityRegistry {
     }));
     const routines = this.routineList();
     const voiceConfigurations = this.voiceConfigurations();
-    const voiceReady = (kind: "stt" | "tts"): boolean => voiceConfigurations.some(item => item.kind === kind && item.enabled && item.keyConfigured);
+    const voiceReady = (kind: "stt" | "tts" | "realtime"): boolean => voiceConfigurations.some(item => item.kind === kind && item.enabled && item.keyConfigured);
     const environment = botId && sessionId ? this.repository.environments.get({ sessionId, executorBotId: botId }) : null;
     const executionReady = environment?.state === "running";
     const browser = botId && sessionId ? this.repository.browsers.get({ sessionId, executorBotId: botId }) : null;
@@ -448,7 +455,7 @@ export class CapabilityRegistry {
       try { this.repository.outbound.assertGrant({ sessionId, executorBotId: botId }, grant.id, grant.version); return true; }
       catch { return false; }
     }));
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, voiceSttReady: voiceReady("stt"), voiceTtsReady: voiceReady("tts"), room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, voiceSttReady: voiceReady("stt"), voiceTtsReady: voiceReady("tts"), voiceRealtimeReady: voiceReady("realtime"), room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
       browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));

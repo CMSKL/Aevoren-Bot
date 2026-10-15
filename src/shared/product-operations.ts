@@ -1,3 +1,4 @@
+import { REALTIME_PRODUCT_OPERATIONS } from "./realtime-product";
 import { VOICE_PRODUCT_OPERATIONS } from "./voice-product";
 import { MEDIA_PRODUCT_OPERATIONS } from "./media-product";
 import { MCP_WRITE_PRODUCT_OPERATIONS } from "./mcp-write-product";
@@ -18,6 +19,7 @@ export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   ...LIBRARY_PRODUCT_OPERATIONS,
   ...MEDIA_PRODUCT_OPERATIONS,
   ...VOICE_PRODUCT_OPERATIONS,
+  ...REALTIME_PRODUCT_OPERATIONS,
   ...ENVIRONMENT_PRODUCT_OPERATIONS,
   ...BROWSER_PRODUCT_OPERATIONS,
   ...DEMONSTRATION_PRODUCT_OPERATIONS,

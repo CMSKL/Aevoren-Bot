@@ -42,6 +42,8 @@ function publicHandoffTask(task: string): string {
 
 export type CoordinatedRoomPolicy = {
   origin?: import("@shared/contracts").DelegationOrigin;
+  /** Host lease rechecked after asynchronous routing and before persistence. */
+  assertCurrent?(): void;
   maxTurns?: number;
   maxHops?: number;
   maxTargetsPerTurn?: number;
@@ -147,6 +149,7 @@ export class RoomCoordinator {
   /** Internal M2 entry point. It is deliberately not exposed through preload or IPC. */
   sendCoordinated(command: RoomSendCommand, policy: CoordinatedRoomPolicy = {}, orchestrationEnabled = true): RoomSendResult {
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
+    policy.assertCurrent?.();
     const routingMode = command.routingMode;
     if (routingMode === "automatic") throw new AevorenBotError("INVALID_REQUEST");
     this.assertRouteShape(command, routingMode);
@@ -723,6 +726,7 @@ export class RoomCoordinator {
         ownerAgentId: values.ownerAgentId,
         reason,
       });
+      policy.assertCurrent?.();
       const prepared = this.repository.createRoomRunWithInitialTurns({
         origin: policy.origin,
         roomId: command.roomId,
