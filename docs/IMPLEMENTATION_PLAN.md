@@ -195,3 +195,11 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 - 当前普通测试 1,488 通过、44 跳过；四套 TypeScript、完整 lint、构建、文档和许可检查通过（215 包／7 类）。进程清理五项无跳过通过，包含已关闭通道的幂等回归。同一冻结未签名 macOS beta.31 包完成 19 项真实检查：资料库 8、原生读取 2、关闭 8、typed API 1，均核验实际包与版本。首次 17／18 的失败由测试 loopback iframe 被该版本现有 CSP 阻止造成；保留失败，改用真实 sandboxed srcdoc 并验证子页面 DOM／Preload 后，八项关闭重跑通过，未扩展 CSP。旧 Main 的同一 srcdoc 负向用例明确关闭失败。此后仅补充测试清理幂等修复，应用安装包未改变。
 
 现仍是开发候选，跨平台修复检查、Beta 晋级及签名发行未完成；master 不晋级。真实第三方账号和 Windows Linux Docker 继续标为未验证。后续阶段 5–6 尚未实现。
+
+## Beta.32 同步 dev 后的验收
+
+`e83e91dd67ca665f2045fc378a3989605d87bb97` 合入已验证 dev `4f24f15`，保留版本 beta.32。相较原 `b922ca8`，生产代码仅增加主文档关闭修复与 Skill 私有 staging 发布修复，原生外发业务及 API 未改，也未引入示范或 MCP Apps。
+
+专项 96／96（快照 10、数据库 25、项目审批 25、外发 36），四套 TypeScript、目标 lint 和完整构建通过。隐藏源码 16／16；实际未签名 macOS arm64 包 24／24：资料库 8、原生读取 2、外发 5、关闭 8、真实包 typed API 1。源码／包界面日志均无强制清理或关闭超时警告，实查版本、isPackaged 和 Resources。
+
+随包 Execution Worker 1.2.0 含私有发布修复，与构建输出字节相同，SHA-256 为 `572b1b355fa653ff37957750aeab7c4aa8af6c1aa77d40fd0b6d05b13056321b`；脚本指南字节一致。未重复整套普通测试，新的跨平台 CI 与签名发行仍待完成；未将此记录称为真实账号或 Windows Docker 验收。
