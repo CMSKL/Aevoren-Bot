@@ -79,6 +79,20 @@ Root 固定合同后再并行；同一时刻由一人编辑 `database.ts`、gate
 用小型确定性 PDF/DOCX 验证真实解析、文本/像素、字体/CMap/WASM；覆盖扫描件、DTD/UTF-16、损坏 CRC、歧义 ZIP、压缩炸弹、网络/文件诱饵、取消/崩溃。
 macOS arm64 与 Windows x64 的实际安装包均验证资产、独立解析进程和 API/Codex/Claude 的真实像素传输；不以模拟返回替代。
 
+### 5.1 集成核对点（代码修改前清单）
+
+- `shared/contracts.ts` 的 `SendCommand`、`TranscriptEntry`、`CreateRoomRunInput` 与 `shared/product-view.ts` 的草稿操作一起增加固定媒体引用；公开 Transcript 只含引用，不能带解析正文、原始字节或主进程授权闭包。
+- `shared/schemas.ts` 当前 `sendCommandSchema.text` 为非空，且群 Schema 由其扩展。改为允许空文本并在对象级检查文本／附件／资料／媒体至少一项；保留 `.extend()` 的组合能力，分别验证私聊与群路由，不能仅修 UI 按钮。
+- `main/database.ts` 的 `digestMessage` 与 `digestRoomCommand` 在媒体为空时必须保持旧摘要字节一致；增加媒体引用后，同 nonce 的不同原图或解析版本应冲突。私聊及群的 prepare 路径都在同一事务写入引用。
+- `main/database.ts` 现有非空用户正文筛选有迁移 SQL 和运行时查询两处。新迁移重新建立受影响触发器／视图，运行时筛选同时接受媒体，覆盖纯媒体用户消息及重启恢复，不能改写已发布迁移。
+- `main/runtime-executor.ts` 当前只在本轮用户条目加入 `resourceContents`；媒体固定版本在相同位置解析当前会话及执行者权限，避免把历史所有媒体或其他成员私聊媒体一起加载。
+- `main/prompt.ts` 当前最高 Manifest 版本为 5；媒体元信息、原始摘要和所选解析摘要形成不可信数据块并进入新版本 Manifest。图片模型调用仍由实际像素传输验收，文本块只证明引用和来源。
+- `main/model-image.ts` 已校验 PNG/JPEG 字节、摘要与即时授权，但回执文字使用“工具画面／旧画面”。媒体复用时补充准确来源文案，保留浏览器的 epoch 与授权检查，不能将普通上传伪装成浏览器观察。
+- `main/library-blob-store.ts` 固定每文件 1 MiB。媒体使用独立预算与私有目录，沿用逐文件身份／摘要核验，不修改文本 Skill 的上限或把调用者路径作为 CAS key。
+- AI 第一批操作拟为 `media.list/read/importPath/bind/unbind/delete`；可信文件选择为独立 `pickImport` IPC。预览页只读取宿主已授权的有界字节；解析任务绑定发起会话、nonce、摘要与取消信号，不能借解析页获得主应用能力。
+
+这些是已核对源码的集成位置与拟定合同，仍不表示阶段 5 已编码或验收。
+
 ## 5.2：音视频引用、转写与朗读
 
 - 复用媒体 CAS/会话绑定增加受支持音视频引用与本地预览；明确实际 codec 限制。视频预览不等于模型理解视频。
