@@ -422,3 +422,16 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 ### beta.33 晋级 Windows 失败（不发布）
 
 晋级 PR #43 的运行 38707578493：Linux、macOS 与密钥检查通过，Windows 源码选择 34 项通过、1 项失败。失败为 `native-outbound.spec.ts` 的未知结果重启场景，`closeTestApplication` 在拥有的 Electron 进程／stdio 收尾阶段报错；该场景含中途重启，尚不能据终端错误断定全部业务断言已完成。Windows 后续关闭、打包和安装验证均未执行，因此当前不合并或发布 beta.33。原始日志 `/tmp/aevoren-beta33-windows-promotion-failure.log` 已保留，正分析 trace 与关闭诊断，未通过盲目重跑或增加期限掩盖失败。
+
+
+### beta.38 当前冻结源码覆盖与宿主休眠证据（2026-10-15）
+
+在 `65e497d3ba18f17ca682a144ac08cc9c777fbfbf`、Node 24.19.0 下直接使用现有构建，单 worker、nice 10、隐藏 Electron、独立临时数据目录及禁用更新执行完整 191 项源码 smoke。结果为 **156 通过、32 条件跳过、3 失败**，25.1 分钟，退出码 1；没有修改产品、fixture、原有期限或重建产物。受控 HTTP 在三个 Runtime 阶段跨 15 次 Renderer 重载保持响应屏障的修正已在该轮通过（1.3 分钟）；真实 Chromium AudioWorklet／生成音频、受控 WebSocket 和普通 Runtime 委派界面亦通过。
+
+失败分别是三十秒 stale／取消、关闭超时提示、未绑定聊天工作区入口。独立读取系统电源记录确认宿主在 08:04:13 −0500 进入 Idle Sleep 586 秒，08:13:59 DarkWake；08:14:43 再进入 Maintenance Sleep 354 秒，08:20:37 用户活动唤醒。关闭提示的 trace 在 close 请求后停顿约 589 秒，未绑定聊天在 firstWindow 阶段停顿约 352 秒，与两段系统休眠对应。stale 场景则在约 19.2 秒时页面关闭，未到三十秒断言边界；没有独立记录证明这次页面关闭的根因，不将其直接归因为产品或休眠。三项原始失败与 trace 保留。
+
+仅对上述三项使用有限子进程 `/usr/bin/caffeinate -i` 防止该轮空闲系统休眠，不唤醒屏幕、不改变电源设置或操作用户应用；冻结代码、构建及 45／20／30 秒原期限均保持不变。定向 **3/3 通过（44.7 秒，退出码 0）**，所属 Electron 均 exitCode=0、signal=null，无强制清理警告。当前累计覆盖 **159 个不同通过场景、32 项条件跳过**，**不是一次完整全绿运行**。随后误启动的完整重跑已按范围收敛要求在 8 项后中止（退出码 130），不计入成功门禁。
+
+只读复核确认包版本为 `0.3.0-beta.38`，Main／Preload／Renderer 共 17 个 out 文件与现有真实未签名 macOS 包逐字节一致；解析资产校验通过 207 项清单资产、231 个资源文件与 9,556 个 ASAR 文件。Main SHA-256 为 `faa97cfb320b2b951982e8d6cf27f06e94aa835b2272774900d355bab56ae7bc`，Preload 为 `1e984f697c82447ea2c6b68faefbb73819c0cf86ad86ac184522b0ee35fb27ca`，Renderer 为 `45092d7bd13fbe6e0a1623f30f41909ee71589c2c8e24cd7d0b9f86b534f7828`，ASAR 为 `c88639591fad72fad6c7509537e59dc5ec99ea8880f19155612acb38987532a3`，parser 清单为 `c3849e73366654ababa5a7aebe47e053201dacc40b2c6c03918a549c8bba1fa1`。麦克风用途声明及四个 Helper 存在；此轮未执行签名 entitlement 验证或物理麦克风测试。
+
+新证据持久保存于本机 `/Users/machao/.codex/aevoren-evidence/2026-10-15/`：`voice38-final-source191.log`、对应 metadata JSON、`voice38-final-source191-test-results/`、四行 `voice38-final-source191-power-transitions.log`、`voice38-focused-awake-three.log` 及对应 metadata、`voice38-final-out-package-hashes.json`、`voice38-final-package-assets.json` 与 `voice38-final-microphone-declaration.json`。这些本地证据不是仓库附件。环境重启前部分历史 `/tmp` 证据已不存在，前文仍按历史结果保留，不能宣称那些临时文件当前可用。此前真实未签名包 40 项为既有验收结果，本轮未重复该套场景。跨平台、签名发行、真实云账号、物理设备与 Windows 恢复仍待验证；阶段 6 尚未交付。
