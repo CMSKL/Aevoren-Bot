@@ -33,6 +33,17 @@ test("rejects a substituted original GPL font even with its original filename", 
   cpSync(original, join(f.resources, "media-parser/public/pdfjs/standard_fonts/LiberationSans-Regular.ttf"));
   assert.throws(() => verifyMediaParserPackage(f.resources), /Forbidden GPL/);
 }));
+test("rejects original GPL font bytes with an uppercase extension outside parser inventory", () => fixture(async f => {
+  const original = join(dirname(require.resolve("pdfjs-dist/package.json")), "standard_fonts/LiberationSans-Regular.ttf");
+  cpSync(original, join(f.resources, "unexpected-font.TTF"));
+  assert.throws(() => verifyMediaParserPackage(f.resources), /Forbidden GPL/);
+}));
+test("rejects original GPL font bytes with an uppercase extension inside ASAR", () => fixture(async f => {
+  const original = join(dirname(require.resolve("pdfjs-dist/package.json")), "standard_fonts/LiberationSans-Regular.ttf");
+  cpSync(original, join(f.source, "unexpected-font.TTF"));
+  await asar.createPackage(f.source, join(f.resources, "app.asar"));
+  assert.throws(() => verifyMediaParserPackage(f.resources), /Forbidden GPL/);
+}));
 test("rejects a changed embedded license", () => fixture(async f => {
   const target = join(f.resources, "media-parser/licenses/pdfjs-dist-LICENSE"); writeFileSync(target, "changed fixture license");
   assert.throws(() => verifyMediaParserPackage(f.resources), /digest mismatch/);

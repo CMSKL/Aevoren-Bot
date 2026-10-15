@@ -331,7 +331,23 @@ The updated fixture passed all three source MCP cases in 10.63 seconds and all t
 - 新增 PNG/JPEG/PDF/DOCX 内容寻址存储、不可变解析版本、会话绑定及任务准入；发送／群路由摘要与 PromptManifest 固定引用。撤销、停用、删除及成员移除立即阻止后续读取，重绑不恢复旧任务授权。
 - 解析器使用独立无 Node 的沙箱 Renderer／真实 PDF Worker、临时 session、精确资源清单与哈希；网络、宿主文件、权限、下载和导航均拒绝。PDF 提取和有界逐页预览、DOCX 严格 ZIP／XML 校验后的纯文本提取；扫描 PDF 无 OCR，DOCX 分节不代表物理页。
 - 界面和 AI 共用十二项 `media.*` 业务动作。正文与实际像素仅以可撤销的瞬时宿主附件传输；工具数据库回执只保存元信息，三个来源的协议适配在后续轮次及缓存重放时重新检查权限。
-- 独立解析资源、精确依赖许可、四个 OFL 字体和实际安装包内容清单正在验证；尚未完成此单元的全部源码、跨平台和安装包验收，不能发布。音视频、语音及阶段 6 不在本单元完成范围。
+- 独立解析资源、精确依赖许可、四个 OFL 字体和真实未签名 macOS 包已通过下述本地验收；当前候选的跨平台 CI、Windows 实包及签名发行仍待验证，不能据此宣称已发布。音视频、语音及阶段 6 不在本单元完成范围。
+
+### 5.1 本地验收：冻结 beta.36 产物
+
+冻结产品构建对应 `c2850bd4413f04fb37c5979501f4e2e105acfe0d`，实际包版本为 `0.3.0-beta.36`。后续校验器与 typed API fixture 修正不改变产品字节，未重新构建安装包。Node 24 目标工具链、pnpm 11.19 冻结依赖验证、完整类型与 lint 均已通过；普通单元测试为 1,627 通过、45 跳过。
+
+| 验证范围 | 实际结果与边界 |
+| --- | --- |
+| 完整隐藏 Electron smoke | 首轮发现 182 项：149 通过、32 跳过、1 项旧 typed API 白名单失败；实际只新增预期的 `media` 分组。固定列出该分组及其 13 个 API、增加非法媒体 ID 断言后，源码定向 1/1 通过。保留首轮失败，不将它改写为单轮全绿；同一冻结产品下累计 150 个不同场景已验证 |
+| 隔离解析器 | 上述完整运行中的六项全部通过：真实 PDF 全物理页与空页、OFL 字体深色像素、CMap 日文、CMYK／JPEG2000 红色像素、JPEG、DOCX store/Deflate/UTF-16、CRC/DTD/伪造内容类型/越界与预算拒绝、加密文件拒绝、六任务并行及单任务取消、私有资源／本地文件／网络／主 API 隔离、伪造摘要拒绝、实际 30 秒超时销毁 |
+| 真实未签名 macOS arm64 包 | 共用包身份／版本断言的媒体 4、资料库 8、原生读取 2、原生外发 7、示范 1、MCP Apps 3、正常关闭 8，合计 33/33 通过（1.8 分钟）；随后修正后的 typed API 实包定向 1/1 通过。正常退出是门禁，未出现强制清理警告 |
+| 完整资源与 ASAR | 207 个解析器清单资产逐字节一致，扫描 228 个资源文件及 9,555 个 ASAR 条目；四个替换字体及许可摘要匹配，无原始 GPL 字体、QuickJS、原生 canvas 或重复原始解析包树。包内 Main 与冻结 source out 完全相同 |
+| 校验器反例 | 独立复核发现 `.TTF` 大写扩展名会漏读已知旧字体字节；ASAR／extraResources 两个反例先复现失败，修正后校验器 7/7 通过，真实包再次通过扫描。未发现该禁止资产实际进入冻结包 |
+
+冻结摘要：Main 为 `9eab40d3a8be0bbe52e47ae947ceeda8f34c0b9eaa1f313cff562514b721d88e`；ASAR 为 `8b7843c9b64921b9ef51ad67be9bab6029ad93ddb8425e1882a140315bca8bd1`；parser manifest 为 `07888e2755c41232ff400118ad5b0e910bcc150ee68920ad50f1251e2dd12e50`。安装包资源验证命令为 `node scripts/verify-media-parser-package.mjs <Mac.app 或 Windows resources>`。
+
+本地日志与 JSON 分别保存于 `/tmp/aevoren-media36-actual-package33.log`、`/tmp/aevoren-media36-full-source-hidden.log`、`/tmp/aevoren-media36-typed-source-final.log`、`/tmp/aevoren-media36-typed-package-final.log`、`/tmp/aevoren-media36-actual-package-assets.json` 和 `/tmp/aevoren-media36-frozen-package-hashes.json`；首轮 typed fixture trace 保留于 `/tmp/aevoren-media36-initial-typed-surface-failure`。这些是临时本机证据，不是仓库附件。JBIG2 解码样本、Windows beta.36 实际运行、签名包与真实外部账号／硬件未在本轮验证；扫描件无 OCR，DOCX 不承诺物理分页，尚未交付阶段 5.2–5.3 或阶段 6。
 
 
 ## 已公开发行：v0.3.0-beta.31
@@ -346,3 +362,12 @@ The updated fixture passed all three source MCP cases in 10.63 seconds and all t
 PR #41 的一个完整跨平台检查已通过；另一个 Windows 检查的首次关闭及随后一次不改代码的重跑仍出现失败。重跑通过源代码业务场景后，在主文档重载后的关闭断言失败，重启持久化校验未到达。保留失败记录，不能用另一轮成功替代。
 
 关闭 smoke 现在只在其自有进程内记录主文档加载、可信 Renderer-ready、flush 请求、可信确认、窗口关闭和进程退出阶段；失败时附上有界 JSON。记录不含 URL、页面内容、密钥或用户文件路径，不修改产品代码、关闭时限或启动参数。新增诊断的本机隐藏主文档重载／修改／关闭／重启用例已通过；下一次 Windows 检查用于定位停在哪个阶段，尚不能据此确认根因或发布。
+
+
+## MCP34 Windows source fixture deadlines
+
+At `a5d674999d215a837e29101434060b6eddb78c91`, [Windows CI 38689015680](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38689015680/job/116270524225) passed 36/38 source smoke cases, including all three MCP App cases. The demonstration case exhausted its 30-second total budget: setup used 9.005 seconds and the second saved-v2 draft click began at 28.254 seconds; publication and application close were not reached. The Library group case had already verified all six requests, routing and pinned original prompt content when its 5-second completion poll expired. Its first actual snapshot IPC took 5.599 seconds and eventually reported `running`; batch completion and the final reference-badge assertion were not verified. Source close handshakes, Windows packaging and installed checks were consequently not run. These failed results remain separate from earlier green runs.
+
+The test-only correction gives the compound demonstration case a 60-second total budget on Windows, retaining 30 seconds on macOS. Only the observed Library completion poll is replaced: subscribe to the production RoomRuntime event before querying current state, match room/session/batch IDs, accept only `completed`, reject other terminal states and unsubscribe on settlement. Its existing 90-second whole-case budget and all business assertions remain unchanged; no sleep, retry or polling-timeout increase was added. Product code and the existing beta.34 package were not rebuilt or changed.
+
+Limited local macOS validation passed both affected source cases (2/2, 10.3 seconds) and the same cases in the existing actual unsigned beta.34 package (2/2, 8.7 seconds). Packaged identity/version checks passed, and package Main matched source out (`c8cd5865fd452e50dcfc074c2269eebbb111d574aae64e892085e0474524f746`); the ASAR digest was unchanged before/after. Targeted ESLint, documentation links and diff checks passed. Evidence is stored locally at `/tmp/aevoren-mcp34-windows-fixtures-evidence.json`, with separate `source` and `package` logs/JSON under the same prefix. Original log/artifacts and trace timing are retained at `/tmp/aevoren-mcp34-a5d6749-windows-failure-summary.json`. These are temporary local files, not repository attachments. This limited macOS rerun does not establish Windows success, a full-suite pass or a signed release; fresh cross-platform CI remains required.
