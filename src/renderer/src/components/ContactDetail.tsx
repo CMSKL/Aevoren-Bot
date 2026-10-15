@@ -20,6 +20,7 @@ export type ContactDetailHandle = {
 
 type Props = {
   bot: Bot | null;
+  active?: boolean;
   rooms: Room[];
   busy: boolean;
   workspaceIds: string[];
@@ -40,7 +41,7 @@ type ContactProfileProps = Props & {
 };
 
 const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(function ContactProfile(
-  { bot, rooms, busy, workspaceIds, librarySessionId, onUseResource, onBotUpdated, onAddToRoom, onLocalError, onSaveStatusChange }, ref,
+  { bot, active = true, rooms, busy, workspaceIds, librarySessionId, onUseResource, onBotUpdated, onAddToRoom, onLocalError, onSaveStatusChange }, ref,
 ) {
   const [selectedRoomId, setSelectedRoomId] = useState("");
   const [pending, setPending] = useState(false);
@@ -146,7 +147,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
         {librarySessionId ? <ComputerPanel sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} mode={mode} initialPageId={previewPageId} active={tab === mode} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊浏览器范围…</p>}
       </div>)}
       <div id={`contact-${bot.id}-apps-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-apps-tab`} hidden={tab !== "apps"} className="contact-tab-panel">
-        {librarySessionId ? <ConnectorPanel key={`${librarySessionId}:${bot.id}`} ref={appsRef} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={tab === "apps"} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊应用范围…</p>}
+        {librarySessionId ? <ConnectorPanel key={`${librarySessionId}:${bot.id}`} ref={appsRef} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={active && tab === "apps"} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊应用范围…</p>}
       </div>
       {tab === "profile" ? <details className="contact-section-disclosure contact-room-disclosure">
         <summary><RoomIcon /><strong>加入群聊</strong><ChevronDownIcon className="contact-disclosure-chevron" /></summary>

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.0-beta.32 (development candidate)
+
+- Add separate account/operation/target write grants and fixed saved-draft approvals for Gmail sending, ordinary Drive text-file creation/replacement and Notion page creation. Gmail sending requires explicit full-scope reauthorization.
+- Persist external intent state before dispatch; interrupted or ambiguous results remain unknown and can only be reconciled through current read authorization. Repeated calls return the original current receipt without another approval or write.
+- Preserve full immutable approval content, detect draft/authorization changes, and retire removed group members' old intent content permanently. Keep internal receipts across history clearing and Runtime removal.
+- Use genuine host-outbound Runtime records for interface actions, retain six independent group members and route Stop to the exact owned task. Existing model Runtime controls stay separate.
+- Fix duplicate approval portals in hidden surfaces and group inspectors. Migration 39 preserves existing records, pending approvals/tools, environment provenance, foreign keys, indexes and triggers.
+- Local ordinary tests: 1,528 passed, 44 skipped; TypeScript, ESLint, build, license, documentation, open-source and security gates passed. Hidden source acceptance passed six cases; the frozen unsigned macOS package passed eight. Controlled HTTP is not real third-party account verification; cross-platform CI and signed publication remain pending.
+
 ## v0.3.0-beta.31 (development candidate)
 
 - Preserve the main renderer's save/close handshake when an embedded App or preview frame loads; reset readiness only for a real main-page navigation. Add source, installed-package and signed-package close regressions.

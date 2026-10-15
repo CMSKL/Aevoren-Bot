@@ -24,6 +24,7 @@ module.exports = {
     { from: "docs/BROWSER_COMPUTER.md", to: "docs/BROWSER_COMPUTER.md" },
     { from: "docs/SCRIPT_SKILLS.md", to: "docs/SCRIPT_SKILLS.md" },
     { from: "docs/NATIVE_CONNECTORS.md", to: "docs/NATIVE_CONNECTORS.md" },
+    { from: "docs/NATIVE_OUTBOUND.md", to: "docs/NATIVE_OUTBOUND.md" },
     { from: "NOTICE", to: "NOTICE" },
     { from: "out/worker", to: "environment-worker" },
     { from: "out/browser-worker", to: "browser-worker" },

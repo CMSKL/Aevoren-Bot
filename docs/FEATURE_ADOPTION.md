@@ -2,7 +2,7 @@
 
 Aevoren 要补齐的主要能力是资料库与 Skill、可执行的电脑与浏览器、语音、可写应用连接，以及跨资源搜索和分享。现有 Bot、群聊、Memory、审批、执行记录、Routine 和自动更新可以继续复用。新增功能应同时提供界面入口和 AI 产品操作，进入现有任务取消、恢复和结果验证链。
 
-本次对照以 Grok Bot 0.68.1 本机安装包和 Aevoren 0.3.0-beta.26 源码为基线，日期为 2026-10-13，静态逆向证据仍以该版本为准。下表补充阶段 1–2 开发／包验收和阶段 3 浏览器／电脑进度。当前源码为 v0.3.0-beta.29 开发候选；签名发行与安装包验收单独记录在[实施计划](IMPLEMENTATION_PLAN.md)，未完成能力不能显示为已安装版本可用。产品登录、注册暂不实施。
+本次对照以 Grok Bot 0.68.1 本机安装包和 Aevoren 0.3.0-beta.26 源码为基线，日期为 2026-10-13，静态逆向证据仍以该版本为准。当前 v0.3.0-beta.29 已发布签名 macOS 包，包含阶段 1–3。脚本 Skill 的 beta.30 与原生读取／本地草稿的 beta.31 分别验收；当前 beta.32 开发外发审批。下表基线对照保留为历史证据，最新交付和真实验证边界以[实施计划](IMPLEMENTATION_PLAN.md)为准，未完成能力不能显示为已安装版本可用。产品登录、注册暂不实施。
 
 ## 证据范围
 
@@ -33,7 +33,7 @@ REA 对安装包做了静态分析和只读提取。清单包含 595 个相关�
 
 | 功能 | Grok Bot 客户端证据 | Aevoren 当前状态 | 借鉴方式 |
 | --- | --- | --- | --- |
-| 统一资料库 | listLibraryDocs/listLibraryPages 和 document/canvas 索引 | 阶段 1 已实现持久文档、正文检索、不可变版本和显式会话绑定；v0.3.0-beta.27 待发布 | 复用已实现的资料对象；跨资源全文搜索和 Canvas 后续实施 |
+| 统一资料库 | listLibraryDocs/listLibraryPages 和 document/canvas 索引 | 已随签名 beta.29 发布持久文档、正文检索、不可变版本和显式会话绑定 | 复用已实现的资料对象；跨资源全文搜索和 Canvas 后续实施 |
 | 可编辑文档 | Tiptap 编辑器与 saveDocument 实际保存链 | 已实现 Markdown 编辑/安全预览、expectedVersion 冲突保留草稿、版本恢复与导出 | 富文本及多格式预览后续实施，不替代当前真实版本链 |
 | 群文档与 Canvas | 群文档/Canvas 读取及产物定位；完整协作画布未验证 | 已实现按群会话绑定文档和固定版本引用；没有 Canvas | 保留群资料边界与已有成果；画布单独实施和验收 |
 | 团队 Bot 的 Files 资料页 | 文件导入实际转成 Bot skill 文本条目 | 私聊/群资料库与文本 Skill 已分别实现，独立于 Memory 和消息附件 | 保持资料、Skill 和记忆语义；多媒体资料后续实施 |
@@ -48,25 +48,25 @@ REA 对安装包做了静态分析和只读提取。清单包含 595 个相关�
 | --- | --- | --- | --- |
 | 文本 Skill 创建、编辑、删除 | workflow store 和团队 Bot Skill CRUD 实际调用 | 已实现创建/编辑/软删除/恢复、启停、不可变版本和会话目录 | 脚本执行与示范技能仍需阶段 4 |
 | 文件、目录和文本/URL 导入 | UTF-8 筛选、frontmatter、名称去重和 addSkills 链 | 已实现文本创建、UTF-8 文件和 SKILL.md 目录导入；没有 URL 安装 | 显示导入失败/跳过原因；URL 安装另行实施和验收 |
-| 导入格式与资源 | 团队路径仅 txt/md/markdown/csv/json/yaml/yml；单条最多 256000 个 UTF-16 单元、最多 250 条；辅助文本各成条目 | 已实现应用拥有的 SKILL.md、references/scripts/assets 字节保存、摘要校验和可再次导入的导出 | 1 MiB 单文件、4 MiB 总量、250 文件；二进制只保存/返回元信息，脚本不执行 |
+| 导入格式与资源 | 团队路径仅 txt/md/markdown/csv/json/yaml/yml；单条最多 256000 个 UTF-16 单元、最多 250 条；辅助文本各成条目 | 已实现应用拥有的 SKILL.md、references/scripts/assets 字节保存、摘要校验和可再次导入的导出 | 1 MiB 单文件、4 MiB 总量、250 文件；二进制保存字节／返回元信息；beta.30 候选另提供授权后执行脚本 |
 | 输入框 `/`、`@` 发现与选择 | 按 Skill 名称与显示标签搜索，说明作为副标题；选择后插入结构化 ID/label | 已实现 `/Skill` 与 `@` 的 Bot/资料/Skill 分组，固定 ID/版本/digest 引用；资源不产生 Bot 路由 | 沿用原 Send；仅准备草稿，点击发送后才启动 Runtime |
 | 运行、插件同步与发布 | runAgentWorkflowNow、syncPluginSkills 及失败重试消费者 | 文本 Skill 经原 Send 启动任务；AI `skills.load/readFile` 可实际读取；没有插件发布/同步 | 插件同步、脚本执行和市场发布后续实施 |
-| 脚本型技能包 | wrapper 的 files 字段被当前主进程和 protobuf 丢弃；未证实脚本兼容 | 未实现，原生 skill_search 禁用 | 后续独立实现 manifest、资源和脚本执行；不靠解除 CLI 限制补齐 |
+| 脚本型技能包 | wrapper 的 files 字段被当前主进程和 protobuf 丢弃；未证实脚本兼容 | beta.30 候选已实现固定版本、入口摘要和镜像授权的 Bash／Python／Node；真实 Docker、UI／包验证通过，发行待完成 | 元信息不授予权限；每次运行审批固定参数，取消和结果查询沿用执行账本 |
 | 录制示范 | armed/recording、开始、保存、丢弃和失败校正链 | 未实现 | 在电脑能力可用后增加示范录制；自动生成可执行技能另验收 |
 
 ### 电脑、浏览器与本机执行
 
 | 功能 | Grok Bot 客户端证据 | Aevoren 当前状态 | 借鉴方式 |
 | --- | --- | --- | --- |
-| 长期电脑、唤醒、休眠、更新、重建 | ensureSandBox 与运行状态消费者；电脑升级排期受开关控制 | 阶段 2 已实现本机 Docker 生命周期；阶段 3 开发候选增加独立桌面伴随容器与实际镜像摘要 | 安装包仍为独立门禁；应用升级不自动替换运行中的后台环境 |
+| 长期电脑、唤醒、休眠、更新、重建 | ensureSandBox 与运行状态消费者；电脑升级排期受开关控制 | 签名 beta.29 包含本机 Docker 生命周期、独立桌面伴随容器与实际镜像摘要 | 安装包仍为独立门禁；应用升级不自动替换运行中的后台环境 |
 | 共享环境与 Bot/任务窗口 | account-level Box 请求没有 agentId；响应含 tenant/pod、primary/fork VNC，界面按 Bot/子任务显示 monitor | 独立 Environment／ExecutionSession，阶段 3 另有同 scope BrowserSession／ComputerView，六成员实际并行通过 | 按会话／执行者隔离，资料／工作卷／profile 不因 Bot 入群自动共享 |
-| 屏幕预览、多窗口、全屏与重连 | VNC 预览、monitor 切换、加载/失败/重试链 | 阶段 3 已接入真实桌面帧、noVNC 连接与 epoch 票据；实际界面／包验收进行中，完整多窗口／全屏尚未交付 | 断线保留用户控制；当前只显示所选 scope 桌面，不据此声明全部窗口能力完成 |
+| 屏幕预览、多窗口、全屏与重连 | VNC 预览、monitor 切换、加载/失败/重试链 | beta.29 已发布真实桌面帧、noVNC 连接与 epoch 票据；完整多窗口／全屏尚未交付 | 断线保留用户控制；当前只显示所选 scope 桌面，不据此声明全部窗口能力完成 |
 | 用户接管、归还与剪贴板 | handoff、交还、可信 VNC guest 剪贴板和输入链 | 阶段 3 后端接管／归还与过期重放真实验证通过；浏览器剪贴板尚未单独验收 | 用户接管暂停 AI 观察／输入／图片，明确归还后重新观察 |
 | 本机命令、后台进程、输出与取消 | local daemon 实际注册 streaming/background shell、Read、Ls，有 requestId/execId 与取消 | 开发分支有经审批的隔离 Linux 命令、真实 stdout／stderr、退出码、独立后台进程与取消；无宿主 Shell | 保留真实任务／进程归属；unknown 不盲重发，后台服务与聊天历史生命周期分开 |
 | 本机与环境间文件传输 | upload/download、根目录与 realpath 校验、执行权限链 | 开发分支有环境文件读取／写入及原生上传／下载，单文件最多 1 MiB、create-only／hash 覆盖核验 | 完成 UI／包验证；拒绝越界／symlink／特殊文件，传输不扩大他人环境权限 |
-| AI 浏览器与电脑操作 | 远程桌面可手工操作浏览器；云端 AI 执行器未做运行验证 | 阶段 3 开发候选有真实 Chromium、DOM 操作、桌面像素和下载，27 共享操作；UI／包验收尚未完成 | 截图实际字节进入传输，不把文本路径或 fixture 当真实模型视觉理解 |
+| AI 浏览器与电脑操作 | 远程桌面可手工操作浏览器；云端 AI 执行器未做运行验证 | beta.29 已发布真实 Chromium、DOM 操作、桌面像素和下载，27 共享操作；真实云模型视觉理解另验收 | 截图实际字节进入传输，不把文本路径或 fixture 当真实模型视觉理解 |
 | 浏览器登录态 | 选定 Chrome 站点、审批、注入 Box、成功/跳过原因的实际链 | 独立持久 profile 已实现并有真实 Docker cookie 隔离／重启证据；不复制宿主 cookies | 用户在选中 scope 内自行登录，持久 cookie 和网站 session cookie 依浏览器语义保存 |
-| 项目服务预览与端口 | 找到云产物 preview；未证实通用本地端口转发 | 已实现后台服务端口归属／连通检测和状态登记；预览与 host 端口发布未实现 | 阶段 3 根据已登记真实服务提供预览，不把任意 URL 当运行成果 |
+| 项目服务预览与端口 | 找到云产物 preview；未证实通用本地端口转发 | beta.29 已发布实际登记服务预览，核验原任务 UID、listener、端口与连接失效 | 阶段 3 根据已登记真实服务提供预览，不把任意 URL 当运行成果 |
 | 通用本机 GUI 控制 | bundle 有泛用 screenshot/click 类，但本地注册表未装 computerUse executor | 未实现 | 单独的 OS 控制适配器及验收；不宣称 Grok 本机已有完整 GUI 控制 |
 | 桌面悬浮聊天入口 | desktopMount 是浮动 Bot 面板，需开关，仅 darwin/linux 路径 | 未实现 | 可选后置；不将此名称解释为文件夹挂载 |
 
@@ -74,9 +74,9 @@ REA 对安装包做了静态分析和只读提取。清单包含 595 个相关�
 
 | 功能 | Grok Bot 客户端证据 | Aevoren 当前状态 | 借鉴方式 |
 | --- | --- | --- | --- |
-| 应用目录、连接、多账号、重授权与移除 | connector card 与安装/auth/remove、账号状态消费者；实际目录由后端返回 | 有通用 MCP，没有成品应用目录 | 复用 MCP，增加可配置连接目录；图标不作为可用性证明 |
+| 应用目录、连接、多账号、重授权与移除 | connector card 与安装/auth/remove、账号状态消费者；实际目录由后端返回 | beta.31 候选增加 Gmail／Drive／Notion 配置目录、加密凭据和会话／Bot 读取授权；保留通用 MCP | 复用 MCP，增加可配置连接目录；图标不作为可用性证明 |
 | 自定义 MCP、Bot 插件绑定与工具管理 | stdio/http/sse 配置、OAuth、Bot 插件绑定；工具禁用按账号下 serverId/toolName 保存，自定义指令按服务器配置 | stdio/HTTP、OAuth、加密密钥、Bot 范围和只读工具审查已有 | 保留现有连接层，补工具选择、说明和连接状态；维持 Aevoren 的 Bot 权限范围 |
-| 可写应用动作、外发邮件与消息 | 工具调用、connector grant、邮件/通道 draft 真实消费者；目的服务依赖外部连接 | 仅经审核的只读 MCP | 增加效果分类、目标账号展示、写动作审批和幂等回执 |
+| 可写应用动作、外发邮件与消息 | 工具调用、connector grant、邮件/通道 draft 真实消费者；目的服务依赖外部连接 | beta.31 候选提供固定账号本地草稿；beta.32 实施写授权、固定审批和外发账本 | 外发结果未知时只读核验，不盲目重发；第三方写入需要实际测试目标 |
 | MCP 媒体与交互 Apps | resource/view 与 callMcpAppTool，包含 userActivated 等参数 | 只保留文本，图片/音频被省略；无 Apps | 先媒体结果，再加入有来源与权限绑定的交互视图 |
 | Slack 与其他消息渠道 | Slack 安装/重装/解绑及 platform/token 连接接口 | 未实现 | 可选连接器，先一个平台完成真实收发与撤销验证，再扩展 |
 | 凭据与敏感输入 | secret 写入口、请求批准、1Password/WebAuthn 相关消费者 | 模型连接密钥和 MCP OAuth 已加密 | 密钥仍通过可信配置保存；模型只能获得引用和使用结果 |

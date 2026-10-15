@@ -1,3 +1,4 @@
+import { IPC } from "../../src/shared/channels";
 import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { openInspector } from "./navigation";
 import { createHash } from "node:crypto";
@@ -15,6 +16,9 @@ function environment(userDataDir: string): Record<string, string> {
   return { ...inherited, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1", AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1" };
 }
 
+const closePhases = new WeakMap<ElectronApplication, string[]>();
+const CLOSE_PHASE_PREFIX = "AEVOREN_CLOSE_PHASE ";
+
 async function launch(userDataDir: string): Promise<{ application: ElectronApplication; page: Page }> {
   const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
   const application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: environment(userDataDir) });
@@ -24,7 +28,38 @@ async function launch(userDataDir: string): Promise<{ application: ElectronAppli
     expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
     await test.info().attach("actual-close-package", { body: JSON.stringify(runtime), contentType: "application/json" });
   }
-  return { application, page: await application.firstWindow() };
+  const page = await application.firstWindow();
+  const phases: string[] = [];
+  closePhases.set(application, phases);
+  let buffered = "";
+  application.process().stderr?.on("data", (chunk: Buffer) => {
+    buffered += chunk.toString("utf8");
+    const lines = buffered.split("\n"); buffered = lines.pop() ?? "";
+    for (const line of lines) if (line.startsWith(CLOSE_PHASE_PREFIX) && phases.length < 120) phases.push(line.slice(CLOSE_PHASE_PREFIX.length));
+    if (buffered.length > 4_096) buffered = "";
+  });
+  await application.evaluate(({ BrowserWindow, ipcMain }, channels) => {
+    const started = performance.now();
+    const record = (phase: string, state: Record<string, string | number | boolean> = {}): void => {
+      console.error("AEVOREN_CLOSE_PHASE " + JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started), ...state }));
+    };
+    for (const window of BrowserWindow.getAllWindows()) {
+      const contents = window.webContents;
+      const send = contents.send.bind(contents);
+      contents.send = (channel, ...args) => {
+        if (channel === channels.appBeforeClose || channel === channels.appCloseBlocked) record(channel, { loading: contents.isLoadingMainFrame(), destroyed: contents.isDestroyed() });
+        return send(channel, ...args);
+      };
+      window.on("close", () => record("window-close", { loading: contents.isLoadingMainFrame() }));
+      window.on("closed", () => record("window-closed"));
+      contents.on("did-navigate", () => record("main-navigation-committed"));
+      contents.on("did-stop-loading", () => record("loading-stopped"));
+      contents.on("render-process-gone", (_event, details) => record("renderer-gone", { reason: details.reason, exitCode: details.exitCode }));
+    }
+    ipcMain.on(channels.appRendererReady, event => record("renderer-ready", { mainFrame: event.senderFrame === event.sender.mainFrame }));
+    ipcMain.on(channels.appConfirmClose, (event, value: unknown) => record("flush-ack", { mainFrame: event.senderFrame === event.sender.mainFrame, canClose: value === true }));
+  }, IPC);
+  return { application, page };
 }
 
 async function createBot(page: Page): Promise<void> {
@@ -48,6 +83,7 @@ async function requestWindowClose(application: ElectronApplication, timeoutMs = 
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
   ]);
   if (!didExit) {
+    await test.info().attach("close-phase-diagnostics", { body: JSON.stringify({ timeoutMs, phases: closePhases.get(application) ?? [] }), contentType: "application/json" });
     await closeTestApplication(application);
     await exited;
   }
@@ -63,6 +99,7 @@ async function requestAppQuit(application: ElectronApplication, timeoutMs = 3_00
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
   ]);
   if (!didExit) {
+    await test.info().attach("close-phase-diagnostics", { body: JSON.stringify({ timeoutMs, phases: closePhases.get(application) ?? [] }), contentType: "application/json" });
     await closeTestApplication(application);
     await exited;
   }
@@ -234,6 +271,8 @@ test("flushes a dirty profile after an embedded frame loads and is removed", asy
 
 for (const navigation of ["same-document", "main-document"] as const) {
   test(`flushes a dirty profile after ${navigation} navigation`, async () => {
+    // Windows took 22.58s through the first close; restart navigation exhausted 30s.
+    if (process.platform === "win32" && navigation === "main-document") test.setTimeout(60_000);
     const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-navigation-"));
     let application: ElectronApplication | undefined;
     const description = `关闭前保存 ${navigation} 后的修改`;

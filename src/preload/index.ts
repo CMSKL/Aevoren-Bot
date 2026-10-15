@@ -1,3 +1,4 @@
+import { NATIVE_OUTBOUND_CHANNELS, NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "@shared/native-outbound-channels";
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "@shared/channels";
 import { LIBRARY_CHANNELS } from "@shared/library-channels";
@@ -24,6 +25,19 @@ function onBrowserChanged(listener: (event: BrowserChangedEvent) => void): () =>
 }
 
 const api: AevorenBotApi = {
+  outbound: {
+    writeGrants: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.writeGrants,input),
+    grantWrite: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.grantWrite,input),
+    revokeWrite: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.revokeWrite,input),
+    enableSend: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.enableSend,input),
+    prepare: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.prepare,input),
+    get: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.get,input),
+    list: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.list,input),
+    requestApproval: input => ipcRenderer.invoke(NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL,input),
+    reconcile: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.reconcile,input),
+    cancel: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.cancel,input),
+    reject: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.reject,input),
+  },
   connectors: {
     list: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.list, input),
     configure: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.configure, input),

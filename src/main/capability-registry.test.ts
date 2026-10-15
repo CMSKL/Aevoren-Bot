@@ -34,6 +34,24 @@ function provider(): ProviderInstanceInfo {
 }
 
 describe("CapabilityRegistry", () => {
+  it("advertises native writing only for the selected executor's current explicit grant", async () => {
+    const repository = new AppRepository(":memory:"); repositories.push(repository);
+    const actor = repository.createBot(), peer = repository.createBot(), current = provider();
+    const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities },
+      { name: "Aevoren Bot", version: "1", platform: "darwin", architecture: "arm64", packaged: false });
+    const scope = { sessionId: actor.session.id, executorBotId: actor.bot.id };
+    const writing = async (sessionId = scope.sessionId) => (await registry.getSnapshot({ botId: actor.bot.id, sessionId })).capabilities.find(item => item.id === "apps.write");
+    const configured = repository.connectors.configure({ provider: "notion", name: "Scoped writing", token: "fixture" }, "sealed-config");
+    const pending = repository.connectors.beginAuthorization({ id: configured.id, expectedVersion: configured.version });
+    const connected = repository.connectors.completeAuthorization(pending.id, pending.authVersion, { accountId: "fixture-account", displayName: "Fixture" }, ["read"], [], "sealed-credentials");
+    expect(await writing()).toMatchObject({ availability: "unavailable", permissionState: "not-granted" });
+    const grant = repository.outbound.grant({ ...scope, connectionId: connected.id, expectedAuthVersion: connected.authVersion, operation: "notion-create-page", targetIds: [crypto.randomUUID()] });
+    expect(await writing()).toMatchObject({ availability: "available", permissionState: "granted" });
+    const room = repository.createRoom({ memberBotIds: [actor.bot.id, peer.bot.id], leadBotId: null });
+    expect(await writing(room.session.id)).toMatchObject({ availability: "unavailable", permissionState: "not-granted" });
+    repository.outbound.revoke({ ...scope, id: grant.id, expectedVersion: grant.version });
+    expect(await writing()).toMatchObject({ availability: "unavailable", permissionState: "not-granted" });
+  });
   it("requires a current native grant and keeps private connection permission out of a Room", async () => {
     const repository = new AppRepository(":memory:"); repositories.push(repository);
     const actor = repository.createBot(), peer = repository.createBot();
