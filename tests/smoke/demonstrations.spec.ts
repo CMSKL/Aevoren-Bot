@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
@@ -15,7 +15,7 @@ test("hidden demonstration UI retains conflicts and publishes only an explicitly
   const app = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: { ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !key.startsWith("AEVOREN_BOT_"))), AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_USER_DATA_DIR: data, AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_FAKE_PROVIDER: "1" } });
   try {
     if (executablePath) {
-      expect(await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion() }))).toEqual({ packaged: true, version: "0.3.0-beta.33" });
+      expect(await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion() }))).toEqual({ packaged: true, version: JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version });
       expect(await app.evaluate(async () => { const fs = await import("node:fs/promises"), path = await import("node:path"); return fs.readFile(path.join(process.resourcesPath, "docs", "SKILL_DEMONSTRATIONS.md"), "utf8"); })).toContain("Browser Worker **1.1.0**");
     }
     const page = await app.firstWindow(); const errors: string[] = []; page.on("pageerror", error => errors.push(error.message)); await expect(page.locator(".app-shell")).toBeVisible();
