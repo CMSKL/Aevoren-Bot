@@ -2,7 +2,7 @@
 
 This guide covers the v0.3.0-beta.35 development candidate: documents and text/script Skills, isolated Docker execution and browser/computer use, reviewable demonstration Skills, native connections, approved external drafts and scoped MCP Apps. Native reads and writes require explicit conversation/Bot permissions; credentials remain in the host. See [Native connections](NATIVE_CONNECTORS.md), [External drafts](NATIVE_OUTBOUND.md) and [MCP Apps](MCP_APPS.md) for setup and exact boundaries.
 
-Earlier local source and unsigned macOS-package receipts are historical; the latest normal-close fix awaits final beta.35 rebuild/package acceptance. Cross-platform CI and signed publication are separate gates in the [implementation record](IMPLEMENTATION_PLAN.md). Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). The app targets macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build; real Windows Docker remains unverified. Phase 5 multimodal/audio/voice and Phase 6 additions are not implemented. Real account authorization, external effects and cloud-model interpretation are not established by controlled fixtures or unavailable private credentials.
+Earlier local source and unsigned macOS-package receipts are historical; the latest normal-close fix awaits final beta.35 rebuild/package acceptance. Cross-platform CI and signed publication are separate gates in the [implementation record](IMPLEMENTATION_PLAN.md). Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). The app targets macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build; real Windows Docker remains unverified. Phase 5 media, transcription and speech have local acceptance evidence; Realtime is under controlled integration acceptance, and Phase 6 additions are pending. Real account authorization, external effects and cloud-model interpretation are not established by controlled fixtures or unavailable private credentials.
 
 ## First run
 
@@ -142,3 +142,8 @@ The beta.35 candidate retains the beta.34 [scoped MCP tools and isolated Apps](M
 ## 转写与朗读（beta.37 开发候选）
 
 在设置 → 语音分别配置转写、朗读和 Realtime。点击录音主动授权音频，停止后显示独立转录任务；手动插入会核对会话与草稿版本，冲突保留结果，发送仍走原有聊天流程。回复的朗读入口生成真实 WAV，当前会话可选择按新回复完成顺序排队，停止会清理队列并拒绝迟到音频。媒体库支持平台实际可解码的有界音视频。实时连接、物理设备与云账号的验收状态见[语音说明](VOICE.md)。
+
+
+## 实时语音（beta.38 开发候选）
+
+聊天面板选择业务 Bot 后主动连接，逐轮开始说话／结束并提交。停止语音与停止已委派业务任务分开；重新连接需要用户操作，不自动复播未知请求。详细流程、采样打断、授权和未验证边界见[实时语音](REALTIME_VOICE.md)。
