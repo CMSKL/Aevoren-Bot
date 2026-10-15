@@ -26,3 +26,14 @@ it("does not admit a new room member or a new session generation into a voice co
   repository.clearConversation(first.session.id);
   expect(() => assertRealtimeAdmission(repository,direct)).toThrow();
 });
+
+it("does not revive an existing realtime session after a selected document is disabled and re-enabled",()=>{
+  const repository=new AppRepository(":memory:");repositories.push(repository);const {bot,session}=repository.createBot();
+  const document=repository.library.create({sessionId:session.id,kind:"document",name:"revoke selected",body:"fixed original"});
+  const input={sessionId:session.id,executorBotId:bot.id,expectedConfigVersion:1,routingMode:"automatic" as const,targetBotIds:[],resourceRefs:[document.reference]};
+  const admission=captureRealtimeAdmission(repository,input),record=repository.realtime.create(input,crypto.randomUUID(),repository.voice.configuration("realtime").configuration,admission);
+  const disabled=repository.library.setEnabled({sessionId:session.id,id:document.resource.id,expectedVersion:document.resource.version,enabled:false});
+  repository.library.setEnabled({sessionId:session.id,id:document.resource.id,expectedVersion:disabled.version,enabled:true});
+  expect(()=>repository.realtime.snapshot({sessionId:session.id,id:record.session.id})).toThrowError(expect.objectContaining({code:"VOICE_NOT_GRANTED"}));
+  const fresh=captureRealtimeAdmission(repository,input);expect(()=>repository.realtime.create(input,crypto.randomUUID(),repository.voice.configuration("realtime").configuration,fresh)).not.toThrow();
+});

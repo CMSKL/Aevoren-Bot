@@ -35,3 +35,29 @@ it("dispatches only frozen final human ASR through real Runtime and records dist
   expect(JSON.stringify(seen)).not.toContain("HOST_DELEGATED_TASK_CONTRACT");
   expect(host.lookup(request)).toEqual(link);
 });
+
+it("starts all six voice-selected Room members before the first result and cancels only one member", async () => {
+  const repository=new AppRepository(":memory:"),actors=Array.from({length:6},()=>repository.createBot());
+  const detail=repository.createRoom({name:"voice parallel",memberBotIds:actors.map(item=>item.bot.id),leadBotId:null});
+  const started:string[]=[],releases=new Map<string,()=>void>(),signals=new Map<string,AbortSignal>();
+  const provider:ModelProvider={async *run(_messages,signal,context):AsyncIterable<ModelEvent>{
+    const id=context!.executorBotId;started.push(id);signals.set(id,signal);yield{type:"started",requestId:id};
+    await new Promise<void>(resolve=>{releases.set(id,resolve);signal.addEventListener("abort",()=>resolve(),{once:true});});
+    signal.throwIfAborted();yield{type:"delta",text:`result-${id}`};yield{type:"completed",finishReason:"stop"};
+  },async testConnection(){}};
+  const worker=new RuntimeCoordinator(repository,null,{transcript:vi.fn(),sendState:vi.fn(),runtime:()=>host?.changed()},false,provider);
+  const rooms=new RoomCoordinator(repository,worker.executor,{transcript:vi.fn(),roomRuntime:()=>host?.changed()});
+  const host=new RealtimeBusinessHost(repository,worker,rooms);
+  cleanups.push(async()=>{for(const release of releases.values())release();await worker.shutdown();await rooms.shutdown();repository.close();});
+  const input={sessionId:detail.session.id,executorBotId:actors[0]!.bot.id,expectedConfigVersion:1,routingMode:"everyone" as const,targetBotIds:actors.map(item=>item.bot.id)};
+  const admission=captureRealtimeAdmission(repository,input),record=repository.realtime.create(input,randomUUID(),repository.voice.configuration("realtime").configuration,admission),turn=repository.realtime.beginTurn(record.session.id);
+  repository.realtime.setTurn(turn.id,"transcribing");repository.realtime.bindInput(turn.id,"input_parallel");const final=repository.realtime.finishTranscript(turn.id,"请所有成员分别回复");repository.realtime.setTurn(turn.id,"responding");repository.realtime.setSession(record.session.id,{state:"responding"});
+  repository.realtime.claimCall(turn.id,{callId:"call_parallel",responseId:"response_parallel",itemId:"function_parallel",arguments:'{"task":"untrusted hint"}'});
+  const link=await host.dispatch({voiceSessionId:record.session.id,turnId:turn.id,callId:"call_parallel",sessionId:detail.session.id,executorBotId:actors[0]!.bot.id,inputGeneration:detail.session.generation,clientNonce:repository.realtime.turnNonce(turn.id),text:final.transcript!,admission},new AbortController().signal);
+  expect(link.kind).toBe("room");await vi.waitFor(()=>expect(started).toHaveLength(6));
+  expect(repository.listRoomTurns(link.id).every(item=>item.state==="running")).toBe(true);
+  const first=repository.listRoomTurns(link.id)[0]!;worker.executor.cancelRun(first.runtimeRunId!);
+  expect(signals.get(first.agentId)?.aborted).toBe(true);expect([...signals].filter(([id])=>id!==first.agentId).every(([,signal])=>!signal.aborted)).toBe(true);
+  for(const release of releases.values())release();const result=await host.wait(link,new AbortController().signal);
+  expect(result.state).toBe("partial");expect(repository.listRoomTurns(link.id).filter(item=>item.state==="completed")).toHaveLength(5);
+});

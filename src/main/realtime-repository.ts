@@ -26,6 +26,14 @@ export const REALTIME_MIGRATION = { version: 44, sql: `
     call_id TEXT NOT NULL,response_id TEXT NOT NULL,item_id TEXT NOT NULL,arguments_digest TEXT NOT NULL,arguments_private TEXT NOT NULL,
     state TEXT NOT NULL CHECK(state IN('dispatching','accepted','completed','failed','cancelled','interrupted_unknown')),linked_task_json TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(voice_session_id,call_id)
   );
+  CREATE TRIGGER retire_revoked_library_realtime AFTER UPDATE OF enabled,deleted_at ON library_resources
+    WHEN (OLD.enabled=1 AND NEW.enabled=0) OR (OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL)
+  BEGIN
+    UPDATE realtime_sessions SET access_revoked=1 WHERE id IN (
+      SELECT voice_session_id FROM realtime_session_private, json_each(admission_json,'$.resources')
+      WHERE json_extract(json_each.value,'$.reference.resourceId')=NEW.id
+    );
+  END;
   CREATE TRIGGER retire_removed_member_realtime AFTER DELETE ON room_members BEGIN
     UPDATE realtime_sessions SET access_revoked=1 WHERE session_id IN (SELECT id FROM sessions WHERE room_id=OLD.room_id)
       AND id IN (SELECT voice_session_id FROM realtime_members WHERE bot_id=OLD.bot_id);
