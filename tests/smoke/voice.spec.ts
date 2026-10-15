@@ -8,7 +8,7 @@ import type { AevorenBotApi, ApiResult, RoomRuntimeSnapshot } from "../../src/sh
 import type { ProductViewInput, ProductViewResult } from "../../src/shared/product-view";
 import { PRODUCT_VIEW_DOM_EVENT } from "../../src/shared/product-view";
 import type { VoiceConfiguration, VoiceConfigurationKind, VoiceTask } from "../../src/shared/voice-contracts";
-import { VOICE_CHANNELS } from "../../src/shared/voice-channels";
+import { VOICE_CHANGED_CHANNEL, VOICE_CHANNELS } from "../../src/shared/voice-channels";
 import { AppRepository } from "../../src/main/database";
 import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
 
@@ -186,7 +186,18 @@ test("keeps streamed transcription separate from an ABA-edited draft and inserts
     expect(await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceMicFixture)).toEqual({ requests: [{ audio: true, video: false }], stopped: 1 });
     await f.page.getByRole("button", { name: "录音转写", exact: true }).click(); await expect(f.page.getByText("正在录音 · 仅麦克风", { exact: true })).toBeVisible(); await select(f, 1);
     expect(await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceMicFixture!.stopped)).toBe(2); expect(f.transcriptions).toHaveLength(1);
-    await select(f, 0); await expect(input).toHaveValue("原草稿\n转写结果 <script>不会执行</script>"); expect((await tasks(f.page, f.bots[0]!.sessionId))[0]?.capture).toMatchObject({ draftVersion: original.draftVersion, baseDigest: original.digest });
+    await select(f, 0); await expect(input).toHaveValue("原草稿\n转写结果 <script>不会执行</script>"); const recorded = (await tasks(f.page, f.bots[0]!.sessionId))[0]!; expect(recorded.capture).toMatchObject({ draftVersion: original.draftVersion, baseDigest: original.digest });
+    await f.page.getByRole("button", { name: "录音转写", exact: true }).click(); await expect(f.page.getByText("正在录音 · 仅麦克风", { exact: true })).toBeVisible();
+    await f.page.getByRole("listitem", { name: f.bots[0]!.name, exact: true }).click({ button: "right" }); await f.page.getByRole("menuitem", { name: "清空聊天记录", exact: true }).click();
+    await expect.poll(() => f.page.evaluate(() => (window as unknown as BrowserFixture).voiceMicFixture!.stopped)).toBe(3);
+    const clear = f.page.getByRole("alertdialog", { name: "清空聊天记录？", exact: true }); await clear.getByRole("button", { name: "清空记录", exact: true }).click(); await expect(clear).toBeHidden();
+    await expect.poll(async () => unwrap(await f.page.evaluate(id => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.sessions.getMain(id), f.bots[0]!.id)).generation).toBe(recorded.inputGeneration + 1);
+    await expect(f.page.getByRole("button", { name: "语音任务 · 0", exact: true })).toBeVisible();
+    // Replay a real earlier completion as if it had been queued at the IPC
+    // boundary before clearing. The new generation must not display it.
+    await f.application.evaluate(({ BrowserWindow }, input) => BrowserWindow.getAllWindows()[0]!.webContents.send(input.channel, { task: input.task }), { channel: VOICE_CHANGED_CHANNEL, task: recorded });
+    await f.page.getByRole("button", { name: "语音任务 · 0", exact: true }).click(); await expect(f.page.getByRole("region", { name: "语音任务", exact: true }).locator(".voice-task")).toHaveCount(0);
+    expect(f.transcriptions).toHaveLength(1);
   });
 });
 
@@ -210,6 +221,12 @@ test("plays actual scoped WAV output through an explicit blocked-play action and
     await expect.poll(async () => (await tasks(f.page, f.bots[0]!.sessionId)).filter(task => task.kind === "speech" && task.state === "cancelled").length).toBe(1);
     expect(await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.players.length)).toBe(1);
     await select(f, 1); await select(f, 0); await expect(f.page.getByLabel("自动朗读本会话新回复", { exact: true })).not.toBeChecked(); expect(f.speeches).toHaveLength(2);
+    await f.page.getByRole("button", { name: `朗读 ${f.bots[0]!.name} 的回复`, exact: true }).click(); await expect.poll(() => f.speeches.length).toBe(3); f.completeSpeech(2);
+    await expect.poll(() => f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.players.length)).toBe(2); await f.page.getByRole("button", { name: `朗读 ${f.bots[0]!.name} 的回复`, exact: true }).click();
+    await f.page.getByRole("listitem", { name: f.bots[0]!.name, exact: true }).click({ button: "right" }); await f.page.getByRole("menuitem", { name: "清空聊天记录", exact: true }).click();
+    await expect.poll(() => f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.pauses)).toBe(2);
+    const clear = f.page.getByRole("alertdialog", { name: "清空聊天记录？", exact: true }); await clear.getByRole("button", { name: "清空记录", exact: true }).click(); await expect(clear).toBeHidden();
+    await expect(f.page.getByRole("button", { name: "语音任务 · 0", exact: true })).toBeVisible(); expect(f.speeches).toHaveLength(3); await expect(f.page.getByRole("button", { name: "停止朗读", exact: true })).toHaveCount(0);
   });
 });
 

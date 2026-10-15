@@ -1639,9 +1639,10 @@ export function App(): React.JSX.Element {
       <div className="app-surface" hidden={settingsOpen || sidebarTab === "contacts"}>
       <Conversation
         sessionId={session?.id}
-        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile"}
+        sessionGeneration={session?.generation}
+        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile" && clearTarget === null}
         userProfile={userProfile}
-        key={session?.id ?? selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
+        key={session ? `${session.id}:${session.generation}` : selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
         initialDraft={session ? composerDraftsRef.current.get(session.id) : undefined}
         onDraftChange={rememberComposerDraft}
         resourceInsertion={resourceInsertion}

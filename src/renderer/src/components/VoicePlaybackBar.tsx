@@ -1,12 +1,12 @@
 import { forwardRef, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from "react";
-import type { TranscriptEntry } from "@shared/contracts";
+import type { RoomRuntimeEvent, TranscriptEntry } from "@shared/contracts";
 import type { VoiceTask } from "@shared/voice-contracts";
 import { voiceTextDigest, waitForVoiceTask } from "../voice-ui-state";
 import "../styles/voice.css";
 
 type QueueItem = { entry?: TranscriptEntry; task?: VoiceTask; label: string };
 export type VoicePlaybackHandle = { enqueue(entry: TranscriptEntry): void; play(task: VoiceTask): void; stop(): void };
-export const VoicePlaybackBar = forwardRef<VoicePlaybackHandle, { sessionId: string; active: boolean; entries: TranscriptEntry[]; speakerName(entry: TranscriptEntry): string }>(function VoicePlaybackBar({ sessionId, active, entries, speakerName }, ref) {
+export const VoicePlaybackBar = forwardRef<VoicePlaybackHandle, { sessionId: string; sessionGeneration: number; active: boolean; entries: TranscriptEntry[]; speakerName(entry: TranscriptEntry): string }>(function VoicePlaybackBar({ sessionId, sessionGeneration, active, entries, speakerName }, ref) {
   const [autoRead, setAutoRead] = useState(false);
   const [count, setCount] = useState(0);
   const [label, setLabel] = useState("");
@@ -74,9 +74,9 @@ export const VoicePlaybackBar = forwardRef<VoicePlaybackHandle, { sessionId: str
     } finally { processing.current = false; if (token === generation.current && mounted.current) { setCount(0); setLabel(""); } if (queue.current.length && mounted.current) void process(); }
   }
   function enqueue(item: QueueItem): void { queue.current.push(item); setCount(queue.current.length + (currentItem.current ? 1 : 0)); void process(); }
-  useImperativeHandle(ref, () => ({ enqueue(entry) { if (active && entry.sessionId === sessionId && entry.role === "assistant" && entry.status === "completed" && entry.body.trim()) { seen.current.set(entry.id, entry.body); enqueue({ entry, label: speakerName(entry) }); } }, play(task) { if (active && task.sessionId === sessionId && task.kind === "speech") { const source = task.source, entry = source.kind === "entry" ? entries.find(entry => entry.id === source.entryId) : undefined; enqueue({ task, entry, label: entry ? speakerName(entry) : task.voice || "AI" }); } }, stop }));
+  useImperativeHandle(ref, () => ({ enqueue(entry) { if (active && entry.sessionId === sessionId && entry.generation === sessionGeneration && entry.role === "assistant" && entry.status === "completed" && entry.body.trim()) { seen.current.set(entry.id, entry.body); enqueue({ entry, label: speakerName(entry) }); } }, play(task) { if (active && task.sessionId === sessionId && task.inputGeneration === sessionGeneration && task.kind === "speech") { const source = task.source, entry = source.kind === "entry" ? entries.find(entry => entry.id === source.entryId) : undefined; enqueue({ task, entry, label: entry ? speakerName(entry) : task.voice || "AI" }); } }, stop }));
   const completed = useEffectEvent((entry: TranscriptEntry): void => {
-    if (entry.sessionId !== sessionId) return;
+    if (entry.sessionId !== sessionId || entry.generation !== sessionGeneration) return;
     const original = currentItem.current?.entry;
     if (original?.id === entry.id && (original.body !== entry.body || entry.status !== "completed")) stop();
     if (!autoRead || !active || entry.role !== "assistant" || entry.status !== "completed" || !entry.body.trim()) return;
@@ -84,8 +84,8 @@ export const VoicePlaybackBar = forwardRef<VoicePlaybackHandle, { sessionId: str
     seen.current.set(entry.id, entry.body); enqueue({ entry, label: speakerName(entry) });
   });
   useEffect(() => window.aevorenBot.events.subscribeTranscript(event => completed(event.entry)), []);
-  const roomChanged = useEffectEvent((event: { sessionId: string; batch: { state: string } }): void => {
-    if (event.sessionId === sessionId && event.batch.state === "cancelled") stop();
+  const roomChanged = useEffectEvent((event: RoomRuntimeEvent): void => {
+    if (event.sessionId === sessionId && event.turns.some(turn => turn.inputGeneration === sessionGeneration) && event.batch.state === "cancelled") stop();
   });
   useEffect(() => window.aevorenBot.events.subscribeRoomRuntime(event => roomChanged(event)), []);
   const stopCurrent = useEffectEvent(stopResources);

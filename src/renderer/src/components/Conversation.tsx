@@ -556,6 +556,7 @@ const TranscriptItem = memo(function TranscriptItem({
 
 type ConversationProps = {
   sessionId?: string;
+  sessionGeneration?: number;
   approvalVisible?: boolean;
   userProfile?: ConversationUserProfile;
   bot: Bot | null;
@@ -599,6 +600,7 @@ type ConversationProps = {
 
 export function Conversation({
   sessionId,
+  sessionGeneration = 1,
   approvalVisible = true,
   userProfile = defaultUserProfile,
   bot,
@@ -1672,7 +1674,7 @@ export function Conversation({
             </button>
           )}
           </div>
-          {sessionId ? <><VoiceCapturePanel sessionId={sessionId} active={approvalVisible} readDraft={readVoiceDraft} onTask={setLatestVoiceTask} /><VoiceTaskPanel sessionId={sessionId} latestTask={latestVoiceTask} onInsert={insertVoiceTranscript} onPlay={playVoiceTask} /><VoicePlaybackBar ref={voicePlaybackRef} sessionId={sessionId} active={approvalVisible} entries={entries} speakerName={entry => entry.speakerBotId ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? bot?.name ?? "AI" : bot?.name ?? "AI"} /></> : null}
+          {sessionId ? <><VoiceCapturePanel sessionId={sessionId} active={approvalVisible} readDraft={readVoiceDraft} onTask={setLatestVoiceTask} /><VoiceTaskPanel sessionId={sessionId} sessionGeneration={sessionGeneration} latestTask={latestVoiceTask} onInsert={insertVoiceTranscript} onPlay={playVoiceTask} /><VoicePlaybackBar ref={voicePlaybackRef} sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible} entries={entries} speakerName={entry => entry.speakerBotId ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? bot?.name ?? "AI" : bot?.name ?? "AI"} /></> : null}
         </div>
       </footer>
       {mediaPickerOpen && sessionId ? <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMediaPickerOpen(false); }}><section className="media-selection-dialog" role="dialog" aria-modal="true" aria-label="选择媒体引用" onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setMediaPickerOpen(false); } }}><header><h2>引用当前会话媒体</h2><button ref={mediaPickerCloseRef} className="icon-button" type="button" aria-label="关闭媒体选择" onClick={() => setMediaPickerOpen(false)}><CloseIcon /></button></header><MediaLibraryPanel key={sessionId} sessionId={sessionId} onUse={selectMedia} /></section></div> : null}

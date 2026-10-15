@@ -5,7 +5,7 @@ import { mergeVoiceTask } from "../voice-ui-state";
 import "../styles/voice.css";
 
 const states: Record<VoiceTask["state"], string> = { prepared: "已准备", running: "处理中", completed: "已完成", failed: "失败", cancelled: "已停止", interrupted_unknown: "结果未知，未自动重试" };
-export function VoiceTaskPanel({ sessionId, latestTask, onInsert, onPlay }: { sessionId: string; latestTask: VoiceTask | null; onInsert(task: VoiceTask, useCurrentDraft: boolean, isCurrent: () => boolean): Promise<boolean>; onPlay(task: VoiceTask): void }): React.JSX.Element {
+export function VoiceTaskPanel({ sessionId, sessionGeneration, latestTask, onInsert, onPlay }: { sessionId: string; sessionGeneration: number; latestTask: VoiceTask | null; onInsert(task: VoiceTask, useCurrentDraft: boolean, isCurrent: () => boolean): Promise<boolean>; onPlay(task: VoiceTask): void }): React.JSX.Element {
   const [tasks, setTasks] = useState<VoiceTask[]>([]);
   const [deltas, setDeltas] = useState<Record<string, string>>({});
   const [media, setMedia] = useState<MediaItem[]>([]);
@@ -20,12 +20,12 @@ export function VoiceTaskPanel({ sessionId, latestTask, onInsert, onPlay }: { se
   const revokedRef = useRef(new Set<string>());
   const accept = useCallback((task: VoiceTask, delta?: string): void => {
     const previous = recordsRef.current.get(task.id);
-    if (task.sessionId !== sessionId || revokedRef.current.has(task.id) || (previous && previous.version > task.version)) return;
+    if (task.sessionId !== sessionId || task.inputGeneration !== sessionGeneration || revokedRef.current.has(task.id) || (previous && previous.version > task.version)) return;
     recordsRef.current.set(task.id, task);
     setTasks(current => mergeVoiceTask(current, task));
     if (delta && task.state === "running") setDeltas(current => ({ ...current, [task.id]: `${current[task.id] ?? ""}${delta}` }));
     if (task.state !== "running" && task.state !== "prepared") setDeltas(current => { const next = { ...current }; delete next[task.id]; return next; });
-  }, [sessionId]);
+  }, [sessionId, sessionGeneration]);
   const remove = useCallback((ids: string[]): void => {
     for (const id of ids) { revokedRef.current.add(id); recordsRef.current.delete(id); }
     setTasks(current => current.filter(task => !ids.includes(task.id)));
