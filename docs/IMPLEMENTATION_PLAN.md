@@ -531,4 +531,4 @@ PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/act
 
 ### beta.39 同步最新 dev 与检查清单
 
-本候选正常合入 dev `a2207e58b4eaaf093a3c4cd43dbef7aff08b33d8` 的历史与有界外发重启关闭诊断。冲突保留 beta.39 的较新功能／检查清单与两侧历史验收记录；本次合并对 src、共享合同、版本、依赖、Worker、构建配置和所有业务字节均无差异，没有重建产品或重跑已通过的 UI 场景。Node 类型、定向 lint、文档／开源检查及工作流 YAML 通过。macOS／Windows 的 CI 源码／实包列表，以及之后的签名发行功能列表均加入 Task3，原有场景与正常关闭门禁完整保留。当前只准备正常开发 PR，不合入 dev／beta 或发布新标签，master 不变。
+本候选已合并同步最新 dev `a2207e58b4eaaf093a3c4cd43dbef7aff08b33d8` 的历史与有界外发重启关闭诊断。冲突保留 beta.39 的较新功能／检查清单与两侧历史验收记录；本次合并对 src、共享合同、版本、依赖、Worker、构建配置和所有业务字节均无差异，没有重建产品或重跑已通过的 UI 场景。Node 类型、定向 lint、文档／开源检查及工作流 YAML 通过。macOS／Windows 的 CI 源码／实包列表，以及之后的签名发行功能列表均加入 Task3，原有场景与正常关闭门禁完整保留。当前只准备正常开发 PR，不合入 dev／beta 或发布新标签，master 不变。
