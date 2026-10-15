@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { linkSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -28,8 +28,17 @@ describe("owned media CAS", () => {
   });
   it("rejects a changed file identity across the actual fd read and respects cancellation", async () => {
     const root = await fixture(), path = join(root, "input.pdf"); writeFileSync(path, "%PDF-1.7\noriginal");
-    let checks = 0;
-    await expect(readMediaSource(path, () => { if (++checks === 3) writeFileSync(path, "%PDF-1.7\nmodified"); })).rejects.toMatchObject({ code: "MEDIA_CONTENT_INVALID" });
+    const before = statSync(path, { bigint: true });
+    let checks = 0, mutationObserved = false;
+    await expect(readMediaSource(path, () => { if (++checks === 3) {
+      writeFileSync(path, "%PDF-1.7\nmodified");
+      // A fast same-sized Windows write need not expose a distinct timestamp.
+      utimesSync(path, Number(before.atimeNs) / 1e9, Number(before.mtimeNs) / 1e9 + 1);
+      const changed = statSync(path, { bigint: true });
+      expect(changed.size).toBe(before.size); expect(changed.mtimeNs).not.toBe(before.mtimeNs);
+      mutationObserved = true;
+    } })).rejects.toMatchObject({ code: "MEDIA_CONTENT_INVALID" });
+    expect(mutationObserved).toBe(true);
     const controller = new AbortController(); controller.abort();
     await expect(new MediaBlobStore(join(root, "media")).put(Buffer.from("no publication"), controller.signal)).rejects.toMatchObject({ code: "TOOL_EXECUTION_CANCELLED" });
   });

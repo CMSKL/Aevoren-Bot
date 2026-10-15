@@ -417,3 +417,9 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 
 - 第二轮 Windows CI（38703832369）普通测试通过后在构建阶段拒绝 OFL LICENSE 摘要；原因是 Windows checkout 的自动 CRLF 转换改变了已固定摘要的上游文本。新增 Git 属性对字体及来源/许可资源保留原始字节，不更改任何已审阅摘要或放宽检查。
 - 保留两次原始失败记录；修复后重新运行完整 CI，Windows 安装包验收尚待通过。
+
+### beta.36 第三轮 Windows 来源读取 fixture 与 Linux 桌面焦点诊断
+
+[CI 38710354729](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38710354729) 的 Windows 普通测试为 1,613 通过／61 跳过／1 失败，停在 `media-blob-store.test.ts` 的同大小来源覆写断言；尚未进入构建、源码界面或安装包。该 fixture 原先假定快速覆写必然立即改变文件时间戳。本次仅在受控 fd 读取边界将 mtime 显式推进一秒，先确认大小未变且 bigint mtime 已变化，再保留原拒绝及取消断言；外层另确认该前置验证确实完成，避免错误包装掩盖失败的测试前提。没有延时、产品代码或来源／CAS 校验变化。本机七项 CAS 测试通过；此结果不表示已在 Windows 执行，也不扩张来源读取器在全部时间戳均被保留时的保证。
+
+同轮 Linux 普通测试 1,630 通过／45 跳过，真实 Docker 浏览器场景 40／41；六环境并行截图在捕获前触发 `BROWSER_OBSERVATION_STALE`。既有诊断为 `phase=focus-before`、耗时 11 ms，epoch 1／1、文档版本 5／5、页面存在且未关闭；没有 ffmpeg 失败，未出现正文、URL 或凭据。桌面焦点原因仍须独立定位，没有放宽焦点、epoch、版本或新鲜度保护，也未以本机成功覆盖此失败。新的正常 CI 将同时验证 Windows fixture 修正并继续提供跨平台证据，当前不宣称完整门禁通过。
