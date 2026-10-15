@@ -217,3 +217,5 @@ MCP beta.34 最终源码包含 metadata 私有投影、App-only 路由、统一 
 同一冻结 beta.34 未签名 macOS 包最终 20／20 通过：资料库 8、原生读取 2、原生外发 5、示范 1、MCP 3 和 typed API 1。MCP 包测试实查 isPackaged、精确版本以及 Resources 中的 MCP 指南；验证真实 opaque iframe、父级／Preload 隔离、工具输入／结果、真实 UI 调用审批、撤权、未知结果与延迟原生→MCP 模态交接。全部使用临时数据库、真实 IPC 与受控 HTTP，未触及真实外部账号；跨平台／Linux Docker／签名发行仍单独验收。
 
 示范基础的真实 Linux [CI 38666108922](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38666108922/job/116198324472) 在 12288fd 完整通过：普通 1,547／45 跳过，实际 Docker／Host 41／41；新增真实 RFB 示范用例 3.239 秒通过。此证据属于 Demo33 基础提交，MCP34 自身跨平台完整 CI 与签名发行仍须通过，真实 Windows Docker 仍未验证。
+
+最终只读复核发现离线 DNS／传输准备失败时 Client 已登记、但尚未进入清理 try，反复刷新目录会累积引用。f85c8cc 将准备过程纳入清理并在分配 HTTP Agent 前验证 Header；原代码重复失败回归复现引用保留，修正后通过。此后四配置重新构建、MCP／旧连接／能力专项 25 通过、1 跳过及针对性 lint 通过；同一修正后的 beta.34 未签名包 MCP3 与 typed1 共 4／4 再通过。此前完整 1,565 与包 20 项是清理补丁前的完整回执，未混称为补丁后重复执行的全量结果。
