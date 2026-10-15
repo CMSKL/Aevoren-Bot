@@ -221,8 +221,8 @@ export class TaskSessionRepository {
     if(!admission){admission={incarnation:randomUUID()};this.database.prepare("INSERT INTO task_executor_admissions VALUES(?,?,?,1,0)").run(sessionId,executor,admission.incarnation);}
     for(const reference of snapshot.selection.resourceRefs)this.host.library.bind({sessionId,id:reference.resourceId});
     for(const reference of snapshot.selection.mediaRefs)this.host.media.bind({sessionId,id:reference.mediaId});
-    snapshot.resourceBindings=this.host.library.captureReferenceBindings(sessionId,snapshot.selection.resourceRefs,executor);
-    snapshot.mediaBindings=this.host.media.captureSendReferences(sessionId,snapshot.selection.mediaRefs,executor);
+    snapshot.resourceBindings=this.host.library.captureReferenceBindings(sessionId,snapshot.selection.resourceRefs);
+    snapshot.mediaBindings=this.host.media.captureSendReferences(sessionId,snapshot.selection.mediaRefs);
     const json=canonical(snapshot),digest=hash(json);
     this.database.prepare("INSERT INTO task_context_selections(session_id,executor_bot_id,version,executor_incarnation,digest,snapshot_json,created_at) VALUES(?,?,?,?,?,?,?)").run(sessionId,executor,version,admission.incarnation,digest,json,new Date().toISOString());
     for(const workspace of snapshot.selection.workspaces){this.database.prepare("INSERT OR IGNORE INTO session_workspace_grants(session_id,workspace_id) VALUES(?,?)").run(sessionId,workspace.id);
@@ -263,8 +263,8 @@ export class TaskSessionRepository {
     if(!this.database.prepare("SELECT 1 FROM task_executor_admissions WHERE session_id=? AND executor_bot_id=? AND incarnation=? AND revoked=0").get(sessionId,executor,row.executor_incarnation))throw denied();
     if(JSON.parse(row.revoked_memories_json).length||JSON.parse(row.revoked_resources_json).length||JSON.parse(row.revoked_media_json).length)throw denied();
     for(const item of snapshot.memories){const current=this.host.getMemory(item.source.id);if(current.deletedAt||item.memory.expiresAt&&item.memory.expiresAt<=new Date().toISOString())throw denied();}
-    this.host.library.assertReferenceBindings(sessionId,snapshot.resourceBindings,executor);
-    const media=this.host.media.captureSendReferences(sessionId,snapshot.selection.mediaRefs,executor);
+    this.host.library.assertReferenceBindings(sessionId,snapshot.resourceBindings);
+    const media=this.host.media.captureSendReferences(sessionId,snapshot.selection.mediaRefs);
     if(media.some((value,index)=>value.incarnation!==snapshot.mediaBindings[index]?.incarnation))throw denied();
     const selection=structuredClone(snapshot.selection);
     const limits=this.database.prepare("SELECT workspace_id,read_allowed,write_allowed,automation_allowed FROM task_workspace_limits WHERE session_id=? AND executor_bot_id=? AND selection_version=?").all(sessionId,executor,version) as {workspace_id:string;read_allowed:number;write_allowed:number;automation_allowed:number}[];
@@ -274,6 +274,27 @@ export class TaskSessionRepository {
       if(!captured||!this.mcpReader)throw denied();const current=this.mcpReader(sessionId,executor,item);if(current.version!==captured.server_version||current.identityDigest!==captured.identity_digest)throw denied();mcpIdentities[item.serverId]=current;}
     return {sessionId,executorBotId:executor,selectionVersion:version,selectionDigest:row.digest,executorIncarnation:row.executor_incarnation,selection,memories:structuredClone(snapshot.memories),history:structuredClone(snapshot.history),mcpIdentities};
   }
+  /** Raw authority reader: never calls Library/Media or the full policy recursively. */
+  private referenceSnapshot(sessionId:string,executor:string,runtimeId?:string):Snapshot|null{
+    const session=this.host.getSession(sessionId);
+    if(runtimeId&&!this.database.prepare("SELECT 1 FROM runtime_runs WHERE id=? AND session_id=? AND executor_bot_id=? AND input_generation=?").get(runtimeId,sessionId,executor,session.generation))throw denied();
+    if(session.kind!=="TASK")return null;this.host.assertSessionExecutor(sessionId,executor);
+    let version=this.selectionVersion(sessionId,executor),expectedDigest:string|undefined,incarnation:string|undefined;
+    if(runtimeId){const pin=this.database.prepare("SELECT r.input_generation,p.task_selection_version,p.task_selection_digest,p.task_executor_incarnation FROM runtime_runs r JOIN runtime_session_scopes p ON p.runtime_run_id=r.id WHERE r.id=? AND r.session_id=? AND r.executor_bot_id=?").get(runtimeId,sessionId,executor) as {input_generation:number;task_selection_version:number|null;task_selection_digest:string|null;task_executor_incarnation:string|null}|undefined;
+      if(!pin||pin.input_generation!==session.generation||!pin.task_selection_version||!pin.task_selection_digest||!pin.task_executor_incarnation)throw denied();
+      version=pin.task_selection_version;expectedDigest=pin.task_selection_digest;incarnation=pin.task_executor_incarnation;
+    }
+    const row=this.database.prepare("SELECT * FROM task_context_selections WHERE session_id=? AND executor_bot_id=? AND version=?").get(sessionId,executor,version) as SelectionRow|undefined;
+    if(!row||hash(row.snapshot_json)!==row.digest||expectedDigest&&row.digest!==expectedDigest||incarnation&&row.executor_incarnation!==incarnation)throw denied();
+    if(!this.database.prepare("SELECT 1 FROM task_executor_admissions WHERE session_id=? AND executor_bot_id=? AND incarnation=? AND revoked=0").get(sessionId,executor,row.executor_incarnation))throw denied();
+    if(JSON.parse(row.revoked_memories_json).length||JSON.parse(row.revoked_resources_json).length||JSON.parse(row.revoked_media_json).length)throw denied();
+    const snapshot=JSON.parse(row.snapshot_json) as Snapshot;taskExecutorSelectionSchema.parse(snapshot.selection);
+    for(const item of snapshot.resourceBindings){const binding=this.database.prepare("SELECT b.version FROM session_resource_bindings b JOIN library_resources r ON r.id=b.resource_id JOIN library_revisions v ON v.resource_id=r.id AND v.id=? AND v.digest=? WHERE b.session_id=? AND b.resource_id=? AND b.revoked_at IS NULL AND r.enabled=1 AND r.deleted_at IS NULL").get(item.reference.revisionId,item.reference.digest,sessionId,item.reference.resourceId) as {version:number}|undefined;if(!binding||binding.version!==item.bindingVersion)throw denied();}
+    for(const item of snapshot.mediaBindings){const binding=this.database.prepare("SELECT b.incarnation FROM session_media_bindings b JOIN media_assets a ON a.id=b.media_id WHERE b.session_id=? AND b.media_id=? AND b.revoked_at IS NULL AND a.enabled=1 AND a.deleted_at IS NULL AND a.sha256=?").get(sessionId,item.reference.mediaId,item.reference.sha256) as {incarnation:string}|undefined;if(!binding||binding.incarnation!==item.incarnation)throw denied();}
+    return snapshot;
+  }
+  libraryReferences(sessionId:string,executor:string,runtimeId?:string):Snapshot["resourceBindings"]|null{return this.referenceSnapshot(sessionId,executor,runtimeId)?.resourceBindings??null;}
+  mediaReferences(sessionId:string,executor:string,runtimeId?:string):TaskExecutorSelection["mediaRefs"]|null{return this.referenceSnapshot(sessionId,executor,runtimeId)?.selection.mediaRefs??null;}
   getSelections(sessionId:string):TaskExecutorSelection[]{const detail=this.get(sessionId);return detail.admittedExecutorBotIds.map(executor=>{const row=this.database.prepare("SELECT snapshot_json FROM task_context_selections WHERE session_id=? AND executor_bot_id=? ORDER BY version DESC LIMIT 1").get(sessionId,executor) as {snapshot_json:string};return taskExecutorSelectionSchema.parse(JSON.parse(row.snapshot_json).selection);});}
   workspaceLimits(sessionId:string,executor:string):TaskExecutorSelection["workspaces"]|null{
     if(this.host.getSession(sessionId).kind!=="TASK")return null;this.assertExecutor(sessionId,executor);

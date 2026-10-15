@@ -254,9 +254,10 @@ describe("persistent conversation resource library", () => {
         raw.prepare(`INSERT OR REPLACE INTO ${table}(${columns.join(",")}) VALUES(${columns.map(() => "?").join(",")})`).run(...columns.map((column) => row[column]!));
       }
     }
+    const originalColumns = new Map(tables.map(table => [table, (raw.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(column => column.name)]));
     const snapshot = (database: DatabaseSync): string => JSON.stringify(Object.fromEntries(tables.map((table) => {
       const info = database.prepare(`PRAGMA table_info(${table})`).all() as { name: string; pk: number }[];
-      const columns = info.map((column) => column.name).filter((name) => !["resource_references_json", "media_references_json"].includes(name));
+      const columns = originalColumns.get(table)!;
       const keys = info.filter((column) => column.pk).toSorted((a, b) => a.pk - b.pk).map((column) => column.name);
       return [table, database.prepare(`SELECT ${columns.join(",")} FROM ${table} ORDER BY ${keys.join(",")}`).all()];
     })));

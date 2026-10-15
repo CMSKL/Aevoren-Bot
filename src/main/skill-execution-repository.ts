@@ -44,7 +44,7 @@ export function approvalReviewDigest(snapshot: import("@shared/skill-execution-c
 export class SkillExecutionRepository {
   private sequence = 0;
   constructor(private readonly database: DatabaseSync, private readonly assertScope: (scope: EnvironmentScope) => void,
-    private readonly resolveReference: (scope: EnvironmentScope, reference: ResourceReference) => LibraryContent) {}
+    private readonly resolveReference: (scope: EnvironmentScope, reference: ResourceReference, runtimeRunId?: string) => LibraryContent) {}
 
   transaction<T>(work: () => T): T {
     const name = `aevoren_skill_${++this.sequence}`; this.database.exec(`SAVEPOINT ${name};`);
@@ -65,7 +65,7 @@ export class SkillExecutionRepository {
     const row = this.database.prepare("SELECT * FROM skill_execution_grants WHERE id=? AND session_id=? AND executor_bot_id=?").get(id, scope.sessionId, scope.executorBotId) as GrantRow | undefined;
     if (!row) throw new AevorenBotError("SKILL_GRANT_NOT_FOUND"); return grant(row);
   }
-  assertGranted(input: EnvironmentScope, id: string, expectedVersion: number): { grant: SkillExecutionGrant; content: LibraryContent } {
+  assertGranted(input: EnvironmentScope, id: string, expectedVersion: number, runtimeRunId?: string): { grant: SkillExecutionGrant; content: LibraryContent } {
     const value = this.get(input, id);
     if (value.revokedAt) throw new AevorenBotError("SKILL_GRANT_REVOKED");
     if (value.version !== expectedVersion) throw new AevorenBotError("SKILL_GRANT_VERSION_CONFLICT");
@@ -73,7 +73,7 @@ export class SkillExecutionRepository {
       .get(value.sessionId, value.executorBotId) as { id: string; image_digest: string; worker_version: string; state: string } | undefined;
     if (!environment || environment.id !== value.environmentId || environment.image_digest !== value.imageDigest || environment.worker_version !== value.workerVersion) throw new AevorenBotError("SKILL_ENVIRONMENT_CHANGED");
     if (environment.state !== "running") throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
-    const content = this.resolveReference(value, value.reference);
+    const content = this.resolveReference(value, value.reference, runtimeRunId);
     const entry = content.revision.files.find(file => file.relativePath === value.entryPath);
     if (content.resource.kind !== "skill" || entry?.sha256 !== value.entrySha256) throw new AevorenBotError("SKILL_SCRIPT_NOT_FOUND");
     return { grant: value, content };
@@ -118,7 +118,7 @@ export class SkillExecutionRepository {
     });
   }
   recordExecution(scope: EnvironmentScope, execution: Execution, snapshot: SkillScriptReviewSnapshot): void {
-    const review = skillScriptReviewSnapshotSchema.parse(snapshot); this.assertGranted(scope, review.target.grantId, review.target.grantVersion);
+    const review = skillScriptReviewSnapshotSchema.parse(snapshot); this.assertGranted(scope, review.target.grantId, review.target.grantVersion, execution.runtimeRunId ?? undefined);
     const row = this.database.prepare("SELECT environment_id FROM environment_executions WHERE id=?").get(execution.id) as { environment_id: string } | undefined;
     if (!row || row.environment_id !== review.target.environmentId || execution.environmentId !== row.environment_id) throw new AevorenBotError("ENVIRONMENT_SCOPE_INVALID");
     const digest = approvalReviewDigest(review), previous = this.database.prepare("SELECT input_digest FROM skill_script_executions WHERE execution_id=?")
