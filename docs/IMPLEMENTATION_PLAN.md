@@ -220,3 +220,19 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 现仍是开发候选，跨平台修复检查、Beta 晋级及签名发行未完成；master 不晋级。真实第三方账号和 Windows Linux Docker 继续标为未验证。后续阶段 5–6 尚未实现。
 
 示范 beta.33 基线合并准备：本分支纳入已通过四项 CI 的 dev `4f24f15`（PR #40），保留原生连接 38、外发 39、示范 40 的实际迁移顺序与 Browser Worker 1.1.0。上述计数保留为各次验收记录，不代表本次合并后的源码／安装包已经重新验证；当前仅完成合并准备，尚未推送或构建，可写 MCP／交互 Apps、Notion 页面更新／追加和阶段 5 功能不进入本单元。
+
+### 示范 beta.33 合并后本机复验（2026-10-15 UTC）
+
+冻结源码 `14046f04aec88ae7096f1aa1b0fffa32fa1269d2` 完成本次验证，应用版本保持 `0.3.0-beta.33`。验证前后工作树干净，所有重任务以 `nice -n 10` 串行执行，未启动本机 Docker、麦克风或真实第三方账号，也未操作用户已安装应用。
+
+| 本次检查 | 实际结果 |
+| --- | --- |
+| 定向业务单测 | 8 文件／110 项通过：Skill 包 10、数据库 25、项目工具 25、示范宿主 4、示范桥 2、Browser Worker 示范 3、RFB 解析 4、共享产品网关 37；包含真实暂停 TCP 接收再等待完整转发字节的回归。未重跑完整普通套件 |
+| 静态与构建 | 四套 TypeScript、lint、build、215 包／7 类许可、33 份文档链接和开源检查通过 |
+| 隐藏源码验收 | 示范 1、原生读取 2、外发 5、关闭握手 8、typed API 1，共 17 项通过 |
+| 新构建实际 macOS arm64 包 | 直接使用本次 out 构建未签名目录包；上述 17 项加资料库 8，共 25 项通过，0 项跳过、0 次强制夹具清理，无遗留本次 Electron 进程 |
+| 随包内容与身份 | 34 份实际运行记录确认 `isPackaged=true`／`0.3.0-beta.33`；6 份功能指南、Execution Worker 1.2.0 与 Browser Worker 1.1.0 全部逐字节匹配源码构建产物；未签名包不包含更新源 |
+
+本次 Main SHA-256 为 `f4041c76e81762ee105d66244188627c436f3f1364620982ff9cffb847cfc80a`，源 out 与包内 Main 一致；app.asar SHA-256 为 `9796aa2438ccc19613f437f6ae815d0e7adf950f0c3d68d6f032fa1a6aa7384c`。本机临时证据为 `/tmp/aevoren-demo33-final-evidence.json`；单测／构建日志为 `/tmp/aevoren-demo33-final-units.log`、`/tmp/aevoren-demo33-final-build.log`，源码验收为 `/tmp/aevoren-demo33-final-source-smoke.log` 与 `/tmp/aevoren-demo33-final-source-typed.log`，包验收为 `/tmp/aevoren-demo33-final-package-smoke.log` 与 `/tmp/aevoren-demo33-final-package-typed.log`，四份对应 Playwright JSON 保存在同名前缀的 `.json` 文件。临时路径不是仓库内可下载附件。
+
+历史完整套件失败、旧 Windows TCP 竞态和旧包 CSP 阻止 iframe 的记录继续保留；本次定向复验不将它们改记为完整 CI 全绿。合并后提交仍须通过当前跨平台 CI，未签名 macOS 本机包不代替签名发行、Windows 安装包或真实 Windows Docker 验收。可写 MCP／交互 Apps、Notion 页面更新／追加未进入此单元，阶段 5–6 仍未实现。
