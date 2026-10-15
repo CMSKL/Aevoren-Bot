@@ -1680,7 +1680,7 @@ export function App(): React.JSX.Element {
               run = snapshot.data.runs.find(candidate => candidate.id === runId);
               if (!run) return;
             }
-            const result = selectedRoom && run?.route !== "host-outbound"
+            const result = selectedRoom && run?.route !== "host-outbound" && run?.route !== "host-mcp"
               ? await window.aevorenBot.roomRuntime.cancelMember(runId)
               : await window.aevorenBot.runtime.cancel(runId);
             if (!result.ok && currentSessionId === sessionIdRef.current) setError(result.error);
