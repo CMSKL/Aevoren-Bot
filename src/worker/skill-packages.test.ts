@@ -3,12 +3,24 @@ import { mkdtemp, readFile, readdir, rm, chmod, symlink, unlink, writeFile, lsta
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { skillPackageDescriptor, SKILL_PACKAGE_MAX_BYTES } from "@shared/skill-execution-contracts";
 import { ENV_HTTP_BODY_MAX_BYTES } from "@shared/environment-contracts";
 import { workerSkillInstallSchema } from "@shared/skill-execution-schemas";
 import { SkillPackages } from "./skill-packages";
 import { skillFixtureFile as file, skillFixturePackage as input, maximumSkillPackage } from "./skill-package-fixture";
+
+const publicationProbe = vi.hoisted(() => ({ requirePrivateWritableDirectory: false }));
+vi.mock("node:fs/promises", async importOriginal => {
+  const filesystem = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...filesystem, rename: async (source: Parameters<typeof filesystem.rename>[0], target: Parameters<typeof filesystem.rename>[1]) => {
+    if (publicationProbe.requirePrivateWritableDirectory && String(source).includes("/snapshots/.prepare-")) {
+      const mode = (await filesystem.lstat(source)).mode & 0o777;
+      if (mode !== 0o700) throw Object.assign(new Error("Read-only directory cannot be renamed"), { code: "EACCES" });
+    }
+    await filesystem.rename(source, target);
+  } };
+});
 
 const sha = (bytes: Buffer | string): string => createHash("sha256").update(bytes).digest("hex");
 describe("immutable Skill install wire bounds", () => {
@@ -73,9 +85,22 @@ describe.skipIf(process.platform === "win32")("Skill cache on real private files
     const request = input(), installed = await packages.install(request), id = randomUUID();
     const entry = await packages.snapshot(id, process.getgid!(), request.id, installed.packageDigest, "scripts/main.js");
     expect((await lstat(entry)).mode & 0o777).toBe(0o440);
+    expect((await lstat(join(packages.snapshotBase, id))).mode & 0o777).toBe(0o550);
     expect((await lstat(dirname(entry))).mode & 0o777).toBe(0o550);
     expect(await readFile(join(packages.snapshotBase, id, "assets/raw.bin"))).toEqual(Buffer.from([0, 255, 1, 128]));
     await packages.removeSnapshot(id); expect(await readdir(packages.snapshotBase)).toEqual([]);
+  }));
+  it("keeps staging private and writable on filesystems that reject renaming read-only directories", async () => fixture(async packages => {
+    const request = input(), installed = await packages.install(request), id = randomUUID();
+    publicationProbe.requirePrivateWritableDirectory = true;
+    try {
+      const entry = await packages.snapshot(id, process.getgid!(), request.id, installed.packageDigest, "scripts/main.js");
+      expect((await lstat(join(packages.snapshotBase, id))).mode & 0o777).toBe(0o550);
+      expect((await lstat(entry)).mode & 0o777).toBe(0o440);
+      expect((await readdir(packages.snapshotBase)).some(name => name.startsWith(".prepare-"))).toBe(false);
+      await packages.removeSnapshot(id);
+      expect(await readdir(packages.snapshotBase)).toEqual([]);
+    } finally { publicationProbe.requirePrivateWritableDirectory = false; }
   }));
   it("refuses a cache symlink and does not copy the external target into a snapshot", async () => fixture(async (packages, root) => {
     const request = input(), installed = await packages.install(request), path = join(packages.cacheDirectory, installed.packageDigest, "scripts/main.js");
