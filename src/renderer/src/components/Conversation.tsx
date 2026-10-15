@@ -21,6 +21,8 @@ import type {
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import type { LibraryResource, LibraryResourceKind, ResourceReference } from "@shared/library-contracts";
 import type { MessageMediaReference } from "@shared/media-contracts";
+import type { VoiceCaptureBegin, VoiceTask } from "@shared/voice-contracts";
+import { voiceTextDigest } from "../voice-ui-state";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
 import { shouldShowBriefApproval } from "../brief-approval-state";
 import { initialRoomRouteAgentIds, latestRoomTurnsByLogicalTurn, roomHandoffProgress } from "../room-runtime-state";
@@ -45,6 +47,9 @@ import { ToolPermissionDialog } from "./ToolPermissionDialog";
 import { LibraryResourcePicker } from "./LibraryResourcePicker";
 import { MediaLibraryPanel } from "./MediaLibraryPanel";
 import { MediaReferenceBadge } from "./MediaReferenceBadge";
+import { VoiceCapturePanel } from "./VoiceCapturePanel";
+import { VoiceTaskPanel } from "./VoiceTaskPanel";
+import { VoicePlaybackBar, type VoicePlaybackHandle } from "./VoicePlaybackBar";
 import {
   ArtifactStatusBar,
   ArtifactCard,
@@ -165,6 +170,7 @@ type TranscriptItemProps = {
   onRevealWorkspaceArtifact(workspaceId: string, path: string): void;
   onOpenWorkspaces(): void;
   onWorkflowAction(action: WorkflowAction): Promise<boolean>;
+  onReadAloud(entry: TranscriptEntry): void;
 };
 
 const toolStateLabels: Record<ToolInvocation["state"], string> = {
@@ -355,6 +361,7 @@ const TranscriptItem = memo(function TranscriptItem({
   onRevealWorkspaceArtifact,
   onOpenWorkspaces,
   onWorkflowAction,
+  onReadAloud,
 }: TranscriptItemProps): React.JSX.Element {
   const evidenceId = useId();
   const [evidenceExpanded, setEvidenceExpanded] = useState(false);
@@ -477,6 +484,7 @@ const TranscriptItem = memo(function TranscriptItem({
             {entry.resourceRefs?.length ? <div className="message-attachments" aria-label="消息资源引用">{entry.resourceRefs.map(reference => <ResourceReferenceBadge key={`${reference.resourceId}:${reference.revisionId}`} sessionId={entry.sessionId} reference={reference} />)}</div> : null}
             {entry.mediaRefs?.length ? <div className="message-attachments" aria-label="消息媒体引用">{entry.mediaRefs.map(reference => <MediaReferenceBadge key={JSON.stringify(reference)} sessionId={entry.sessionId} reference={reference} />)}</div> : null}
           </div> : null}
+          {entry.role === "assistant" && entry.status === "completed" && assistantBody.trim() ? <button className="text-button message-read-aloud" type="button" aria-label={`朗读 ${speakerName} 的回复`} onClick={() => onReadAloud(entry)}>朗读 · AI 合成语音</button> : null}
           {entry.role === "assistant"
             ? <ArtifactStatusBar
                 writes={toolInvocations}
@@ -695,6 +703,8 @@ export function Conversation({
   const consumedInsertionRef = useRef<string | null>(null);
   const consumedMediaInsertionRef = useRef<string | null>(null);
   const composerMountedRef = useRef(true);
+  const voicePlaybackRef = useRef<VoicePlaybackHandle>(null);
+  const [latestVoiceTask, setLatestVoiceTask] = useState<VoiceTask | null>(null);
   useEffect(() => { composerMountedRef.current = true; return () => { composerMountedRef.current = false; }; }, []);
   const applyResourceInsertion = useEffectEvent((): void => {
     if (!resourceInsertion || resourceInsertion.sessionId !== sessionId || resourceInsertion.id === consumedInsertionRef.current) return;
@@ -739,6 +749,31 @@ export function Conversation({
   const hasInvalidRoomMentions = invalidRoomMentions.length > 0;
   const targetBotIds = room ? resolveRoomTargetIds(roomMentions, memberBotIds) : [];
   const explicitRoutingBlocked = Boolean(room && routingPreference === "explicit" && targetBotIds.length === 0);
+  const readVoiceDraft = useCallback(async (): Promise<VoiceCaptureBegin> => {
+    if (!sessionId) throw new Error("请先选择聊天。");
+    const base = composerSnapshotRef.current;
+    const targets = room ? resolveRoomTargetIds(base.roomMentions, memberBotIds) : [];
+    const baseDigest = await voiceTextDigest(JSON.stringify({ sessionId, text: base.draft, attachments: base.attachments.map(item => item.id), routingPreference: base.routingPreference, targets, resourceRefs: base.resourceRefs, mediaRefs: base.mediaRefs }));
+    if (!composerMountedRef.current || composerSnapshotRef.current !== base) throw new Error("草稿已变化，请重新操作。");
+    return { sessionId, draftVersion: base.draftVersion, baseDigest };
+  }, [sessionId, room, memberBotIds]);
+  const insertVoiceTranscript = useCallback(async (task: VoiceTask, useCurrentDraft: boolean, isCurrent: () => boolean): Promise<boolean> => {
+    if (!sessionId || task.sessionId !== sessionId) return false;
+    const base = await readVoiceDraft();
+    const result = await window.aevorenBot.voice.get({ sessionId, id: task.id });
+    if (!result.ok) throw new Error(result.error.safeMessage);
+    const latest = result.data;
+    if (latest.state !== "completed" || latest.kind !== "transcription" || !latest.transcript) throw new Error("转写尚未完成或已不可读取。");
+    if (!useCurrentDraft && latest.capture && (latest.capture.captureId !== task.capture?.captureId || latest.capture.draftVersion !== base.draftVersion || latest.capture.baseDigest !== base.baseDigest)) return false;
+    if (!composerMountedRef.current || composerStateRef.current.draftVersion !== base.draftVersion || !isCurrent()) return false;
+    const current = composerStateRef.current;
+    const text = `${current.text}${current.text && !current.text.endsWith("\n") ? "\n" : ""}${latest.transcript}`;
+    if (text.length > 100_000) throw new Error("插入后超过草稿长度上限，转写内容仍保留。");
+    updateComposer(value => ({ ...value, text }));
+    return true;
+  }, [sessionId, readVoiceDraft, updateComposer]);
+  const readAloud = useCallback((entry: TranscriptEntry): void => voicePlaybackRef.current?.enqueue(entry), []);
+  const playVoiceTask = useCallback((task: VoiceTask): void => voicePlaybackRef.current?.play(task), []);
   const subjectName = bot?.name ?? room?.room.name ?? "选择对话";
   const currentDate = new Date();
   const conversationScopeId = room?.room.id ?? bot?.id ?? null;
@@ -1340,6 +1375,7 @@ export function Conversation({
               onRevealWorkspaceArtifact={revealWorkspaceArtifact}
               onOpenWorkspaces={onOpenWorkspaces}
               onWorkflowAction={handleWorkflowAction}
+              onReadAloud={readAloud}
             />
             </Fragment>
           );
@@ -1636,6 +1672,7 @@ export function Conversation({
             </button>
           )}
           </div>
+          {sessionId ? <><VoiceCapturePanel sessionId={sessionId} active={approvalVisible} readDraft={readVoiceDraft} onTask={setLatestVoiceTask} /><VoiceTaskPanel sessionId={sessionId} latestTask={latestVoiceTask} onInsert={insertVoiceTranscript} onPlay={playVoiceTask} /><VoicePlaybackBar ref={voicePlaybackRef} sessionId={sessionId} active={approvalVisible} entries={entries} speakerName={entry => entry.speakerBotId ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? bot?.name ?? "AI" : bot?.name ?? "AI"} /></> : null}
         </div>
       </footer>
       {mediaPickerOpen && sessionId ? <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMediaPickerOpen(false); }}><section className="media-selection-dialog" role="dialog" aria-modal="true" aria-label="选择媒体引用" onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setMediaPickerOpen(false); } }}><header><h2>引用当前会话媒体</h2><button ref={mediaPickerCloseRef} className="icon-button" type="button" aria-label="关闭媒体选择" onClick={() => setMediaPickerOpen(false)}><CloseIcon /></button></header><MediaLibraryPanel key={sessionId} sessionId={sessionId} onUse={selectMedia} /></section></div> : null}
