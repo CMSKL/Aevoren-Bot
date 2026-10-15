@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -91,7 +91,14 @@ async function withMcp(callback: (fixture: { page: Page; application: ElectronAp
     application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: {
       ...environment, AEVOREN_BOT_USER_DATA_DIR: directory, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_FAKE_PROVIDER: "1", AEVOREN_BOT_NATIVE_TEST_ORIGIN: `http://127.0.0.1:${address.port}`,
     } });
-    if (executablePath) expect(await application.evaluate(({ app }) => app.isPackaged)).toBe(true);
+    if (executablePath) {
+      const runtime = await application.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), resourcesPath: process.resourcesPath }));
+      expect(runtime.packaged).toBe(true);
+      expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
+      const guide = join(runtime.resourcesPath, "docs", "MCP_APPS.md");
+      expect(existsSync(guide)).toBe(true);
+      expect(readFileSync(guide, "utf8")).toContain("Scoped MCP tools and Apps");
+    }
     const page = await application.firstWindow(), errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
     await expect(page.locator(".app-shell")).toBeVisible();

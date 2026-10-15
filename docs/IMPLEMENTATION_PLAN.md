@@ -28,7 +28,7 @@
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 已纳入 v0.3.0-beta.29 签名发行 | 开发与跨平台安装包验证通过，之前签名 fixture 失败保留为历史记录 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
-| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本 Skill 单元本机验收通过（beta.30 候选），跨平台 CI 收尾；应用连接实施中 | Worker 12、Host 4、脚本包 2 与单成员停止 1 项通过；签名发行待完成，示范／外发／写 MCP 尚未开始 |
+| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本、读取／外发和示范本机验收通过，MCP／Apps 及 Notion 更新收尾，阶段尚未完成 | 各源码／包与真实适配器证据分开记录，跨平台 CI／签名发行仍为门禁 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
 
@@ -201,3 +201,15 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 最终完整普通测试记录为 1,540 通过、45 跳过、6 失败：五项原有 5 秒超时（CDP 1 MiB、群聊 20 轮、FIFO 20 轮、工具混合指令循环、诊断参数循环），一项 lead-room 在轮询期限内仍为 running。对应未修改的六个文件单 Worker 复核 128／128 通过，未提高超时或减少断言；保留完整失败证据，远端完整 CI 仍须独立通过，不能把分次复核改记为一次完整全绿。
 
 真实 Linux Docker 集成测试已加入现有浏览器套件，走实际 x11vnc 的 RFB 握手、页面点击、文字／剪贴板脱敏、断线封存、容器重启、旧 epoch 拒绝和归还后重新观察。该测试将在 Linux CI 的真实容器门禁执行；本机 Docker daemon 未启动，本机结果为跳过，不算真实 Docker 已验收。示范单元不代表阶段 4 全部完成，可写 MCP／交互 Apps 以及阶段 5–6 仍待交付。
+
+## 阶段 4 MCP／Apps：v0.3.0-beta.34 候选
+
+迁移 41 接在真实 38／39／40 后，按 Scope 保存工具授权、固定参数／目标审批及持久调用账本。配置、凭据与格式变化使授权失效；移出再加入不能恢复旧参数。host-mcp Runtime 支持六成员先启动，单成员停止／撤权不影响兄弟任务；HTTP 写调用不自动重授权重放，已结束意图只查询回执。
+
+隔离 App 使用独立 loopback 外层及 opaque 内层。App-only 工具不进入模型和旧只读路径；协议 _meta 仅在宿主及已授权 App 之间传递，公共回执、模型和日志剥离顶层 _meta，保留同名嵌套用户数据。模型打开操作返回 waiting_user，不暴露视图 URL。一个活跃 Scope 的原生／MCP 审批由同一组件持有。支持范围见[MCP 工具与 Apps](MCP_APPS.md)。
+
+初次隐藏验收复现 Renderer CSP 阻止 loopback iframe，修正窄 frame-src 后 MCP 3 与 typed API 1 共 4 项通过，原生外发回归 5 项通过；含真实隔离 frame、父级／Preload 拒绝、实际 App 调用审批、撤权关闭、未知取消及原生→MCP 审批交接。后续私有 metadata／app-only 回归与能力检查 19 项、Node 类型及针对性 lint 通过。上述早期源码回执为 Source33；Source34 最终构建、完整普通测试及安装包验收单列，尚未完成。
+
+脚本 beta.30 的合并提交 93bd211 已全部验收并建立不可变标签。签名工作流 38591554270 在 Mac 普通文件系统测试发生只读目录 rename EACCES，未创建公开 Release。修复 39e12da 保持 staging0700 到 rename 后再固定0550；原代码确定性回归失败、修正后10项通过，不放宽最终只读权限。修复进入后续 Beta，旧标签不移动。
+
+MCP beta.34 最终源码包含 metadata 私有投影、App-only 路由、统一 Apps 审批持有者及快照发布修复。完整普通测试单 Worker 1,565 通过、45 跳过；四配置 TypeScript、lint、build、文档、215 包／7 类许可、开源及安全审计通过。隐藏源码 MCP3／示范1／typed1／外发5／读取2 的不同场景均通过；读取回归最初因新增 MCP 范围说明与原生说明文字重复而严格匹配失败，收窄到真实“聊天应用”区域后两项通过，未使用第 n 个元素或减少业务断言。最终安装包仍在验收。

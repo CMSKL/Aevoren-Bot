@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.0-beta.34 (development candidate)
+
+- Add conversation/executor-scoped MCP grants, fixed schema/configuration/credential approvals and durable send-once tool receipts. Unknown results do not replay; confirmation is explicitly server-reported.
+- Add opaque sandboxed MCP Apps with actual initialization, input/results and approved tool calls. App-only visibility is enforced and protocol metadata stays out of model and journal results.
+- Share one Apps approval owner across native and MCP actions, preserving six-member execution and exact Stop/revoke.
+- Retain read-only MCP compatibility, existing themes and icons. External App domains and device permissions are disabled; real accounts and final package acceptance remain separate verification gates.
+
 ## v0.3.0-beta.33 (development candidate)
 
 - Added explicit isolated-computer demonstration recording and scoped editable text Skill drafts; publication reviews a fixed saved version and creates a disabled Skill.

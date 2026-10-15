@@ -12,7 +12,7 @@
 
 Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联系人组织长期使用的 Bot 与群协作，通过按会话授权的工作区访问本地项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
 
-> **源码版本：v0.3.0-beta.33（开发候选）。** 当前源码新增用户明确开始的电脑示范录制与待审阅 Skill 草稿，并保留 Gmail、Drive、Notion 固定草稿版本的外发审批。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
+> **源码版本：v0.3.0-beta.34（开发候选）。** 当前源码新增按会话授权的 MCP 工具审批与隔离交互 Apps，并保留示范 Skill 草稿及原生应用固定外发审批。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
 [v0.3.0-beta.29](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.29) 已公开发布签名 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输和登记服务预览。脚本 Skill 与原生应用连接作为后续单元验收。真实 Windows Docker、真实第三方账号仍未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
 
