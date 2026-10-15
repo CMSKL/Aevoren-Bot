@@ -208,8 +208,9 @@ async function finishClose(): Promise<void> {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
     return;
   }
-  roomCoordinator?.beginShutdown();
   shutdownPromise ??= (async () => {
+    await routineService?.shutdown();
+    roomCoordinator?.beginShutdown();
     await mcpAppsBridge?.dispose();
     await mcpWriteService?.shutdown();
     await nativeOutboundService?.shutdown();
@@ -225,7 +226,6 @@ async function finishClose(): Promise<void> {
     await browserService?.shutdown();
     await providerService?.dispose();
     await mcpService?.dispose();
-    routineService?.stop();
   })();
   try {
     await shutdownPromise;
@@ -474,14 +474,14 @@ app.whenReady().then(async () => {
     forceFakeProvider ? undefined : new MemoryCaptureService(repository, providerService),
   );
   runtimeCoordinator = sendWorker;
-  routineService = new RoutineService(repository, sendWorker, (run) => {
-    const title = run.state === "completed" ? "定时任务已完成" : run.state === "missed" ? "定时任务已错过" : "定时任务需要关注";
-    showNotification(title, `${run.routineName} · ${run.state}`,"routines");
-  });
   roomCoordinator = new RoomCoordinator(repository, sendWorker.executor, {
     transcript: emitTranscript,
     roomRuntime: emitRoomRuntime,
   }, decisionService);
+  routineService = new RoutineService(repository, sendWorker, (run) => {
+    const title = run.state === "completed" ? "定时任务已完成" : run.state === "missed" ? "定时任务已错过" : "定时任务需要关注";
+    showNotification(title, `${run.routineName} · ${run.state}`,"routines");
+  }, undefined, roomCoordinator);
   const realtimeTestOrigin = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_REALTIME_TEST_ORIGIN : undefined;
   let realtimeSocketFactory: RealtimeSocketFactory | undefined;
   if (realtimeTestOrigin) {

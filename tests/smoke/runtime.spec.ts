@@ -558,7 +558,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     ).toSorted())).toEqual(["authorize", "cancelAuthorization", "clearAuthorization", "delete", "list", "probe", "save", "setEnabled"]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.routines,
-    ).toSorted())).toEqual(["create", "delete", "list", "listRuns", "runNow", "setEnabled", "update"]);
+    ).toSorted())).toEqual(["cancelRun", "create", "delete", "list", "listRuns", "runNow", "setEnabled", "update"]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.updates,
     ).toSorted())).toEqual(["check", "getState", "installAndRestart", "retry"]);

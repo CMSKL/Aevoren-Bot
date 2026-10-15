@@ -18,6 +18,7 @@ import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import type { ModelImageAttachment, ModelTextAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
+  "routines.list", "routines.listRuns",
   "search.query","search.open","organization.snapshot","bots.readImageAvatar",
   "sessions.taskOptions", "sessions.listTasks", "sessions.getTask", "voice.realtime.snapshot", "voice.configurations", "voice.get", "voice.list", "voice.audio",
   "media.list", "media.metadata", "media.read", "media.preview",
@@ -41,7 +42,7 @@ const mcpWriteOperation = (operation: string): boolean => MCP_WRITE_PRODUCT_OPER
 const mediaOperation = (operation: string): boolean => operation.startsWith("media.");
 const voiceOperation = (operation: string): boolean => operation.startsWith("voice.");
 const botImageOperation=(operation:string):boolean=>["bots.setImageAvatar","bots.clearImageAvatar","bots.readImageAvatar"].includes(operation);
-const scopedOperation = (operation: string): boolean => botImageOperation(operation) || voiceOperation(operation) || mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
+const scopedOperation = (operation: string): boolean => operation.startsWith("routines.") || botImageOperation(operation) || voiceOperation(operation) || mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
 type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[]; modelText?: ModelTextAttachment };
 
 /** Both transports use these handlers; only the host can supply execution identity. */
@@ -84,6 +85,12 @@ export class ProductOperationService {
       const approval = repository.getApprovalRequest(value.id);
       const target = repository.getToolInvocation(approval.toolInvocationId);
       return `${value.resolution === "deny" ? "拒绝" : "批准一次"} · ${repository.getBot(approval.executorBotId).name} · ${target.targetPath}`.slice(0, 2_048);
+    }
+    if (tool.operation.startsWith("routines.")) {
+      const routine = id ? repository.getRoutine(id) : tool.operation === "routines.cancelRun" ? repository.getRoutine(repository.getRoutineRun(value.runId as string).routineId) : null;
+      const target = (value.target ?? (value.patch as { target?: unknown } | undefined)?.target ?? routine?.target) as import("@shared/routine-contracts").RoutineTarget | undefined;
+      const roster = target?.kind === "room" ? target.targetBotIds.map(botId => repository.getBot(botId).name).join("、") : target?.kind === "bot" ? repository.getBot(target.botId).name : typeof value.botId === "string" ? repository.getBot(value.botId).name : "当前会话";
+      return `${label} · ${routine?.name ?? value.name ?? ""} · ${roster}${target?.kind === "room" ? ` · 成员版本 ${target.expectedMembershipVersion}` : ""}`.slice(0, 2048);
     }
     if (tool.operation.startsWith("bots.") && (id || typeof value.botId === "string")) return `${label} · ${repository.getBot(id ?? value.botId as string).name}`;
     if (tool.operation.startsWith("rooms.") && (id || typeof value.roomId === "string")) return `${label} · ${repository.getRoom(id ?? value.roomId as string).name}`;
@@ -150,6 +157,7 @@ export class ProductOperationService {
     if (!definition) throw new AevorenBotError("INVALID_REQUEST", "产品操作不存在，请先查询功能目录。");
     const schema = PRODUCT_OPERATION_SCHEMAS[tool.operation]!;
     const input = schema.parse(this.libraryInput(tool.operation, tool.input, runtime));
+    if (tool.operation.startsWith("routines.")) this.dependencies.routineService.assertOperationScope(tool.operation, input, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, runtimeRunId: runtime.id });
     const taskPolicy=repository.tasks.runtimeTaskPolicy(runtimeRunId);
     if(taskPolicy){
       const record=input&&typeof input==="object"&&!Array.isArray(input)?input as Record<string,unknown>:null;
@@ -633,6 +641,7 @@ export class ProductOperationService {
       if(supplied?.roomId!==undefined&&supplied.roomId!==session.roomId||supplied?.sessionId!==undefined&&supplied.sessionId!==runtime.sessionId)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
       return {roomId:session.roomId,sessionId:runtime.sessionId};
     }
+    if (operation.startsWith("routines.")) return input;
     if (voiceOperation(operation) || mediaOperation(operation)) {
       if (operation === "media.available" || ["voice.configurations", "voice.configure"].includes(operation)) return input;
       if (input !== undefined && (!input || typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");

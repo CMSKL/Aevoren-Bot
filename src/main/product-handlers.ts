@@ -1,3 +1,4 @@
+import { routineRunNowIpcSchema, routineRunCancelSchema } from "@shared/routine-schemas";
 import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
 import { botImageSetSchema,botImageClearSchema,botImageReadSchema } from "@shared/bot-image-schemas";
 import type { BotImageService } from "./bot-image-service";
@@ -266,23 +267,24 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const parsed = mcpServerMutationIdSchema.parse(input);
     return dependencies.mcpService.delete(parsed.id, parsed.expectedVersion);
   });
-  handle(IPC.routinesList, () => dependencies.routineService.list());
+  handle(IPC.routinesList, () => dependencies.routineService.list(libraryContext));
   handle(IPC.routinesListRuns, (routineId: unknown) =>
-    dependencies.routineService.listRuns(routineId === undefined ? undefined : routineIdSchema.parse(routineId)),
+    dependencies.routineService.listRuns(routineId === undefined ? undefined : routineIdSchema.parse(routineId), libraryContext),
   );
-  handle(IPC.routinesCreate, (input: unknown) => dependencies.routineService.create(routineCreateSchema.parse(input)));
+  handle(IPC.routinesCreate, (input: unknown) => commit(() => dependencies.routineService.create(routineCreateSchema.parse(input), libraryContext)));
   handle(IPC.routinesUpdate, (input: unknown) => {
     const parsed = routineUpdateSchema.parse(input);
-    return dependencies.routineService.update(parsed.id, parsed.expectedVersion, parsed.patch);
+    return commit(() => dependencies.routineService.update(parsed.id, parsed.expectedVersion, parsed.patch, libraryContext));
   });
   handle(IPC.routinesSetEnabled, (input: unknown) => {
     const parsed = routineEnabledSchema.parse(input);
-    return dependencies.routineService.setEnabled(parsed.id, parsed.expectedVersion, parsed.enabled);
+    return commit(() => dependencies.routineService.setEnabled(parsed.id, parsed.expectedVersion, parsed.enabled, libraryContext));
   });
-  handle(IPC.routinesRunNow, (id: unknown) => dependencies.routineService.runNow(routineIdSchema.parse(id)));
+  handle(IPC.routinesRunNow, (id: unknown) => dependencies.routineService.runNow(routineRunNowIpcSchema.parse(id), libraryContext));
+  handle(IPC.routinesCancelRun, (input: unknown) => dependencies.routineService.cancelRun(routineRunCancelSchema.parse(input), libraryContext));
   handle(IPC.routinesDelete, (input: unknown) => {
     const parsed = routineMutationSchema.parse(input);
-    return dependencies.routineService.delete(parsed.id, parsed.expectedVersion);
+    return commit(() => dependencies.routineService.delete(parsed.id, parsed.expectedVersion, libraryContext));
   });
   handle(IPC.conversationsList, () => repository.listConversations());
   handle(IPC.conversationsSetPinned, (input: unknown) => {

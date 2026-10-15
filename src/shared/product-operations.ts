@@ -55,6 +55,7 @@ export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   { name: "routines.update", channel: IPC.routinesUpdate, description: "修改 · 定时任务", effectClass: "write-reversible", interaction: "none" },
   { name: "routines.setEnabled", channel: IPC.routinesSetEnabled, description: "启停 · 定时任务", effectClass: "write-reversible", interaction: "none" },
   { name: "routines.runNow", channel: IPC.routinesRunNow, description: "立即执行 · 定时任务", effectClass: "write-reversible", interaction: "none" },
+  { name: "routines.cancelRun", channel: IPC.routinesCancelRun, description: "取消指定执行 · 定时任务", effectClass: "write-reversible", interaction: "none" },
   { name: "routines.delete", channel: IPC.routinesDelete, description: "删除 · 定时任务", effectClass: "irreversible", interaction: "none" },
   { name: "conversations.list", channel: IPC.conversationsList, description: "列出 · 聊天", effectClass: "read-local", interaction: "none" },
   { name: "conversations.setPinned", channel: IPC.conversationsSetPinned, description: "置顶 · 聊天", effectClass: "write-reversible", interaction: "none" },

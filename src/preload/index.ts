@@ -284,7 +284,8 @@ const api: AevorenBotApi = {
     create: (input) => ipcRenderer.invoke(IPC.routinesCreate, input),
     update: (input) => ipcRenderer.invoke(IPC.routinesUpdate, input),
     setEnabled: (input) => ipcRenderer.invoke(IPC.routinesSetEnabled, input),
-    runNow: (id) => ipcRenderer.invoke(IPC.routinesRunNow, id),
+    runNow: (input) => ipcRenderer.invoke(IPC.routinesRunNow, input),
+    cancelRun: (input) => ipcRenderer.invoke(IPC.routinesCancelRun, input),
     delete: (input) => ipcRenderer.invoke(IPC.routinesDelete, input),
   },
   conversations: {

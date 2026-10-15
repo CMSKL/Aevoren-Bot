@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Cron } from "croner";
 import type { AttachmentDraft, Routine, RoutineRun, RoutineSchedule, RoutineMessageOrigin } from "@shared/contracts";
-import type { RoutineCreateInput, RoutineRunCancelInput, RoutineTriggerInput, RoutineUpdatePatch } from "@shared/routine-contracts";
-import { routineRunCancelSchema } from "@shared/routine-schemas";
+import type { RoutineCreateInput, RoutineRunCancelInput, RoutineTriggerInput, RoutineUpdatePatch, RoutineContext, RoutineRunNowInput } from "@shared/routine-contracts";
+import { routineRunCancelSchema, routineRunNowIpcSchema } from "@shared/routine-schemas";
 import type { AppRepository } from "./database";
 import { AevorenBotError } from "./errors";
 import type { SendWorker } from "./send-worker";
@@ -48,39 +48,77 @@ export class RoutineService {
     this.stop();
     await Promise.allSettled(this.dispatches.values());
   }
-  list(): Routine[] {
-    return this.repository.listRoutines();
+  assertOperationScope(operation: string, input: unknown, context?: RoutineContext): void {
+    if (!context) return;
+    const session = this.repository.getSession(context.sessionId);
+    this.repository.assertSessionExecutor(session.id, context.executorBotId);
+    if (session.kind !== "MAIN") throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    if (context.runtimeRunId) {
+      const runtime = this.repository.getRuntimeRun(context.runtimeRunId);
+      if (runtime.sessionId !== session.id || runtime.executorBotId !== context.executorBotId || runtime.inputGeneration !== session.generation || !["running", "streaming"].includes(runtime.state)) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    }
+    const record = input && typeof input === "object" ? input as Record<string, unknown> : {};
+    let targetSessionId: string | undefined;
+    if (operation === "routines.create") {
+      const value = input as RoutineCreateInput;
+      if (value.target) targetSessionId = value.target.sessionId;
+      else if (value.botId !== session.botId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    } else if (operation === "routines.cancelRun") targetSessionId = this.repository.getRoutineRun(record.runId as string).targetSnapshot.target.sessionId;
+    else if (operation !== "routines.list" && !(operation === "routines.listRuns" && input === undefined)) {
+      const id = typeof input === "string" ? input : record.id as string;
+      targetSessionId = this.repository.getRoutine(id).target.sessionId;
+    }
+    if (targetSessionId && targetSessionId !== session.id) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    if (operation === "routines.update") {
+      const target = (record.patch as RoutineUpdatePatch).target;
+      if (target && target.sessionId !== session.id) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    }
   }
-  listRuns(id?: string): RoutineRun[] {
-    return this.repository.listRoutineRuns(id);
+  list(context?: RoutineContext): Routine[] {
+    this.assertOperationScope("routines.list", undefined, context);
+    return this.repository.listRoutines().filter(value => !context || value.target.sessionId === context.sessionId);
+  }
+  listRuns(id?: string, context?: RoutineContext): RoutineRun[] {
+    this.assertOperationScope("routines.listRuns", id, context);
+    return this.repository.listRoutineRuns(id).filter(value => !context || value.targetSnapshot.target.sessionId === context.sessionId);
   }
   getByTriggerKey(key: string): RoutineRun | null {
     return this.repository.routineTargets.getByTriggerKey(key);
   }
-  create(input: RoutineCreateInput): Routine {
+  create(input: RoutineCreateInput, context?: RoutineContext): Routine {
+    this.assertOperationScope("routines.create", input, context);
     const enabled = input.enabled ?? false, nextRunAt = enabled ? nextRun(input.schedule, this.clock() - 1) : null;
     if (enabled && nextRunAt === null) throw new AevorenBotError("ROUTINE_SCHEDULE_INVALID");
     return this.repository.createRoutine({ ...input, enabled, nextRunAt });
   }
-  update(id: string, expectedVersion: number, patch: RoutineUpdatePatch): Routine {
+  update(id: string, expectedVersion: number, patch: RoutineUpdatePatch, context?: RoutineContext): Routine {
+    this.assertOperationScope("routines.update", { id, patch }, context);
     const current = this.repository.getRoutine(id), schedule = patch.schedule ?? current.schedule, nextRunAt = current.enabled ? nextRun(schedule, this.clock() - 1) : null;
     if (current.enabled && nextRunAt === null) throw new AevorenBotError("ROUTINE_SCHEDULE_INVALID");
     return this.repository.updateRoutine(id, expectedVersion, patch, nextRunAt);
   }
-  setEnabled(id: string, expectedVersion: number, enabled: boolean): Routine {
+  setEnabled(id: string, expectedVersion: number, enabled: boolean, context?: RoutineContext): Routine {
+    this.assertOperationScope("routines.setEnabled", { id }, context);
     const current = this.repository.getRoutine(id), nextRunAt = enabled ? nextRun(current.schedule, this.clock() - 1) : null;
     if (enabled && nextRunAt === null) throw new AevorenBotError("ROUTINE_SCHEDULE_INVALID");
     return this.repository.setRoutineEnabled(id, expectedVersion, enabled, nextRunAt);
   }
-  delete(id: string, expectedVersion: number): void {
+  delete(id: string, expectedVersion: number, context?: RoutineContext): void {
+    this.assertOperationScope("routines.delete", { id }, context);
     this.repository.deleteRoutine(id, expectedVersion);
   }
   hasEnabled(): boolean {
     return this.repository.hasEnabledRoutines();
   }
-  async runNow(id: string): Promise<RoutineRun> {
-    const routine = this.repository.getRoutine(id);
-    return this.createTriggerRun({ routineId: id, expectedVersion: routine.version, triggerKey: `${id}:manual:${randomUUID()}`, trigger: "manual" });
+  async runNow(input: RoutineRunNowInput, context?: RoutineContext): Promise<RoutineRun> {
+    const parsed = routineRunNowIpcSchema.parse(input);
+    if (context && typeof parsed === "string") throw new AevorenBotError("INVALID_REQUEST");
+    this.assertOperationScope("routines.runNow", parsed, context);
+    const id = typeof parsed === "string" ? parsed : parsed.id, routine = this.repository.getRoutine(id);
+    const triggerKey = context?.runtimeRunId ? `${id}:model:${this.repository.getRuntimeRun(context.runtimeRunId).clientNonce}:${context.executorBotId}` : `${id}:manual:${randomUUID()}`;
+    const result = await this.createTriggerRun({ routineId: id, expectedVersion: typeof parsed === "string" ? routine.version : parsed.expectedVersion, triggerKey, trigger: "manual" });
+    this.assertOperationScope("routines.runNow", parsed, context);
+    return result;
   }
   /** eventAttachment is host-only untrusted data, never part of the public trigger schema. */
   async createTriggerRun(input: RoutineTriggerInput, eventAttachment?: AttachmentDraft): Promise<RoutineRun> {
@@ -89,7 +127,8 @@ export class RoutineService {
     if (["queued", "waiting"].includes(run.state)) await this.dispatch(run);
     return this.repository.getRoutineRun(run.id);
   }
-  async cancelRun(input: RoutineRunCancelInput): Promise<RoutineRun> {
+  async cancelRun(input: RoutineRunCancelInput, context?: RoutineContext): Promise<RoutineRun> {
+    this.assertOperationScope("routines.cancelRun", input, context);
     const parsed = routineRunCancelSchema.parse(input), run = this.repository.getRoutineRun(parsed.runId);
     if (run.version !== parsed.expectedVersion) throw new AevorenBotError("ROUTINE_VERSION_CONFLICT", undefined, undefined, { currentVersion: run.version });
     if (terminal(run.state)) return run;
@@ -213,7 +252,7 @@ export class RoutineService {
       return;
     }
     const owned = run.runtimeRunId ? this.repository.getRuntimeRun(run.runtimeRunId) : this.repository.getRoomBatch(run.batchId!);
-    if (["completed", "failed", "cancelled", "interrupted"].includes(owned.state)) {
+    if (["completed", "partial", "failed", "cancelled", "interrupted"].includes(owned.state)) {
       const state = run.state === "cancel-requested" ? (run.lastErrorCode ? "failed" : "cancelled") : owned.state === "completed" ? "completed" : owned.state === "cancelled" ? "cancelled" : "failed";
       const result = this.repository.transitionRoutineRun(run.id, state, run.lastErrorCode ?? ("lastErrorCode" in owned ? owned.lastErrorCode : null));
       this.notify(result);

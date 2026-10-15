@@ -31,7 +31,7 @@ function create(f: ReturnType<typeof fixture>) { return f.service.create({ name:
 function roomTarget(f: ReturnType<typeof fixture>, count = 2) {
   const bots = [f.owner, ...Array.from({ length: count - 1 }, () => f.repository.createBot())];
   const detail = f.repository.createRoom({ name: "Routine room", memberBotIds: bots.map(value => value.bot.id), leadBotId: null });
-  return { detail, bots, target: { kind: "room" as const, roomId: detail.room.id, sessionId: detail.session.id, routingMode: "everyone" as const, targetBotIds: bots.map(value => value.bot.id) } };
+  return { detail, bots, target: { kind: "room" as const, roomId: detail.room.id, sessionId: detail.session.id, routingMode: "everyone" as const, targetBotIds: bots.map(value => value.bot.id), expectedMembershipVersion: detail.room.membershipVersion } };
 }
 function origin(run: RoutineRun): RoutineMessageOrigin { return { kind: "routine", routineId: run.routineId, routineRunId: run.id, fromBotNameSnapshot: run.routineName, ...(run.botId ? { fromBotId: run.botId } : {}), fromSessionId: run.targetSnapshot.target.sessionId, fromRuntimeRunId: "", rootClientNonce: run.clientNonce, depth: 0 }; }
 function event(content: string): AttachmentDraft { const bytes = Buffer.from(content); return { id: randomUUID(), name: "automation-event.json", mimeType: "application/json", size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), kind: "text", content }; }
@@ -60,6 +60,22 @@ describe("group Routine durable admission and execution", () => {
     } finally { release(); }
   });
 
+  it("settles a partially failed group once and preserves its successful member results", async () => {
+    let failedBot = "";
+    const f = fixture(async function* (messages, signal, context) {
+      if (context!.executorBotId === failedBot) throw new Error("Controlled member failure");
+      yield* complete(messages, signal, context);
+    });
+    const group = roomTarget(f, 3); failedBot = group.bots[0]!.bot.id;
+    const routine = f.service.create({ name: "Partial outcome", prompt: "Independent results", target: group.target, schedule });
+    const run = await f.service.runNow(routine.id);
+    await vi.waitFor(() => expect(f.repository.getRoomBatch(run.batchId!).state).toBe("partial"));
+    await f.service.tick(); expect(f.repository.getRoutineRun(run.id).state).toBe("failed");
+    expect(f.repository.listRoomTurns(run.batchId!).filter(turn => turn.state === "completed")).toHaveLength(2);
+    const version = f.repository.getRoutineRun(run.id).version; await f.service.tick();
+    expect(f.repository.getRoutineRun(run.id).version).toBe(version);
+  });
+
   it("does not add members automatically and requires explicit reselection after add/remove/readd", async () => {
     const f = fixture(), group = roomTarget(f, 3), routine = f.service.create({ name: "Fixed cohort", prompt: "Saved", target: group.target, schedule });
     const third = f.repository.createBot();
@@ -67,7 +83,7 @@ describe("group Routine durable admission and execution", () => {
     await expect(f.service.runNow(routine.id)).rejects.toMatchObject({ code: "APPROVAL_SCOPE_INVALID" });
     detail = f.repository.removeRoomMember(detail.room.id, third.bot.id, detail.room.membershipVersion);
     await expect(f.service.runNow(routine.id)).rejects.toMatchObject({ code: "APPROVAL_SCOPE_INVALID" });
-    const refreshed = f.service.update(routine.id, routine.version, { target: group.target });
+    const refreshed = f.service.update(routine.id, routine.version, { target: { ...group.target, expectedMembershipVersion: detail.room.membershipVersion } });
     const run = await f.service.runNow(refreshed.id);
     expect(run.targetSnapshot.membershipVersion).toBe(detail.room.membershipVersion);
     await vi.waitFor(() => expect(f.repository.getRoomBatch(run.batchId!).state).toBe("completed")); await f.service.tick();
@@ -205,10 +221,10 @@ describe("group Routine durable admission and execution", () => {
     expect(f.service.listRuns(staleRule.id)).toHaveLength(1);
   });
 
-  it("migrates real v45 Routine definitions and run history without changing unrelated rows or foreign keys", () => {
+  it("migrates real v46 Routine definitions and run history without changing unrelated rows or foreign keys", () => {
     const root = mkdtempSync(join(tmpdir(), "aevoren-routine-upgrade-")), path = join(root, "app.sqlite"), db = new DatabaseSync(path);
     db.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL);PRAGMA foreign_keys=ON;");
-    for (const migration of MIGRATIONS.filter(value => value.version <= 45)) {
+    for (const migration of MIGRATIONS.filter(value => value.version <= 46)) {
       if ("foreignKeysOff" in migration && migration.foreignKeysOff) db.exec("PRAGMA foreign_keys=OFF;");
       db.exec(migration.sql); db.prepare("INSERT INTO schema_migrations VALUES(?,?)").run(migration.version, "2026-10-01");
       db.exec("PRAGMA legacy_alter_table=OFF;PRAGMA foreign_keys=ON;");
