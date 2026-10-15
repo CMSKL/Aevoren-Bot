@@ -30,6 +30,7 @@ type SnapshotContext = {
   mcpTools: McpToolInfo[];
   mcpScopedReady: boolean;
   routines: Routine[];
+  eventsConfigured?: boolean;
   executionReady: boolean;
   scriptReady: boolean;
   nativeReadReady: boolean;
@@ -325,6 +326,13 @@ function capabilityDescriptors(
       toolNames: mcpAvailable ? context.mcpTools.map((tool) => tool.namespacedName) : [],
     },
     {
+      id: "automation.events", name: "事件与本机 Webhook", category: "automation",
+      description: "按固定 Routine 版本接收事件；数据仅作为不可信 JSON 附件。AI 只管理当前 MAIN 订阅，监听和密钥仅由用户设置。",
+      effectClass: "write-reversible", adapterKind: "local", availability: executionTools ? "available" : "unavailable",
+      reason: executionTools ? context.eventsConfigured ? null : "尚未启用当前会话的事件订阅；本机监听默认停止。" : "当前模型来源尚未接入宿主产品工具。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
       id: "automation.scheduler",
       name: "定时与后台任务",
       category: "automation",
@@ -393,7 +401,7 @@ function taskCapability(capability: CapabilityDescriptor, policy: TaskSessionPol
     reason: operations.length ? `仅限本任务明确选择的 ${operations.length} 个产品动作；实际列表请查询 product_catalog。` : "当前任务的可执行产品动作目录为空。",
     toolNames: capability.toolNames.filter(name => name === "product_catalog" || operations.length > 0),
   };
-  if (capability.id === "project.provisioning") return denied();
+  if (["project.provisioning", "automation.events"].includes(capability.id)) return denied();
   if (["network.search", "network.realtime-data"].includes(capability.id) && !selected.network) return denied();
   if (capability.id === "device.clipboard" && !selected.clipboard) return denied();
   if (capability.id === "memory.manual") return policy.memories.length || operations.some(name => name.startsWith("memories."))
@@ -500,7 +508,7 @@ export class CapabilityRegistry {
       try { this.repository.outbound.assertGrant({ sessionId, executorBotId: botId }, grant.id, grant.version); return true; }
       catch { return false; }
     }));
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, voiceSttReady: voiceReady("stt"), voiceTtsReady: voiceReady("tts"), voiceRealtimeReady: voiceReady("realtime"), room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
+    const capabilities = capabilityDescriptors(workspaces, { eventsConfigured: !taskPolicy && this.repository.automationEvents.list().some(hook => hook.enabled && (!sessionId || hook.targetSnapshot.target.sessionId === sessionId)), selection, provider, providerCapabilities, voiceSttReady: voiceReady("stt"), voiceTtsReady: voiceReady("tts"), voiceRealtimeReady: voiceReady("realtime"), room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
       browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map(original => taskPolicy ? taskCapability(original, taskPolicy) : original).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));

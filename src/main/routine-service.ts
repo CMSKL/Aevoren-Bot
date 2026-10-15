@@ -48,6 +48,10 @@ export class RoutineService {
     this.stop();
     await Promise.allSettled(this.dispatches.values());
   }
+  /** Host terminal-event bridge: settle receipts before admitting dependent events, without advancing schedules. */
+  async reconcileCompletedRuns(): Promise<void> {
+    for (const run of this.repository.listPendingRoutineRuns()) await this.reconcileOne(run);
+  }
   assertOperationScope(operation: string, input: unknown, context?: RoutineContext): void {
     if (!context) return;
     const session = this.repository.getSession(context.sessionId);

@@ -18,12 +18,14 @@ export interface EventRoutineBridge {
 export type EventActorScope = { sessionId: string };
 export type RuntimeAutomationEvent = z.infer<typeof runtimeEventSchema>;
 const terminalRun = (run: RoutineRun) => ["completed", "failed", "cancelled", "missed", "unknown"].includes(run.state);
+type EventCommit = <T>(operation: () => T) => T;
 
 export class EventService {
   private readonly dispatches = new Map<string, Promise<EventDelivery>>();
   private closing = false;
   constructor(private readonly repository: EventRepository, private readonly routines: EventRoutineBridge,
-    private readonly codec: SecretCodec, private readonly notify: () => void = () => {}) {}
+    private readonly codec: SecretCodec, private readonly notify: () => void = () => {},
+    private readonly host?: { assertSourceSession(id: string): void }) {}
 
   private routine(id: string): Routine {
     const routine = this.routines.list().find(value => value.id === id);
@@ -38,16 +40,29 @@ export class EventService {
     const ids = new Set(subscriptions.map(hook => hook.id));
     return { subscriptions, deliveries: this.repository.deliveries().filter(value => ids.has(value.subscriptionId)) };
   }
+  assertOperationScope(operation: string, input: unknown, actor: EventActorScope): void {
+    if (operation === "automationEvents.snapshot") return;
+    if (operation === "automationEvents.create") {
+      const parsed = eventCreateSchema.parse(input); this.scope({ source: parsed.source, targetSnapshot: this.routine(parsed.routineId).targetSnapshot }, actor); return;
+    }
+    const parsed = operation === "automationEvents.update" ? eventUpdateSchema.parse(input) : eventVersionSchema.parse(input);
+    if (operation === "automationEvents.cancel") { this.scope(this.repository.getDelivery(parsed.id), actor); return; }
+    const hook = this.repository.get(parsed.id); this.scope(hook, actor);
+    if (operation === "automationEvents.update") { const patch = (parsed as EventSubscriptionUpdate).patch; this.scope({ source: patch.source ?? hook.source, targetSnapshot: this.routine(patch.routineId ?? hook.routineId).targetSnapshot }, actor); }
+  }
+  private source(source: EventSubscription["source"]): void { if (source.kind !== "webhook") this.host?.assertSourceSession(source.sessionId); }
   create(input: EventSubscriptionCreate, actor?: EventActorScope): EventSubscription {
     const parsed = eventCreateSchema.parse(input), routine = this.routine(parsed.routineId);
+    this.source(parsed.source);
     this.scope({ source: parsed.source, targetSnapshot: routine.targetSnapshot }, actor);
     const created = this.repository.create(parsed, routine); this.notify(); return created;
   }
-  async update(input: EventSubscriptionUpdate, actor?: EventActorScope): Promise<EventSubscription> {
+  async update(input: EventSubscriptionUpdate, actor?: EventActorScope, commit: EventCommit = action => action()): Promise<EventSubscription> {
     const parsed = eventUpdateSchema.parse(input), current = this.repository.get(parsed.id); this.scope(current, actor);
     const routine = this.routine(parsed.patch.routineId ?? current.routineId);
+    this.source(parsed.patch.source ?? current.source);
     this.scope({ source: parsed.patch.source ?? current.source, targetSnapshot: routine.targetSnapshot }, actor);
-    const updated = this.repository.update(parsed, routine); this.notify();
+    const updated = commit(() => this.repository.update(parsed, routine)); this.notify();
     await this.cancelOwned(current.id);
     return updated;
   }
@@ -60,9 +75,9 @@ export class EventService {
     this.notify(); await this.cancelOwned(hook.id);
     return { subscription, token };
   }
-  async revoke(input: EventVersionInput, actor?: EventActorScope): Promise<EventSubscription> {
+  async revoke(input: EventVersionInput, actor?: EventActorScope, commit: EventCommit = action => action()): Promise<EventSubscription> {
     const parsed = eventVersionSchema.parse(input), hook = this.repository.get(parsed.id); this.scope(hook, actor);
-    const updated = this.repository.setToken(parsed.id, parsed.expectedVersion, null); this.notify(); await this.cancelOwned(hook.id); return updated;
+    const updated = commit(() => this.repository.setToken(parsed.id, parsed.expectedVersion, null)); this.notify(); await this.cancelOwned(hook.id); return updated;
   }
   authenticate(id: string, version: number, bearer: string): EventSubscription {
     if (this.closing) throw new EventStateError("EVENT_STOPPED");
@@ -132,7 +147,7 @@ export class EventService {
     }
     this.notify(); return this.repository.getDelivery(id);
   }
-  async cancel(input: EventVersionInput, actor?: EventActorScope): Promise<EventDelivery> {
+  async cancel(input: EventVersionInput, actor?: EventActorScope, commit: EventCommit = action => action()): Promise<EventDelivery> {
     const parsed = eventVersionSchema.parse(input); let receipt = this.repository.getDelivery(parsed.id); this.scope(receipt, actor);
     if (receipt.version !== parsed.expectedVersion) throw new EventStateError("EVENT_VERSION_CONFLICT", receipt.version);
     if (["cancelled", "failed"].includes(receipt.state)) return receipt;
@@ -140,7 +155,7 @@ export class EventService {
     if (receipt.state === "unknown") { if (!known) return receipt; receipt = this.repository.link(receipt.id, known.id); }
     // An already completed handoff cannot be undone by pausing its subscription.
     if (known && terminalRun(known) && known.state !== "cancelled") return this.repository.link(receipt.id, known.id);
-    const cancelling = this.repository.transition(receipt.id, "cancel-requested"); this.notify();
+    const cancelling = commit(() => this.repository.transition(receipt.id, "cancel-requested")); this.notify();
     await this.stopReceipt(cancelling, known);
     return this.repository.getDelivery(receipt.id);
   }

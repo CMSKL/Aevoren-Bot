@@ -1,0 +1,6 @@
+.automation-events-panel { display: grid; gap: 16px; min-width: 0; }
+.automation-events-panel .settings-card { min-width: 0; overflow-wrap: anywhere; }
+.automation-events-panel small { display: block; margin-block: 6px; }
+.automation-events-panel input:not([type="checkbox"]), .automation-events-panel select { max-width: 100%; min-width: 0; }
+.automation-events-panel textarea { width: 100%; box-sizing: border-box; resize: vertical; font-family: ui-monospace, monospace; }
+.automation-event-card footer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

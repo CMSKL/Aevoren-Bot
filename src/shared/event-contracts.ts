@@ -22,6 +22,7 @@ export type EventListenerState = { listening: boolean; host: "127.0.0.1"; port: 
 export type EventSnapshot = { subscriptions: EventSubscription[]; deliveries: EventDelivery[]; listener: EventListenerState };
 export type EventTokenReceipt = { subscription: EventSubscription; token: string };
 export type EventApi = {
+  onChanged(listener: () => void): () => void;
   snapshot(): Promise<ApiResult<EventSnapshot>>;
   create(input: EventSubscriptionCreate): Promise<ApiResult<EventSubscription>>;
   update(input: EventSubscriptionUpdate): Promise<ApiResult<EventSubscription>>;

@@ -1274,6 +1274,7 @@ export type UserProfile = {
 };
 
 export interface AevorenBotApi {
+  automationEvents: import("./event-contracts").EventApi;
   botImages:import("./bot-image-contracts").BotImageApi;
   organization:import("./organization-contracts").OrganizationApi;
   search: import("./search-contracts").SearchApi;

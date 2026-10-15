@@ -1,3 +1,4 @@
+import { EventRepository, AUTOMATION_EVENT_MIGRATION } from "./event-repository";
 import { RoutineRepository, GROUP_ROUTINE_MIGRATION } from "./routine-repository";
 import { OrganizationRepository,ORGANIZATION_MIGRATION } from "./organization-repository";
 import { SearchRepository } from "./search-repository";
@@ -2093,6 +2094,7 @@ export const MIGRATIONS = [
   TASK_SESSION_MIGRATION,
   ORGANIZATION_MIGRATION,
   GROUP_ROUTINE_MIGRATION,
+  AUTOMATION_EVENT_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3211,6 +3213,7 @@ export class AppRepository {
   readonly realtime: RealtimeRepository;
   readonly tasks: TaskSessionRepository;
   readonly routineTargets: RoutineRepository;
+  readonly automationEvents: EventRepository;
   readonly search: SearchRepository;
   readonly organization:OrganizationRepository;
   readonly environments: EnvironmentRepository;
@@ -3261,6 +3264,7 @@ export class AppRepository {
       this.library.setTaskReferenceReader((sessionId, executor, runtimeId) => this.tasks.libraryReferences(sessionId, executor, runtimeId));
       this.media.setTaskRuntimeReferencesReader(runtimeId => this.tasks.runtimeTaskPolicy(runtimeId)?.selection.mediaRefs ?? null);
       this.routineTargets = new RoutineRepository(this.database, this);
+      this.automationEvents = new EventRepository(this.database);
       this.media.setTaskSessionReferencesReader((sessionId, executor) => this.tasks.mediaReferences(sessionId, executor));
     } catch (error) {
       this.database.close();
@@ -3280,7 +3284,8 @@ export class AppRepository {
       ? Number((this.database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as { version: number }).version)
       : 0;
     const targetSchemaVersion = MIGRATIONS.at(-1)?.version ?? 0;
-    if (this.filename !== ":memory:" && hadMigrationTable && sourceSchemaVersion < targetSchemaVersion) {
+    const previouslyApplied = new Set(hadMigrationTable ? (this.database.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: number }>).map(row => row.version) : []);
+    if (this.filename !== ":memory:" && hadMigrationTable && MIGRATIONS.some(migration => !previouslyApplied.has(migration.version))) {
       this.createMigrationBackup(sourceSchemaVersion, targetSchemaVersion);
     }
     this.database.exec(`

@@ -241,7 +241,7 @@ describe("explicit loopback Webhook ingress", () => {
 describe("actual saved Routine bridge", () => {
   it("sends only the saved instruction body with event JSON as an untrusted attachment", async () => {
     const root = mkdtempSync(join(tmpdir(), "aevoren-real-event-")), path = join(root, "app.sqlite"), repository = new AppRepository(path), db = new DatabaseSync(path);
-    db.exec("PRAGMA foreign_keys=ON"); db.exec(AUTOMATION_EVENT_MIGRATION.sql);
+    db.exec("PRAGMA foreign_keys=ON");
     const worker = new SendWorker(repository, null, { transcript: () => {}, sendState: () => {}, runtime: () => {} }, false, { run: async function* () { yield { type: "started", requestId: randomUUID() }; yield { type: "completed", finishReason: "stop" }; }, testConnection: async () => {} });
     const routines = new RoutineService(repository, worker, () => {}), events = new EventService(new EventRepository(db), routines, codec());
     cleanup.push(async () => { await events.shutdown(); await routines.shutdown(); await worker.shutdown(); db.close(); repository.close(); rmSync(root, { recursive: true, force: true }); });

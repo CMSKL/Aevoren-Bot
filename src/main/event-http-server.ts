@@ -25,7 +25,7 @@ function body(request: IncomingMessage): Promise<unknown> {
 export class EventHttpServer {
   private server: Server | null = null;
   private state: EventListenerState = { listening: false, host: "127.0.0.1", port: null };
-  constructor(private readonly events: EventService) {}
+  constructor(private readonly events: EventService, private readonly changed: () => void = () => {}) {}
   snapshot(): EventListenerState { return { ...this.state }; }
   async start(input: { port?: number } = {}): Promise<EventListenerState> {
     const parsed = eventListenerSchema.parse(input);
@@ -37,12 +37,13 @@ export class EventHttpServer {
       await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(parsed.port ?? 0, "127.0.0.1", () => { server.off("error", reject); resolve(); }); });
       const address = server.address();
       if (!address || typeof address === "string" || address.address !== "127.0.0.1") throw new EventStateError("EVENT_INVALID");
-      this.state = { listening: true, host: "127.0.0.1", port: address.port }; return this.snapshot();
+      this.state = { listening: true, host: "127.0.0.1", port: address.port }; this.changed(); return this.snapshot();
     } catch (error) { this.server = null; server.close(); throw error; }
   }
   async stop(): Promise<EventListenerState> {
     const server = this.server; this.server = null; this.state = { listening: false, host: "127.0.0.1", port: null };
     if (server) await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
+    this.changed();
     return this.snapshot();
   }
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {

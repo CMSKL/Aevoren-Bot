@@ -1,3 +1,4 @@
+import { AutomationEventsPanel } from "./AutomationEventsPanel";
 import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
 import { useEffectEvent, useCallback, useEffect, useRef, useState } from "react";
 import darkThemePreview from "../assets/themes/dark.png";
@@ -13,7 +14,7 @@ import { ConnectorSettingsPanel } from "./ConnectorSettingsPanel";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 import type { UpdateAction } from "../update-actions";
 
-type SettingsSection = "general" | "capabilities" | "memory" | "mcp" | "routines" | "updates" | "apps" | "voice";
+type SettingsSection = "general" | "capabilities" | "memory" | "mcp" | "routines" | "updates" | "apps" | "voice" | "automation-events";
 
 type SettingsDialogProps = {
   open: boolean;
@@ -186,6 +187,7 @@ export function SettingsDialog({
             <button type="button" aria-label="语音" className={section === "voice" ? "selected" : ""} aria-current={section === "voice" ? "page" : undefined} onClick={() => setSection("voice")}><PanelIcon /><span>语音</span></button>
             <button type="button" aria-label="MCP" className={section === "mcp" ? "selected" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => setSection("mcp")}><PanelIcon /><span>MCP</span></button>
             <button type="button" aria-label="主动服务" className={section === "routines" ? "selected" : ""} aria-current={section === "routines" ? "page" : undefined} onClick={() => setSection("routines")}><BellIcon /><span>主动服务</span></button>
+            <button type="button" aria-label="事件与 Webhook" className={section === "automation-events" ? "selected" : ""} aria-current={section === "automation-events" ? "page" : undefined} onClick={() => setSection("automation-events")}><BellIcon /><span>事件与 Webhook</span></button>
             <button type="button" aria-label="版本更新" className={section === "updates" ? "selected" : ""} aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}><RefreshIcon /><span>版本更新</span></button>
           </nav>
         </aside>
@@ -278,6 +280,7 @@ export function SettingsDialog({
             <McpSettingsPanel active={open && section === "mcp"} />
           </section> : null}
 
+          {section === "automation-events" ? <section className="settings-panel" aria-label="事件与 Webhook"><AutomationEventsPanel active={open && section === "automation-events"} /></section> : null}
           {section === "routines" ? <section className="settings-panel" aria-label="主动服务">
             <RoutinesSettingsPanel active={open && section === "routines"} />
           </section> : null}
