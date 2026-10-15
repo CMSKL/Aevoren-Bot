@@ -23,6 +23,7 @@ export function VoiceControlsPopover({ id, open, trigger, onClose, children }: {
     if (!open) return;
     const outside = (event: PointerEvent): void => {
       const target = event.target as Node;
+      if (target instanceof Element && target.closest(".message-read-aloud")) return;
       const editing = target instanceof Element ? target.closest(".composer-editor, .composer-footer-actions") : null;
       if (editing && trigger.current?.closest(".composer")?.contains(editing)) return;
       if (!panel.current?.contains(target) && !trigger.current?.contains(target)) onClose();
