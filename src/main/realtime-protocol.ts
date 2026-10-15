@@ -5,6 +5,7 @@ export const REALTIME_SAMPLE_RATE = 24_000;
 export const REALTIME_MAX_MESSAGE_BYTES = 1_048_576;
 export const REALTIME_MAX_TEXT = 20_000;
 export const REALTIME_MAX_ARGUMENTS = 8_192;
+export const REALTIME_MAX_OUTPUT_SAMPLES = 8_388_608;
 export const REALTIME_DELEGATE_NAME = "delegate_to_runtime";
 
 type WireObject = Record<string, unknown>;
@@ -75,7 +76,7 @@ export function parseRealtimeEvent(raw: string | Buffer): RealtimeWireEvent {
   }
   if (type === "response.output_audio.delta") return { type, responseId: id(event.response_id), itemId: id(event.item_id), contentIndex: integer(event.content_index, 0), pcm: decodeRealtimePcm(event.delta, 524_288) };
   if (type === "response.output_audio_transcript.delta" || type === "response.output_audio_transcript.done") return { type, responseId: id(event.response_id), itemId: id(event.item_id), text: string(type.endsWith(".done") ? event.transcript : event.delta) };
-  if (type === "conversation.item.truncated") return { type, itemId: id(event.item_id), contentIndex: integer(event.content_index, 0), audioEndMs: integer(event.audio_end_ms, 120_000) };
+  if (type === "conversation.item.truncated") return { type, itemId: id(event.item_id), contentIndex: integer(event.content_index, 0), audioEndMs: integer(event.audio_end_ms, Math.floor(REALTIME_MAX_OUTPUT_SAMPLES * 1000 / REALTIME_SAMPLE_RATE)) };
   if (type === "error") return { type, clientEventId: event.error && object(event.error).event_id != null ? id(object(event.error).event_id) : null };
   return { type: "ignored" };
 }

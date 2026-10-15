@@ -16,6 +16,10 @@ describe("versioned realtime-v1 protocol",()=>{
     expect(()=>parseRealtimeEvent(JSON.stringify({type:"session.started"}))).toThrow();expect(()=>parseRealtimeEvent(" ".repeat(REALTIME_MAX_MESSAGE_BYTES+1))).toThrow();
     expect(()=>parseRealtimeEvent(JSON.stringify({type:"response.function_call_arguments.done",response_id:"r",item_id:"i",call_id:"c",name:"tool",arguments:"x".repeat(8193)}))).toThrow();
   });
+  it("accepts truncate acknowledgements above two minutes within the actual output sample budget",()=>{
+    expect(parseRealtimeEvent(JSON.stringify({type:"conversation.item.truncated",item_id:"long_audio",content_index:0,audio_end_ms:121000}))).toEqual({type:"conversation.item.truncated",itemId:"long_audio",contentIndex:0,audioEndMs:121000});
+    expect(()=>parseRealtimeEvent(JSON.stringify({type:"conversation.item.truncated",item_id:"too_long",content_index:0,audio_end_ms:350000}))).toThrow();
+  });
   it("retains only safe correlated provider error metadata",()=>{
     expect(parseRealtimeEvent(JSON.stringify({type:"error",error:{event_id:"event_1",message:"PRIVATE_KEY_OR_PROVIDER_BODY",code:"private"}}))).toEqual({type:"error",clientEventId:"event_1"});
   });

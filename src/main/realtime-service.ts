@@ -8,7 +8,7 @@ import type { RealtimeDispatchRequest } from "./realtime-business-host";
 import { assertRealtimeAdmission, captureRealtimeAdmission, type RealtimeAdmission } from "./realtime-admission";
 import { VoiceSettings } from "./voice-settings";
 import { AevorenBotError } from "./errors";
-import { decodeRealtimePcm, REALTIME_DELEGATE_NAME, REALTIME_MAX_ARGUMENTS, type RealtimeWireEvent } from "./realtime-protocol";
+import { decodeRealtimePcm, REALTIME_DELEGATE_NAME, REALTIME_MAX_ARGUMENTS, REALTIME_MAX_OUTPUT_SAMPLES, type RealtimeWireEvent } from "./realtime-protocol";
 import { RealtimeSocketAdapter, type RealtimeSocketFactory } from "./realtime-socket-adapter";
 
 export type RealtimeCaptureLease = {captureId:string;signal:AbortSignal;assertCurrent():void};
@@ -143,7 +143,7 @@ export class RealtimeService {
     if(event.type==="response.output_audio.delta"){
       if(response.done)throw new AevorenBotError("VOICE_RESPONSE_INVALID");
       const saved=this.repository.realtime.internal(job.id).session,key=audioKey(event.responseId,event.itemId,event.contentIndex),audio=job.audio.get(key)??{epoch:saved.playbackEpoch,responseId:event.responseId,itemId:event.itemId,contentIndex:event.contentIndex,received:0,played:0};
-      audio.received+=event.pcm.length/2;if(audio.received>8_388_608||job.audio.size>=128&&!job.audio.has(key))throw new AevorenBotError("VOICE_TOO_LARGE");job.audio.set(key,audio);
+      audio.received+=event.pcm.length/2;if(audio.received>REALTIME_MAX_OUTPUT_SAMPLES||job.audio.size>=128&&!job.audio.has(key))throw new AevorenBotError("VOICE_TOO_LARGE");job.audio.set(key,audio);
       this.repository.realtime.setSession(job.id,{itemId:event.itemId,contentIndex:event.contentIndex,receivedSamples:audio.received,playedSamples:audio.played});
       this.options.onEvent?.({type:"audio",sessionId:saved.sessionId,id:job.id,playbackEpoch:audio.epoch,responseId:event.responseId,itemId:event.itemId,contentIndex:event.contentIndex,dataBase64:event.pcm.toString("base64")});return;
     }
