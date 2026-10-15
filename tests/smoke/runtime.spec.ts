@@ -412,7 +412,15 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     expect(mediaResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.voice,
-    ).toSorted())).toEqual(["audio", "beginCapture", "cancelCapture", "commitCapture", "configurations", "get", "list", "onChanged", "saveConfiguration", "speak", "stop", "transcribe"]);
+    ).toSorted())).toEqual(["audio", "beginCapture", "cancelCapture", "commitCapture", "configurations", "get", "list", "onChanged", "realtime", "saveConfiguration", "speak", "stop", "transcribe"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.voice.realtime,
+    ).toSorted())).toEqual(["append", "commitTurn", "interrupt", "onChanged", "playbackAck", "snapshot", "start", "stop", "stopTask"]);
+    const realtimeValidation = await launched.page.evaluate(async () => {
+      const realtime = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.voice.realtime;
+      return [await realtime.snapshot({ sessionId: "not-a-uuid", id: "not-a-uuid" }), await realtime.append({ sessionId: "not-a-uuid", id: "not-a-uuid", captureId: "not-a-uuid", sequence: 0, dataBase64: "AAA=" })];
+    });
+    for (const result of realtimeValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     const voiceResult = await launched.page.evaluate(() =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.voice.get({ sessionId: "not-a-uuid", id: "not-a-uuid" }),
     );
