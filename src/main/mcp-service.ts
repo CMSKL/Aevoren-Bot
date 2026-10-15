@@ -48,6 +48,11 @@ function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+function toolVisibility(metadata: unknown): ("model" | "app")[] {
+  const value = object(object(metadata)?.ui)?.visibility;
+  return value === undefined ? ["model", "app"] : Array.isArray(value) && value.every(item => item === "model" || item === "app") ? value : [];
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : [];
 }
@@ -362,8 +367,7 @@ export class McpService {
     try{assertCurrent();await client.connect(prepared.transport,{signal,timeout:CONNECT_TIMEOUT_MS,maxTotalTimeout:CONNECT_TIMEOUT_MS});
       const listed=await client.listTools(undefined,{signal,timeout:CONNECT_TIMEOUT_MS,maxTotalTimeout:CONNECT_TIMEOUT_MS});assertCurrent();
       const tools:McpScopedTool[]=listed.tools.flatMap(tool=>{if(!SAFE_TOOL_NAME.test(tool.name)||Buffer.byteLength(JSON.stringify(tool.inputSchema))>20000)return [];
-        const ui=object(object(tool._meta)?.ui),rawVisibility=ui?.visibility,visibility=rawVisibility===undefined?["model","app"]:
-          Array.isArray(rawVisibility)&&rawVisibility.every(value=>value==="model"||value==="app")?rawVisibility:[];
+        const ui=object(object(tool._meta)?.ui),visibility=toolVisibility(tool._meta);
         const resourceUri=typeof ui?.resourceUri==="string"&&ui.resourceUri.startsWith("ui://")&&ui.resourceUri.length<=2048?ui.resourceUri:null;
         return [{serverId:id,serverName:server.name,serverVersion:server.version,name:tool.name,description:tool.description?.slice(0,2000)??"",
           inputSchema:tool.inputSchema as Record<string,unknown>,schemaDigest:mcpDigest({inputSchema:tool.inputSchema,uiResourceUri:resourceUri,visibility}),
@@ -412,7 +416,7 @@ export class McpService {
       const listed = await client.listTools(undefined, { timeout: CONNECT_TIMEOUT_MS, maxTotalTimeout: CONNECT_TIMEOUT_MS });
       const trustedReadOnlyTools = new Set(stringArray(server.config.trustedReadOnlyTools));
       const tools = listed.tools.flatMap((tool): McpToolInfo[] => {
-        if (!SAFE_TOOL_NAME.test(tool.name) || JSON.stringify(tool.inputSchema).length > 20_000) return [];
+        if (!SAFE_TOOL_NAME.test(tool.name) || JSON.stringify(tool.inputSchema).length > 20_000 || !toolVisibility(tool._meta).includes("model")) return [];
         const claimedReadOnly = tool.annotations?.readOnlyHint === true;
         return [{
           serverId: server.id,
