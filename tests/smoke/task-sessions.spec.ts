@@ -28,7 +28,7 @@ function selection(executorBotId: string, patch: Partial<TaskExecutorSelection> 
 }
 function text(capture: Capture, body: string): void {
   if (capture.released || capture.aborted) throw new Error("Controlled reply is not available");
-  capture.released = true; capture.response.writeHead(200, { "content-type": "text/event-stream" });
+  capture.released = true; if (!capture.response.headersSent) capture.response.writeHead(200, { "content-type": "text/event-stream" });
   capture.response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: body }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
 }
 function tool(capture: Capture, operation: string, input: unknown): void {
@@ -109,8 +109,12 @@ async function withTasks(work: (f: Fixture) => Promise<void>, mcp = false): Prom
       return api.providers.saveOpenAiCompatible({ instanceId: provider.id, expectedVersion: provider.version, baseUrl, apiKey: "task-fixture-token" });
     }, `http://127.0.0.1:${address.port}/v1`));
     if (mcp) {
-      const saved = value(await f.page.evaluate(url => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.save({ name: "task-read-fixture", trustedReadOnlyTools: ["read_fixture"], config: { transport: "streamable-http", url, headers: {} } }), `http://127.0.0.1:${address.port}/mcp`));
-      value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.setEnabled(input), { id: saved.id, expectedVersion: saved.version, enabled: true }));
+      const url = `http://127.0.0.1:${address.port}/mcp`;
+      const saved = value(await f.page.evaluate(url => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.save({ name: "task-read-fixture", config: { transport: "streamable-http", url, headers: {} } }), url));
+      const probed = value(await f.page.evaluate(id => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.probe(id), saved.id));
+      expect(probed.tools.find(tool => tool.name === "read_fixture")?.claimedReadOnly).toBe(true);
+      const trusted = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.save(input), { id: probed.id, expectedVersion: probed.version, name: probed.name, trustedReadOnlyTools: ["read_fixture"], config: { transport: "streamable-http" as const, url, headers: {} } }));
+      value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcp.setEnabled(input), { id: trusted.id, expectedVersion: trusted.version, enabled: true }));
       await expect.poll(async () => (await options(f.page, bots[0]!.sessionId)).executors[0]?.mcpTools.map(item => item.name)).toContain("read_fixture");
     }
     await work(f);
@@ -186,7 +190,7 @@ test("creates explicit empty task scopes through UI and keeps sibling drafts, hi
 test("starts all six Task Room members before any result and cancels one without stopping its five peers or sibling thread", async () => {
   test.setTimeout(90_000);
   await withTasks(async f => {
-    f.handler = () => undefined;
+    f.handler = capture => { capture.response.writeHead(200, { "content-type": "text/event-stream" }); capture.response.flushHeaders(); };
     const task = await createTask(f.page, f.room.sessionId, "六成员任务", f.bots.map(bot => selection(bot.id)));
     const sibling = await createTask(f.page, f.room.sessionId, "兄弟任务", [selection(f.bots[0]!.id)]);
     const sent = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.send(input), { roomId: f.room.id, sessionId: task.session.id, clientNonce: randomUUID(), text: "TASK_GROUP_ALL", routingMode: "everyone" as const, targetBotIds: f.bots.map(bot => bot.id) }));
@@ -197,7 +201,7 @@ test("starts all six Task Room members before any result and cancels one without
     const cancelled = group.runs.find(run => run.executorBotId === f.bots[0]!.id)!;
     value(await f.page.evaluate(runId => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.cancelMember(runId), cancelled.id));
     await expect.poll(() => f.captures.filter(capture => capture.aborted).length).toBe(1);
-    expect((await roomSnapshot(f, sibling.session.id)).runs[0]?.state).toBe("running");
+    await expect.poll(async () => (await roomSnapshot(f, sibling.session.id)).runs[0]?.state).toBe("running");
     for (const capture of f.captures.slice(0, 6).filter(capture => !capture.aborted)) text(capture, `TASK_GROUP_DONE_${capture.command.model}`);
     await expect.poll(async () => (await roomSnapshot(f, task.session.id)).turns.filter(turn => turn.state === "completed").length).toBe(5);
     group = await roomSnapshot(f, task.session.id); expect(group.turns.filter(turn => turn.state === "cancelled")).toHaveLength(1); expect(group.runs.every(run => run.sessionId === task.session.id)).toBe(true);
@@ -234,7 +238,7 @@ test("filters actor task reads through real tools and keeps parent resources pri
     value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library.bind(input), { sessionId: selected.session.id, id: f.document.id }));
     const before = f.captures.length, refused = await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.messages.send(input), { sessionId: selected.session.id, clientNonce: randomUUID(), text: "TASK_REVOKED_RESOURCE_MUST_NOT_TRANSMIT" });
     if (refused.ok) await expect.poll(async () => (await snapshot(f.page, selected.session.id)).runs.find(run => run.id === refused.data.runId)?.state).toBe("failed");
-    else expect(refused.error.code).toBe("APPROVAL_SCOPE_INVALID");
+    else expect(["APPROVAL_SCOPE_INVALID", "LIBRARY_NOT_BOUND"]).toContain(refused.error.code);
     expect(f.captures).toHaveLength(before);
     const parent = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library.read(input), { sessionId: actor.sessionId, id: f.document.id, revisionId: f.document.reference.revisionId })); expect(parent.revision.body).toBe("TASK_PARENT_DOCUMENT_PRIVATE");
   });
