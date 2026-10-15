@@ -79,12 +79,13 @@ import { addLibraryProductHandlers, type LibraryExecutionContext } from "./libra
 import type { LibraryService } from "./library-service";
 import type { LibraryChangedEvent, LibraryExportResult, LibraryResourceKind } from "@shared/library-contracts";
 import { addEnvironmentProductHandlers, type EnvironmentProductDependencies } from "./environment-product-handlers";
+import { addDemonstrationProductHandlers, type DemonstrationProductDependencies } from "./demonstration-product-handlers";
 import { addBrowserProductHandlers, type BrowserProductDependencies } from "./browser-product-handlers";
 import { addSkillExecutionProductHandlers, type SkillExecutionProductDependencies } from "./skill-execution-product-handlers";
 import { addNativeConnectorProductHandlers, type NativeConnectorProductDependencies } from "./native-connector-product-handlers";
 import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 
-export type ProductDependencies = McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
+export type ProductDependencies = McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & DemonstrationProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
   nativeOutboundService?: NativeOutboundService;
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
@@ -141,6 +142,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
   addEnvironmentProductHandlers(handlers, dependencies, commit, libraryContext);
   addBrowserProductHandlers(handlers, dependencies, commit, libraryContext);
+  addDemonstrationProductHandlers(handlers, dependencies, commit, libraryContext);
   addSkillExecutionProductHandlers(handlers, dependencies, commit, libraryContext);
   addNativeConnectorProductHandlers(handlers, dependencies, commit, libraryContext);
   addNativeOutboundProductHandlers(handlers, dependencies, libraryContext);
@@ -157,7 +159,9 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const result = repository.getApprovalReview(parsed);
     if (!result.snapshot || !result.executable) return result;
     try {
-      if (result.snapshot.kind === "skill-script") {
+      if (result.snapshot.kind === "demonstration-skill") {
+        dependencies.repository.demonstrations.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
+      } else if (result.snapshot.kind === "skill-script") {
         if (!dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
         dependencies.skillExecutionService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
       } else if (result.snapshot.kind === "mcp-write") {

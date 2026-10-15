@@ -1,4 +1,5 @@
 import { MCP_WRITE_OPERATION_SCHEMAS } from "@shared/mcp-write-product";
+import { DEMONSTRATION_OPERATION_SCHEMAS } from "@shared/demonstration-product";
 import { NATIVE_OUTBOUND_OPERATION_SCHEMAS } from "@shared/native-outbound-product";
 import { z } from "zod";
 import { LIBRARY_OPERATION_SCHEMAS } from "@shared/library-product";
@@ -14,6 +15,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...LIBRARY_OPERATION_SCHEMAS,
   ...ENVIRONMENT_OPERATION_SCHEMAS,
   ...BROWSER_OPERATION_SCHEMAS,
+  ...DEMONSTRATION_OPERATION_SCHEMAS,
   ...SKILL_EXECUTION_OPERATION_SCHEMAS,
   ...NATIVE_CONNECTOR_OPERATION_SCHEMAS,
   ...NATIVE_OUTBOUND_OPERATION_SCHEMAS,

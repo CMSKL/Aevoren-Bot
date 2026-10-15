@@ -35,6 +35,7 @@ import { MemoryCaptureService } from "./memory-capture-service";
 import { LibraryService } from "./library-service";
 import { writeLibraryExport } from "./library-export";
 import { EnvironmentService } from "./environment-service";
+import { DemonstrationService } from "./demonstration-service";
 import { BrowserService } from "./browser-service";
 import { SkillExecutionService } from "./skill-execution-service";
 import { NativeConnectorService } from "./native-connector-service";
@@ -435,6 +436,7 @@ app.whenReady().then(async () => {
     libraryService,
     environmentService,
     browserService,
+    demonstrationService: new DemonstrationService(repository, browserService, libraryService),
     skillExecutionService: productSkillExecutionService,
     nativeConnectorService: productNativeConnectorService,
     nativeOutboundService: productNativeOutboundService,

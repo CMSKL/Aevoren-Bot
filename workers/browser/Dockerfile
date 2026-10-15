@@ -11,7 +11,7 @@ RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund \
     && chown 1000:1000 /var/lib/aevoren-browser-profile /var/lib/aevoren-browser-downloads \
     && find /usr /bin /sbin -xdev -type f -perm /6000 -exec chmod a-s {} +
 
-LABEL io.aevoren.role="browser-worker" io.aevoren.worker-version="1.0.0"
+LABEL io.aevoren.role="browser-worker" io.aevoren.worker-version="1.1.0"
 COPY index.mjs engine.mjs ./
 USER root
 EXPOSE 8081
