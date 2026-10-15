@@ -20,7 +20,9 @@ export class McpAppsBridge{
  private origin="";
  private readonly viewers=new Map<string,Viewer>();
  private readonly unsubscribe:()=>void;
+ private readonly unsubscribeGrants:()=>void;
  constructor(private readonly writes:McpWriteService,private readonly mcp:McpService,private readonly options:Options){
+ this.unsubscribeGrants=writes.onGrantInvalidation(id=>{for(const viewer of this.viewers.values())if(viewer.grantId===id)this.retire(viewer);});
  this.unsubscribe=mcp.onScopedInvalidation(id=>{for(const viewer of this.viewers.values())if(viewer.view.serverId===id)this.retire(viewer);});}
  private scope(input:EnvironmentScope){return {sessionId:input.sessionId,executorBotId:input.executorBotId};}
  private assertCurrent(viewer:Viewer){viewer.controller.signal.throwIfAborted();this.writes.ledger.current(viewer.view,viewer.view.intentId);
@@ -104,5 +106,5 @@ export class McpAppsBridge{
  const ready={jsonrpc:'2.0',method:'ui/notifications/sandbox-proxy-ready',params:{viewId:config.viewId,epoch:config.epoch}};
  parent.postMessage(ready,'*');void send(ready).catch(close);
  </script></body></html>`;}
- async dispose(){this.unsubscribe();for(const viewer of this.viewers.values())this.retire(viewer);const server=this.server;this.server=null;if(server){server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}}
+ async dispose(){this.unsubscribe();this.unsubscribeGrants();for(const viewer of this.viewers.values())this.retire(viewer);const server=this.server;this.server=null;if(server){server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}}
 }
