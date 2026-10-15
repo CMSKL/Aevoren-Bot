@@ -50,6 +50,7 @@ import { MediaReferenceBadge } from "./MediaReferenceBadge";
 import { VoiceCapturePanel } from "./VoiceCapturePanel";
 import { VoiceTaskPanel } from "./VoiceTaskPanel";
 import { VoicePlaybackBar, type VoicePlaybackHandle } from "./VoicePlaybackBar";
+import { VoiceControlsPopover } from "./VoiceControlsPopover";
 import {
   ArtifactStatusBar,
   ArtifactCard,
@@ -707,6 +708,11 @@ export function Conversation({
   const composerMountedRef = useRef(true);
   const voicePlaybackRef = useRef<VoicePlaybackHandle>(null);
   const [latestVoiceTask, setLatestVoiceTask] = useState<VoiceTask | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [pendingReadAloud, setPendingReadAloud] = useState<TranscriptEntry | null>(null);
+  const voiceTriggerRef = useRef<HTMLButtonElement>(null);
+  const voiceControlsId = useId();
+  const closeVoice = useCallback((): void => { setVoiceOpen(false); setPendingReadAloud(null); if (voiceTriggerRef.current?.getClientRects().length) voiceTriggerRef.current.focus(); }, []);
   useEffect(() => { composerMountedRef.current = true; return () => { composerMountedRef.current = false; }; }, []);
   const applyResourceInsertion = useEffectEvent((): void => {
     if (!resourceInsertion || resourceInsertion.sessionId !== sessionId || resourceInsertion.id === consumedInsertionRef.current) return;
@@ -774,8 +780,17 @@ export function Conversation({
     updateComposer(value => ({ ...value, text }));
     return true;
   }, [sessionId, readVoiceDraft, updateComposer]);
-  const readAloud = useCallback((entry: TranscriptEntry): void => voicePlaybackRef.current?.enqueue(entry), []);
+  const readAloud = useCallback((entry: TranscriptEntry): void => { setPendingReadAloud(entry); setVoiceOpen(true); }, []);
   const playVoiceTask = useCallback((task: VoiceTask): void => voicePlaybackRef.current?.play(task), []);
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (!approvalVisible) { setVoiceOpen(false); setPendingReadAloud(null); return; }
+      if (voiceOpen && pendingReadAloud) { voicePlaybackRef.current?.enqueue(pendingReadAloud); setPendingReadAloud(null); }
+    });
+    return () => { cancelled = true; };
+  }, [approvalVisible, voiceOpen, pendingReadAloud]);
   const subjectName = bot?.name ?? room?.room.name ?? "选择对话";
   const currentDate = new Date();
   const conversationScopeId = room?.room.id ?? bot?.id ?? null;
@@ -1501,6 +1516,7 @@ export function Conversation({
               <button ref={mediaTriggerRef} className="attachment-button" type="button" aria-label="添加媒体" title="添加图片或文档" aria-haspopup="menu" aria-expanded={mediaMenuOpen} disabled={busy || mediaImporting || mediaRefs.length >= 6 || !sessionId} onClick={() => setMediaMenuOpen(current => !current)}><DocumentIcon /></button>
               {mediaMenuOpen ? <div role="menu" aria-label="添加媒体方式"><button className="text-button" role="menuitem" type="button" onClick={() => void importMedia()}>导入媒体文件</button><button className="text-button" role="menuitem" type="button" onClick={() => { setMediaMenuOpen(false); setMediaPickerOpen(true); }}>引用已有媒体</button></div> : null}
             </div>
+            <button ref={voiceTriggerRef} className="composer-voice-trigger" type="button" aria-label="语音" aria-haspopup="dialog" aria-controls={voiceControlsId} aria-expanded={voiceOpen && approvalVisible} disabled={!sessionId} onClick={() => { if (voiceOpen) closeVoice(); else setVoiceOpen(true); }}>语音</button>
             {sessionId ? <>
               <button className="composer-mention-button" type="button" aria-label={room ? "提及 Bot" : "引用资料"} title="提及 Bot 或引用资料" onClick={openMentionPicker}><AtIcon /></button>
               <button className="composer-mention-button" type="button" aria-label="选择 Skill" title="选择 Skill" onClick={() => {
@@ -1674,7 +1690,7 @@ export function Conversation({
             </button>
           )}
           </div>
-          {sessionId ? <><VoiceCapturePanel sessionId={sessionId} active={approvalVisible} readDraft={readVoiceDraft} onTask={setLatestVoiceTask} /><VoiceTaskPanel sessionId={sessionId} sessionGeneration={sessionGeneration} latestTask={latestVoiceTask} onInsert={insertVoiceTranscript} onPlay={playVoiceTask} /><VoicePlaybackBar ref={voicePlaybackRef} sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible} entries={entries} speakerName={entry => entry.speakerBotId ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? bot?.name ?? "AI" : bot?.name ?? "AI"} /></> : null}
+          {sessionId ? <VoiceControlsPopover id={voiceControlsId} open={voiceOpen && approvalVisible} trigger={voiceTriggerRef} onClose={closeVoice}><VoiceCapturePanel sessionId={sessionId} active={approvalVisible && voiceOpen} readDraft={readVoiceDraft} onTask={setLatestVoiceTask} /><VoiceTaskPanel sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible && voiceOpen} latestTask={latestVoiceTask} onInsert={insertVoiceTranscript} onPlay={playVoiceTask} /><VoicePlaybackBar ref={voicePlaybackRef} sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible && voiceOpen} entries={entries} speakerName={entry => entry.speakerBotId ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? bot?.name ?? "AI" : bot?.name ?? "AI"} /></VoiceControlsPopover> : null}
         </div>
       </footer>
       {mediaPickerOpen && sessionId ? <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMediaPickerOpen(false); }}><section className="media-selection-dialog" role="dialog" aria-modal="true" aria-label="选择媒体引用" onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setMediaPickerOpen(false); } }}><header><h2>引用当前会话媒体</h2><button ref={mediaPickerCloseRef} className="icon-button" type="button" aria-label="关闭媒体选择" onClick={() => setMediaPickerOpen(false)}><CloseIcon /></button></header><MediaLibraryPanel key={sessionId} sessionId={sessionId} onUse={selectMedia} /></section></div> : null}
