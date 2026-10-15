@@ -1,8 +1,8 @@
 # User guide
 
-This guide covers the v0.3.0-beta.40 development candidate: all-resource search, independent Task threads, media and voice, documents and text/script Skills, isolated Docker execution and browser/computer use, reviewable demonstration Skills, native connections, approved external drafts and scoped MCP Apps. Native reads and writes require explicit conversation/Bot permissions; credentials remain in the host. See [Native connections](NATIVE_CONNECTORS.md), [External drafts](NATIVE_OUTBOUND.md) and [MCP Apps](MCP_APPS.md) for setup and exact boundaries.
+This guide covers the v0.3.0-beta.42 local implementation candidate: Bot/group MAIN Routines, personal organization, all-resource search, independent Task threads, media and voice, documents and text/script Skills, isolated Docker execution and browser/computer use, reviewable demonstration Skills, native connections, approved external drafts and scoped MCP Apps. Native reads and writes require explicit conversation/Bot permissions; credentials remain in the host. See [Native connections](NATIVE_CONNECTORS.md), [External drafts](NATIVE_OUTBOUND.md) and [MCP Apps](MCP_APPS.md) for setup and exact boundaries.
 
-The published signed macOS baseline is [v0.3.0-beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33). Task threads passed local source and actual unsigned macOS-package acceptance; cross-platform and signed publication remain pending. Phase 5 has local source/unsigned-package evidence, including 159 distinct Realtime source passes and 32 conditional skips across separate runs; it is not a single all-green full run. Real cloud accounts, physical audio devices and Windows Docker remain unverified. See the [implementation record](IMPLEMENTATION_PLAN.md) for exact evidence, failures and release boundaries. Source beta.40 adds [all-resource search](SEARCH.md), with local SQLite/transport and two hidden UI cases passed; its actual unsigned macOS package passed five checks; platform and signed-release gates are pending. Organization, group automation, events/Webhooks and templates/exports remain under implementation.
+Release status and exact source/package evidence are recorded separately in the [implementation record](IMPLEMENTATION_PLAN.md); a feature described in this guide is not proof that its signed release has shipped. Task threads, search and earlier media/voice work retain their recorded local source and unsigned-package evidence. The beta.42 [MAIN Bot/group Routine](GROUP_ROUTINES.md) integration is under validation: its targeted component tests and Web typecheck pass, while hidden Electron, actual-package, cross-platform and signed-release gates remain pending. Real cloud accounts, physical audio devices and Windows Docker remain unverified. Event subscriptions/Webhooks and templates/exports are separate later deliveries.
 
 ## First run
 
@@ -109,7 +109,18 @@ For a running background service, register its listening port. The Worker verifi
 - The first public-information approval offers **Allow public queries and remember**. This explicitly enables the existing public-read setting and approves the current query once; subsequent public search/fetch, weather and time queries run in the background. It does not authorize files, clipboard, MCP or external writes. Close/reject the dialog or stop the task if you do not consent. **Allow once** does not save a lasting permission.
 - Turn remembered public queries off in **Settings → General → Automatically approve public read-only tools**. Local and other protected operations keep their original per-Workspace or per-call authorization. Already-waiting unrelated requests are not silently approved by the new entry.
 - Built-in web search returns untrusted public-index results with source URLs and retrieval time. Verify consequential or time-sensitive claims against the returned sources.
-- Routines support one-time, interval, and five-field cron schedules. They depend on the selected Provider, permissions, and local app availability.
+- Routines support one-time, interval, and five-field cron schedules for Bot/group MAIN conversations. They depend on the selected Provider, permissions, and local app availability; see the workflow below.
+
+
+## Bot and group Routines (beta.42 local candidate)
+
+Open **Settings → 主动服务**, enter a name and saved task prompt, and choose **Routine 执行目标**. Only Bot and Room MAIN conversations are offered. A new rule starts paused; enable it after review or choose **立即运行** for one execution. TASK targets, event subscriptions and Webhooks are not available in this delivery.
+
+A Room defaults to **Everyone · 保存当前全部成员**. This saves a fixed roster and uses the existing parallel group path; a member waiting for approval does not block its siblings. **只运行勾选成员** saves an explicit subset instead. The saved card shows the chosen members, session generation, reviewed membership version and rule version. Adding a member never silently adds it to an existing rule.
+
+After a membership, selected Bot profile or authorization change, edit the rule and choose **重新选择并审阅目标**, check the members, then save. Explicit subsets retain only their still-present selected members; new members start unchecked. The UI refreshes the actual MAIN target before saving and the host checks the reviewed membership version. Conflicts preserve the draft. Changing the target conversation explicitly clears that rule's fixed document/media references; this editor currently has no resource picker.
+
+**取消本次运行** cancels only the selected accepted Runtime or Room batch. **正在取消** remains visible until the host confirms an outcome; pausing the definition affects future scheduling. Recent runs show actual durable states and can be refreshed. An unknown acceptance result is kept as **结果未知**, without replaying the saved task after restart. Tool approvals and external-write verification still apply. Connected AI uses the same business handlers and current version checks, scoped to its actual MAIN conversation. See [Group Routines](GROUP_ROUTINES.md) for scope, recovery and pending acceptance gates.
 
 ## Updating
 
