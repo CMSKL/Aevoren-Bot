@@ -52,7 +52,6 @@ REA 对安装包做了静态分析和只读提取。清单包含 595 个相关�
 | 输入框 `/`、`@` 发现与选择 | 按 Skill 名称与显示标签搜索，说明作为副标题；选择后插入结构化 ID/label | 已实现 `/Skill` 与 `@` 的 Bot/资料/Skill 分组，固定 ID/版本/digest 引用；资源不产生 Bot 路由 | 沿用原 Send；仅准备草稿，点击发送后才启动 Runtime |
 | 运行、插件同步与发布 | runAgentWorkflowNow、syncPluginSkills 及失败重试消费者 | 文本 Skill 经原 Send 启动任务；AI `skills.load/readFile` 可实际读取；没有插件发布/同步 | 插件同步、脚本执行和市场发布后续实施 |
 | 脚本型技能包 | wrapper 的 files 字段被当前主进程和 protobuf 丢弃；未证实脚本兼容 | beta.30 候选已实现固定版本、入口摘要和镜像授权的 Bash／Python／Node；真实 Docker、UI／包验证通过，发行待完成 | 元信息不授予权限；每次运行审批固定参数，取消和结果查询沿用执行账本 |
-
 | 录制示范 | armed/recording、开始、保存、丢弃和失败校正链 | 独立开发单元实现明确开始、接受输入转发边界、脱敏记录、版本化草稿与审批发布；初始停用 | 真实 Docker/noVNC 用例已加入 CI，本机 daemon 不可用；跨平台安装包待验收。坐标录制不保证语义定位，不自动生成可执行宏 |
 
 ### 电脑、浏览器与本机执行

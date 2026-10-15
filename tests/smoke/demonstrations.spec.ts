@@ -16,7 +16,8 @@ test("hidden demonstration UI retains conflicts and publishes only an explicitly
   try {
     if (executablePath) {
       expect(await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion() }))).toEqual({ packaged: true, version: JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version });
-      expect(await app.evaluate(async () => { const fs = await import("node:fs/promises"), path = await import("node:path"); return fs.readFile(path.join(process.resourcesPath, "docs", "SKILL_DEMONSTRATIONS.md"), "utf8"); })).toContain("Browser Worker **1.1.0**");
+      const resourcesPath = await app.evaluate(() => process.resourcesPath);
+      expect(readFileSync(join(resourcesPath, "docs", "SKILL_DEMONSTRATIONS.md"), "utf8")).toContain("Browser Worker **1.1.0**");
     }
     const page = await app.firstWindow(); const errors: string[] = []; page.on("pageerror", error => errors.push(error.message)); await expect(page.locator(".app-shell")).toBeVisible();
     await page.getByRole("listitem", { name: "示范验收 Bot", exact: true }).click();
