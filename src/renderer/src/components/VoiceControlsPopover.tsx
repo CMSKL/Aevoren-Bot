@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 
-export function VoiceControlsPopover({ id, open, trigger, onClose, children }: { id: string; open: boolean; trigger: RefObject<HTMLButtonElement | null>; onClose(): void; children: ReactNode }): React.JSX.Element {
+export function VoiceControlsPopover({ id, open, trigger, onClose, children }: { id: string; open: boolean; trigger: RefObject<HTMLButtonElement | null>; onClose(restoreFocus?: boolean): void; children: ReactNode }): React.JSX.Element {
   const panel = useRef<HTMLElement>(null), close = useRef<HTMLButtonElement>(null);
   const [bounds, setBounds] = useState({ left: 8, top: 8, width: 480, maxHeight: 480 });
   useLayoutEffect(() => {
@@ -24,9 +24,9 @@ export function VoiceControlsPopover({ id, open, trigger, onClose, children }: {
     const outside = (event: PointerEvent): void => {
       const target = event.target as Node;
       if (target instanceof Element && target.closest(".message-read-aloud")) return;
-      const editing = target instanceof Element ? target.closest(".composer-editor, .composer-footer-actions") : null;
+      const editing = target instanceof Element ? target.closest(".composer-editor, .composer-footer-actions, .composer-resource-groups") : null;
       if (editing && trigger.current?.closest(".composer")?.contains(editing)) return;
-      if (!panel.current?.contains(target) && !trigger.current?.contains(target)) onClose();
+      if (!panel.current?.contains(target) && !trigger.current?.contains(target)) onClose(false);
     };
     const escape = (event: KeyboardEvent): void => { if (event.key === "Escape") { event.preventDefault(); onClose(); } };
     document.addEventListener("pointerdown", outside);
@@ -41,5 +41,5 @@ export function VoiceControlsPopover({ id, open, trigger, onClose, children }: {
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
-  }}><header><strong>语音</strong><button ref={close} className="text-button" type="button" aria-label="关闭语音控制" onClick={onClose}>关闭</button></header>{children}</section>, document.body);
+  }}><header><strong>语音</strong><button ref={close} className="text-button" type="button" aria-label="关闭语音控制" onClick={() => onClose()}>关闭</button></header>{children}</section>, document.body);
 }

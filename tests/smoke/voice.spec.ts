@@ -175,7 +175,7 @@ test("saves three independent editable voice configurations without echoing keys
     await expect.poll(() => f.page.getByRole("dialog", { name: "语音控制", exact: true }).evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1; })).toBe(true);
     await f.page.keyboard.press("Escape"); await expect(trigger).toBeFocused(); await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await f.application.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]!; window.webContents.setZoomFactor(1); window.setSize(1182, 804); });
-    await openVoice(f); await f.page.locator(".transcript").click({ position: { x: 4, y: 4 } }); await expect(trigger).toBeFocused(); await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await openVoice(f); await f.page.locator(".transcript").click({ position: { x: 4, y: 4 } }); await expect(trigger).toHaveAttribute("aria-expanded", "false"); expect(await f.page.locator(".voice-controls-popover").evaluate(element => element.contains(document.activeElement))).toBe(false);
   });
 });
 
@@ -255,7 +255,9 @@ test("queues group speech by live member completion while all six model requests
   test.setTimeout(90_000);
   await withVoice(async f => {
     await configure(f.page); await f.page.getByRole("listitem", { name: f.room.name, exact: true }).click(); await expect(f.page.getByRole("heading", { name: f.room.name, exact: true })).toBeVisible(); await openVoice(f);
-    await f.page.getByLabel("自动朗读本会话新回复", { exact: true }).check(); const input = f.page.getByLabel("消息", { exact: true }); await input.fill("@"); await f.page.getByRole("option").filter({ hasText: "所有人" }).click(); await input.fill("每位成员分别回复。"); await f.page.getByRole("button", { name: "发送", exact: true }).click();
+    await f.page.getByLabel("自动朗读本会话新回复", { exact: true }).check(); const input = f.page.getByLabel("消息", { exact: true }); await input.fill("@"); await f.page.getByRole("option").filter({ hasText: "所有人" }).click();
+    await expect(f.page.getByRole("button", { name: "移除 @所有人", exact: true })).toBeVisible(); await expect(f.page.getByLabel("群聊默认响应方式", { exact: true })).toHaveValue("everyone"); await expect(f.page.getByLabel("自动朗读本会话新回复", { exact: true })).toBeChecked();
+    await input.fill("每位成员分别回复。"); await f.page.getByRole("button", { name: "发送", exact: true }).click();
     await expect.poll(() => f.models.size, { timeout: 15_000 }).toBe(6); expect(f.speeches).toHaveLength(0);
     const order = [5, 3, 1, 4, 2, 0];
     for (let index = 0; index < order.length; index++) { f.completeModel(order[index]!); await expect(f.page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(index + 1); }

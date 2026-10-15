@@ -712,7 +712,7 @@ export function Conversation({
   const [pendingReadAloud, setPendingReadAloud] = useState<TranscriptEntry | null>(null);
   const voiceTriggerRef = useRef<HTMLButtonElement>(null);
   const voiceControlsId = useId();
-  const closeVoice = useCallback((): void => { setVoiceOpen(false); setPendingReadAloud(null); if (voiceTriggerRef.current?.getClientRects().length) voiceTriggerRef.current.focus(); }, []);
+  const closeVoice = useCallback((restoreFocus = true): void => { setVoiceOpen(false); setPendingReadAloud(null); if (restoreFocus && voiceTriggerRef.current?.getClientRects().length) voiceTriggerRef.current.focus(); }, []);
   useEffect(() => { composerMountedRef.current = true; return () => { composerMountedRef.current = false; }; }, []);
   const applyResourceInsertion = useEffectEvent((): void => {
     if (!resourceInsertion || resourceInsertion.sessionId !== sessionId || resourceInsertion.id === consumedInsertionRef.current) return;
