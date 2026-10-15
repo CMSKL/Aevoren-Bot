@@ -1,3 +1,4 @@
+import type { TaskSessionApi } from "./task-session-contracts";
 import type { VoiceApi } from "./voice-contracts";
 import type { BotAvatarColor, BotAvatarShape } from "./bot-avatar";
 
@@ -52,6 +53,9 @@ export type ConversationBatchDeleteResult = {
 
 /** A chat is backed by its existing Session; removing it does not remove its contact. */
 export type ConversationSummary = {
+  kind?: "MAIN" | "TASK";
+  title?: string;
+  parentSessionId?: string | null;
   sessionId: string;
   botId: string | null;
   roomId: string | null;
@@ -151,7 +155,7 @@ export type Session = {
   id: string;
   botId: string | null;
   roomId: string | null;
-  kind: "MAIN";
+  kind: "MAIN" | "TASK";
   generation: number;
   createdAt: string;
   updatedAt: string;
@@ -1363,7 +1367,7 @@ export interface AevorenBotApi {
       resolution: ApprovalResolution;
     }): Promise<ApiResult<ToolApprovalResult>>;
   };
-  sessions: {
+  sessions: TaskSessionApi & {
     onChanged(listener: (event: { session: Session }) => void): () => void;
     getMain(botId: string): Promise<ApiResult<Session>>;
   };
