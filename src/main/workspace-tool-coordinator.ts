@@ -27,7 +27,7 @@ type Waiter = {
 
 type ToolExecutor = {
   productRequestPreview?(tool: import("@shared/contracts").ProductToolRequest): string;
-  productRequestRequiresApproval?(tool: import("@shared/contracts").ProductToolRequest): boolean;
+  productRequestRequiresApproval?(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId?: string): boolean;
   productRequestApprovalReview?(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined;
   validateProductRequest?(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): void;
   execute(id: string, signal?: AbortSignal): Promise<{ invocation: ToolApprovalResult["invocation"]; content: string; images?: import("./model-image").ModelImageAttachment[] }>;
@@ -74,7 +74,7 @@ export class WorkspaceToolCoordinator {
     const autoApprovePublicRead = this.repository.getSetting("tools.autoApprovePublicRead")?.value === "true" &&
       ["web-search", "web-fetch", "weather-current", "time-now"].includes(prepared.invocation.toolKind);
     if (
-      tool.kind === "product-call" && this.executor.productRequestRequiresApproval?.(tool) === false ||
+      tool.kind === "product-call" && this.executor.productRequestRequiresApproval?.(tool, runtimeRunId) === false ||
       prepared.invocation.toolKind === "text-measure" || prepared.invocation.toolKind === "project-bots" ||
       autoApprovePublicRead ||
       prepared.invocation.workspaceId && this.repository.getUserMessage(runtime.clientNonce).origin?.kind !== "ai-delegation" && this.repository.listSessionWorkspaces(runtime.sessionId, runtime.executorBotId)

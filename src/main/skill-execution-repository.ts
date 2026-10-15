@@ -2,9 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { EnvironmentScope, Execution } from "@shared/environment-contracts";
 import type { LibraryContent, ResourceReference } from "@shared/library-contracts";
-import type { ApprovalReviewSnapshot, SkillExecutionGrant, SkillGrantInput, SkillGrantsInput, SkillRevokeInput, SkillScriptExecution } from "@shared/skill-execution-contracts";
+import type { SkillScriptReviewSnapshot, SkillExecutionGrant, SkillGrantInput, SkillGrantsInput, SkillRevokeInput, SkillScriptExecution } from "@shared/skill-execution-contracts";
 import { environmentScopeSchema } from "@shared/environment-schemas";
-import { approvalReviewSnapshotSchema, skillGrantRecordSchema, skillGrantSchema, skillGrantsSchema, skillRevokeSchema } from "@shared/skill-execution-schemas";
+import { approvalReviewSnapshotSchema, skillScriptReviewSnapshotSchema, skillGrantRecordSchema, skillGrantSchema, skillGrantsSchema, skillRevokeSchema } from "@shared/skill-execution-schemas";
 import { AevorenBotError } from "./errors";
 
 export const SKILL_EXECUTION_MIGRATION = { version: 37, sql: `
@@ -37,7 +37,7 @@ function grant(row: GrantRow): SkillExecutionGrant {
     entryPath: row.entry_path, entrySha256: row.entry_sha256, interpreter: row.interpreter, version: row.version,
     createdAt: row.created_at, updatedAt: row.updated_at, revokedAt: row.revoked_at });
 }
-export function approvalReviewDigest(snapshot: ApprovalReviewSnapshot): string {
+export function approvalReviewDigest(snapshot: import("@shared/skill-execution-contracts").ApprovalReviewSnapshot): string {
   return createHash("sha256").update(JSON.stringify(approvalReviewSnapshotSchema.parse(snapshot))).digest("hex");
 }
 
@@ -117,8 +117,8 @@ export class SkillExecutionRepository {
       return this.get(parsed, value.id);
     });
   }
-  recordExecution(scope: EnvironmentScope, execution: Execution, snapshot: ApprovalReviewSnapshot): void {
-    const review = approvalReviewSnapshotSchema.parse(snapshot); this.assertGranted(scope, review.target.grantId, review.target.grantVersion);
+  recordExecution(scope: EnvironmentScope, execution: Execution, snapshot: SkillScriptReviewSnapshot): void {
+    const review = skillScriptReviewSnapshotSchema.parse(snapshot); this.assertGranted(scope, review.target.grantId, review.target.grantVersion);
     const row = this.database.prepare("SELECT environment_id FROM environment_executions WHERE id=?").get(execution.id) as { environment_id: string } | undefined;
     if (!row || row.environment_id !== review.target.environmentId || execution.environmentId !== row.environment_id) throw new AevorenBotError("ENVIRONMENT_SCOPE_INVALID");
     const digest = approvalReviewDigest(review), previous = this.database.prepare("SELECT input_digest FROM skill_script_executions WHERE execution_id=?")
@@ -133,7 +133,7 @@ export class SkillExecutionRepository {
       JOIN environment_executions e ON e.id=s.execution_id JOIN environments env ON env.id=e.environment_id
       WHERE s.execution_id=? AND env.session_id=? AND env.executor_bot_id=?`).get(execution.id, scope.sessionId, scope.executorBotId) as { review_json: string; input_digest: string } | undefined;
     if (!row) throw new AevorenBotError("ENVIRONMENT_EXECUTION_NOT_FOUND");
-    const review = approvalReviewSnapshotSchema.parse(JSON.parse(row.review_json));
+    const review = skillScriptReviewSnapshotSchema.parse(JSON.parse(row.review_json));
     if (approvalReviewDigest(review) !== row.input_digest) throw new AevorenBotError("SKILL_EXECUTION_CONFLICT");
     return { ...review.target, execution };
   }

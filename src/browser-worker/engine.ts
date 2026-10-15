@@ -257,23 +257,40 @@ export class BrowserEngine {
 
   private async frame(input: Input, desktop: boolean): Promise<BrowserWorkerFrame> {
     const record = desktop && input.actor === "user" ? await this.focusedPage() : this.page(input.pageId);
-    if (input.actor === "ai") {
-      await record!.page.bringToFront(); this.activePageId = record!.id;
-      await this.assertFocused(record!);
+    const startedAt = Date.now(), versionBefore = record?.version;
+    let phase = "focus-before", observation: { id: string; documentVersion: number | null } | undefined;
+    try {
+      if (input.actor === "ai") {
+        await record!.page.bringToFront(); this.activePageId = record!.id;
+        await this.assertFocused(record!);
+      }
+      phase = "document-version-before";
+      observation = input.actor === "ai" ? await this.observe(record!, input.expectedEpoch, 0, 18_000, "ai") : { id: randomUUID(), documentVersion: record?.version ?? null };
+      if (input.actor === "user" && record) this.remember({ id: observation.id, pageId: record.id, actor: "user", epoch: input.expectedEpoch, documentVersion: record.version, refs: new Map() });
+      phase = "capture";
+      const bytes = desktop
+        ? await this.runProgram("ffmpeg", ["-hide_banner", "-loglevel", "error", "-filter_threads", "1", "-f", "x11grab", "-video_size", "1280x800", "-i", ":99", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-threads", "1", "-q:v", "4", "pipe:1"])
+        : await record!.page.screenshot({ type: "jpeg", quality: 80, caret: "initial", timeout: 5_000 });
+      this.assertAccess(input.expectedEpoch, input.actor);
+      if (bytes.length > BROWSER_FRAME_MAX_BYTES) throw new BrowserWorkerError("BROWSER_IMAGE_TOO_LARGE", 413);
+      phase = "focus-after";
+      if (desktop && (await this.focusedPage())?.id !== record?.id) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+      this.assertAccess(input.expectedEpoch, input.actor);
+      phase = "document-version-after";
+      if (record && record.version !== observation.documentVersion) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+      return { browserSessionId: this.options.browserSessionId, pageId: record?.id ?? null, observationId: observation.id, controlEpoch: input.expectedEpoch,
+        documentVersion: record?.version ?? null, dataBase64: bytes.toString("base64"), mimeType: "image/jpeg", size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"),
+        ...imageDimensions(bytes, "image/jpeg"), capturedAt: new Date().toISOString() };
+    } catch (error) {
+      if (process.env.AEVOREN_BROWSER_DIAGNOSTICS === "1" && error instanceof BrowserWorkerError && error.code === "BROWSER_OBSERVATION_STALE") {
+        const version = (value: number | null | undefined): number | null => Number.isSafeInteger(value) && value! >= 0 ? value! : null;
+        await writeFile("/tmp/aevoren-frame-diagnostics.json", JSON.stringify({ phase, desktop, ai: input.actor === "ai", elapsedMs: Math.min(60_000, Math.max(0, Date.now() - startedAt)),
+          expectedEpoch: version(input.expectedEpoch), currentEpoch: version(this.control.epoch), ownerIsAi: this.control.owner === "ai", needsObservation: this.control.needsObservation,
+          pageKnown: Boolean(record && this.pages.get(record.id) === record), pageClosed: record?.page.isClosed() ?? true, pageCount: Math.min(this.pages.size, 20),
+          versionBefore: version(versionBefore), versionAfter: version(record?.version), observedVersion: version(observation?.documentVersion) }), { mode: 0o600 }).catch(() => undefined);
+      }
+      throw error;
     }
-    const observation = input.actor === "ai" ? await this.observe(record!, input.expectedEpoch, 0, 18_000, "ai") : { id: randomUUID(), documentVersion: record?.version ?? null };
-    if (input.actor === "user" && record) this.remember({ id: observation.id, pageId: record.id, actor: "user", epoch: input.expectedEpoch, documentVersion: record.version, refs: new Map() });
-    const bytes = desktop
-      ? await this.runProgram("ffmpeg", ["-hide_banner", "-loglevel", "error", "-filter_threads", "1", "-f", "x11grab", "-video_size", "1280x800", "-i", ":99", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-threads", "1", "-q:v", "4", "pipe:1"])
-      : await record!.page.screenshot({ type: "jpeg", quality: 80, caret: "initial", timeout: 5_000 });
-    this.assertAccess(input.expectedEpoch, input.actor);
-    if (bytes.length > BROWSER_FRAME_MAX_BYTES) throw new BrowserWorkerError("BROWSER_IMAGE_TOO_LARGE", 413);
-    if (desktop && (await this.focusedPage())?.id !== record?.id) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
-    this.assertAccess(input.expectedEpoch, input.actor);
-    if (record && record.version !== observation.documentVersion) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
-    return { browserSessionId: this.options.browserSessionId, pageId: record?.id ?? null, observationId: observation.id, controlEpoch: input.expectedEpoch,
-      documentVersion: record?.version ?? null, dataBase64: bytes.toString("base64"), mimeType: "image/jpeg", size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"),
-      ...imageDimensions(bytes, "image/jpeg"), capturedAt: new Date().toISOString() };
   }
 
   async perform(action: EngineAction, payload: Record<string, unknown> | ControlRecord): Promise<unknown> {

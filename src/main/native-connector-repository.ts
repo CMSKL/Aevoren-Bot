@@ -156,6 +156,12 @@ export class NativeConnectorRepository {
     const value = this.row(id); this.assertConnected(value, expectedAuthVersion);
     this.database.prepare("UPDATE native_connections SET encrypted_credentials=? WHERE id=?").run(encryptedCredentials, id);
   }
+  registerCreatedFileId(id: string, expectedAuthVersion: number, accountId: string, fileId: string): void {
+    const value=this.row(id);this.assertConnected(value,expectedAuthVersion);
+    if(value.provider!=="drive"||connection(value).account?.accountId!==accountId||!/^[A-Za-z0-9_-]{1,256}$/u.test(fileId))throw new NativeConnectorError("RESOURCE_NOT_ALLOWED");
+    const ids=JSON.parse(value.created_file_ids_json) as string[];if(ids.includes(fileId))return;if(ids.length>=500)throw new NativeConnectorError("TOO_LARGE");
+    this.database.prepare("UPDATE native_connections SET created_file_ids_json=?,version=version+1,updated_at=? WHERE id=?").run(JSON.stringify([...ids,fileId]),new Date().toISOString(),id);
+  }
   requireAuthentication(id: string, expectedAuthVersion: number): void {
     const value = this.row(id);
     if (value.auth_version !== expectedAuthVersion) return;

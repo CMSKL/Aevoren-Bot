@@ -1,3 +1,4 @@
+import { nativeOutboundIdSchema } from "@shared/native-outbound-schemas";
 import { normalizeProductRequest } from "./product-request";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -12,6 +13,7 @@ import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import type { ModelImageAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
+  "outbound.writeGrants", "outbound.get", "outbound.list", "outbound.reconcile",
   "connectors.list", "connectors.bindings", "connectors.search", "connectors.read", "drafts.list", "drafts.read", "drafts.versions",
   "approvals.review", "skills.scripts", "skills.executionGrants", "skills.scriptExecution",
   "browser.get", "browser.tabs", "browser.read", "browser.observe", "browser.downloads", "computer.view", "computer.screenshot", "preview.list",
@@ -24,7 +26,7 @@ const PINNED_LIBRARY_READS = new Set(["library.read", "library.readFile", "docum
 const environmentOperation = (operation: string): boolean => /^(environments|execution|processes)\./.test(operation);
 const browserOperation = (operation: string): boolean => /^(browser|computer|preview)\./.test(operation);
 const scriptOperation = (operation: string): boolean => ["skills.scripts", "skills.executionGrants", "skills.grantExecution", "skills.revokeExecution", "skills.runScript", "skills.scriptExecution", "approvals.review"].includes(operation);
-const nativeScopedOperation = (operation: string): boolean => operation.startsWith("drafts.") || ["connectors.bindings", "connectors.bind", "connectors.unbind", "connectors.search", "connectors.read"].includes(operation);
+const nativeScopedOperation = (operation: string): boolean => operation.startsWith("outbound.") && operation !== "outbound.enableSend" || operation.startsWith("drafts.") || ["connectors.bindings", "connectors.bind", "connectors.unbind", "connectors.search", "connectors.read"].includes(operation);
 const scopedOperation = (operation: string): boolean => environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation);
 type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[] };
 
@@ -75,11 +77,24 @@ export class ProductOperationService {
     return label;
   }
 
-  requiresApproval(tool: ProductToolRequest): boolean {
+  requiresApproval(tool: ProductToolRequest, runtimeRunId?: string): boolean {
+    if (tool.action === "execute" && tool.operation === "outbound.send" && runtimeRunId) {
+      this.validate(tool, runtimeRunId);
+      const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
+      const input = nativeOutboundIdSchema.parse(this.libraryInput(tool.operation, tool.input, runtime));
+      return this.dependencies.repository.outbound.current(input, input.id).state === "prepared";
+    }
     return tool.action === "execute" && !PUBLIC_READS.has(tool.operation);
   }
 
   approvalReview(tool: ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined {
+    if (tool.action === "execute" && tool.operation === "outbound.send") {
+      if (!this.dependencies.nativeOutboundService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
+      const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
+      const input = nativeOutboundIdSchema.parse(this.libraryInput(tool.operation,tool.input,runtime));
+      const intent = this.dependencies.repository.outbound.current(input, input.id);
+      return intent.state === "prepared" ? this.dependencies.nativeOutboundService.approvalReview(input) : undefined;
+    }
     if (tool.action !== "execute" || tool.operation !== "skills.runScript") return undefined;
     const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
     if (!this.dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
@@ -100,6 +115,11 @@ export class ProductOperationService {
     if (nativeScopedOperation(tool.operation)) repository.connectors.assertRuntimeCurrent(runtime.id, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId });
     if (["connectors.search", "connectors.read"].includes(tool.operation)) repository.connectors.access(input as import("@shared/native-connector-contracts").ConnectorAccessInput);
     if (tool.operation === "skills.runScript") this.approvalReview({ ...tool, input }, runtimeRunId);
+    if (tool.operation === "outbound.send") {
+      const selection = input as import("@shared/native-outbound-contracts").NativeOutboundIdInput;
+      const intent = repository.outbound.current(selection, selection.id);
+      if (intent.state === "prepared") this.approvalReview({ ...tool, input }, runtimeRunId);
+    }
     if (tool.operation === "roomRuntime.cancelMember") {
       const target = repository.getRuntimeRun(input as string);
       if (target.sessionId !== runtime.sessionId || !repository.getSession(target.sessionId).roomId || !target.promptManifest.sourceTurnId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
@@ -146,6 +166,15 @@ export class ProductOperationService {
 
   private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<ProductExecutionResult> {
     this.validate(tool, invocation.runtimeRunId);
+    const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
+    if (tool.action === "execute" && tool.operation === "outbound.send") {
+      this.validate(tool, invocation.runtimeRunId);
+      if (!this.dependencies.nativeOutboundService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
+      const input=nativeOutboundIdSchema.parse(this.libraryInput(tool.operation,tool.input,runtime));
+      const result=await this.dependencies.nativeOutboundService.send(input,invocation.approvalRequestId,{signal,
+        assertCurrent:()=>this.dependencies.repository.connectors.assertRuntimeCurrent(runtime.id,{sessionId:runtime.sessionId,executorBotId:runtime.executorBotId})});
+      return this.result({status:result.state==="unknown"?"interrupted_unknown":result.state,operation:tool.operation,result});
+    }
     if (tool.action === "catalog") {
       const query = tool.query?.trim().toLocaleLowerCase() ?? "";
       const operations = PRODUCT_OPERATIONS.filter((item) => !query || `${item.name} ${item.description}`.toLocaleLowerCase().includes(query));
@@ -169,13 +198,12 @@ export class ProductOperationService {
       const result = await this.handlers.get(definition.channel)!(tool.input);
       return this.result({ status: "completed", operation: tool.operation, result });
     }
-    const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
     if (tool.operation === "skills.runScript") {
       const approval = this.dependencies.repository.getApprovalRequest(invocation.approvalRequestId);
       const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
       const review = this.dependencies.repository.getApprovalReview({ ...scope, id: approval.id, expectedVersion: approval.version });
       if (!review.snapshot || !this.dependencies.skillExecutionService) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
-      this.dependencies.skillExecutionService.assertApprovalReview(review.snapshot, scope);
+      this.dependencies.skillExecutionService.assertApprovalReview(review.snapshot?.kind === "skill-script" ? review.snapshot : (()=>{throw new AevorenBotError("APPROVAL_REVIEW_INVALID");})(), scope);
     }
     if (!PUBLIC_READS.has(tool.operation)) {
       const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);

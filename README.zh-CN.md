@@ -12,9 +12,9 @@
 
 Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联系人组织长期使用的 Bot 与群协作，通过按会话授权的工作区访问本地项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
 
-> **源码版本：v0.3.0-beta.31（开发候选）。** 当前源码新增 Gmail、所选 Drive 文件、共享 Notion 页面的原生读取，以及按会话／Bot 明确授权的本地版本草稿。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
+> **源码版本：v0.3.0-beta.32（开发候选）。** 当前源码新增 Gmail、Drive、Notion 固定草稿版本的外发审批。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
-v0.3.0-beta.28 的 Docker 执行已通过本机检查、33 项 Worker／Docker／AI 工具链专项、3 项隐藏源码 Electron 和 3 项未签名 macOS 包场景，最终开发 CI 全绿。下一候选加入隔离 Chromium、电脑接管、截图图片传输与登记服务预览。浏览器源码／安装包验收与 Beta 签名发行分别推进。进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
+[v0.3.0-beta.29](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.29) 已公开发布签名 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输和登记服务预览。脚本 Skill 与原生应用连接作为后续单元验收。真实 Windows Docker、真实第三方账号仍未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
 
 > **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductToolRequest, PromptManifest, RuntimeRun } from "@shared/contracts";
 import type { EnvironmentScope } from "@shared/environment-contracts";
-import type { ApprovalReviewSnapshot, SkillScriptExecution } from "@shared/skill-execution-contracts";
+import type { SkillScriptReviewSnapshot, SkillScriptExecution } from "@shared/skill-execution-contracts";
 import { AppRepository } from "./database";
 import { AevorenBotError } from "./errors";
 import type { ProductDependencies } from "./product-handlers";
@@ -35,14 +35,14 @@ function fixture() {
   fixtures.push({ repository, root });
   const executor = new WorkspaceToolExecutor(repository, new WorkspaceService(repository));
   const coordinator = new WorkspaceToolCoordinator(repository, executor, () => {});
-  const grants = new Map<string, ApprovalReviewSnapshot>();
+  const grants = new Map<string, SkillScriptReviewSnapshot>();
   let revoked = false;
   const adapter = {
     approvalReview: (_input: unknown, selection: EnvironmentScope) => {
       if (revoked) throw new AevorenBotError("SKILL_GRANT_REVOKED");
       return grants.get(selection.executorBotId)!;
     },
-    assertApprovalReview: (_snapshot: ApprovalReviewSnapshot, _scope: EnvironmentScope) => {
+    assertApprovalReview: (_snapshot: SkillScriptReviewSnapshot, _scope: EnvironmentScope) => {
       if (revoked) throw new AevorenBotError("SKILL_GRANT_REVOKED");
     },
     runScript: vi.fn(), scriptExecution: vi.fn(),
@@ -108,7 +108,7 @@ describe("script Skill product approval gateway", () => {
     expect(approval.state).toBe("pending");
     expect(f.adapter.runScript).not.toHaveBeenCalled();
     const original = f.repository.getApprovalReview({ ...scope(run), id: approval.id, expectedVersion: approval.version });
-    expect(original.snapshot?.resourceName).toBe("Original Skill");
+    expect(original.snapshot?.kind === "skill-script" ? original.snapshot.resourceName : undefined).toBe("Original Skill");
     f.grants.get(run.executorBotId)!.resourceName = "Changed adapter name";
     expect(f.repository.getApprovalReview({ ...scope(run), id: approval.id, expectedVersion: approval.version }).snapshot).toEqual(original.snapshot);
     const other = f.runs[1]!;
