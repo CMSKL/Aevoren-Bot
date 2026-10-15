@@ -1,6 +1,6 @@
-import type { ApiResult, ConversationSummary, Session, MemoryItem } from "./contracts";
+import type { ApiResult, ConversationSummary, Session, MemoryItem, Workspace, TranscriptEntry } from "./contracts";
 import type { ResourceReference } from "./library-contracts";
-import type { MessageMediaReference } from "./media-contracts";
+import type { MediaItem, MessageMediaReference } from "./media-contracts";
 export type TaskMemoryReference = { id: string; version: number; digest: string };
 export type TaskHistoryReference = { entryId: string; generation: number; digest: string };
 export type TaskWorkspaceSelection = { id: string; read: boolean; write: boolean; automation: boolean };
@@ -27,7 +27,17 @@ export type TaskListInput = { parentSessionId: string; limit?: number };
 export type TaskScopeInput = { sessionId: string };
 export type TaskCancelInput = TaskScopeInput & { expectedVersion: number };
 export type TaskMemorySnapshot = { source: TaskMemoryReference; memory: MemoryItem };
+export type TaskOptions = {
+  session: Session; scopeVersion: number;
+  executors: { id: string; name: string; memories: MemoryItem[]; workspaces: Workspace[];
+    mcpTools: { serverId: string; serverVersion: number; serverName: string; name: string }[] }[];
+  history: { entryId: string; generation: number; digest: string; role: TranscriptEntry["role"]; body: string }[];
+  resources: { reference: ResourceReference; name: string; kind: "document" | "skill" }[];
+  media: MediaItem[]; productOperations: { name: string; description: string }[];
+  currentSelections: TaskExecutorSelection[] | null;
+};
 export type TaskSessionApi = {
+  taskOptions(input: TaskScopeInput): Promise<ApiResult<TaskOptions>>;
   createTask(input: TaskCreateInput): Promise<ApiResult<TaskDetail>>;
   listTasks(input: TaskListInput): Promise<ApiResult<TaskDetail[]>>;
   getTask(input: TaskScopeInput): Promise<ApiResult<TaskDetail>>;

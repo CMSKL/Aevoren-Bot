@@ -1403,7 +1403,7 @@ export interface AevorenBotApi {
   };
   roomRuntime: {
     cancelMember(runId: string): Promise<ApiResult<RuntimeRun>>;
-    getSnapshot(roomId: string): Promise<ApiResult<RoomRuntimeSnapshot>>;
+    getSnapshot(input: string | { roomId: string; sessionId: string }): Promise<ApiResult<RoomRuntimeSnapshot>>;
     send(command: RoomSendCommand): Promise<ApiResult<RoomSendResult>>;
     cancel(batchId: string): Promise<ApiResult<RoomBatch>>;
     continue(batchId: string): Promise<ApiResult<RoomBatch>>;
