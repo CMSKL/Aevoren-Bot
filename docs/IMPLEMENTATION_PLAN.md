@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.35**。阶段 4 的本机实现、源码和未签名 macOS 包已分别验收；跨平台 CI、真实 Docker 增量场景与签名发行仍是门禁，不能据此宣布阶段整体完成。阶段 5–6 尚未实施。各候选记录保留其当时状态；最新状态以本表与末尾验收更正为准。
+当前开发候选为 **v0.3.0-beta.35**。阶段 4 先前的本机源码和未签名 macOS 包回执保留为历史；当前候选已纳入正常关闭修复，最终 beta.35 重建／安装包复核待完成。跨平台 CI、真实 Docker 增量场景与签名发行仍是门禁，不能据此宣布阶段整体完成。阶段 5–6 尚未实施。各候选记录保留其当时状态；最新状态以本表与末尾验收更正为准。
 
 ## 已确定的方案
 
@@ -30,7 +30,7 @@
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 已纳入 v0.3.0-beta.29 签名发行 | 开发与跨平台安装包验证通过，之前签名 fixture 失败保留为历史记录 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
-| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本、示范、原生读取／外发、MCP／Apps 与 Notion 更新的本机源码／未签名 macOS 包验收通过；阶段发行验收待完成 | 各源码／包与真实适配器证据分开记录，跨平台 CI／签名发行仍为门禁 |
+| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 既有本机源码／包回执为历史；正常关闭修复已纳入，当前 beta.35 最终重建／包与跨平台发行验收待完成 | 各源码／包与真实适配器证据分开记录，跨平台 CI／签名发行仍为门禁 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
 
@@ -232,12 +232,22 @@ Combined Stage 4 beta.35 source acceptance after merging MCP beta.34 foundation 
 
 Combined frozen SHA-256: main `b69062c51e85525ae838aaf8659119891d4c7af44bdd4351becb2b51536ab436`, preload `04360d5de6b69c317a2a4f4cbcc56a0a4a92d26e4ef6f1bd00716108cc49d05d`, renderer `a1e3f97f27cc288fe38cb5c3c70f3316696eb9778aea2ea56400cf804a16c301`. Documentation links passed for 34 files; license checks passed for 215 packages / 7 groups, open-source readiness and dependency/security audits passed with the verified existing backport. Package beta.35 and cross-platform CI are separate pending gates; real third-party credentials were unavailable. The earlier isolated Notion source receipts remain historical and are not substituted for this combined build.
 
-## Final beta.35 package and evidence correction
+## Earlier beta.35 package snapshot and evidence correction
 
 The final MCP setup-failure cleanup `f85c8cc` was integrated as `c384380`. The controlled DNS/client-cleanup suite passed 6 tests with 1 skipped; the scoped-write foundation passed 13 tests, and Node TypeScript passed. The 1,586/45 ordinary and 14-source-case aggregates above belong to the pre-cleanup combined source; they were not relabeled as a fresh full run after this narrow fix.
 
-The rebuilt unsigned macOS beta.35 package from `c384380` passed 21 actual packaged scenarios in 1.4 minutes: Library 8, demonstrations 1, MCP Apps 3, native reads 2 and native outbound including Notion updates 7. Each relevant fixture used the actual package executable and checked packaged metadata. Final bundle SHA-256: main `02945cd6a5439fa5cb52be18366cc8a5fe28aea115045fe6d6642a0cb29309a5`, preload `04360d5de6b69c317a2a4f4cbcc56a0a4a92d26e4ef6f1bd00716108cc49d05d`, renderer `a1e3f97f27cc288fe38cb5c3c70f3316696eb9778aea2ea56400cf804a16c301`.
+The rebuilt unsigned macOS beta.35 package from `c384380` passed 21 actual packaged scenarios in 1.4 minutes: Library 8, demonstrations 1, MCP Apps 3, native reads 2 and native outbound including Notion updates 7. Each relevant fixture used the actual package executable and checked packaged metadata. That historical bundle SHA-256: main `02945cd6a5439fa5cb52be18366cc8a5fe28aea115045fe6d6642a0cb29309a5`, preload `04360d5de6b69c317a2a4f4cbcc56a0a4a92d26e4ef6f1bd00716108cc49d05d`, renderer `a1e3f97f27cc288fe38cb5c3c70f3316696eb9778aea2ea56400cf804a16c301`.
 
-A final audit found that the old runtime typed-API fixture ignored `AEVOREN_PACKAGED_APP_PATH`; earlier typed-API checks counted in beta.31/beta.32/beta.33/beta.34 package summaries therefore establish source behavior only. Their separate Library/native/outbound/demonstration package receipts remain valid where those fixtures selected and verified the real package. The corrected fixture commit `37c762e` now honors the executable and asserts `isPackaged` and the exact version. Its initial real-package run exposed a source-only mock-keychain-flag assertion; the test now applies that assertion only to source runs. The actual packaged rerun passed 1/1, and the source rerun passed 1/1. Current beta.35 package acceptance is therefore 21 + 1 = 22 actual packaged checks, without retroactively upgrading old evidence. All windows stayed hidden.
+A final audit found that the old runtime typed-API fixture ignored `AEVOREN_PACKAGED_APP_PATH`; earlier typed-API checks counted in beta.31/beta.32/beta.33/beta.34 package summaries therefore establish source behavior only. Their separate Library/native/outbound/demonstration package receipts remain valid where those fixtures selected and verified the real package. The corrected fixture commit `37c762e` now honors the executable and asserts `isPackaged` and the exact version. Its initial real-package run exposed a source-only mock-keychain-flag assertion; the test now applies that assertion only to source runs. The actual packaged rerun passed 1/1, and the source rerun passed 1/1. At that historical candidate, package acceptance was 21 + 1 = 22 actual packaged checks, without retroactively upgrading old evidence. All windows stayed hidden.
 
 Stage 4 has local implementation, source and unsigned macOS-package acceptance; cross-platform CI, actual Docker demonstration increments, Windows Docker and signed publication remain gates. Real user private credentials, Gmail/Drive/Notion account writes, cloud-model inference and audio service integration were not exercised. Phase 5 media/audio/voice and Phase 6 automation/search/thread/template/export extensions remain unimplemented. The complete six-phase scope and branch/release requirements above remain in force; master does not advance.
+
+## Normal-close fix: current beta.35 candidate
+
+The former test cleanup helper could terminate an application that had not exited normally. Earlier business assertions and genuine packaged metadata remain evidence for those behaviors, but do not establish a successful graceful shutdown. Subframe loading had cleared the main renderer's readiness, leaving a real close request waiting for an ACK that would never be resent.
+
+The current source at `843d8d4` incorporates the complete readiness/close fix, strict normal-close cleanup, private owned-tree cleanup, transactional legacy database fixtures and event-driven project-tool waits. Readiness resets only on committed main navigation; iframe and in-page navigation preserve it. Main loading gates flush requests, and an existing pending-close request retries when loading stops. Cancelled main navigation retains the live renderer and its dirty-save handshake. No additional readiness IPC or replacement timeout was introduced.
+
+The old main code fails the real `srcdoc` regression. Fixed beta.35 source passed eight close scenarios plus three MCP scenarios (11 total); an actual MCP application exited normally with code 0 in 275 ms without forced termination. The first beta.31 package close selection passed 17/18: its HTTP iframe fixture was blocked by beta.31's intended CSP, so the fixture was corrected to a real `srcdoc` frame without loosening CSP. The corrected frozen beta.31 package then passed 19 actual packaged checks (Library 8, native connections 2, close 8, typed API 1). Beta.31 backport validation also passed 1,488 ordinary tests with 44 skipped, all four TypeScript projects, lint, build, license checks for 215 packages / 7 groups, documentation checks for 31 files and four focused Node fixture tests. These are beta.31 receipts, not final beta.35 package results.
+
+Windows checks for PR #37/#38 reached their source business assertions, but the test worker failed during exit; no installation-package gate ran in those jobs. They are not successful Windows or package acceptance. A later pre-close-fix beta.35 source run passed 1,587 ordinary tests with 45 skipped, and 41 Linux Docker checks passed; those and the earlier 22-package-case aggregate predate this final close fix and remain historical. Final beta.35 rebuild, normal-close package acceptance and cross-platform CI are pending. Phase 5/6 remain unimplemented, and real account/private-credential, microphone, audio/cloud inference and Windows Docker checks remain unverified.

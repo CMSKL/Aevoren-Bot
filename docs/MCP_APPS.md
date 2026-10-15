@@ -34,4 +34,6 @@ Protocol `_meta` is retained privately for an authorized App. Public intents, mo
 
 Controlled SDK servers, real local HTTP, real SQLite, real approval/Runtime handling and hidden Electron views verify the implementation. These tests do not establish a real third-party account's permissions or prove a remote service's side effects. Local unsigned packages and signed Releases are separate acceptance gates.
 
+The current beta.35 candidate includes a normal-close fix verified by focused source scenarios. Earlier package business checks did not prove graceful exit because their cleanup helper could force termination; final rebuilt beta.35 package and cross-platform acceptance remain pending. See the implementation record for the separate beta.31 backport receipts.
+
 The transport follows the official [MCP Apps overview](https://modelcontextprotocol.io/extensions/apps/overview) and [2026-01-26 protocol specification](https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx). No additional UI SDK dependency is bundled.

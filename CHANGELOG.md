@@ -5,7 +5,7 @@
 - Add distinct Notion saved-draft operations and exact page write grants for title-only updates and end-of-page paragraph appends. Preserve existing page body and ordinary/data-source title property identity.
 - Pin observed target metadata in the fixed approval review and recheck the current account and grant before a single PATCH. Changed drafts invalidate pending approval.
 - Verify appended blocks by returned or committed child IDs, parent and text; ambiguous attempts remain unknown and cannot resend. Label title reconciliation based only on current state without claiming the original request caused that state.
-- Real SQLite, controlled HTTP and Renderer unit checks pass. The combined source build, 1,586 ordinary tests (45 skipped) and 14 hidden Electron source cases passed before the final MCP setup cleanup. Post-cleanup focused checks and 22 actual unsigned macOS-package cases passed; cross-platform CI and signed publication remain pending. Real Notion credentials are unavailable and unverified.
+- Real SQLite, controlled HTTP and Renderer unit checks pass. The combined source build, 1,586 ordinary tests (45 skipped) and 14 hidden Electron source cases passed before the final MCP setup cleanup. Post-cleanup focused checks and 22 actual unsigned macOS-package business cases passed at the earlier candidate; its old cleanup helper did not establish normal exit. The latest normal-close fix awaits final beta.35 rebuild/package acceptance, cross-platform CI and signed publication. Real Notion credentials are unavailable and unverified.
 
 ## v0.3.0-beta.34 (development candidate)
 
