@@ -370,7 +370,33 @@ test("selects /Skill and @document through the group composer, retains its draft
       expect(prompt).not.toContain("UI_AT_DOCUMENT_CHANGED_LATER");
       respondText(capture, `fixture reference reply ${capture.command.model}`);
     }
-    await expect.poll(async () => (await roomSnapshot(f)).batches[0]?.state).toBe("completed");
+    // One real snapshot IPC took 5.599s on Windows; wait for the production event without a short polling deadline.
+    await f.page.evaluate(async ({ roomId, sessionId, batchId }) => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      let unsubscribe = (): void => {};
+      try {
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const check = (batch: RoomRuntimeSnapshot["batches"][number]): void => {
+            if (settled || batch.id !== batchId || batch.sessionId !== sessionId || batch.roomId !== roomId) return;
+            if (batch.state === "queued" || batch.state === "running") return;
+            settled = true;
+            if (batch.state === "completed") resolve();
+            else reject(new Error(`Expected completed room batch, received ${batch.state}`));
+          };
+          unsubscribe = api.events.subscribeRoomRuntime(event => {
+            if (event.roomId === roomId && event.sessionId === sessionId) check(event.batch);
+          });
+          void api.roomRuntime.getSnapshot(roomId).then(result => {
+            if (settled) return;
+            if (!result.ok) { settled = true; reject(new Error(result.error.code)); return; }
+            const batch = result.data.batches.find(item => item.id === batchId && item.sessionId === sessionId && item.roomId === roomId);
+            if (!batch) { settled = true; reject(new Error("Expected room batch was not found")); return; }
+            check(batch);
+          }, reject);
+        });
+      } finally { unsubscribe(); }
+    }, { roomId: f.room.id, sessionId: f.room.sessionId, batchId: active.batches[0]!.id });
     await expect(f.page.locator('[aria-label="消息资源引用"] .message-attachment')).toContainText(["Skill：快捷 Skill · v1", "资料：快捷资料 · v1"]);
     await captureEvidence(f.page, "library-slash-at-message-refs.png");
   });

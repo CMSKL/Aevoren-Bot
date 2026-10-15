@@ -8,6 +8,8 @@ import { AppRepository } from "../../src/main/database";
 import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { openInspector } from "./navigation";
 test("hidden demonstration UI retains conflicts and publishes only an explicitly confirmed disabled Skill", async () => {
+  // Windows used 9s for setup and reached the second v2 draft click at 28.254s, before publication.
+  if (process.platform === "win32") test.setTimeout(60_000);
   const data = mkdtempSync(join(tmpdir(), "aevoren-demo-smoke-")), filename = join(data, "aevoren-bot.sqlite"), repository = new AppRepository(filename);
   const bot = repository.createBot(); repository.updateBot(bot.bot.id, bot.bot.version, { name: "示范验收 Bot" }); const scope = { sessionId: bot.session.id, executorBotId: bot.bot.id }, now = new Date().toISOString();
   const draft = repository.demonstrations.create(scope, { id: randomUUID(), browserSessionId: randomUUID(), epoch: 2, state: "interrupted", reason: "disconnect", events: [{ kind: "pointer", x: 30, y: 80, buttons: 1 }, { kind: "redacted-text" }], eventCount: 2, createdAt: now, updatedAt: now });
