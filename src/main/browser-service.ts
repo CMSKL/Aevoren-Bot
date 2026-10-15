@@ -45,6 +45,8 @@ export class BrowserService {
   private readonly ticketResults = new Map<string, ComputerVncTicket>();
   private preparing?: Promise<import("./docker-driver").DockerImage>;
   private closing = false;
+  private readonly demonstrationClosing = new AbortController();
+  private readonly demonstrationPending = new Set<Promise<unknown>>();
   constructor(private readonly repository: AppRepository, private readonly codec: SecretCodec, private readonly contextPath: string, mediaRoot: string,
     private readonly environments: EnvironmentService, private readonly changed: (event: BrowserChangedEvent) => void = () => undefined,
     private readonly docker: BrowserDockerDriver = new BrowserDockerDriver()) { this.media = new BrowserMediaStore(mediaRoot); }
@@ -79,6 +81,28 @@ export class BrowserService {
     const health = schemas.browserWorkerHealthSchema.parse(await (await this.client(input)).request("/v1/health", "GET", undefined, signal));
     if (health.browserSessionId !== record.id || health.environmentId !== record.environmentId || health.workerVersion !== record.workerVersion) throw new AevorenBotError("BROWSER_SCOPE_INVALID");
     return health;
+  }
+  demonstrationRequest(input: BrowserScope, action: "status" | "start" | "stop" | "discard", payload: { id: string; expectedEpoch: number } | undefined, context: BrowserCallContext = {}): Promise<unknown> {
+    if (this.closing) return Promise.reject(new AevorenBotError("BROWSER_UNAVAILABLE"));
+    const pending = this.requestDemonstration(input, action, payload, { ...context, signal: AbortSignal.any([this.demonstrationClosing.signal, ...(context.signal ? [context.signal] : [])]) });
+    this.demonstrationPending.add(pending); void pending.finally(() => this.demonstrationPending.delete(pending)).catch(() => undefined); return pending;
+  }
+  private async requestDemonstration(input: BrowserScope, action: "status" | "start" | "stop" | "discard", payload: { id: string; expectedEpoch: number } | undefined, context: BrowserCallContext = {}): Promise<unknown> {
+    const target = scope(input); this.live(target, context);
+    const health = await this.health(target, context.signal); this.live(target, context);
+    if (!health.capabilities.includes("demonstration") || health.workerVersion !== BROWSER_WORKER_VERSION) throw new AevorenBotError("DEMONSTRATION_UNSUPPORTED");
+    if (action !== "status" && (context.actor === "ai" || !payload || payload.expectedEpoch !== health.control.controlEpoch)) throw new AevorenBotError("COMPUTER_CONTROL_CHANGED");
+    try {
+      const result = await (await this.client(target)).request(`/v1/demonstrations/${action}`, action === "status" ? "GET" : "POST", action === "status" ? undefined : { actor: "user", id: payload!.id, expectedEpoch: payload!.expectedEpoch }, context.signal);
+      this.live(target, context); return result;
+    } catch (error) {
+      if (error instanceof ExecutionWorkerError && error.code === "DEMONSTRATION_INPUT_UNSUPPORTED") throw new AevorenBotError("DEMONSTRATION_INPUT_UNSUPPORTED");
+      if (error instanceof ExecutionWorkerError && error.code === "DEMONSTRATION_VIEWER_REQUIRED") throw new AevorenBotError("DEMONSTRATION_VIEWER_REQUIRED");
+      if (error instanceof ExecutionWorkerError && error.code === "DEMONSTRATION_STATE_INVALID") throw new AevorenBotError("DEMONSTRATION_STATE_INVALID");
+      if (error instanceof ExecutionWorkerError && error.code === "DEMONSTRATION_NOT_FOUND") throw new AevorenBotError("DEMONSTRATION_NOT_FOUND");
+      if (error instanceof ExecutionWorkerError && error.code === "DEMONSTRATION_LIMIT") throw new AevorenBotError("DEMONSTRATION_LIMIT");
+      throw failure(error);
+    }
   }
   async get(input: BrowserScope, context: BrowserCallContext = {}): Promise<BrowserSession | null> {
     const target = scope(input); this.live(target, context); const existing = this.repository.browsers.get(target); if (!existing) return null;
@@ -339,5 +363,5 @@ export class BrowserService {
       this.repository.browsers.update(input, this.repository.browsers.get(input)!.version, { state: "stopped" });
     }
   }); }
-  async shutdown(): Promise<void> { this.closing = true; await Promise.allSettled([...this.active].map(([id, entry]) => this.cancelOperation(entry.scope, id))); await this.viewers.shutdown(); }
+  async shutdown(): Promise<void> { this.closing = true; this.demonstrationClosing.abort(); await Promise.allSettled(this.demonstrationPending); await Promise.allSettled([...this.active].map(([id, entry]) => this.cancelOperation(entry.scope, id))); await this.viewers.shutdown(); }
 }

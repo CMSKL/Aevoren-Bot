@@ -1,3 +1,4 @@
+import { demonstrationApprovalReviewSchema } from "./demonstration-schemas";
 import { externalDraftReviewSnapshotSchema } from "./native-outbound-schemas";
 import { z } from "zod";
 import { environmentDirectoryPathSchema, environmentScopeSchema } from "./environment-schemas";
@@ -31,7 +32,7 @@ export const skillGrantRecordSchema = environmentScopeSchema.extend({ id, enviro
 export const skillScriptReviewSnapshotSchema = z.object({ kind: z.literal("skill-script"), resourceName: z.string().min(1).max(120), revisionNumber: version,
   target: z.object({ grantId: id, grantVersion: version, environmentId: id, imageDigest, workerVersion, reference: resourceReferenceSchema,
     entryPath: skillEntryPathSchema, entrySha256: digest, interpreter: skillInterpreterSchema, ...invocation }).strict() }).strict();
-export const approvalReviewSnapshotSchema = z.union([skillScriptReviewSnapshotSchema, externalDraftReviewSnapshotSchema]);
+export const approvalReviewSnapshotSchema = z.discriminatedUnion("kind", [skillScriptReviewSnapshotSchema, externalDraftReviewSnapshotSchema, demonstrationApprovalReviewSchema]);
 export const approvalReviewInputSchema = environmentScopeSchema.extend({ id, expectedVersion: version }).strict();
 const base64 = z.string().max(Math.ceil(ENV_FILE_MAX_BYTES / 3) * 4).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
 export const workerSkillInstallSchema = z.object({ id, reference: resourceReferenceSchema,

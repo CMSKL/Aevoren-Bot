@@ -13,6 +13,7 @@ import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import type { ModelImageAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
+  "demonstrations.status", "demonstrations.drafts", "demonstrations.readDraft",
   "outbound.writeGrants", "outbound.get", "outbound.list", "outbound.reconcile",
   "connectors.list", "connectors.bindings", "connectors.search", "connectors.read", "drafts.list", "drafts.read", "drafts.versions",
   "approvals.review", "skills.scripts", "skills.executionGrants", "skills.scriptExecution",
@@ -27,7 +28,7 @@ const environmentOperation = (operation: string): boolean => /^(environments|exe
 const browserOperation = (operation: string): boolean => /^(browser|computer|preview)\./.test(operation);
 const scriptOperation = (operation: string): boolean => ["skills.scripts", "skills.executionGrants", "skills.grantExecution", "skills.revokeExecution", "skills.runScript", "skills.scriptExecution", "approvals.review"].includes(operation);
 const nativeScopedOperation = (operation: string): boolean => operation.startsWith("outbound.") && operation !== "outbound.enableSend" || operation.startsWith("drafts.") || ["connectors.bindings", "connectors.bind", "connectors.unbind", "connectors.search", "connectors.read"].includes(operation);
-const scopedOperation = (operation: string): boolean => environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation);
+const scopedOperation = (operation: string): boolean => environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || operation.startsWith("demonstrations.");
 type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[] };
 
 /** Both transports use these handlers; only the host can supply execution identity. */
@@ -57,6 +58,10 @@ export class ProductOperationService {
     const label = productOperation(tool.operation)?.description ?? tool.operation;
     if (["execution.run", "processes.start"].includes(tool.operation) && typeof value.command === "string") {
       return `${label} · ${value.cwd ?? "."}\n${value.command}`.slice(0, 2_048);
+    }
+    if (tool.operation === "demonstrations.publish" && typeof value.id === "string" && typeof value.sessionId === "string" && typeof value.executorBotId === "string") {
+      const saved = repository.demonstrations.assertPublish(value as unknown as import("@shared/demonstration-contracts").DemonstrationPublishInput);
+      return `${label} · ${saved.name} · v${saved.version}\nSHA-256 ${saved.digest}\n初始停用；不授予脚本权限或自动执行。\n${saved.body}`.slice(0, 2048);
     }
     if (tool.operation === "roomRuntime.cancelMember" && typeof input === "string") {
       const run = repository.getRuntimeRun(input);
@@ -88,14 +93,16 @@ export class ProductOperationService {
   }
 
   approvalReview(tool: ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined {
-    if (tool.action === "execute" && tool.operation === "outbound.send") {
+    if (tool.action !== "execute") return undefined;
+    if (tool.operation === "demonstrations.publish") { const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId); return this.dependencies.repository.demonstrations.approvalReview(this.libraryInput(tool.operation, tool.input, runtime) as import("@shared/demonstration-contracts").DemonstrationPublishInput); }
+    if (tool.operation === "outbound.send") {
       if (!this.dependencies.nativeOutboundService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
       const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
       const input = nativeOutboundIdSchema.parse(this.libraryInput(tool.operation,tool.input,runtime));
       const intent = this.dependencies.repository.outbound.current(input, input.id);
       return intent.state === "prepared" ? this.dependencies.nativeOutboundService.approvalReview(input) : undefined;
     }
-    if (tool.action !== "execute" || tool.operation !== "skills.runScript") return undefined;
+    if (tool.operation !== "skills.runScript") return undefined;
     const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
     if (!this.dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
     const input = skillRunSchema.omit({ clientNonce: true }).parse(this.libraryInput(tool.operation, tool.input, runtime));
@@ -112,6 +119,7 @@ export class ProductOperationService {
     if (!definition) throw new AevorenBotError("INVALID_REQUEST", "产品操作不存在，请先查询功能目录。");
     const schema = PRODUCT_OPERATION_SCHEMAS[tool.operation]!;
     const input = schema.parse(this.libraryInput(tool.operation, tool.input, runtime));
+    if (tool.operation === "demonstrations.publish") repository.demonstrations.assertPublish(input as import("@shared/demonstration-contracts").DemonstrationPublishInput);
     if (nativeScopedOperation(tool.operation)) repository.connectors.assertRuntimeCurrent(runtime.id, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId });
     if (["connectors.search", "connectors.read"].includes(tool.operation)) repository.connectors.access(input as import("@shared/native-connector-contracts").ConnectorAccessInput);
     if (tool.operation === "skills.runScript") this.approvalReview({ ...tool, input }, runtimeRunId);
@@ -202,8 +210,14 @@ export class ProductOperationService {
       const approval = this.dependencies.repository.getApprovalRequest(invocation.approvalRequestId);
       const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
       const review = this.dependencies.repository.getApprovalReview({ ...scope, id: approval.id, expectedVersion: approval.version });
-      if (!review.snapshot || !this.dependencies.skillExecutionService) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
-      this.dependencies.skillExecutionService.assertApprovalReview(review.snapshot?.kind === "skill-script" ? review.snapshot : (()=>{throw new AevorenBotError("APPROVAL_REVIEW_INVALID");})(), scope);
+      if (review.snapshot?.kind !== "skill-script" || !this.dependencies.skillExecutionService) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      this.dependencies.skillExecutionService.assertApprovalReview(review.snapshot, scope);
+    }
+    if (tool.operation === "demonstrations.publish") {
+      const approval = this.dependencies.repository.getApprovalRequest(invocation.approvalRequestId), scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
+      const review = this.dependencies.repository.getApprovalReview({ ...scope, id: approval.id, expectedVersion: approval.version });
+      if (review.snapshot?.kind !== "demonstration-skill") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      this.dependencies.repository.demonstrations.assertApprovalReview(review.snapshot, scope);
     }
     if (!PUBLIC_READS.has(tool.operation)) {
       const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
@@ -236,6 +250,15 @@ export class ProductOperationService {
           return this.result({ status: "previously_completed", operation: tool.operation, reused: true, result,
             receiptNotice: "未再次执行脚本；已查询原任务的实际状态和固定版本来源。" });
         }
+        if (tool.operation === "demonstrations.publish") {
+          const receipt = JSON.parse(previous) as { result?: import("@shared/library-contracts").LibraryContent };
+          if (!receipt.result?.resource.id || !receipt.result.revision.id) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+          const result = this.dependencies.repository.library.read({ sessionId: runtime.sessionId, id: receipt.result.resource.id,
+            revisionId: receipt.result.revision.id, includeDisabled: true }, runtime.executorBotId);
+          return this.result({ status: "previously_completed", operation: tool.operation, reused: true, result,
+            receiptNotice: "未再次发布或启用 Skill；已核验原发布版本的当前会话授权与状态。" });
+        }
+        if (tool.operation.startsWith("demonstrations.")) { const receipt = JSON.parse(previous) as { status?: string; result?: unknown }; return this.result({ ...receipt, status: receipt.status === "waiting_user" ? "waiting_user" : "previously_completed", reused: true, receiptNotice: "返回首次已保存操作回执；当前示范草稿或 Skill 状态请重新查询。" }); }
         if (browserOperation(tool.operation)) {
           const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId };
           const supplied = tool.input as { expectedEpoch?: number } | undefined;

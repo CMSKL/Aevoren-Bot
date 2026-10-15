@@ -7,17 +7,23 @@ import type { EngineAction } from "./engine-protocol";
 import type { EngineClient } from "./engine-client";
 import { BrowserStateStore } from "./state-store";
 import { BrowserWorkerError } from "./worker-error";
+import { DemonstrationStore } from "./demonstration-store";
+import type { DemonstrationEvent } from "@shared/demonstration-contracts";
 
 export class BrowserWorker {
   readonly bootId = randomUUID();
   readonly store: BrowserStateStore;
+  readonly demonstrations: DemonstrationStore;
   controlBusy = false;
   private connectionCount = 0;
+  private closing = false;
+  private viewerInputSupported = true;
   private readyEpoch: number | null = null;
   private closeViewers: () => void = () => undefined;
 
   constructor(readonly options: { environmentId: string; browserSessionId: string; stateDirectory: string; downloadsDirectory: string }, readonly engine: Pick<EngineClient, "request" | "close"> & Partial<Pick<EngineClient, "isAlive">>) {
     this.store = new BrowserStateStore(join(options.stateDirectory, "browser.sqlite"), options.browserSessionId);
+    this.demonstrations = new DemonstrationStore(this.store.database, options.browserSessionId);
   }
 
   control(): BrowserWorkerControl {
@@ -27,18 +33,36 @@ export class BrowserWorker {
   }
   assertHealthy(): void { if (this.engine.isAlive === false) throw new BrowserWorkerError("BROWSER_ENGINE_STOPPED", 503); }
 
-  viewerConnected(): void { this.connectionCount++; }
-  viewerDisconnected(): void { this.connectionCount = Math.max(0, this.connectionCount - 1); }
+  viewerConnected(): void { this.viewerInputSupported = true; this.connectionCount++; }
+  viewerInputUnsupported(): void { this.viewerInputSupported = false; if (!this.closing) this.demonstrations.interrupt("unsupported-input"); }
+  viewerDisconnected(): void { if (!this.closing) this.demonstrations.interrupt("disconnect"); this.connectionCount = Math.max(0, this.connectionCount - 1); }
   setViewerCloser(closer: () => void): void { this.closeViewers = closer; }
   acknowledgeControl(): void { this.readyEpoch = this.store.control().epoch; }
-  engineStopped(): void { this.readyEpoch = null; this.closeViewers(); }
-  canConnectViewer(epoch: number): boolean { const value = this.store.control(); return this.engine.isAlive !== false && !this.controlBusy && this.readyEpoch === epoch && value.owner === "user" && value.epoch === epoch; }
+  engineStopped(): void { if (!this.closing) this.demonstrations.interrupt("disconnect"); this.readyEpoch = null; this.closeViewers(); }
+  canConnectViewer(epoch: number): boolean { if (this.closing) return false; const value = this.store.control(); return this.engine.isAlive !== false && !this.controlBusy && this.readyEpoch === epoch && value.owner === "user" && value.epoch === epoch; }
+
+  demonstration(input: { action: "start" | "stop" | "discard"; actor: "ai" | "user"; expectedEpoch: number; id: string }): unknown {
+    if (input.actor !== "user") throw new BrowserWorkerError("BROWSER_CONTROL_FORBIDDEN", 403);
+    this.store.assertAccess(input.expectedEpoch, "user");
+    if (this.controlBusy || this.readyEpoch !== input.expectedEpoch) throw new BrowserWorkerError("BROWSER_CONTROL_CHANGED", 409);
+    if (input.action === "start") {
+      if (this.control().owner !== "user" || !this.connectionCount) throw new BrowserWorkerError("DEMONSTRATION_VIEWER_REQUIRED", 409);
+      if (!this.viewerInputSupported) throw new BrowserWorkerError("DEMONSTRATION_INPUT_UNSUPPORTED", 409);
+      return this.demonstrations.start(input.id, input.expectedEpoch);
+    }
+    const capture = this.demonstrations.get(input.id);
+    if (!capture || capture.id !== input.id) throw new BrowserWorkerError("DEMONSTRATION_NOT_FOUND", 404);
+    if (capture.state === "recording" && (capture.epoch !== input.expectedEpoch || this.control().owner !== "user")) throw new BrowserWorkerError("BROWSER_CONTROL_CHANGED", 409);
+    return input.action === "stop" ? this.demonstrations.stop(input.id) : this.demonstrations.discard(input.id);
+  }
+  acceptedViewerInput(epoch: number, event: DemonstrationEvent): void { if (this.canConnectViewer(epoch)) this.demonstrations.accepted(epoch, event); }
 
   async changeControl(owner: "ai" | "user", input: Record<string, unknown>): Promise<BrowserWorkerControl> {
     if (input.actor !== "user") throw new BrowserWorkerError("BROWSER_CONTROL_FORBIDDEN", 403);
     if (this.controlBusy) throw new BrowserWorkerError("BROWSER_CONTROL_CHANGED", 409);
     const operation = this.store.beginOperation(String(input.operationId), `control-${owner}`, input);
     if (operation.reused) return this.control();
+    this.demonstrations.interrupt("control-changed");
     const control = this.store.transition(owner, Number(input.expectedEpoch));
     this.readyEpoch = null;
     this.closeViewers();
@@ -97,5 +121,5 @@ export class BrowserWorker {
     return { ...metadata, browserSessionId: this.options.browserSessionId, mimeType: "application/octet-stream", dataBase64: bytes.toString("base64") };
   }
 
-  async close(): Promise<void> { this.closeViewers(); await this.engine.close(); this.store.close(); }
+  async close(): Promise<void> { if (this.closing) return; this.closing = true; this.demonstrations.interrupt("disconnect"); this.closeViewers(); await this.engine.close(); this.store.close(); }
 }
