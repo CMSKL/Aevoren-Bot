@@ -211,8 +211,18 @@ test("keeps contact editing, model configuration and settings usable at 200 perc
         return Math.min(rect.right, other.right) - Math.max(rect.left, other.left) > 1
           && Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top) > 1;
       }));
-      return { inputWidth: search.getBoundingClientRect().width, overlap };
+      const searchBox = search.closest<HTMLElement>(".sidebar-search")!.getBoundingClientRect();
+      const inner = [...header.querySelectorAll<HTMLElement>(".sidebar-search input, .sidebar-search button")].map(control => control.getBoundingClientRect());
+      return { inputWidth: search.getBoundingClientRect().width, overlap,
+        contained: inner.every(rect => rect.left >= searchBox.left && rect.right <= searchBox.right),
+        innerOverlap: inner.some((rect, index) => inner.slice(index + 1).some(other => Math.min(rect.right, other.right) - Math.max(rect.left, other.left) > 1 && Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top) > 1)),
+      };
     });
+    await test.info().attach("compact-search-200", { body: JSON.stringify(sidebarHeader), contentType: "application/json" });
+    await expect(page.getByRole("button", { name: "打开全资源搜索", exact: true })).toBeVisible();
+    await expect(page.locator(".sidebar-search").getByRole("button", { name: "未读", exact: true })).toBeVisible();
+    expect(sidebarHeader.contained).toBe(true);
+    expect(sidebarHeader.innerOverlap).toBe(false);
     expect(sidebarHeader.inputWidth).toBeGreaterThan(30);
     expect(sidebarHeader.overlap).toBe(false);
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
