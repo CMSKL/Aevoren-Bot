@@ -1,3 +1,4 @@
+import { RoutineRepository, GROUP_ROUTINE_MIGRATION } from "./routine-repository";
 import { SearchRepository } from "./search-repository";
 import { McpWriteRepository, MCP_WRITE_MIGRATION } from "./mcp-write-repository";
 import { normalizeProductRequest } from "./product-request";
@@ -62,7 +63,6 @@ import type {
   RoomTurnState,
   Routine,
   RoutineRun,
-  RoutineSchedule,
   RuntimeRoute,
   RuntimeRun,
   RuntimeState,
@@ -2090,6 +2090,7 @@ export const MIGRATIONS = [
   VOICE_MIGRATION,
   REALTIME_MIGRATION,
   TASK_SESSION_MIGRATION,
+  GROUP_ROUTINE_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -2375,38 +2376,6 @@ type McpServerRow = {
   last_connected_at: string | null;
   created_at: string;
   updated_at: string;
-};
-
-type RoutineRow = {
-  id: string;
-  name: string;
-  prompt: string;
-  bot_id: string;
-  schedule_json: string;
-  enabled: number;
-  next_run_at: number | null;
-  version: number;
-  created_at: string;
-  updated_at: string;
-};
-
-type RoutineRunRow = {
-  id: string;
-  routine_id: string;
-  routine_name: string;
-  bot_id: string;
-  prompt_snapshot: string;
-  schedule_snapshot_json: string;
-  trigger: "schedule" | "manual";
-  trigger_key: string;
-  scheduled_for: number;
-  state: RoutineRun["state"];
-  client_nonce: string;
-  runtime_run_id: string | null;
-  last_error_code: string | null;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
 };
 
 export type McpServerConfig = {
@@ -2857,42 +2826,6 @@ function toMcpServerConfig(row: McpServerRow): McpServerConfig {
   };
 }
 
-function toRoutine(row: RoutineRow): Routine {
-  return {
-    id: row.id,
-    name: row.name,
-    prompt: row.prompt,
-    botId: row.bot_id,
-    enabled: row.enabled === 1,
-    schedule: JSON.parse(row.schedule_json) as RoutineSchedule,
-    nextRunAt: row.next_run_at === null ? null : Number(row.next_run_at),
-    version: Number(row.version),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function toRoutineRun(row: RoutineRunRow): RoutineRun {
-  return {
-    id: row.id,
-    routineId: row.routine_id,
-    routineName: row.routine_name,
-    botId: row.bot_id,
-    promptSnapshot: row.prompt_snapshot,
-    scheduleSnapshot: JSON.parse(row.schedule_snapshot_json) as RoutineSchedule,
-    trigger: row.trigger,
-    triggerKey: row.trigger_key,
-    scheduledFor: Number(row.scheduled_for),
-    state: row.state,
-    clientNonce: row.client_nonce,
-    runtimeRunId: row.runtime_run_id,
-    lastErrorCode: row.last_error_code,
-    createdAt: row.created_at,
-    startedAt: row.started_at,
-    finishedAt: row.finished_at,
-  };
-}
-
 function toRoom(row: RoomRow): Room {
   return {
     id: row.id,
@@ -3273,6 +3206,7 @@ export class AppRepository {
   readonly voice: VoiceRepository;
   readonly realtime: RealtimeRepository;
   readonly tasks: TaskSessionRepository;
+  readonly routineTargets: RoutineRepository;
   readonly search: SearchRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
@@ -3320,6 +3254,7 @@ export class AppRepository {
       this.search = new SearchRepository(this.database);
       this.library.setTaskReferenceReader((sessionId, executor, runtimeId) => this.tasks.libraryReferences(sessionId, executor, runtimeId));
       this.media.setTaskRuntimeReferencesReader(runtimeId => this.tasks.runtimeTaskPolicy(runtimeId)?.selection.mediaRefs ?? null);
+      this.routineTargets = new RoutineRepository(this.database, this);
       this.media.setTaskSessionReferencesReader((sessionId, executor) => this.tasks.mediaReferences(sessionId, executor));
     } catch (error) {
       this.database.close();
@@ -4274,6 +4209,7 @@ export class AppRepository {
 
   private assertRuntimeSessionScope(runtimeRunId: string): void {
     this.tasks.assertTaskRuntime(runtimeRunId);
+    this.routineTargets.assertRuntime(runtimeRunId);
     const scope = this.database.prepare(
       `SELECT runtime_session_scopes.scope_version, conversation_scope_versions.version
        FROM runtime_runs JOIN runtime_session_scopes ON runtime_session_scopes.runtime_run_id = runtime_runs.id
@@ -5540,9 +5476,9 @@ export class AppRepository {
         `SELECT 1 FROM agent_handoffs INNER JOIN room_batches ON room_batches.id = agent_handoffs.run_id
          WHERE room_batches.session_id = ? AND agent_handoffs.state = 'dispatching' LIMIT 1`,
       ).get(sessionId);
-      const activeRoutine = session.kind === "MAIN" && session.botId && this.database.prepare(
-        "SELECT 1 FROM routine_runs WHERE bot_id = ? AND state IN ('queued', 'waiting', 'running') LIMIT 1",
-      ).get(session.botId);
+      const activeRoutine = session.kind === "MAIN" && this.database.prepare(
+        "SELECT 1 FROM routine_runs WHERE json_extract(target_snapshot_json, '$.target.sessionId') = ? AND state IN ('queued', 'waiting', 'dispatching', 'running', 'cancel-requested') LIMIT 1",
+      ).get(session.id);
       const pendingSend = this.database.prepare(
         `SELECT 1 FROM send_journal WHERE session_id = ?
          AND NOT EXISTS (SELECT 1 FROM retired_conversation_sends WHERE client_nonce = send_journal.client_nonce)
@@ -5741,8 +5677,10 @@ export class AppRepository {
       if (!origin.routineRunId) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
       const run = this.getRoutineRun(origin.routineRunId);
       const message = this.getUserMessage(clientNonce);
+      this.routineTargets.assertRun(run.id);
+      this.routineTargets.assertMessage(run.id, message);
       if (run.clientNonce !== clientNonce || origin.rootClientNonce !== clientNonce || run.routineId !== origin.routineId ||
-          run.botId !== origin.fromBotId || message.sessionId !== this.getMainSession(run.botId).id || origin.depth !== 0 ||
+          (run.botId ?? undefined) !== origin.fromBotId || message.sessionId !== run.targetSnapshot.target.sessionId || origin.fromSessionId !== message.sessionId || origin.depth !== 0 ||
           message.body !== `[Routine: ${run.routineName}]\n${run.promptSnapshot}`) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
       this.database.prepare("UPDATE transcript_entries SET origin_json = ? WHERE client_nonce = ? AND role = 'user' AND origin_json IS NULL").run(JSON.stringify(origin), clientNonce);
       return;
@@ -7988,121 +7926,20 @@ export class AppRepository {
       .all() as McpServerRow[]).map(toMcpServerConfig);
   }
 
-  listRoutines(): Routine[] {
-    return (this.database.prepare("SELECT * FROM routines ORDER BY created_at ASC, id ASC").all() as RoutineRow[]).map(toRoutine);
-  }
-
-  getRoutine(id: string): Routine {
-    const row = this.database.prepare("SELECT * FROM routines WHERE id = ?").get(id) as RoutineRow | undefined;
-    if (!row) throw new AevorenBotError("ROUTINE_NOT_FOUND");
-    return toRoutine(row);
-  }
-
-  createRoutine(input: { name: string; prompt: string; botId: string; schedule: RoutineSchedule; enabled: boolean; nextRunAt: number | null }): Routine {
-    this.getBot(input.botId);
-    const id = randomUUID();
-    const timestamp = now();
-    this.database.prepare(
-      `INSERT INTO routines(id,name,prompt,bot_id,schedule_json,enabled,next_run_at,version,created_at,updated_at)
-       VALUES(?,?,?,?,?,?,?,1,?,?)`,
-    ).run(id, input.name, input.prompt, input.botId, JSON.stringify(input.schedule), input.enabled ? 1 : 0, input.nextRunAt, timestamp, timestamp);
-    return this.getRoutine(id);
-  }
-
-  updateRoutine(id: string, expectedVersion: number, patch: Partial<Pick<Routine, "name" | "prompt" | "schedule">>, nextRunAt: number | null): Routine {
-    const current = this.getRoutine(id);
-    const updated = this.database.prepare(
-      `UPDATE routines SET name=?,prompt=?,schedule_json=?,next_run_at=?,version=version+1,updated_at=? WHERE id=? AND version=?`,
-    ).run(patch.name ?? current.name, patch.prompt ?? current.prompt, JSON.stringify(patch.schedule ?? current.schedule), nextRunAt, now(), id, expectedVersion);
-    if (Number(updated.changes) !== 1) this.throwRoutineConflict(id);
-    return this.getRoutine(id);
-  }
-
-  setRoutineEnabled(id: string, expectedVersion: number, enabled: boolean, nextRunAt: number | null): Routine {
-    const updated = this.database.prepare(
-      "UPDATE routines SET enabled=?,next_run_at=?,version=version+1,updated_at=? WHERE id=? AND version=?",
-    ).run(enabled ? 1 : 0, nextRunAt, now(), id, expectedVersion);
-    if (Number(updated.changes) !== 1) this.throwRoutineConflict(id);
-    return this.getRoutine(id);
-  }
-
-  deleteRoutine(id: string, expectedVersion: number): void {
-    const active = this.database.prepare("SELECT 1 FROM routine_runs WHERE routine_id=? AND state IN ('queued','waiting','running')").get(id);
-    if (active) throw new AevorenBotError("ROUTINE_BUSY");
-    const deleted = this.database.prepare("DELETE FROM routines WHERE id=? AND version=?").run(id, expectedVersion);
-    if (Number(deleted.changes) !== 1) this.throwRoutineConflict(id);
-  }
-
-  listRoutineRuns(routineId?: string): RoutineRun[] {
-    if (routineId) this.getRoutine(routineId);
-    const rows = this.database.prepare(
-      `SELECT * FROM routine_runs ${routineId ? "WHERE routine_id = ?" : ""} ORDER BY scheduled_for DESC, id DESC LIMIT 500`,
-    ).all(...(routineId ? [routineId] : [])) as RoutineRunRow[];
-    return rows.map(toRoutineRun);
-  }
-
-  createRoutineRun(routine: Routine, trigger: "schedule" | "manual", triggerKey: string, scheduledFor: number, state: RoutineRun["state"] = "queued"): RoutineRun {
-    const id = randomUUID();
-    const clientNonce = randomUUID();
-    const timestamp = now();
-    this.database.prepare(
-      `INSERT INTO routine_runs(
-         id,routine_id,routine_name,bot_id,prompt_snapshot,schedule_snapshot_json,trigger,trigger_key,
-         scheduled_for,state,client_nonce,runtime_run_id,last_error_code,created_at,started_at,finished_at
-       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,NULL,?)`,
-    ).run(
-      id, routine.id, routine.name, routine.botId, routine.prompt, JSON.stringify(routine.schedule), trigger, triggerKey,
-      scheduledFor, state, clientNonce, timestamp, ["missed", "cancelled"].includes(state) ? timestamp : null,
-    );
-    return this.getRoutineRun(id);
-  }
-
-  getRoutineRun(id: string): RoutineRun {
-    const row = this.database.prepare("SELECT * FROM routine_runs WHERE id=?").get(id) as RoutineRunRow | undefined;
-    if (!row) throw new AevorenBotError("ROUTINE_RUN_NOT_FOUND");
-    return toRoutineRun(row);
-  }
-
-  listPendingRoutineRuns(): RoutineRun[] {
-    return (this.database.prepare("SELECT * FROM routine_runs WHERE state IN ('queued','waiting','running') ORDER BY scheduled_for ASC,id ASC").all() as RoutineRunRow[]).map(toRoutineRun);
-  }
-
-  advanceRoutineAndCreateRun(routineId: string, expectedNextRunAt: number, nextRunAt: number | null, missed: boolean): RoutineRun | null {
-    return this.transaction(() => {
-      const routine = this.getRoutine(routineId);
-      const updated = this.database.prepare(
-        "UPDATE routines SET next_run_at=?,enabled=CASE WHEN json_extract(schedule_json,'$.type')='once' THEN 0 ELSE enabled END,version=version+1,updated_at=? WHERE id=? AND enabled=1 AND next_run_at=?",
-      ).run(nextRunAt, now(), routineId, expectedNextRunAt);
-      if (Number(updated.changes) !== 1) return null;
-      return this.createRoutineRun(routine, "schedule", `${routine.id}:schedule:${expectedNextRunAt}`, expectedNextRunAt, missed ? "missed" : "queued");
-    });
-  }
-
-  attachRoutineRuntime(runId: string, runtimeRunId: string): RoutineRun {
-    const updated = this.database.prepare(
-      "UPDATE routine_runs SET runtime_run_id=?,state='running',started_at=? WHERE id=? AND state IN ('queued','waiting')",
-    ).run(runtimeRunId, now(), runId);
-    if (Number(updated.changes) !== 1) throw new AevorenBotError("ROUTINE_RUN_STATE_INVALID");
-    return this.getRoutineRun(runId);
-  }
-
-  transitionRoutineRun(runId: string, state: RoutineRun["state"], errorCode: string | null = null): RoutineRun {
-    const terminal = ["completed", "failed", "cancelled", "missed"].includes(state);
-    const updated = this.database.prepare(
-      "UPDATE routine_runs SET state=?,last_error_code=?,finished_at=CASE WHEN ?=1 THEN ? ELSE finished_at END WHERE id=?",
-    ).run(state, errorCode, terminal ? 1 : 0, now(), runId);
-    if (Number(updated.changes) !== 1) throw new AevorenBotError("ROUTINE_RUN_NOT_FOUND");
-    return this.getRoutineRun(runId);
-  }
-
-  hasEnabledRoutines(): boolean {
-    return Boolean(this.database.prepare("SELECT 1 FROM routines WHERE enabled=1 LIMIT 1").get());
-  }
-
-  private throwRoutineConflict(id: string): never {
-    const current = this.getRoutine(id);
-    throw new AevorenBotError("ROUTINE_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
-  }
+  listRoutines(): Routine[] { return this.routineTargets.list(); }
+  getRoutine(id: string): Routine { return this.routineTargets.get(id); }
+  createRoutine(input: import("@shared/routine-contracts").RoutineCreateInput & { enabled: boolean; nextRunAt: number | null }): Routine { return this.routineTargets.create(input); }
+  updateRoutine(id: string, expectedVersion: number, patch: import("@shared/routine-contracts").RoutineUpdatePatch, nextRunAt: number | null): Routine { return this.routineTargets.update(id, expectedVersion, patch, nextRunAt); }
+  setRoutineEnabled(id: string, expectedVersion: number, enabled: boolean, nextRunAt: number | null): Routine { return this.routineTargets.setEnabled(id, expectedVersion, enabled, nextRunAt); }
+  deleteRoutine(id: string, expectedVersion: number): void { this.routineTargets.delete(id, expectedVersion); }
+  listRoutineRuns(routineId?: string): RoutineRun[] { return this.routineTargets.listRuns(routineId); }
+  createRoutineRun(routine: Routine, trigger: RoutineRun["trigger"], triggerKey: string, scheduledFor: number, state: RoutineRun["state"] = "queued"): RoutineRun { return this.routineTargets.createRun(routine, trigger, triggerKey, scheduledFor, state); }
+  getRoutineRun(id: string): RoutineRun { return this.routineTargets.getRun(id); }
+  listPendingRoutineRuns(): RoutineRun[] { return this.routineTargets.pending(); }
+  advanceRoutineAndCreateRun(id: string, expectedNext: number, next: number | null, missed: boolean): RoutineRun | null { return this.routineTargets.advanceDue(id, expectedNext, next, missed); }
+  attachRoutineRuntime(runId: string, runtimeRunId: string): RoutineRun { return this.routineTargets.attach(runId, { runtimeRunId }); }
+  transitionRoutineRun(id: string, state: RoutineRun["state"], errorCode: string | null = null): RoutineRun { return this.routineTargets.transition(id, state, errorCode); }
+  hasEnabledRoutines(): boolean { return this.routineTargets.hasEnabled(); }
 
   getMcpServerConfig(id: string): McpServerConfig {
     const row = this.database.prepare("SELECT * FROM mcp_servers WHERE id = ?").get(id) as McpServerRow | undefined;
