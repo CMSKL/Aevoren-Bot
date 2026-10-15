@@ -1,5 +1,5 @@
 import { createServer, type ServerResponse } from "node:http";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -39,6 +39,10 @@ async function view(page: Page, input: ProductViewInput): Promise<ProductViewRes
 async function draft(page: Page): Promise<{ text: string; digest: string; draftVersion: number; mediaRefs: unknown[] }> { const result = await view(page, { action: "draft_get" }); expect(result.status).toBe("completed"); return result.result as { text: string; digest: string; draftVersion: number; mediaRefs: unknown[] }; }
 async function select(f: Fixture, index: number): Promise<void> { await f.page.getByRole("listitem", { name: f.bots[index]!.name, exact: true }).click(); await expect(f.page.getByRole("heading", { name: f.bots[index]!.name, exact: true })).toBeVisible(); }
 async function openVoice(f: Fixture): Promise<void> { const dialog = f.page.getByRole("dialog", { name: "语音控制", exact: true }); if (!await dialog.isVisible()) await f.page.locator(".composer-toolbar").getByRole("button", { name: "语音", exact: true }).click(); await expect(dialog).toBeVisible(); }
+async function captureVoice(f: Fixture, name: string): Promise<void> {
+  const png = await f.application.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0]!.webContents.capturePage()).toPNG().toString("base64"));
+  writeFileSync(test.info().outputPath(name), Buffer.from(png, "base64"));
+}
 async function holdNextTaskRead(f: Fixture, channel: string = VOICE_CHANNELS.get): Promise<void> {
   await f.application.evaluate(({ ipcMain }, channel) => {
     const original = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => unknown> })._invokeHandlers.get(channel); if (!original) throw new Error("Missing actual voice task reader");
@@ -174,7 +178,7 @@ test("saves three independent editable voice configurations without echoing keys
     await f.application.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]!; window.setMinimumSize(320, 300); window.setSize(720, 520); window.webContents.setZoomFactor(2); });
     await expect.poll(() => f.page.evaluate(() => innerWidth)).toBeLessThanOrEqual(360);
     await expect.poll(() => f.page.getByRole("dialog", { name: "语音控制", exact: true }).evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1; })).toBe(true);
-    await f.page.screenshot({ path: test.info().outputPath("voice-controls-200-percent.png") });
+    await captureVoice(f, "voice-controls-200-percent.png");
     await f.page.keyboard.press("Escape"); await expect(trigger).toBeFocused(); await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await f.application.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]!; window.webContents.setZoomFactor(1); window.setSize(1182, 804); });
     await openVoice(f); await f.page.locator(".transcript").click({ position: { x: 4, y: 4 } }); await expect(trigger).toHaveAttribute("aria-expanded", "false"); expect(await f.page.locator(".voice-controls-popover").evaluate(element => element.contains(document.activeElement))).toBe(false);
@@ -289,7 +293,7 @@ test("queues group speech by live member completion while all six model requests
     expect(snapshot.turns).toHaveLength(6); expect(snapshot.turns.every(turn => turn.state === "completed")).toBe(true);
     f.completeSpeech(0); await expect.poll(async () => f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.players.length)).toBe(1);
     await input.fill("@"); await expect(f.page.getByRole("option").filter({ hasText: "所有人" })).toBeVisible();
-    await f.page.screenshot({ path: test.info().outputPath("voice-chooser-playback.png") });
+    await captureVoice(f, "voice-chooser-playback.png");
     await f.page.getByRole("option").filter({ hasText: "所有人" }).click();
     await expect(f.page.getByLabel("自动朗读本会话新回复", { exact: true })).toBeChecked();
     expect(f.speeches[0]!.aborted).toBe(false); expect(await f.page.evaluate(() => (window as unknown as BrowserFixture).voiceAudioFixture!.pauses)).toBe(0);
