@@ -12,7 +12,7 @@ const APP_PROTOCOL="2026-01-26",MAX_RPC_BYTES=160000;
 const rpcSchema=z.object({jsonrpc:z.literal("2.0"),id:z.union([z.string().max(100),z.number().int()]).optional(),method:z.string().min(1).max(100),params:z.record(z.string(),z.json()).optional()}).strict();
 type Rpc=z.infer<typeof rpcSchema>;
 type Viewer={view:McpAppView;token:string;html:string;input:Record<string,unknown>;result:unknown;grantId:string;grantVersion:number;credentialDigest:string;
- controller:AbortController;initialized:boolean;ready:boolean;inputSent:boolean;events:Set<ServerResponse>;requests:Map<string,{digest:string;promise:Promise<unknown>}>};
+ scopeVersion:number;controller:AbortController;initialized:boolean;ready:boolean;inputSent:boolean;events:Set<ServerResponse>;requests:Map<string,{digest:string;promise:Promise<unknown>}>};
 type Options={requestAndWait:(intent:McpWriteIntent,signal:AbortSignal)=>Promise<McpWriteIntent>};
 const rpcError=(id:Rpc["id"],code:number,message:string,data?:unknown)=>({jsonrpc:"2.0",id:id??null,error:{code,message,...(data?{data}:{})}});
 export class McpAppsBridge{
@@ -28,6 +28,7 @@ export class McpAppsBridge{
  this.unsubscribe=mcp.onScopedInvalidation(id=>{for(const viewer of this.viewers.values())if(viewer.view.serverId===id)this.retire(viewer);});}
  private scope(input:EnvironmentScope){return {sessionId:input.sessionId,executorBotId:input.executorBotId};}
  private assertCurrent(viewer:Viewer){viewer.controller.signal.throwIfAborted();this.writes.ledger.current(viewer.view,viewer.view.intentId);
+ if(this.writes.ledger.scopeVersion(viewer.view)!==viewer.scopeVersion)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
  const grant=this.writes.ledger.assertGrant(viewer.view,viewer.grantId,viewer.grantVersion);
  if(grant.serverId!==viewer.view.serverId||grant.serverVersion!==viewer.view.serverVersion||this.mcp.scopedCredentialDigest(grant.serverId)!==viewer.credentialDigest)
  throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");}
@@ -60,7 +61,7 @@ export class McpAppsBridge{
  permissionsNotice:"第三方 App 在隔离视图中运行。相机、麦克风、剪贴板、外部网络和宿主文件均未授权；工具调用仍需会话授权和逐次审批。"};
  const viewer:Viewer={view,token,html:resource.html,input:resource.intent.review.arguments,result:(resource.intent.result as{response?:unknown}|null)?.response??resource.intent.result,
  grantId:resource.intent.review.grantId,grantVersion:resource.intent.review.grantVersion,credentialDigest:this.writes.ledger.credentialForIntent(resource.intent.id),
- controller:new AbortController(),initialized:false,ready:false,inputSent:false,events:new Set(),requests:new Map()};this.viewers.set(id,viewer);this.assertCurrent(viewer);return view;}
+ scopeVersion:this.writes.ledger.scopeVersion(input),controller:new AbortController(),initialized:false,ready:false,inputSent:false,events:new Set(),requests:new Map()};this.viewers.set(id,viewer);this.assertCurrent(viewer);return view;}
  closeApp(input:EnvironmentScope&{id:string;expectedEpoch:number}){const parsed=mcpAppCloseSchema.parse(input),viewer=this.viewers.get(parsed.id);if(!viewer)return;
  if(viewer.view.sessionId!==parsed.sessionId||viewer.view.executorBotId!==parsed.executorBotId||viewer.view.epoch!==parsed.expectedEpoch)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");this.retire(viewer);}
  private async handleMessage(viewer:Viewer,raw:unknown):Promise<unknown>{const parsed=rpcSchema.safeParse(raw);if(!parsed.success)return rpcError(undefined,-32600,"Invalid request");const rpc=parsed.data;

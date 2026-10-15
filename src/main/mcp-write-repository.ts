@@ -79,6 +79,7 @@ function intent(row:IntentRow):McpWriteIntent{const review=mcpWriteReviewSchema.
 export class McpWriteRepository{
  constructor(private readonly database:DatabaseSync,private readonly assertScope:(scope:EnvironmentScope)=>void){}
  private scope(input:EnvironmentScope){const scope=environmentScopeSchema.parse({sessionId:input.sessionId,executorBotId:input.executorBotId});this.assertScope(scope);return scope;}
+ scopeVersion(input:EnvironmentScope){const scope=this.scope(input);const row=this.database.prepare("SELECT version FROM conversation_scope_versions WHERE session_id=?").get(scope.sessionId) as {version:number}|undefined;if(!row)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");return row.version;}
  grants(input:EnvironmentScope){const scope=this.scope(input);return (this.database.prepare("SELECT * FROM mcp_tool_grants WHERE session_id=? AND executor_bot_id=? ORDER BY created_at,id").all(scope.sessionId,scope.executorBotId) as GrantRow[]).map(grant);}
  grant(input:McpToolGrantInput,credentialDigest:string):McpToolGrant{const parsed=mcpToolGrantSchema.parse(input),scope=this.scope(parsed),old=this.database.prepare("SELECT * FROM mcp_tool_grants WHERE session_id=? AND executor_bot_id=? AND server_id=? AND tool_name=?").get(scope.sessionId,scope.executorBotId,parsed.serverId,parsed.toolName) as GrantRow|undefined;
  if(old&&old.version!==parsed.expectedVersion||!old&&parsed.expectedVersion!==undefined)throw new AevorenBotError("INVALID_REQUEST","授权版本已变化。");
