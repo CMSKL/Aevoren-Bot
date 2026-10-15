@@ -12,7 +12,7 @@ function value<T>(result:ApiResult<T>):T{if(!result.ok)throw new Error(result.er
 test("real realtime UI streams generated PCM, delegates frozen ASR and stops its owned microphone",async()=>{
   test.setTimeout(90_000);
   const data=mkdtempSync(join(tmpdir(),"aevoren-realtime-ui-")),repository=new AppRepository(join(data,"aevoren-bot.sqlite"));
-  const actor=repository.createBot();repository.updateBot(actor.bot.id,actor.bot.version,{name:"实时语音验收"});repository.setSetting("memory.capture.enabled","false",false);repository.close();
+  const actor=repository.createBot(), other=repository.createBot();repository.updateBot(actor.bot.id,actor.bot.version,{name:"实时语音验收"});repository.setSetting("memory.capture.enabled","false",false);repository.close();
   const server=new WebSocketServer({host:"127.0.0.1",port:0}),received:Record<string,unknown>[]=[],errors:string[]=[];
   let sockets=0,commits=0,responses=0,pcmSamples=0,cloudOutput:string|null=null;
   await new Promise<void>(resolve=>server.once("listening",resolve));
@@ -37,7 +37,7 @@ test("real realtime UI streams generated PCM, delegates frozen ASR and stops its
           send(socket,{type:"response.function_call_arguments.done",response_id:responseId,item_id:"function_1",call_id:"call_1",name:"delegate_to_runtime",arguments:args});
           send(socket,{type:"response.done",response:{id:responseId,status:"completed",output:[{id:"function_1",type:"function_call",call_id:"call_1",name:"delegate_to_runtime",arguments:args,status:"completed"}]}});
         }else{
-          const pcm=Buffer.alloc(4800);for(let i=0;i<2400;i++)pcm.writeInt16LE(Math.round(Math.sin(i/20)*2000),i*2);
+          const pcm=Buffer.alloc(24_000);for(let i=0;i<12_000;i++)pcm.writeInt16LE(Math.round(Math.sin(i/20)*2000),i*2);
           send(socket,{type:"response.output_audio.delta",response_id:responseId,item_id:"audio_1",content_index:0,delta:pcm.toString("base64")});
           send(socket,{type:"response.done",response:{id:responseId,status:"completed",output:[]}});
         }
@@ -60,9 +60,9 @@ test("real realtime UI streams generated PCM, delegates frozen ASR and stops its
       const RealAudioContext=window.AudioContext;
       // Keep the real Chromium processor/sample clock, mute only this fixture's speaker sink.
       const connect=AudioNode.prototype.connect;
-      AudioNode.prototype.connect=function(destination: AudioNode | AudioParam, output?:number, input?:number) {
-        if(destination instanceof AudioDestinationNode){const mute=this.context.createGain();mute.gain.value=0;connect.call(mute,destination,0,0);return connect.call(this,mute,output??0,input??0);}
-        return destination instanceof AudioParam?connect.call(this,destination,output??0):connect.call(this,destination,output??0,input??0);
+      AudioNode.prototype.connect=function(this:AudioNode,destination: AudioNode | AudioParam, output?:number, input?:number) {
+        if(destination instanceof AudioDestinationNode){const mute=this.context.createGain();mute.gain.value=0;Reflect.apply(connect,mute,[destination,0,0]);return Reflect.apply(connect,this,[mute,output??0,input??0]);}
+        return destination instanceof AudioParam?Reflect.apply(connect,this,[destination,output??0]):Reflect.apply(connect,this,[destination,output??0,input??0]);
       } as typeof AudioNode.prototype.connect;
       const global=window as unknown as {realtimeFixture:{requests:number;stopped:number;contexts:AudioContext[]}};
       global.realtimeFixture={requests:0,stopped:0,contexts:[]};
@@ -76,6 +76,7 @@ test("real realtime UI streams generated PCM, delegates frozen ASR and stops its
     });
     const config=value(await page.evaluate(()=>(window as unknown as {aevorenBot:AevorenBotApi}).aevorenBot.voice.configurations())).find(item=>item.kind==="realtime")!;
     value(await page.evaluate(input=>(window as unknown as {aevorenBot:AevorenBotApi}).aevorenBot.voice.saveConfiguration(input),{kind:"realtime" as const,expectedVersion:config.version,enabled:true,model:config.model,voice:config.voice,apiKey:"realtime-fixture-key"}));
+    await page.getByRole("listitem",{name:other.bot.name,exact:true}).click();
     await page.getByRole("listitem",{name:"实时语音验收",exact:true}).click();
     const panel=page.getByRole("region",{name:"实时语音",exact:true});
     await panel.getByRole("button",{name:"连接实时语音",exact:true}).click();
@@ -87,8 +88,17 @@ test("real realtime UI streams generated PCM, delegates frozen ASR and stops its
     await expect(panel).toContainText("只回复一句简短问候");
     const snapshot=value(await page.evaluate(id=>(window as unknown as {aevorenBot:AevorenBotApi}).aevorenBot.runtime.getSessionSnapshot(id),actor.session.id));
     const human=snapshot.entries.find(entry=>entry.origin?.kind==="voice-input");expect(human?.body).toBe("只回复一句简短问候");expect(JSON.stringify(human)).not.toContain("发送邮件");
+    await expect(panel.getByRole("button",{name:"打断语音",exact:true})).toBeEnabled();
+    await panel.getByRole("button",{name:"打断语音",exact:true}).click();
+    await expect(panel.getByRole("button",{name:"开始说话",exact:true})).toBeEnabled();
+    const beforeSecond=pcmSamples;
+    await panel.getByRole("button",{name:"开始说话",exact:true}).click();
+    await expect.poll(()=>pcmSamples).toBeGreaterThan(beforeSecond+2400);
+    await panel.getByRole("button",{name:"结束本轮并提交",exact:true}).click();
+    await expect.poll(()=>commits).toBe(2);await expect.poll(()=>responses).toBe(3);
+    await expect(panel).toContainText("语音第 2 轮");
     await panel.getByRole("button",{name:"停止语音通话",exact:true}).click();
-    await expect.poll(()=>page.evaluate(()=>(window as unknown as {realtimeFixture:{requests:number;stopped:number}}).realtimeFixture)).toMatchObject({requests:1,stopped:1});
+    await expect.poll(()=>page.evaluate(()=>(window as unknown as {realtimeFixture:{requests:number;stopped:number}}).realtimeFixture)).toMatchObject({requests:2,stopped:2});
     expect(errors).toEqual([]);expect(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().some(win=>win.isVisible()))).toBe(false);
   }finally{await closeTestApplication(app);for(const socket of server.clients)socket.terminate();await new Promise<void>(resolve=>server.close(()=>resolve()));removeTestDirectory(data);}
 });
