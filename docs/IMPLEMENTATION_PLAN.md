@@ -417,3 +417,8 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 ### beta.38 当前冻结业务源码普通回归
 
 最终限制为单测试进程的一轮完整普通回归通过：150 文件通过／8 条件跳过，1,713 项通过／45 条件跳过，145.66 秒，原有 5 秒测试期限与产品群聊并行均未修改。完整 ESLint 通过。此前两进程一轮仍有两项超时及超时清理后的 database-not-open 未处理异常，日志保留；不能重记为成功。两失败文件单独串行通过 71 项；以上全绿整轮另有独立日志 `/tmp/aevoren-realtime38-serial-full-unit.log`。该冻结源码仍待合入阶段 5.2 的聊天区语音布局修复，再做完整类型、构建及安装包验收。
+
+
+### beta.33 晋级 Windows 失败（不发布）
+
+晋级 PR #43 的运行 38707578493：Linux、macOS 与密钥检查通过，Windows 源码选择 34 项通过、1 项失败。失败为 `native-outbound.spec.ts` 的未知结果重启场景，`closeTestApplication` 在拥有的 Electron 进程／stdio 收尾阶段报错；该场景含中途重启，尚不能据终端错误断定全部业务断言已完成。Windows 后续关闭、打包和安装验证均未执行，因此当前不合并或发布 beta.33。原始日志 `/tmp/aevoren-beta33-windows-promotion-failure.log` 已保留，正分析 trace 与关闭诊断，未通过盲目重跑或增加期限掩盖失败。
