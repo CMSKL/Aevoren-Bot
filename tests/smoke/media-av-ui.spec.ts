@@ -50,7 +50,18 @@ test("actual local audio/video controls decode owned bytes without autoplay and 
     const video = dialog.locator("video"); await expect(video).toHaveCount(1);
     await expect.poll(() => video.evaluate((element: HTMLVideoElement) => ({ width: element.videoWidth, height: element.videoHeight, paused: element.paused, autoplay: element.autoplay }))).toEqual({ width: 32, height: 24, paused: true, autoplay: false });
     await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState)).toBeGreaterThanOrEqual(2);
-    const pixel = await video.evaluate((element: HTMLVideoElement) => { const canvas = document.createElement("canvas"); canvas.width = 32; canvas.height = 24; const ctx = canvas.getContext("2d")!; ctx.drawImage(element, 0, 0); return [...ctx.getImageData(16, 12, 1, 1).data]; });
+    // A readyState alone does not attest a presented frame in a hidden window.
+    // Seek the paused preview and wait for a real compositor frame before readback.
+    const presented = await video.evaluate(async (element: HTMLVideoElement) => {
+      const frame = new Promise<VideoFrameCallbackMetadata>(resolve => element.requestVideoFrameCallback((_time, metadata) => resolve(metadata)));
+      const seeked = new Promise<void>((resolve, reject) => { element.addEventListener("seeked", () => resolve(), { once: true }); element.addEventListener("error", reject, { once: true }); });
+      element.currentTime = Math.min(0.1, element.duration / 2); await seeked; const metadata = await frame;
+      const canvas = document.createElement("canvas"); canvas.width = 32; canvas.height = 24; const ctx = canvas.getContext("2d")!; ctx.drawImage(element, 0, 0);
+      return { pixel: [...ctx.getImageData(16, 12, 1, 1).data], paused: element.paused, mediaTime: metadata.mediaTime, frames: metadata.presentedFrames };
+    });
+    await test.info().attach("av-presented-frame", { body: JSON.stringify(presented), contentType: "application/json" });
+    expect(presented.paused).toBe(true); expect(presented.frames).toBeGreaterThan(0);
+    const pixel = presented.pixel;
     expect(pixel[0]).toBeGreaterThan(180); expect(pixel[1]).toBeLessThan(80); expect(pixel[2]).toBeLessThan(80);
     await video.evaluate((element: HTMLVideoElement) => { (window as unknown as { heldAvVideo: HTMLMediaElement }).heldAvVideo = element; });
     await dialog.getByRole("button", { name: "关闭媒体预览", exact: true }).click();
