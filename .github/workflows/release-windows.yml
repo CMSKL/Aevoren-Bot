@@ -77,6 +77,10 @@ jobs:
           if (!(Test-Path $env:AEVOREN_PACKAGED_APP_PATH)) { throw "Missing signed Windows app" }
           pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts
           if ($LASTEXITCODE -ne 0) { throw "Signed Windows library acceptance failed" }
+      - name: Validate close handshakes in the signed Windows app
+        env:
+          AEVOREN_PACKAGED_APP_PATH: "${{ github.workspace }}/dist/win-unpacked/Aevoren Bot.exe"
+        run: pnpm exec playwright test tests/smoke/close-handshake.spec.ts
       - name: Verify Windows release assets and generate checksums
         run: pnpm release:prepare:win
       - run: pnpm sbom:generate
