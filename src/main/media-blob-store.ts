@@ -9,15 +9,16 @@ export function mediaBytesDigest(bytes: Uint8Array): string { return createHash(
 export function assertMediaNotCancelled(signal?: AbortSignal): void {
   if (signal?.aborted) throw new AevorenBotError("TOOL_EXECUTION_CANCELLED");
 }
-function sameFile(a: BigIntStats, b: BigIntStats): boolean {
+function sameFile(a: BigIntStats, b: BigIntStats, expectedDigest?: string): boolean {
   return a.isFile() && b.isFile() && a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.size === b.size
-    && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+    && a.mtimeNs === b.mtimeNs && (expectedDigest !== undefined || a.ctimeNs === b.ctimeNs);
 }
 
-/** Reads a trusted picker/resolved Workspace path without following its final link. */
-export async function readMediaSource(path: string, check: () => void): Promise<Buffer> {
+/** Raw sources require stable ctime. CAS reads may accept link cleanup only after verifying their known digest. */
+export async function readMediaSource(path: string, check: () => void, expectedDigest?: string): Promise<Buffer> {
   let handle;
   try {
+    if (expectedDigest !== undefined && !/^[a-f0-9]{64}$/u.test(expectedDigest)) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
     check();
     const before = await lstat(path, { bigint: true });
     if (!before.isFile() || before.isSymbolicLink()) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
@@ -26,7 +27,7 @@ export async function readMediaSource(path: string, check: () => void): Promise<
     check();
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const opened = await handle.stat({ bigint: true });
-    if (!sameFile(before, opened)) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
+    if (!sameFile(before, opened, expectedDigest)) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
     const bytes = Buffer.alloc(Number(before.size) + 1);
     let length = 0;
     while (length < bytes.length) {
@@ -37,10 +38,12 @@ export async function readMediaSource(path: string, check: () => void): Promise<
     }
     const after = await handle.stat({ bigint: true }), current = await lstat(path, { bigint: true });
     check();
-    if (length !== Number(before.size) || !sameFile(opened, after) || !sameFile(after, current)
+    const content = bytes.subarray(0, length);
+    if (expectedDigest !== undefined && mediaBytesDigest(content) !== expectedDigest) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
+    if (length !== Number(before.size) || !sameFile(opened, after, expectedDigest) || !sameFile(after, current, expectedDigest)
       || await realpath(dirname(path)) !== dirname(path)) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
     check();
-    return bytes.subarray(0, length);
+    return content;
   } catch (error) {
     check();
     if (error instanceof AevorenBotError) throw error;
@@ -87,7 +90,7 @@ export class MediaBlobStore {
     try {
       const root = await realpath(this.root);
       if ((await lstat(this.root)).isSymbolicLink()) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
-      const bytes = await readMediaSource(join(root, sha256.slice(0, 2), sha256), () => assertMediaNotCancelled(signal));
+      const bytes = await readMediaSource(join(root, sha256.slice(0, 2), sha256), () => assertMediaNotCancelled(signal), sha256);
       if (bytes.length !== size || mediaBytesDigest(bytes) !== sha256) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
       return bytes;
     } catch (error) {
