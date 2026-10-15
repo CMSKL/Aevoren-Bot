@@ -2,6 +2,8 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
+当前开发候选为 **v0.3.0-beta.35**。阶段 4 的本机实现、源码和未签名 macOS 包已分别验收；跨平台 CI、真实 Docker 增量场景与签名发行仍是门禁，不能据此宣布阶段整体完成。阶段 5–6 尚未实施。各候选记录保留其当时状态；最新状态以本表与末尾验收更正为准。
+
 ## 已确定的方案
 
 - 电脑首期使用本机 Docker 隔离 Linux 环境，自托管服务器后置。
@@ -28,13 +30,13 @@
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 已纳入 v0.3.0-beta.29 签名发行 | 开发与跨平台安装包验证通过，之前签名 fixture 失败保留为历史记录 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
-| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本、读取／外发和示范本机验收通过，MCP／Apps 及 Notion 更新收尾，阶段尚未完成 | 各源码／包与真实适配器证据分开记录，跨平台 CI／签名发行仍为门禁 |
+| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本、示范、原生读取／外发、MCP／Apps 与 Notion 更新的本机源码／未签名 macOS 包验收通过；阶段发行验收待完成 | 各源码／包与真实适配器证据分开记录，跨平台 CI／签名发行仍为门禁 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
 
-## 阶段 1 交付记录：v0.3.0-beta.27
+## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
 
-当前为候选版本，尚未发布；master 不晋级。已完成以下实现：
+当时为未发布候选；这些能力后来纳入 beta.29 发行。master 不晋级。该候选完成以下实现：
 
 - 资料/文本 Skill CRUD、正文检索、expectedVersion、不可变版本、历史恢复、启停、软删除及显式会话绑定；跨会话只提供可复用元信息，正文读取仍检查绑定。
 - `SKILL.md` YAML 元信息、文件/目录导入、references/scripts/assets 保存、内容寻址摘要校验与固定版本导出。导出保留真实字节、不覆盖已有目标；取消和无效输入不发布部分资源。脚本不执行，二进制只提供元信息。
@@ -55,9 +57,9 @@
 
 验收采用临时数据与受控 localhost HTTP，未调用真实云模型或用户聊天数据库。Windows 符号链接相关用例受运行器权限限制而跳过；未将这些边界标为实际验证。
 
-阶段 1 只完成文本资料与 Skill 能力。阶段 2 已完成开发验收；阶段 3 已完成本机与原生 Linux 核心验收，跨平台最终 CI／签名发布仍在收尾，阶段 4–6 尚未实施。未发布能力不能作为已安装产品的可用功能。
+该历史时点的阶段 1 只完成文本资料与 Skill 能力，阶段 2–3 尚在后续验收；此段不描述 beta.35 的当前实现。未发布能力不能作为已安装产品的可用功能。
 
-## 阶段 2 交付记录：v0.3.0-beta.28 开发候选
+## 阶段 2 交付记录：v0.3.0-beta.28（历史快照）
 
 开发分支为 `codex/docker-execution`，从已验收的 `dev` 创建；`v0.3.0-beta.28` 已合入 beta 并建立同名标签，尚未公开发布，master 不晋级。
 
@@ -88,7 +90,7 @@
 
 本阶段没有交付 BrowserSession、桌面／截图／图像传输、接管、服务预览、可执行 Skill 包、应用连接或语音；这些继续按阶段 3–6 实施。首期命令界面不提供交互式 PTY。
 
-## 阶段 3 交付记录：v0.3.0-beta.29 开发候选
+## 阶段 3 交付记录：v0.3.0-beta.29（候选与发行历史）
 
 当前发行状态： [Beta PR #29](https://github.com/CMSKL/Aevoren-Bot/pull/29) 已合入 beta `c36049b8`，同名标签精确指向该提交；[macOS 签名工作流](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38548693111) 成功并公开 [v0.3.0-beta.29](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.29)。标签和标题均为 `v0.3.0-beta.29`，包含 DMG、ZIP、blockmap、Beta 更新清单、SHA256 与 SBOM。Windows 签名工作流因未配置签名而跳过，不将其声明为已发布签名 Windows 包。下方候选阶段记录保留为开发历史。
 
@@ -133,7 +135,7 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 
 该交付的真实 Google／Notion 凭据尚未提供，不把受控 HTTP／真实本机回调测试算作真实第三方账号验收。宿主读取的二进制只返回元信息与字节计数，没有媒体存储、下载、预览或模型像素。最后安装包与跨平台 CI 尚未完成。使用与支持边界见[原生应用连接](NATIVE_CONNECTORS.md)；外发、示范与写 MCP／Apps 仍为阶段 4 后续单元，阶段 5–6 未开始。
 
-最终 native.31 本机验收：普通测试 1,487 通过、44 跳过，四套 TypeScript、lint、构建、文档、许可、开源和安全检查通过。Drive 25 项适配器测试包含仅请求绑定 ID 的网络边界、空授权零 HTTP、绑定／查询改变拒绝旧分页游标；不用账号级列表再过滤。真实 SQLite 与共享网关验证每次远端读取鲜取、撤销丢弃迟到正文，原草稿版本重试复核当前授权且不覆盖新草稿。最终未签名 macOS beta.31 包的原生连接 2 项与 typed API 1 项通过，确认 isPackaged、beta.31 与随包连接指南；较早 beta.31 包的资料库 8 项也通过。测试均采用假 provider 数据和真实本机 HTTP／IPC／SQLite，不声称真实第三方账号已经授权。跨平台 CI／签名发行仍是后续门禁。
+最终 native.31 本机验收：普通测试 1,487 通过、44 跳过，四套 TypeScript、lint、构建、文档、许可、开源和安全检查通过。Drive 25 项适配器测试包含仅请求绑定 ID 的网络边界、空授权零 HTTP、绑定／查询改变拒绝旧分页游标；不用账号级列表再过滤。真实 SQLite 与共享网关验证每次远端读取鲜取、撤销丢弃迟到正文，原草稿版本重试复核当前授权且不覆盖新草稿。最终未签名 macOS beta.31 包的原生连接 2 项通过，确认 isPackaged、beta.31 与随包连接指南；当时汇总中的 typed API 1 项更正为源码 fixture 证据，原因见末尾验收更正；较早 beta.31 包的资料库 8 项也通过。测试均采用假 provider 数据和真实本机 HTTP／IPC／SQLite，不声称真实第三方账号已经授权。跨平台 CI／签名发行仍是后续门禁。
 
 阶段 4 首个交付从已通过四项跨平台 CI 并合入 dev 的第三阶段创建 `codex/script-skills`，候选版本为 `v0.3.0-beta.30`。固定版本、入口 SHA、镜像和会话／执行者构成脚本授权；每次运行另记录固定参数审批快照。执行复用现有任务、日志、取消与未知结果查询，Worker 1.2.0 使用私有安装缓存和逐任务只读快照。真实 Docker、界面与关键安装包场景已经通过，跨平台最终 CI 与签名发行尚未完成；该单元不代表整个阶段 4 完成。使用与边界见[脚本 Skill](SCRIPT_SKILLS.md)。
 
@@ -179,7 +181,7 @@ Beta 验证的一轮六 Scope 截图返回 `BROWSER_OBSERVATION_STALE`，该请�
 
 外发 beta.32 本机验收：普通测试 1,528 通过、44 跳过；TypeScript、lint、构建、许可 215 包／7 类、文档、开源和安全检查通过。真实 SQLite／Coordinator 网关覆盖有效审批正向回执、固定草稿、已确认／未知结果经过新工具调用查询而不再次审批／派发、六成员全部先启动、单成员停止、同步校验失败清理与移出再加入的不可恢复正文边界。迁移 39 以真实旧库验证历史各表、待处理审批／工具、环境／进程／日志／端口、外键、索引和触发器保留。
 
-隐藏源码外发五项与 typed API 一项共 6／6 通过；最终未签名 macOS beta.32 包为连接 2、外发 5、typed API 1 共 8／8 通过，实查 isPackaged、版本和随包指南。实际本机 HTTP／IPC／SQLite 的 Notion 503 已提交提示保存 unknown，重启后仅 GET 核验确认且 POST 总数为 1；审批前编辑／撤权禁用允许按钮且零外发，六群成员停止一个后另外五个完成，已经打开群聊时新宿主任务仍能精确停止。接管用户应用未参与这些测试，所有 Electron 窗口隐藏。
+隐藏源码外发五项与 typed API 一项共 6／6 通过；最终未签名 macOS beta.32 包为连接 2、外发 5 共 7／7 通过，typed API 1 项更正为独立源码 fixture 证据，实查 isPackaged、版本和随包指南。实际本机 HTTP／IPC／SQLite 的 Notion 503 已提交提示保存 unknown，重启后仅 GET 核验确认且 POST 总数为 1；审批前编辑／撤权禁用允许按钮且零外发，六群成员停止一个后另外五个完成，已经打开群聊时新宿主任务仍能精确停止。接管用户应用未参与这些测试，所有 Electron 窗口隐藏。
 
 首次外发隐藏场景复现严格 Scope 额外参数拒绝，修正为仅会话／执行者后暴露隐藏聊天和应用页的重复审批 portal；修复实际显示归属后重跑通过，没有改用第 n 个匹配或强制点击。外发仍只验证受控服务，真实第三方账号、真实 Windows Docker、签名包另行验收；示范、可写 MCP／Apps 和阶段 5–6 尚未完成。
 
@@ -208,7 +210,7 @@ Frozen SHA-256: main `51d6738f71a2d1f164dd7b7ab46d16da6e5f9ca83a3d98055422406b54
 
 示范 beta.33 集成原生连接及外发基础后，真实迁移 38、39 先于示范迁移 40 执行，连续迁移诊断三项通过；脚本、外发和示范三类固定审批保留各自严格判别分支。专项 68 项与外发／脚本回归 49 项通过，四配置 TypeScript、lint、build、文档、215 包／7 类许可、开源和安全 32 项检查通过。隐藏源码界面 17／17 通过（示范 1、资料库 8、原生连接 2、外发 5、typed API 1）。普通完整检查遇到原有计时断言超时，保留原结果后对未改变的用例复核；不能据此宣布完整门禁已经通过。
 
-审查发现已发布示范的缓存回执可能在资料解绑／删除后仍带旧正文；修复为复核原资源、原版本及当前 Scope，拒绝已解绑／删除资源，原发布 Skill 不重复创建或自动启用。产品网关 37 项通过，含后续修改资料后仍返回原版本、解绑／删除后拒绝两项回归。修复源码重新通过四配置 TypeScript 与构建并冻结未签名 macOS beta.33 包；该包原生连接 2、外发 5、typed API 1 通过，示范 1 在纠正测试读取随包指南的方式后通过，实查 isPackaged、版本与指南正文。最初指南测试在 Electron evaluate 内动态 import 不被支持，改为查询实际 Resources 路径后读取；应用和包均未为此重建或修改。
+审查发现已发布示范的缓存回执可能在资料解绑／删除后仍带旧正文；修复为复核原资源、原版本及当前 Scope，拒绝已解绑／删除资源，原发布 Skill 不重复创建或自动启用。产品网关 37 项通过，含后续修改资料后仍返回原版本、解绑／删除后拒绝两项回归。修复源码重新通过四配置 TypeScript 与构建并冻结未签名 macOS beta.33 包；该包原生连接 2、外发 5 通过，typed API 1 项更正为源码 fixture 证据；示范 1 在纠正测试读取随包指南的方式后通过，实查 isPackaged、版本与指南正文。最初指南测试在 Electron evaluate 内动态 import 不被支持，改为查询实际 Resources 路径后读取；应用和包均未为此重建或修改。
 
 最终完整普通测试记录为 1,540 通过、45 跳过、6 失败：五项原有 5 秒超时（CDP 1 MiB、群聊 20 轮、FIFO 20 轮、工具混合指令循环、诊断参数循环），一项 lead-room 在轮询期限内仍为 running。对应未修改的六个文件单 Worker 复核 128／128 通过，未提高超时或减少断言；保留完整失败证据，远端完整 CI 仍须独立通过，不能把分次复核改记为一次完整全绿。
 
@@ -229,3 +231,13 @@ MCP beta.34 最终源码包含 metadata 私有投影、App-only 路由、统一 
 Combined Stage 4 beta.35 source acceptance after merging MCP beta.34 foundation `4c0834fa`: all four TypeScript projects, full ESLint, one full build and the ordinary single-worker suite passed (1,586 passed, 45 skipped; 130 passed and 8 skipped test files). The combined hidden Electron suite passed 14/14 in 46.7 seconds: demonstrations 1, MCP Apps 3, native reads 2, native outbound including Notion updates 7, typed API 1. The unified parent-owned Apps approval host remained intact; no child native approval portal was restored. Actual migrations 38/39/40/41, private MCP metadata, App-only visibility, demonstration privacy/replay protection and the Worker private staging rename fix were preserved. No new migration or dependency was introduced.
 
 Combined frozen SHA-256: main `b69062c51e85525ae838aaf8659119891d4c7af44bdd4351becb2b51536ab436`, preload `04360d5de6b69c317a2a4f4cbcc56a0a4a92d26e4ef6f1bd00716108cc49d05d`, renderer `a1e3f97f27cc288fe38cb5c3c70f3316696eb9778aea2ea56400cf804a16c301`. Documentation links passed for 34 files; license checks passed for 215 packages / 7 groups, open-source readiness and dependency/security audits passed with the verified existing backport. Package beta.35 and cross-platform CI are separate pending gates; real third-party credentials were unavailable. The earlier isolated Notion source receipts remain historical and are not substituted for this combined build.
+
+## Final beta.35 package and evidence correction
+
+The final MCP setup-failure cleanup `f85c8cc` was integrated as `c384380`. The controlled DNS/client-cleanup suite passed 6 tests with 1 skipped; the scoped-write foundation passed 13 tests, and Node TypeScript passed. The 1,586/45 ordinary and 14-source-case aggregates above belong to the pre-cleanup combined source; they were not relabeled as a fresh full run after this narrow fix.
+
+The rebuilt unsigned macOS beta.35 package from `c384380` passed 21 actual packaged scenarios in 1.4 minutes: Library 8, demonstrations 1, MCP Apps 3, native reads 2 and native outbound including Notion updates 7. Each relevant fixture used the actual package executable and checked packaged metadata. Final bundle SHA-256: main `02945cd6a5439fa5cb52be18366cc8a5fe28aea115045fe6d6642a0cb29309a5`, preload `04360d5de6b69c317a2a4f4cbcc56a0a4a92d26e4ef6f1bd00716108cc49d05d`, renderer `a1e3f97f27cc288fe38cb5c3c70f3316696eb9778aea2ea56400cf804a16c301`.
+
+A final audit found that the old runtime typed-API fixture ignored `AEVOREN_PACKAGED_APP_PATH`; earlier typed-API checks counted in beta.31/beta.32/beta.33/beta.34 package summaries therefore establish source behavior only. Their separate Library/native/outbound/demonstration package receipts remain valid where those fixtures selected and verified the real package. The corrected fixture commit `37c762e` now honors the executable and asserts `isPackaged` and the exact version. Its initial real-package run exposed a source-only mock-keychain-flag assertion; the test now applies that assertion only to source runs. The actual packaged rerun passed 1/1, and the source rerun passed 1/1. Current beta.35 package acceptance is therefore 21 + 1 = 22 actual packaged checks, without retroactively upgrading old evidence. All windows stayed hidden.
+
+Stage 4 has local implementation, source and unsigned macOS-package acceptance; cross-platform CI, actual Docker demonstration increments, Windows Docker and signed publication remain gates. Real user private credentials, Gmail/Drive/Notion account writes, cloud-model inference and audio service integration were not exercised. Phase 5 media/audio/voice and Phase 6 automation/search/thread/template/export extensions remain unimplemented. The complete six-phase scope and branch/release requirements above remain in force; master does not advance.

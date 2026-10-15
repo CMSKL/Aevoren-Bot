@@ -1,6 +1,6 @@
 # Native application connections
 
-This guide covers the v0.3.0-beta.31 development candidate: Gmail, Google Drive and Notion reads plus local drafts. External sending and third-party writes are a subsequent delivery. Validation status is recorded in the [implementation plan](IMPLEMENTATION_PLAN.md).
+This guide describes native reads and local drafts introduced in beta.31 and retained in the beta.35 development candidate. Approved external sending/writing is also implemented; see the separate [external draft guide](NATIVE_OUTBOUND.md) for account/operation/target grants, Gmail send reauthorization, Notion updates and fixed-version approval. Validation status is recorded in the [implementation plan](IMPLEMENTATION_PLAN.md).
 
 ## Configure and authorize
 
@@ -8,7 +8,7 @@ Open **Settings → Application connections (应用连接)**. Configure Gmail or
 
 Click **Authorize** explicitly. Google opens the system browser with PKCE S256 and a random `127.0.0.1` callback port. Cancel or expiry closes the listener and prevents late results from saving credentials. Notion verifies the configured token's identity. Configuring a connection does not authorize a Bot to read it.
 
-- Gmail uses readonly mail access plus identity scopes. Search returns matching message metadata; reading returns selected headers and bounded text, with attachment metadata only. HTML without plain text is identified and displayed as escaped text. This unit does not download attachments or send mail.
+- Gmail uses readonly mail access plus identity scopes. Search returns matching message metadata; reading returns selected headers and bounded text, with attachment metadata only. HTML without plain text is identified and displayed as escaped text. The read adapter does not download attachments. Sending is a separate operation requiring Gmail send authorization and fixed-draft approval.
 - Drive uses its native desktop Picker with exactly `drive.file`, separate from Gmail scopes. Select the files to authorize. Each chat grant can narrow that set further; shortcuts do not broaden access. Google Docs/Sheets/Slides export bounded text, CSV or text respectively.
 - Notion uses API version `2026-03-11`, searches page titles and reads bounded page/block text that the token can access. Share the intended pages with that internal connection in Notion. Search is not a full-text index or a complete list of all accessible pages.
 
@@ -26,11 +26,11 @@ The interface and AI use the same validated `connectors.*` handlers. Models disc
 
 Create a local Gmail message, Drive text-file draft or Notion page draft from the application's chat panel. Each draft fixes its account and authorization version. Saving creates an immutable revision; `expectedVersion` conflicts retain the editor's unsaved content. A retry with the same creation identity returns the original draft rather than creating another.
 
-`drafts.*` supports listing, reading, creating, updating, version history and local deletion. Drafts remain local and have state `local-draft`; no send button or network write occurs when saving. After account authorization is revoked, existing local content remains reviewable/editable within its original scope and is marked unauthorized. A repeated AI mutation returns the original saved revision with current authorization status.
+`drafts.*` supports listing, reading, creating, updating, version history and local deletion. Drafts remain local and have state `local-draft`; saving never sends mail or writes to the remote provider. Preparing and approving an external action is separate from saving. After account authorization is revoked, existing local content remains reviewable/editable within its original scope and is marked unauthorized. A repeated AI mutation returns the original saved revision with current authorization status.
 
 ## Limits and actual support
 
-Responses are bounded to 2 MiB JSON, 4 MiB binary content and 128,000 text characters. Notion recursion and pagination are bounded; truncation is reported. Only fixed official HTTPS endpoints and supported read operations are permitted; credentialed redirects are rejected.
+Responses are bounded to 2 MiB JSON, 4 MiB binary content and 128,000 text characters. Notion recursion and pagination are bounded; truncation is reported. The read adapters permit only fixed official HTTPS endpoints and supported read operations; credentialed redirects are rejected. External writes use a separately granted, fixed-target adapter and approval flow.
 
 Binary bytes may be read by the host, but this unit returns metadata and byte count only. It does not save those bytes as media references, provide downloads/previews or send pixels to a model. Attachment metadata likewise does not prove attachment-content retrieval.
 

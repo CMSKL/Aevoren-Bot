@@ -1,6 +1,6 @@
 # Approved external drafts
 
-This guide accompanies the v0.3.0-beta.35 development candidate. The earlier beta.32 outbound unit has separate source and package receipts; the Notion-update unit passed its own source build and ten hidden Electron checks. Cross-platform CI, installation-package validation and signed publication remain pending. This page does not imply a published installer or verified access to a real third-party account. Configure reads and local drafts using [Native connections](NATIVE_CONNECTORS.md).
+This guide accompanies the v0.3.0-beta.35 development candidate. The earlier beta.32 outbound unit has separate source and package receipts; the Notion-update unit passed its own source build and ten hidden Electron checks. The combined unsigned macOS beta.35 package also passed its own acceptance checks. Cross-platform CI and signed publication remain pending. This page does not imply a published installer or verified access to a real third-party account. Configure reads and local drafts using [Native connections](NATIVE_CONNECTORS.md).
 
 ## Separate writing permission
 
