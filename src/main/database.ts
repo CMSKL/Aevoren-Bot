@@ -89,6 +89,8 @@ import { AevorenBotError } from "./errors";
 import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
 import { MediaRepository, MEDIA_MIGRATION } from "./media-repository";
 import { VoiceRepository, VOICE_MIGRATION } from "./voice-repository";
+import { RealtimeRepository, REALTIME_MIGRATION } from "./realtime-repository";
+import { assertRealtimeAdmission } from "./realtime-admission";
 import { messageMediaReferencesSchema } from "@shared/media-schemas";
 import type { MessageMediaReference } from "@shared/media-contracts";
 import { EnvironmentRepository, ENVIRONMENT_MIGRATION } from "./environment-repository";
@@ -2084,6 +2086,7 @@ export const MIGRATIONS = [
   MCP_WRITE_MIGRATION,
   MEDIA_MIGRATION,
   VOICE_MIGRATION,
+  REALTIME_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3260,6 +3263,7 @@ export class AppRepository {
   readonly library: LibraryRepository;
   readonly media: MediaRepository;
   readonly voice: VoiceRepository;
+  readonly realtime: RealtimeRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
   readonly demonstrations: DemonstrationRepository;
@@ -3293,6 +3297,7 @@ export class AppRepository {
         if (session.roomId && this.getRoom(session.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
         if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
       });
+      this.realtime = new RealtimeRepository(this.database, (sessionId, executorBotId) => this.voice.assertScope(sessionId, { executorBotId }), admission => assertRealtimeAdmission(this, admission));
       this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.demonstrations = new DemonstrationRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.browsers = new BrowserRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
@@ -5685,6 +5690,13 @@ export class AppRepository {
   }
 
   private recordDelegationOrigin(clientNonce: string, origin: import("@shared/contracts").DelegationOrigin): void {
+    if (origin.kind === "voice-input") {
+      const message = this.getUserMessage(clientNonce);
+      this.realtime.assertVoiceOrigin(origin, { sessionId: message.sessionId, clientNonce, text: message.body });
+      this.database.prepare("UPDATE transcript_entries SET origin_json=? WHERE client_nonce=? AND role='user' AND origin_json IS NULL")
+        .run(JSON.stringify(origin), clientNonce);
+      return;
+    }
     if (origin.kind === "routine") {
       if (!origin.routineRunId) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
       const run = this.getRoutineRun(origin.routineRunId);
