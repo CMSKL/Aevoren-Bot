@@ -61,6 +61,24 @@ export class SearchService {
         if (entry.sessionId !== sessionId || entry.generation !== session.generation || entry.status !== "completed") continue;
         yield this.candidate("message", title, entry.body, entry.updatedAt, { type: "message", sessionId, id, generation: entry.generation, seq: entry.seq, digest: hash(entry.body), authorityDigest });
       }
+      if (session.kind === "TASK" && kinds.has("message")) {
+        const policies = context ? [runtimeId ? repo.tasks.runtimeTaskPolicy(runtimeId)! : repo.tasks.taskSessionPolicy(sessionId, actor!)!]
+          : repo.tasks.get(sessionId).admittedExecutorBotIds.flatMap(executor => {
+            try { return [repo.tasks.taskSessionPolicy(sessionId, executor)!]; } catch { return []; }
+          });
+        const seen = new Set<string>();
+        for (const policy of policies) for (const quote of policy.history) {
+          if (seen.has(quote.entryId) || expected && (expected.type !== "message" || expected.id !== quote.entryId)) continue;
+          try {
+            const original = repo.getTranscriptEntry(quote.entryId), origin = repo.getSession(original.sessionId);
+            if (original.generation !== origin.generation || original.generation !== quote.generation || original.status !== "completed" || createHash("sha256").update(original.body).digest("hex") !== quote.digest) continue;
+            seen.add(quote.entryId);
+            yield this.candidate("message", `${title} · 已选历史`, quote.body, original.updatedAt,
+              { type: "message", sessionId, originSessionId: original.sessionId, id: original.id, generation: quote.generation, seq: original.seq, digest: hash(quote.body),
+                authorityDigest: this.authority(sessionId, context, { selection: policy.selectionDigest, incarnation: policy.executorIncarnation }) });
+          } catch { /* A missing/cleared original is unavailable, never a fuzzy replacement. */ }
+        }
+      }
       if (session.kind === "TASK" && kinds.has("task") && (!expected || expected.id === sessionId)) {
         const task = repo.tasks.get(sessionId, actor);
         yield this.candidate("task", task.title, task.title, task.session.updatedAt, { type: "task", sessionId, id: sessionId, version: task.version, digest: hash(task.title), authorityDigest });

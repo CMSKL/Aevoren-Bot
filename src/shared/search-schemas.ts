@@ -6,7 +6,7 @@ const base = { sessionId: id, authorityDigest: digest };
 export const searchScopeSchema = z.discriminatedUnion("kind", [z.object({ kind: z.literal("all") }).strict(), z.object({ kind: z.literal("session"), sessionId: id }).strict(), z.object({ kind: z.literal("project"), projectId: id }).strict()]);
 export const searchQuerySchema = z.object({ query: z.string().trim().min(1).max(200), scope: searchScopeSchema.optional(), kinds: z.array(z.enum(SEARCH_KINDS)).min(1).max(7).refine(items => new Set(items).size === items.length).optional(), cursor: z.string().min(1).max(2048).optional(), limit: z.number().int().min(1).max(100).optional() }).strict();
 export const searchSourceSchema = z.discriminatedUnion("type", [
-  z.object({ ...base, type: z.literal("message"), id, generation: positive, seq: positive, digest }).strict(),
+  z.object({ ...base, type: z.literal("message"), id, generation: positive, seq: positive, digest, originSessionId: id.optional() }).strict(),
   z.object({ ...base, type: z.literal("document"), id, revisionId: id, digest }).strict(),
   z.object({ ...base, type: z.literal("skill"), id, revisionId: id, digest }).strict(),
   z.object({ ...base, type: z.literal("media"), id, reference: messageMediaReferenceSchema, digest }).strict(),

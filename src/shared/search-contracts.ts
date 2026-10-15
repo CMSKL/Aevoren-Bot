@@ -8,7 +8,7 @@ export type SearchScope = { kind: "all" } | { kind: "session"; sessionId: string
 export type SearchQueryInput = { query: string; scope?: SearchScope; kinds?: SearchKind[]; cursor?: string; limit?: number };
 type SourceBase = { sessionId: string; authorityDigest: string };
 export type SearchSourceReference = SourceBase & (
-  | { type: "message"; id: string; generation: number; seq: number; digest: string }
+  | { type: "message"; id: string; generation: number; seq: number; digest: string; originSessionId?: string }
   | { type: "document" | "skill"; id: string; revisionId: string; digest: string }
   | { type: "media"; id: string; reference: MessageMediaReference; digest: string }
   | { type: "voice-transcript"; id: string; generation: number; digest: string }

@@ -6,7 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { TaskExecutorSelection } from "@shared/task-session-contracts";
 import type { SearchExecutionContext, SearchSourceReference } from "@shared/search-contracts";
-import { AppRepository } from "./database";
+import { AppRepository, digestMessage } from "./database";
 import { SearchRepository } from "./search-repository";
 import { SearchService } from "./search-service";
 import { mediaExtractionDigest, type StoredMediaImport } from "./media-repository";
@@ -95,6 +95,25 @@ describe("scoped all-resource search with actual SQLite sources", () => {
     expect(f.search.open({ source: result.items[0]!.source }, context).source).toEqual(result.items[0]!.source);
     expect(() => f.search.query({ query: "needle", scope: { kind: "all" } }, context)).toThrowError(expect.objectContaining({ code: "RUNTIME_CONTROL_SCOPE_INVALID" }));
     expect(() => f.search.query({ query: "needle", scope: { kind: "session", sessionId: privateBot.session.id } }, context)).toThrowError();
+  });
+  it("searches only explicitly selected parent-history snapshots under the Task scope", () => {
+    const f = fixture(), repo = f.repository, chosen = message(repo, f.owner.session.id, "needle SELECTED_HISTORY_QUOTE");
+    message(repo, f.owner.session.id, "needle PRIVATE_UNSELECTED_PARENT_HISTORY");
+    const task = repo.tasks.create({ parentSessionId: f.owner.session.id, expectedScopeVersion: 1, clientNonce: randomUUID(), title: "Quoted context", selections: [selected(f.owner.bot.id, { history: [{ entryId: chosen.id, generation: chosen.generation, digest: digestMessage(chosen.body) }] })] });
+    const context = runtime(repo, task.session.id, f.owner.bot.id), result = f.search.query({ query: "needle", kinds: ["message"] }, context);
+    expect(result.items).toHaveLength(1); expect(result.items[0]!.snippet).toContain("SELECTED_HISTORY_QUOTE");
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_UNSELECTED_PARENT_HISTORY");
+    expect(result.items[0]!.source).toMatchObject({ type: "message", sessionId: task.session.id, originSessionId: f.owner.session.id, id: chosen.id, seq: chosen.seq, generation: chosen.generation });
+    expect(f.search.open({ source: result.items[0]!.source }, context).source).toEqual(result.items[0]!.source);
+    expect(() => f.search.query({ query: "needle", scope: { kind: "session", sessionId: f.owner.session.id } }, context)).toThrowError();
+  });
+  it("does not open a cleared selected-history origin or replace it with identical new text", () => {
+    const f = fixture(), repo = f.repository, chosen = message(repo, f.owner.session.id, "needle SELECTED_OLD_ORIGIN");
+    const task = repo.tasks.create({ parentSessionId: f.owner.session.id, expectedScopeVersion: 1, clientNonce: randomUUID(), title: "Quoted context", selections: [selected(f.owner.bot.id, { history: [{ entryId: chosen.id, generation: chosen.generation, digest: digestMessage(chosen.body) }] })] });
+    const context = runtime(repo, task.session.id, f.owner.bot.id), hit = f.search.query({ query: "needle", kinds: ["message"] }, context).items[0]!;
+    repo.clearConversation(f.owner.session.id); message(repo, f.owner.session.id, "needle SELECTED_OLD_ORIGIN");
+    expect(() => f.search.open({ source: hit.source }, context)).toThrowError();
+    expect(f.search.query({ query: "needle", kinds: ["message"] }, context).items).toEqual([]);
   });
   it("does not admit a later selected document to an originally empty Task Runtime", () => {
     const f = fixture(), repo = f.repository, doc = repo.library.create({ sessionId: f.owner.session.id, kind: "document", name: "Doc", body: "needle LATER_SOURCE" });
