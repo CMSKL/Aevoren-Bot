@@ -405,6 +405,7 @@ export class ProductOperationService {
       metadata: { operation: tool.operation, resourceCount: createdCount },
     })), memorySourceEntryId, { runtimeRunId: runtime.id, executorBotId: runtime.executorBotId, sessionId: runtime.sessionId, signal });
     let result = await scopedHandlers.get(definition.channel)!(input);
+    if (tool.operation === "mcp.openApp") return this.result({ ...result as { status: string; reason: string }, operation: tool.operation });
     let images: ModelImageAttachment[] | undefined;
     if (tool.operation === "computer.screenshot") {
       const shot = result as import("@shared/browser-contracts").ComputerScreenshot;

@@ -70,13 +70,17 @@ export class McpWriteService{
  this.jobs.set(prior.id,{controller,grantId:prior.review.grantId,promise});void promise.finally(()=>this.jobs.delete(prior.id)).catch(()=>{});return promise;}
  cancelTool(input:McpWriteIdInput){const value=this.ledger.current(input,input.id);this.jobs.get(value.id)?.controller.abort();this.uiTasks.get(value.id)?.controller.abort();
  return value.state==="prepared"?this.ledger.settle(value.id,"rejected",null,"USER_CANCELLED"):value.state==="dispatching"?this.ledger.settle(value.id,"unknown",null,"CANCELLED_AFTER_DISPATCH"):value;}
+ /** Host-only; callers must forward exclusively to an authorized isolated App. */
+ appToolResult(input:McpWriteIdInput,context:Context={}){this.context(input,context);const intent=this.ledger.current(input,input.id),server=this.repository.getMcpServerConfig(intent.review.serverId);
+ if(!server.enabled||server.version!==intent.review.serverVersion||this.mcp.scopedCredentialDigest(server.id)!==this.ledger.credentialForIntent(intent.id))throw new AevorenBotError("MCP_AUTH_REQUIRED");
+ return this.ledger.appResponse(input,intent.id);}
  async appResource(input:McpWriteIdInput,context:Context={}){this.context(input,context);const intent=this.ledger.current(input,input.id);if(intent.state!=="confirmed")throw new AevorenBotError("MCP_RESULT_INVALID");
  const permission=this.ledger.assertGrant(input,intent.review.grantId,intent.review.grantVersion),session=await this.mcp.openScoped(permission.serverId,permission.serverVersion,context.signal??new AbortController().signal);
  try{const tool=this.definition(session,permission,"user");if(!tool.uiResourceUri)throw new AevorenBotError("MCP_TOOL_NOT_FOUND");
  if(session.credentialDigest!==this.ledger.credentialForIntent(intent.id))throw new AevorenBotError("MCP_AUTH_REQUIRED");
  const result=await session.readResource(tool.uiResourceUri);this.context(input,context);const html=result.contents.find(value=>value.uri===tool.uiResourceUri&&"text" in value&&value.mimeType==="text/html;profile=mcp-app");
  if(!html||!("text" in html)||Buffer.byteLength(html.text)>384000)throw new AevorenBotError("MCP_RESULT_INVALID");
- return {intent,tool,html:html.text,resourceResult:result,viewerId:randomUUID(),epoch:1,resourceDigest:mcpDigest(html.text)};
+ return {intent,tool,appResponse:this.appToolResult({...this.scope(input),id:intent.id,expectedVersion:intent.version},context),html:html.text,resourceResult:result,viewerId:randomUUID(),epoch:1,resourceDigest:mcpDigest(html.text)};
  }finally{await session.close();}}
  async requestApproval(input:McpWriteIdInput,coordinator:WorkspaceToolCoordinator):Promise<ToolPrepareResult>{
  const intent=this.ledger.get(input);this.assertApprovalReview(intent.review,input);

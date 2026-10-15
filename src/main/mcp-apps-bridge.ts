@@ -12,7 +12,7 @@ const APP_PROTOCOL="2026-01-26",MAX_RPC_BYTES=160000;
 const rpcSchema=z.object({jsonrpc:z.literal("2.0"),id:z.union([z.string().max(100),z.number().int()]).optional(),method:z.string().min(1).max(100),params:z.record(z.string(),z.json()).optional()}).strict();
 type Rpc=z.infer<typeof rpcSchema>;
 type Viewer={view:McpAppView;token:string;html:string;input:Record<string,unknown>;result:unknown;grantId:string;grantVersion:number;credentialDigest:string;
- scopeVersion:number;controller:AbortController;initialized:boolean;ready:boolean;inputSent:boolean;events:Set<ServerResponse>;requests:Map<string,{digest:string;promise:Promise<unknown>}>};
+ scopeVersion:number;controller:AbortController;initialized:boolean;ready:boolean;inputSent:boolean;events:Set<ServerResponse>;requests:Map<string,{digest:string;promise:Promise<unknown>;grant?:{id:string;version:number}}>};
 type Options={requestAndWait:(intent:McpWriteIntent,signal:AbortSignal)=>Promise<McpWriteIntent>};
 const rpcError=(id:Rpc["id"],code:number,message:string,data?:unknown)=>({jsonrpc:"2.0",id:id??null,error:{code,message,...(data?{data}:{})}});
 export class McpAppsBridge{
@@ -62,14 +62,15 @@ export class McpAppsBridge{
  const id=randomUUID(),token=randomBytes(32).toString("hex"),view:McpAppView={...this.scope(input),id,intentId:resource.intent.id,serverId:resource.tool.serverId,serverVersion:resource.tool.serverVersion,
  resourceUri:resource.tool.uiResourceUri!,epoch:1,proxyUrl:`${this.origin}/view/${id}/${token}`,title:resource.tool.name,
  permissionsNotice:"第三方 App 在隔离视图中运行。相机、麦克风、剪贴板、外部网络和宿主文件均未授权；工具调用仍需会话授权和逐次审批。"};
- const viewer:Viewer={view,token,html:resource.html,input:resource.intent.review.arguments,result:(resource.intent.result as{response?:unknown}|null)?.response??resource.intent.result,
+ const viewer:Viewer={view,token,html:resource.html,input:resource.intent.review.arguments,result:resource.appResponse,
  grantId:resource.intent.review.grantId,grantVersion:resource.intent.review.grantVersion,credentialDigest:this.writes.ledger.credentialForIntent(resource.intent.id),
  scopeVersion:this.writes.ledger.scopeVersion(input),controller:new AbortController(),initialized:false,ready:false,inputSent:false,events:new Set(),requests:new Map()};this.viewers.set(id,viewer);this.assertCurrent(viewer);return view;}
  closeApp(input:EnvironmentScope&{id:string;expectedEpoch:number}){const parsed=mcpAppCloseSchema.parse(input),viewer=this.viewers.get(parsed.id);if(!viewer)return;
  if(viewer.view.sessionId!==parsed.sessionId||viewer.view.executorBotId!==parsed.executorBotId||viewer.view.epoch!==parsed.expectedEpoch)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");this.retire(viewer);}
  private async handleMessage(viewer:Viewer,raw:unknown):Promise<unknown>{const parsed=rpcSchema.safeParse(raw);if(!parsed.success)return rpcError(undefined,-32600,"Invalid request");const rpc=parsed.data;
- this.assertCurrent(viewer);if(rpc.id!==undefined){const key=String(rpc.id),digest=mcpDigest(rpc),prior=viewer.requests.get(key);if(prior)return prior.digest===digest?prior.promise:rpcError(rpc.id,-32600,"Request id conflict");
- if(viewer.requests.size>=200)return rpcError(rpc.id,-32000,"Viewer request limit reached");const promise=this.dispatch(viewer,rpc);viewer.requests.set(key,{digest,promise});return promise;}return this.dispatch(viewer,rpc);}
+ this.assertCurrent(viewer);if(rpc.id!==undefined){const key=String(rpc.id),digest=mcpDigest(rpc),prior=viewer.requests.get(key);if(prior){if(prior.digest!==digest)return rpcError(rpc.id,-32600,"Request id conflict");
+ if(prior.grant)try{this.writes.ledger.assertGrant(viewer.view,prior.grant.id,prior.grant.version);}catch{return rpcError(rpc.id,-32000,"Tool authorization changed");}return prior.promise;}
+ if(viewer.requests.size>=200)return rpcError(rpc.id,-32000,"Viewer request limit reached");const grant=rpc.method==="tools/call"?this.writes.toolGrants(viewer.view).find(value=>value.serverId===viewer.view.serverId&&value.toolName===rpc.params?.name&&!value.revokedAt):undefined;const promise=this.dispatch(viewer,rpc);viewer.requests.set(key,{digest,promise,...(grant?{grant:{id:grant.id,version:grant.version}}:{})});return promise;}return this.dispatch(viewer,rpc);}
  private async dispatch(viewer:Viewer,rpc:Rpc):Promise<unknown>{try{
  if(rpc.method==="ui/notifications/sandbox-proxy-ready")return {notification:{jsonrpc:"2.0",method:"ui/notifications/sandbox-resource-ready",params:{html:viewer.html,viewId:viewer.view.id,epoch:viewer.view.epoch}}};
  if(rpc.method==="ui/initialize"){
@@ -92,7 +93,7 @@ export class McpAppsBridge{
  const intent=await this.writes.prepareTool({...this.scope(viewer.view),grantId:grant.id,expectedGrantVersion:grant.version,arguments:args,targetPreview,clientNonce:randomUUID()},{signal:viewer.controller.signal},"app");
  const finished=await this.options.requestAndWait(intent,viewer.controller.signal);this.assertCurrent(viewer);
  if(finished.state!=="confirmed")return rpcError(rpc.id,-32000,finished.state==="unknown"?"Result unknown; do not resend":"Tool action was not completed",{intentId:finished.id,state:finished.state});
- return {jsonrpc:"2.0",id:rpc.id,result:(finished.result as{response?:unknown}|null)?.response??{content:[]}};}
+ return {jsonrpc:"2.0",id:rpc.id,result:this.writes.appToolResult({...this.scope(viewer.view),id:finished.id,expectedVersion:finished.version},{signal:viewer.controller.signal})};}
  if(rpc.method==="notifications/message")return {notifications:[]};
  return rpcError(rpc.id,-32601,"Host capability is not supported");
  }catch{return rpcError(rpc.id,-32000,"Request denied or connection authorization changed");}}

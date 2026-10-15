@@ -73,9 +73,22 @@ type GrantRow={id:string;session_id:string;executor_bot_id:string;server_id:stri
 type IntentRow={id:string;session_id:string;executor_bot_id:string;client_nonce:string;input_digest:string;state:McpWriteIntent["state"];version:number;review_json:string;review_digest:string;credential_digest:string;result_json:string|null;result_digest:string|null;error_code:string|null;created_at:string;updated_at:string;retired_at:string|null};
 const grant=(row:GrantRow):McpToolGrant=>({id:row.id,sessionId:row.session_id,executorBotId:row.executor_bot_id,serverId:row.server_id,serverVersion:row.server_version,toolName:row.tool_name,
  schemaDigest:row.schema_digest,version:row.version,createdAt:row.created_at,revokedAt:row.revoked_at});
+function privateResult(row:IntentRow):unknown {
+ const result:unknown=row.result_json?JSON.parse(row.result_json):null;
+ if((result===null?null:mcpDigest(result))!==row.result_digest)throw new AevorenBotError("MCP_RESULT_INVALID");
+ return result;
+}
+function publicResult(value:unknown):unknown {
+ if(!value||typeof value!=="object"||Array.isArray(value))return value;
+ const wrapper=value as Record<string,unknown>,response=wrapper.response;
+ if(!response||typeof response!=="object"||Array.isArray(response))return value;
+ // CallToolResult._meta belongs to the App view. Nested user data is not protocol metadata.
+ const projected={...response as Record<string,unknown>};delete projected._meta;
+ return {...wrapper,response:projected};
+}
 function intent(row:IntentRow):McpWriteIntent{const review=mcpWriteReviewSchema.parse(JSON.parse(row.review_json));if(mcpDigest(review)!==row.review_digest)throw new AevorenBotError("MCP_RESULT_INVALID");
- return {id:row.id,sessionId:row.session_id,executorBotId:row.executor_bot_id,state:row.state,version:row.version,review,result:row.result_json?JSON.parse(row.result_json):null,
- resultDigest:row.result_digest,errorCode:row.error_code,createdAt:row.created_at,updatedAt:row.updated_at};}
+ const result=publicResult(privateResult(row));return {id:row.id,sessionId:row.session_id,executorBotId:row.executor_bot_id,state:row.state,version:row.version,review,result,
+ resultDigest:result===null?null:mcpDigest(result),errorCode:row.error_code,createdAt:row.created_at,updatedAt:row.updated_at};}
 export class McpWriteRepository{
  constructor(private readonly database:DatabaseSync,private readonly assertScope:(scope:EnvironmentScope)=>void){}
  private scope(input:EnvironmentScope){const scope=environmentScopeSchema.parse({sessionId:input.sessionId,executorBotId:input.executorBotId});this.assertScope(scope);return scope;}
@@ -102,6 +115,10 @@ export class McpWriteRepository{
  current(input:EnvironmentScope,id:string){const scope=this.scope(input),row=this.row(id);if(row.retired_at||row.session_id!==scope.sessionId||row.executor_bot_id!==scope.executorBotId)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");return intent(row);}
  list(input:EnvironmentScope){const scope=this.scope(input);return (this.database.prepare("SELECT * FROM mcp_write_intents WHERE session_id=? AND executor_bot_id=? AND retired_at IS NULL ORDER BY created_at DESC,id LIMIT 500").all(scope.sessionId,scope.executorBotId) as IntentRow[]).map(intent);}
  get(input:McpWriteIdInput){const parsed=mcpWriteIdSchema.parse(input),value=this.current(parsed,parsed.id);if(value.version!==parsed.expectedVersion)throw new AevorenBotError("INVALID_REQUEST","任务版本已变化。");return value;}
+ /** Host-only App channel. This response must never enter product results or tool journals. */
+ appResponse(input:EnvironmentScope,id:string){const value=this.current(input,id);if(value.state!=="confirmed")throw new AevorenBotError("MCP_RESULT_INVALID");
+ this.assertGrant(input,value.review.grantId,value.review.grantVersion);const raw=privateResult(this.row(id));
+ if(!raw||typeof raw!=="object"||!("response" in raw))throw new AevorenBotError("MCP_RESULT_INVALID");return raw.response;}
  credentialForIntent(id:string){return this.row(id).credential_digest;}
  assertReview(input:EnvironmentScope,review:McpWriteReview){const scope=this.scope(input),value=this.current(scope,review.intentId);if(mcpDigest(value.review)!==mcpDigest(mcpWriteReviewSchema.parse(review)))throw new AevorenBotError("APPROVAL_REVIEW_INVALID");this.assertGrant(scope,review.grantId,review.grantVersion);return value;}
  dispatch(input:EnvironmentScope,id:string,expectedVersion:number){const value=this.get({...this.scope(input),id,expectedVersion});if(value.state!=="prepared")throw new AevorenBotError("TOOL_STATE_INVALID");this.assertReview(input,value.review);

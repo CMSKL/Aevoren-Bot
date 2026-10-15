@@ -39,7 +39,12 @@ export function addMcpWriteProductHandlers(handlers: Map<string, (input?: unknow
       case "mcp.toolResult": return service.toolResult(parsed as McpWriteIdInput);
       case "mcp.listToolIntents": return service.listToolIntents(parsed as EnvironmentScope);
       case "mcp.cancelTool": return service.cancelTool(parsed as McpWriteIdInput);
-      case "mcp.openApp": if (!dependencies.mcpAppsBridge) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE"); return dependencies.mcpAppsBridge.openApp(parsed as McpWriteIdInput);
+      case "mcp.openApp": {
+        if (service.toolResult(parsed as McpWriteIdInput).state !== "confirmed") throw new AevorenBotError("MCP_RESULT_INVALID");
+        if (context) return { status: "waiting_user", reason: "请在当前聊天的应用面板打开已完成结果的交互 App。" };
+        if (!dependencies.mcpAppsBridge) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
+        return dependencies.mcpAppsBridge.openApp(parsed as McpWriteIdInput);
+      }
       case "mcp.closeApp": return dependencies.mcpAppsBridge?.closeApp(parsed as EnvironmentScope & { id: string; expectedEpoch: number });
       case "mcp.executeTool": throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
     }

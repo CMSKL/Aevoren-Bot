@@ -27,7 +27,7 @@ const descriptions: Record<string, string> = {
   toolResult: "读取原 MCP 调用的实际持久状态与未受信任的服务器回执",
   listToolIntents: "列出当前会话 Bot 的 MCP 调用意图，不跨会话读取参数或结果",
   cancelTool: "仅取消所属 MCP 调用；派发后的不确定结果保留为未知",
-  openApp: "打开原工具结果绑定的隔离 MCP App；新工具调用经过同一审批业务层",
+  openApp: "请求用户在应用面板打开原工具结果绑定的隔离 MCP App；AI 返回等待用户处理，不取得本机视图地址",
   closeApp: "关闭指定 epoch 的 MCP App 并终止该视图尚未完成的请求",
 };
 export const MCP_WRITE_PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = Object.entries(MCP_WRITE_CHANNELS)
