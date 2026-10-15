@@ -66,7 +66,7 @@ export type SkillScriptExecution = {
 };
 export type SkillScriptExecutionInput = EnvironmentScope & { id: string };
 export type SkillExecutionChangedEvent = EnvironmentScope & { grantId: string; type: "granted" | "revoked" | "execution"; executionId?: string };
-export type ApprovalReviewSnapshot = {
+export type SkillScriptReviewSnapshot = {
   kind: "skill-script";
   resourceName: string;
   revisionNumber: number;
@@ -85,6 +85,7 @@ export type ApprovalReviewSnapshot = {
     timeoutMs: number;
   };
 };
+export type ApprovalReviewSnapshot = SkillScriptReviewSnapshot | import("./native-outbound-contracts").ExternalDraftReviewSnapshot;
 export type ApprovalReviewInput = EnvironmentScope & { id: string; expectedVersion: number };
 export type ApprovalReviewResult = { snapshot: ApprovalReviewSnapshot | null; executable: boolean; reason?: string };
 export type SkillExecutionApi = {

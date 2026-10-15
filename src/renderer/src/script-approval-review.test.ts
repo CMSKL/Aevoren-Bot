@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ApiResult, ToolInvocation } from "@shared/contracts";
-import type { ApprovalReviewInput, ApprovalReviewResult } from "@shared/skill-execution-contracts";
+import type { ApprovalReviewInput, ApprovalReviewResult, SkillScriptReviewSnapshot } from "@shared/skill-execution-contracts";
 import { isScriptRun, loadScriptApprovalReview, scriptReviewMatches } from "./script-approval-review";
 
 const invocation: ToolInvocation = { id: "tool-a", runtimeRunId: "run-a", sessionId: "private-a", executorBotId: "bot-a", toolCallId: "call-a", idempotencyKey: "nonce-a", commandDigest: "digest-a", toolKind: "product-call", effectClass: "irreversible", workspaceId: null, targetPath: "scripts/main.py", arguments: { kind: "product-call", action: "execute", operation: "skills.runScript", input: { grantId: "grant-a", expectedGrantVersion: 3, args: ["--literal", "$(leave-me); value"], cwd: ".", timeoutMs: 120000 } }, state: "awaiting-approval", attemptCount: 0, approvalRequestId: "approval-a", resultDigest: null, resultMetadata: null, lastErrorCode: null, version: 1, createdAt: "2026-10-14T00:00:00.000Z", updatedAt: "2026-10-14T00:00:00.000Z", startedAt: null, finishedAt: null };
@@ -11,7 +11,8 @@ describe("immutable script approval review", () => {
     expect(isScriptRun(invocation)).toBe(true);
     expect(scriptReviewMatches(invocation, review)).toBe(true);
     for (const change of [{ grantVersion: 4 }, { args: ["--different"] }, { cwd: "other" }, { timeoutMs: 5000 }]) {
-      expect(scriptReviewMatches(invocation, { ...review, snapshot: { ...review.snapshot!, target: { ...review.snapshot!.target, ...change } } })).toBe(false);
+      const snapshot = review.snapshot as SkillScriptReviewSnapshot;
+      expect(scriptReviewMatches(invocation, { ...review, snapshot: { ...snapshot, target: { ...snapshot.target, ...change } } })).toBe(false);
     }
   });
   it("blocks a missing or revoked script review while leaving legacy operations available", () => {

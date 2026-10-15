@@ -1,7 +1,7 @@
-import type { ApprovalReviewSnapshot } from "@shared/skill-execution-contracts";
+import type { SkillScriptReviewSnapshot } from "@shared/skill-execution-contracts";
 import "../styles/skill-scripts.css";
 
-export function SkillScriptReview({ snapshot }: { snapshot: ApprovalReviewSnapshot }): React.JSX.Element {
+export function SkillScriptReview({ snapshot }: { snapshot: SkillScriptReviewSnapshot }): React.JSX.Element {
   const target = snapshot.target;
   return <section className="skill-script-review" aria-label="本次脚本执行快照">
     <h3>{snapshot.resourceName} · v{snapshot.revisionNumber}</h3>

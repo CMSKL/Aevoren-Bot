@@ -1,8 +1,10 @@
+import { NATIVE_OUTBOUND_PRODUCT_OPERATIONS } from "./native-outbound-product";
 import { IPC } from "./channels";
 import { LIBRARY_PRODUCT_OPERATIONS } from "./library-product";
 import { ENVIRONMENT_PRODUCT_OPERATIONS } from "./environment-product";
 import { BROWSER_PRODUCT_OPERATIONS } from "./browser-product";
 import { SKILL_EXECUTION_PRODUCT_OPERATIONS } from "./skill-execution-product";
+import { NATIVE_CONNECTOR_PRODUCT_OPERATIONS } from "./native-connector-product";
 import type { CapabilityEffectClass } from "./contracts";
 
 export type ProductOperationDefinition = { name: string; channel: string; description: string; effectClass: CapabilityEffectClass; interaction: 'none' | 'native' | 'human-decision' };
@@ -13,6 +15,8 @@ export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   ...ENVIRONMENT_PRODUCT_OPERATIONS,
   ...BROWSER_PRODUCT_OPERATIONS,
   ...SKILL_EXECUTION_PRODUCT_OPERATIONS,
+  ...NATIVE_CONNECTOR_PRODUCT_OPERATIONS,
+  ...NATIVE_OUTBOUND_PRODUCT_OPERATIONS,
   { name: "userProfile.get", channel: IPC.userProfileGet, description: "查看 · 个人资料", effectClass: "read-local", interaction: "none" },
   { name: "userProfile.update", channel: IPC.userProfileUpdate, description: "修改 · 个人资料", effectClass: "write-reversible", interaction: "none" },
   { name: "attachments.pick", channel: IPC.attachmentsPick, description: "选择 · 附件", effectClass: "write-reversible", interaction: "native" },

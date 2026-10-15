@@ -94,6 +94,8 @@ import { approvalReviewInputSchema, approvalReviewSnapshotSchema } from "@shared
 import { resourceReferencesSchema } from "@shared/library-schemas";
 import type { ResourceReference } from "@shared/library-contracts";
 import { containsLikelySecret } from "./memory-safety";
+import { NativeOutboundRepository, NATIVE_OUTBOUND_MIGRATION } from "./native-outbound-repository";
+import { NativeConnectorRepository, NATIVE_CONNECTOR_MIGRATION } from "./native-connector-repository";
 
 const ACTIVE_RUNTIME_STATES: readonly RuntimeState[] = [
   "created",
@@ -2070,6 +2072,8 @@ export const MIGRATIONS = [
   ENVIRONMENT_MIGRATION,
   BROWSER_MIGRATION,
   SKILL_EXECUTION_MIGRATION,
+  NATIVE_CONNECTOR_MIGRATION,
+  NATIVE_OUTBOUND_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3241,6 +3245,8 @@ export class AppRepository {
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
   readonly skillExecutions: SkillExecutionRepository;
+  readonly connectors: NativeConnectorRepository;
+  readonly outbound: NativeOutboundRepository;
 
   constructor(private readonly filename: string, private readonly options: AppRepositoryOptions = {}) {
     this.database = new DatabaseSync(filename);
@@ -3256,6 +3262,8 @@ export class AppRepository {
       });
       this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.browsers = new BrowserRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.connectors = new NativeConnectorRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.outbound = new NativeOutboundRepository(this.database, this.connectors, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.skillExecutions = new SkillExecutionRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId),
         (scope, reference) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId)[0]!);
     } catch (error) {
@@ -4335,7 +4343,7 @@ export class AppRepository {
     const session = this.getSession(runtime.sessionId);
     const review = reviewSnapshot === undefined ? undefined : approvalReviewSnapshotSchema.parse(reviewSnapshot);
     if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "skills.runScript") {
-      if (!review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      if (!review || review.kind !== "skill-script") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
       const value = parsed.tool.input as { grantId: string; expectedGrantVersion: number; args: string[]; cwd: string; timeoutMs: number };
       const { grant, content } = this.skillExecutions.assertGranted({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, value.grantId, value.expectedGrantVersion);
       if (review.target.grantId !== grant.id || review.target.grantVersion !== grant.version || review.target.environmentId !== grant.environmentId ||
@@ -4344,6 +4352,14 @@ export class AppRepository {
           review.target.entrySha256 !== grant.entrySha256 || review.target.interpreter !== grant.interpreter ||
           JSON.stringify(review.target.args) !== JSON.stringify(value.args) || review.target.cwd !== value.cwd || review.target.timeoutMs !== value.timeoutMs ||
           review.resourceName !== content.revision.name || review.revisionNumber !== content.revision.number) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "outbound.send") {
+      const value = parsed.tool.input as { id: string; expectedVersion: number };
+      const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, intent = this.outbound.current(scope, value.id);
+      if (intent.state === "prepared") {
+        if (!review || review.kind !== "external-draft") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+        this.outbound.assertReview(scope, review);
+        if (value.id !== intent.id || value.expectedVersion !== review.expectedIntentVersion || intent.version !== value.expectedVersion) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      } else if (review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
     } else if (review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
     this.assertToolSessionScope({ sessionId: session.id, executorBotId: runtime.executorBotId,
       runtimeRunId: runtime.id, workspaceId: toolWorkspaceId(parsed.tool), toolKind: parsed.tool.kind });
@@ -4745,6 +4761,13 @@ export class AppRepository {
     return this.getToolInvocation(id);
   }
 
+  interruptProductToolInvocation(id: string, content: string): ToolInvocation {
+    const value=this.getToolInvocation(id);if(value.state==="interrupted-unknown")return value;
+    if(value.state!=="running"&&value.state!=="dispatching")throw new AevorenBotError("TOOL_STATE_INVALID");
+    const at=now();this.database.prepare(`UPDATE tool_invocations SET state='interrupted-unknown',version=version+1,last_error_code='APP_INTERRUPTED',result_digest=?,result_metadata_json=?,finished_at=?,updated_at=? WHERE id=?`)
+      .run(digestMessage(content),JSON.stringify({nativeOutboundUnknown:true}),at,at,id);
+    return this.getToolInvocation(id);
+  }
   cancelToolInvocation(id: string): ToolInvocation {
     return this.transaction(() => {
       const current = this.getToolInvocation(id);
@@ -5636,7 +5659,14 @@ export class AppRepository {
       .run(JSON.stringify({ ...origin, ancestorRunIds: [...(source.origin?.ancestorRunIds ?? []), parent.id] }), clientNonce);
   }
 
+  prepareHostOutboundMessage(command: SendCommand, executorBotId: string): ReturnType<AppRepository["prepareMessage"]> {
+    this.assertSessionExecutor(command.sessionId,executorBotId);
+    return this.prepareMessageInternal(command,undefined,executorBotId);
+  }
   prepareMessage(command: SendCommand, origin?: import("@shared/contracts").DelegationOrigin): { disposition: "prepared" | "duplicate"; journal: SendJournalEntry } {
+    return this.prepareMessageInternal(command,origin);
+  }
+  private prepareMessageInternal(command: SendCommand, origin?: import("@shared/contracts").DelegationOrigin, hostExecutorBotId?: string): { disposition: "prepared" | "duplicate"; journal: SendJournalEntry } {
     const attachments = normalizeAttachmentDrafts(command.attachments);
     const attachmentMetadata = attachments.map(({ content: _content, ...attachment }) => attachment);
     const resourceRefs = resourceReferencesSchema.parse(command.resourceRefs ?? []);
@@ -5646,7 +5676,9 @@ export class AppRepository {
       if (existing.bodyDigest !== digest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
       return { disposition: "duplicate", journal: existing };
     }
-    if (this.getActiveRuntimeRun(command.sessionId)) throw new AevorenBotError("SESSION_BUSY");
+    const active=(this.database.prepare("SELECT * FROM runtime_runs WHERE session_id=? AND state IN ('created','dispatching','running','streaming','cancel-requested')").all(command.sessionId) as RuntimeRow[]).map(toRuntime);
+    const independentHost=hostExecutorBotId!==undefined&&Boolean(this.getSession(command.sessionId).roomId)&&active.every(run=>run.route==="host-outbound"&&run.executorBotId!==hostExecutorBotId);
+    if(active.length&&!independentHost)throw new AevorenBotError("SESSION_BUSY");
     const session = this.getSession(command.sessionId);
     this.library.assertReferences(session.id, resourceRefs, session.botId ?? undefined);
     const timestamp = now();
@@ -7497,8 +7529,8 @@ export class AppRepository {
     const executorBotId = options.executorBotId ?? this.getBotForSession(journal.sessionId).id;
     this.assertSessionExecutor(journal.sessionId, executorBotId);
     const executorBot = this.getBot(executorBotId);
-    const providerInstanceId = options.providerInstanceId ?? (route === "fake" ? "fake" : executorBot.modelSelection.providerInstanceId);
-    const providerModelId = options.providerModelId ?? (route === "fake" ? "" : executorBot.modelSelection.modelId);
+    const providerInstanceId = options.providerInstanceId ?? (route === "host-outbound" ? "host-outbound" : route === "fake" ? "fake" : executorBot.modelSelection.providerInstanceId);
+    const providerModelId = options.providerModelId ?? (route === "fake" || route === "host-outbound" ? "" : executorBot.modelSelection.modelId);
     const executionKey = options.executionKey ?? clientNonce;
     const batch = this.getRoomBatchByNonce(clientNonce);
     const everyone = batch?.routingMode === "everyone" && !batch.orchestrationEnabled ? batch : null;
@@ -7506,7 +7538,8 @@ export class AppRepository {
     const activeRuns = (this.database
       .prepare(`SELECT * FROM runtime_runs WHERE session_id = ? AND state IN (${placeholders})`)
       .all(journal.sessionId, ...ACTIVE_RUNTIME_STATES) as RuntimeRow[]).map(toRuntime);
-    if (activeRuns.some((runtime) => !everyone || runtime.executorBotId === executorBotId || runtime.executionKey === executionKey)) {
+    const independentHost = route === "host-outbound" && Boolean(this.getSession(journal.sessionId).roomId) && activeRuns.every(runtime => runtime.route === "host-outbound");
+    if (activeRuns.some((runtime) => (!everyone && !independentHost) || runtime.executorBotId === executorBotId || runtime.executionKey === executionKey)) {
       throw new AevorenBotError("SESSION_BUSY");
     }
     if (everyone) {

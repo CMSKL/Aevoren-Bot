@@ -4,6 +4,8 @@ export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
 
 import type { LibraryApi, LibraryContent, ResourceReference } from "./library-contracts";
 import type { ApprovalReviewInput, ApprovalReviewResult, SkillExecutionApi } from "./skill-execution-contracts";
+import type { NativeOutboundApi } from "./native-outbound-contracts";
+import type { NativeConnectorsApi, ConnectorDraftsApi } from "./native-connector-contracts";
 export type { LibraryResource, LibraryContent, ResourceRevision, ResourceReference, MediaRef } from "./library-contracts";
 
 export type Bot = {
@@ -376,7 +378,7 @@ export type SaveCliProviderInput = {
   cliPath: string;
 };
 
-export type RuntimeRoute = "fake" | ProviderDriverKind;
+export type RuntimeRoute = "fake" | "host-outbound" | ProviderDriverKind;
 export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "user" | "assistant";
 
 export type PromptManifestBlock = {
@@ -1250,6 +1252,9 @@ export interface AevorenBotApi {
   processes: import("./environment-contracts").ProcessesApi;
   library: LibraryApi;
   skillsExecution: SkillExecutionApi;
+  outbound: NativeOutboundApi;
+  connectors: NativeConnectorsApi;
+  drafts: ConnectorDraftsApi;
   userProfile: {
     get(): Promise<ApiResult<UserProfile>>;
     update(input: UserProfile): Promise<ApiResult<UserProfile>>;

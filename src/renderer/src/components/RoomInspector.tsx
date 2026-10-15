@@ -11,10 +11,11 @@ import { ConversationWorkspace, type ConversationWorkspaceProps } from "./Conver
 import { LibraryPanel, type LibraryPanelHandle } from "./LibraryPanel";
 import { EnvironmentPanel } from "./EnvironmentPanel";
 import { ComputerPanel } from "./ComputerPanel";
+import { ConnectorPanel, type ConnectorPanelHandle } from "./ConnectorPanel";
 
 type Draft = Pick<RoomDetail["room"], "name" | "description"> & { leadBotId: string | null };
 type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
-type InspectorTab = "details" | "library" | "skill" | "environment" | "browser" | "computer";
+type InspectorTab = "details" | "library" | "skill" | "environment" | "browser" | "computer" | "apps";
 
 export type RoomInspectorHandle = { flush(): Promise<boolean> };
 
@@ -58,6 +59,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const tabChangeRef = useRef(false);
   const documentsRef = useRef<LibraryPanelHandle>(null);
   const skillsRef = useRef<LibraryPanelHandle>(null);
+  const appsRef = useRef<ConnectorPanelHandle>(null);
   const handleProductView = useEffectEvent((event: Event) => {
     const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
     if (request.input.action !== "room_members") return;
@@ -159,6 +161,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
     if (draftRef.current && savedRef.current && !same(draftRef.current, savedRef.current)) return flush();
     if (tab === "library") return await documentsRef.current?.flush() ?? true;
     if (tab === "skill") return await skillsRef.current?.flush() ?? true;
+    if (tab === "apps") return await appsRef.current?.flush() ?? true;
     return true;
   }
 
@@ -238,8 +241,8 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
       </header>
       {error ? <div className="dialog-error" role="alert">{error.safeMessage}</div> : null}
       <div className="library-tabs" role="tablist" aria-label="群聊配置">
-        {([["details", "资料"], ["library", "资料库"], ["skill", "Skill"], ["environment", "执行环境"], ["browser", "浏览器"], ["computer", "电脑"]] as const).map(([value, label]) => <button id={`room-${detail.room.id}-${value}-tab`} key={value} type="button" role="tab" tabIndex={tab === value ? 0 : -1} disabled={changingTab} aria-selected={tab === value} aria-controls={`room-${detail.room.id}-${value}-panel`} onClick={() => void changeTab(value)} onKeyDown={event => {
-          const tabs: InspectorTab[] = ["details", "library", "skill", "environment", "browser", "computer"];
+        {([["details", "资料"], ["library", "资料库"], ["skill", "Skill"], ["environment", "执行环境"], ["browser", "浏览器"], ["computer", "电脑"], ["apps", "应用"]] as const).map(([value, label]) => <button id={`room-${detail.room.id}-${value}-tab`} key={value} type="button" role="tab" tabIndex={tab === value ? 0 : -1} disabled={changingTab} aria-selected={tab === value} aria-controls={`room-${detail.room.id}-${value}-panel`} onClick={() => void changeTab(value)} onKeyDown={event => {
+          const tabs: InspectorTab[] = ["details", "library", "skill", "environment", "browser", "computer", "apps"];
           const index = tabs.indexOf(value);
           const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : null;
           if (!next) return;
@@ -327,6 +330,10 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
       <div id={`room-${detail.room.id}-environment-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-environment-tab`} hidden={tab !== "environment"}>
         <label className="field environment-member-selector"><span>查看成员的执行环境</span><select aria-label="执行环境成员" value={environmentMember?.botId ?? ""} onChange={event => setEnvironmentBotId(event.target.value)}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>
         {environmentMember ? <EnvironmentPanel sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "environment"} initialExecutionId={scriptExecution?.sessionId === detail.session.id && scriptExecution.executorBotId === environmentMember.botId ? scriptExecution.id : undefined} onOpenPreview={pageId => { setPreviewPageId(pageId); void changeTab("browser"); }} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
+      </div>
+      <div id={`room-${detail.room.id}-apps-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-apps-tab`} hidden={tab !== "apps"}>
+        <label className="field environment-member-selector"><span>应用执行成员</span><select aria-label="应用执行成员" value={environmentMember?.botId ?? ""} disabled={changingTab} onChange={event => { const botId = event.target.value; void appsRef.current?.flush().then(saved => { if (saved) setEnvironmentBotId(botId); }); }}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>
+        {environmentMember ? <ConnectorPanel ref={appsRef} sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "apps"} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
       </div>
       {(["browser", "computer"] as const).map(mode => <div key={mode} id={`room-${detail.room.id}-${mode}-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-${mode}-tab`} hidden={tab !== mode}>
         <label className="field environment-member-selector"><span>查看成员的{mode === "browser" ? "浏览器" : "电脑"}</span><select aria-label={mode === "browser" ? "浏览器成员" : "电脑成员"} value={environmentMember?.botId ?? ""} onChange={event => setEnvironmentBotId(event.target.value)}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>

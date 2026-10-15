@@ -35,9 +35,9 @@ describe("SettingsDialog", () => {
     expect(html).toContain('aria-label="关闭设置"');
   });
 
-  it("keeps the six global sections and directs per-Bot configuration to contacts", () => {
+  it("keeps the seven global sections and directs per-Bot configuration to contacts", () => {
     const html = render();
-    for (const label of ["通用", "能力与权限", "长期记忆", "MCP", "主动服务", "版本更新"]) expect(html).toContain(`aria-label="${label}"`);
+    for (const label of ["通用", "能力与权限", "长期记忆", "应用连接", "MCP", "主动服务", "版本更新"]) expect(html).toContain(`aria-label="${label}"`);
     expect(html).not.toContain('aria-label="模型与 CLI"');
     expect(html).toContain("Bot 的资料、模型、工具与记忆范围，请在联系人中配置。");
   });
