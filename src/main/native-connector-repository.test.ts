@@ -144,19 +144,46 @@ describe("native connector scope and immutable drafts", () => {
     expect(value.connectors.get(first.connection.id).account?.accountId).toBe("account-1");
   });
   it("SQLite migration and restart preserve old chats and encrypted records while interrupting pending OAuth", () => {
-    const directory = mkdtempSync(join(tmpdir(), "aevoren-connector-migration-")); directories.push(directory); const path = join(directory, "test.sqlite");
-    const db = new DatabaseSync(path); db.exec("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)");
-    for (const migration of MIGRATIONS.filter(item => item.version <= 37)) {
-      if ("foreignKeysOff" in migration && migration.foreignKeysOff) db.exec("PRAGMA foreign_keys=OFF");
-      db.exec(migration.sql); db.prepare("INSERT INTO schema_migrations VALUES(?,?)").run(migration.version, "2026-10-14T00:00:00Z");
-      db.exec("PRAGMA foreign_keys=ON");
-    } db.close();
-    let value = repository(path); const first = granted(value), draft = value.connectors.createDraft({ ...first.access, content: mail });
-    value.connectors.beginAuthorization({ id: first.connection.id, expectedVersion: first.connection.version });
-    value.close(); repositories.splice(repositories.indexOf(value), 1); value = repository(path);
-    expect(value.getSession(first.scope.sessionId).id).toBe(first.scope.sessionId);
-    expect(value.connectors.readDraft({ ...first.scope, id: draft.draft.id }).revision.content).toEqual(mail);
-    value.connectors.recoverAuthorizations();
-    expect(value.connectors.get(first.connection.id).state).toBe("auth-required"); expect(value.connectors.secrets(first.connection.id).credentials).toBeNull();
+    const started = performance.now(), phases: { phase: string; elapsedMs: number }[] = [];
+    const mark = (phase: string) => phases.push({ phase, elapsedMs: Math.round(performance.now() - started) });
+    try {
+      const directory = mkdtempSync(join(tmpdir(), "aevoren-connector-migration-")); directories.push(directory); const path = join(directory, "test.sqlite");
+      mark("legacy-start");
+      const db = new DatabaseSync(path);
+      try {
+        db.exec("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)");
+        for (const migration of MIGRATIONS.filter(item => item.version <= 37)) {
+          const foreignKeysOff = "foreignKeysOff" in migration && migration.foreignKeysOff;
+          if (foreignKeysOff) db.exec("PRAGMA foreign_keys=OFF");
+          try {
+            db.exec("BEGIN IMMEDIATE");
+            try {
+              expect(db.isTransaction).toBe(true);
+              db.exec(migration.sql);
+              if (foreignKeysOff) expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+              db.prepare("INSERT INTO schema_migrations VALUES(?,?)").run(migration.version, "2026-10-14T00:00:00Z");
+              db.exec("COMMIT");
+            } catch (error) {
+              db.exec("ROLLBACK");
+              throw error;
+            }
+          } finally {
+            if (foreignKeysOff) db.exec("PRAGMA legacy_alter_table=OFF; PRAGMA foreign_keys=ON");
+          }
+        }
+      } finally { db.close(); }
+      mark("legacy-complete"); mark("upgrade-open-start");
+      let value = repository(path);
+      mark("upgrade-open-complete");
+      const first = granted(value), draft = value.connectors.createDraft({ ...first.access, content: mail });
+      value.connectors.beginAuthorization({ id: first.connection.id, expectedVersion: first.connection.version });
+      value.close(); repositories.splice(repositories.indexOf(value), 1);
+      mark("restart-open-start"); value = repository(path); mark("restart-open-complete");
+      expect(value.getSession(first.scope.sessionId).id).toBe(first.scope.sessionId);
+      expect(value.connectors.readDraft({ ...first.scope, id: draft.draft.id }).revision.content).toEqual(mail);
+      value.connectors.recoverAuthorizations();
+      expect(value.connectors.get(first.connection.id).state).toBe("auth-required"); expect(value.connectors.secrets(first.connection.id).credentials).toBeNull();
+      mark("assertions-complete");
+    } finally { console.info("native-connector-migration-phases", JSON.stringify(phases)); }
   });
 });

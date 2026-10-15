@@ -442,6 +442,14 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 
 本机独占资源的最终七项 CAS 测试 7／7 通过（3.06 秒），Node TypeScript 与目标 lint 通过；此前与长场景同时运行时两个原有大文件 IO 测试触发五秒限制的日志独立保留，没有增加时限。本次没有完整套件、构建、Docker 或界面重跑；新的 Windows CI 仍须实际通过。日志分别为 `/tmp/aevoren-media36-ctime-fixture-tests.log` 与 `/tmp/aevoren-media36-ctime-fixture-final-tests.log`。
 
+### beta.36 旧库构造 fixture 事务与阶段诊断
+
+提交 `1a84b81ad942c4b3f73353d44c903f013f42f2e8` 的 [CI 38716663804](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38716663804) 中，Windows CAS 文件六项适用测试通过、一项既有平台条件跳过，受控 ctime 两项没有失败。普通测试共 1,622 通过／61 跳过／1 失败；唯一失败是原生连接器旧库升级及 OAuth 重启场景触发原 60 秒限制，实际同步执行约 98,361 ms。构建、源码界面及安装包未到达。日志没有细分构造／首次打开／重启阶段，不能仅凭超时断言 Windows 停在哪一步。同期 Linux 普通测试 1,639 通过／45 跳过，真实 Docker 浏览器 41／41 通过，六环境并行画面场景为 6,646 ms；不以 Linux 成功替代 Windows 门禁。
+
+该测试的旧版 37 数据库原先逐条自动提交迁移 SQL；本机先增加真实 SQLite `isTransaction` 前置断言，旧 fixture 在 6 ms 内以 false 失败。现在仅让旧库构造采用与已有数据库测试相同的逐迁移显式事务、回滚、外键检查及模式恢复，旧句柄始终关闭；产品迁移、原聊天／密文／OAuth 重启断言及 60 秒时限均未改。七个固定名称及累计毫秒数的阶段记录在 finally 输出，不含路径、正文、凭据或账号，用于下次 Windows 失败定位。
+
+本机定向连接器仓库 12／12 通过（总计 902 ms），Node TypeScript、目标 lint、文档链接与 diff 检查通过；没有完整套件、构建或界面重跑。修正明确证明了 fixture 的事务边界，不宣称已证明 Windows 超时根因或新 Windows 门禁通过。旧失败与本机前置失败日志分别保留为 `/tmp/aevoren-media36-1a84b81-windows-failure.log`、`/tmp/aevoren-media36-legacy-transaction-before.log`。
+
 ### beta.33 外发重启关闭诊断（未发布）
 
 PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38707578493) 在源码 35 项中通过 34 项；外发未知结果场景已确认一次提交和 unknown 状态，但首次重启的关闭夹具失败，第二次启动及只读核验尚未到达。原 trace 只有关闭调用和夹具错误，没有该进程的退出／管道状态或 Main 关闭阶段，不能确定是产品关闭、进程退出还是继承管道未释放。
