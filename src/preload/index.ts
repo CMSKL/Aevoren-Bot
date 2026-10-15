@@ -4,6 +4,7 @@ import { LIBRARY_CHANNELS } from "@shared/library-channels";
 import { ENVIRONMENT_CHANNELS, EXECUTION_CHANNELS, PROCESS_CHANNELS, ENVIRONMENT_EVENTS } from "@shared/environment-channels";
 import { BROWSER_CHANNELS, COMPUTER_CHANNELS, PREVIEW_CHANNELS, BROWSER_EVENTS } from "@shared/browser-channels";
 import { SKILL_EXECUTION_CHANNELS, SKILL_EXECUTION_EVENTS } from "@shared/skill-execution-channels";
+import { NATIVE_CONNECTOR_CHANNELS, CONNECTOR_DRAFT_CHANNELS } from "@shared/native-connector-channels";
 import type { SkillExecutionChangedEvent } from "@shared/skill-execution-contracts";
 import type { BrowserChangedEvent } from "@shared/browser-contracts";
 import type { EnvironmentChangedEvent } from "@shared/environment-contracts";
@@ -23,6 +24,26 @@ function onBrowserChanged(listener: (event: BrowserChangedEvent) => void): () =>
 }
 
 const api: AevorenBotApi = {
+  connectors: {
+    list: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.list, input),
+    configure: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.configure, input),
+    authorize: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.authorize, input),
+    cancelAuthorization: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.cancelAuthorization, input),
+    revoke: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.revoke, input),
+    bindings: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.bindings, input),
+    bind: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.bind, input),
+    unbind: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.unbind, input),
+    search: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.search, input),
+    read: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.read, input),
+  },
+  drafts: {
+    list: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.list, input),
+    create: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.create, input),
+    update: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.update, input),
+    read: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.read, input),
+    versions: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.versions, input),
+    delete: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.delete, input),
+  },
   skillsExecution: {
     scripts: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.scripts, input),
     executionGrants: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.executionGrants, input),

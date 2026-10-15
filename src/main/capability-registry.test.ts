@@ -34,6 +34,25 @@ function provider(): ProviderInstanceInfo {
 }
 
 describe("CapabilityRegistry", () => {
+  it("requires a current native grant and keeps private connection permission out of a Room", async () => {
+    const repository = new AppRepository(":memory:"); repositories.push(repository);
+    const actor = repository.createBot(), peer = repository.createBot();
+    const current = provider();
+    const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities },
+      { name: "Aevoren Bot", version: "1", platform: "darwin", architecture: "arm64", packaged: false });
+    const selection = { botId: actor.bot.id, sessionId: actor.session.id };
+    const capability = async (input = selection) => (await registry.getSnapshot(input)).capabilities.find(item => item.id === "apps.read");
+    const configured = repository.connectors.configure({ provider: "notion", name: "Fixture shared pages", token: "fixture" }, "encrypted-config");
+    const pending = repository.connectors.beginAuthorization({ id: configured.id, expectedVersion: configured.version });
+    const connected = repository.connectors.completeAuthorization(pending.id, pending.authVersion, { accountId: "fixture-account", displayName: "Fixture" }, ["read"], [], "encrypted-credentials");
+    expect(await capability()).toMatchObject({ availability: "unavailable", permissionState: "not-granted" });
+    repository.connectors.bind({ sessionId: actor.session.id, executorBotId: actor.bot.id, connectionId: connected.id, expectedAuthVersion: connected.authVersion });
+    expect(await capability()).toMatchObject({ availability: "available", permissionState: "granted" });
+    const room = repository.createRoom({ name: "Separate grants", memberBotIds: [actor.bot.id, peer.bot.id], leadBotId: null });
+    expect(await capability({ botId: actor.bot.id, sessionId: room.session.id })).toMatchObject({ availability: "unavailable", permissionState: "not-granted" });
+    repository.connectors.revoke({ id: connected.id, expectedVersion: connected.version });
+    expect(await capability()).toMatchObject({ availability: "unavailable", permissionState: "not-granted" });
+  });
   it("advertises only the limited adapter's actual host tools, not unrelated capabilities", async () => {
     const repository = new AppRepository(":memory:");
     repositories.push(repository);

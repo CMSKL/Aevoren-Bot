@@ -4,6 +4,7 @@ export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
 
 import type { LibraryApi, LibraryContent, ResourceReference } from "./library-contracts";
 import type { ApprovalReviewInput, ApprovalReviewResult, SkillExecutionApi } from "./skill-execution-contracts";
+import type { NativeConnectorsApi, ConnectorDraftsApi } from "./native-connector-contracts";
 export type { LibraryResource, LibraryContent, ResourceRevision, ResourceReference, MediaRef } from "./library-contracts";
 
 export type Bot = {
@@ -1250,6 +1251,8 @@ export interface AevorenBotApi {
   processes: import("./environment-contracts").ProcessesApi;
   library: LibraryApi;
   skillsExecution: SkillExecutionApi;
+  connectors: NativeConnectorsApi;
+  drafts: ConnectorDraftsApi;
   userProfile: {
     get(): Promise<ApiResult<UserProfile>>;
     update(input: UserProfile): Promise<ApiResult<UserProfile>>;

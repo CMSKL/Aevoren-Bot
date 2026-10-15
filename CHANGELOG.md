@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.0-beta.31 (development candidate)
+
+- Preserve the main renderer's save/close handshake when an embedded App or preview frame loads; reset readiness only for a real main-page navigation. Add source, installed-package and signed-package close regressions.
+- Add native Gmail, selected/app-created Drive files and shared Notion-page read adapters; Google uses PKCE and a random loopback callback, with separate Drive Picker authorization. Notion uses internal tokens and API version 2026-03-11.
+- Encrypt credentials in the host, keep them outside AI metadata, and require explicit conversation/executor grants. Account/scope changes invalidate grants; token refresh does not expand permissions. Revocation and member removal block late results and old bindings.
+- Add application connection settings and Contact/Room application tabs, with local draft revisions, conflict-preserving editors and fixed-account draft provenance. This delivery has no external send/write path.
+- Keep old draft receipts pinned to their saved revision while querying current authorization; every remote read is fresh and rechecks its grant. Cancellation retains its typed outcome.
+- Controlled adapter, SQLite and hidden UI tests passed. Real third-party authorization, binary media import/preview and final installation-package acceptance remain separate verification boundaries.
+
 ## v0.3.0-beta.30 (development candidate)
 
 - Add exact-revision Bash/Python/Node Skill grants tied to a conversation, executing Bot, entry checksum and environment image. Script metadata does not grant execution permission.
