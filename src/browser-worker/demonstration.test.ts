@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { once } from "node:events";
 import WebSocket from "ws";
 import { describe, expect, it } from "vitest";
@@ -13,18 +13,27 @@ describe("demonstration viewer recording boundary", () => {
   it("requires human control and an actual viewer; records only forwarded current epoch traffic", async () => fixture(async worker => {
     const user = await worker.changeControl("user", { actor: "user", expectedEpoch: 1, operationId: randomUUID() }), id = randomUUID();
     expect(() => worker.demonstration({ action: "start", actor: "user", expectedEpoch: user.controlEpoch, id })).toThrow("DEMONSTRATION_VIEWER_REQUIRED");
-    const received: Buffer[] = []; const tcp = createServer(socket => socket.on("data", bytes => received.push(Buffer.from(bytes)))); tcp.listen(0, "127.0.0.1"); await once(tcp, "listening");
+    const header = Buffer.from("RFB 003.008\n\x01\x01"), click = Buffer.from([5, 1, 0, 40, 0, 90]), text = Buffer.from([4, 1, 0, 0, 0, 0, 0, 115]), sent = Buffer.concat([header, click, text]);
+    let resolveForwarded!: () => void;
+    const forwarded = new Promise<void>(resolve => { resolveForwarded = resolve; });
+    const received: Buffer[] = []; const tcp = createServer(socket => socket.on("data", bytes => {
+      received.push(Buffer.from(bytes));
+      if (Buffer.concat(received).length >= sent.length) resolveForwarded();
+    })); tcp.listen(0, "127.0.0.1"); await once(tcp, "listening");
+    const connected = once(tcp, "connection"); let peer: Socket | undefined;
     const token = "c".repeat(64), server = createBrowserServer(worker, token, (tcp.address() as { port: number }).port); server.listen(0, "127.0.0.1"); await once(server, "listening");
     const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as { port: number }).port}/v1/computer/vnc?epoch=${user.controlEpoch}`, { headers: { authorization: `Bearer ${token}` } });
     try {
-      await once(ws, "open"); worker.demonstration({ action: "start", actor: "user", expectedEpoch: user.controlEpoch, id });
-      const header = Buffer.from("RFB 003.008\n\x01\x01"), click = Buffer.from([5, 1, 0, 40, 0, 90]), text = Buffer.from([4, 1, 0, 0, 0, 0, 0, 115]);
+      await once(ws, "open"); peer = (await connected)[0] as Socket; peer.pause(); worker.demonstration({ action: "start", actor: "user", expectedEpoch: user.controlEpoch, id });
       ws.send(header.subarray(0, 5)); ws.send(Buffer.concat([header.subarray(5), click, text]));
-      await expect.poll(() => worker.demonstrations.status()?.eventCount).toBe(2); expect(Buffer.concat(received)).toEqual(Buffer.concat([header, click, text]));
+      await expect.poll(() => worker.demonstrations.status()?.eventCount).toBe(2);
+      // A recorded write can precede the TCP peer's data callback.
+      expect(received).toHaveLength(0); peer.resume(); await forwarded;
+      expect(Buffer.concat(received)).toEqual(sent);
       await expect(worker.perform("pages", { actor: "ai", expectedEpoch: user.controlEpoch })).rejects.toThrow("BROWSER_USER_CONTROL");
       ws.close(); await once(ws, "close"); await expect.poll(() => worker.demonstrations.status()?.state).toBe("interrupted");
       expect(worker.control().owner).toBe("user"); const snapshot = worker.demonstration({ action: "stop", actor: "user", expectedEpoch: user.controlEpoch, id }) as { events: unknown[] }; expect(snapshot.events).toEqual([{ kind: "pointer", x: 40, y: 90, buttons: 1 }, { kind: "redacted-text" }]);
-    } finally { ws.terminate(); await new Promise<void>(resolve => server.close(() => resolve())); await new Promise<void>(resolve => tcp.close(() => resolve())); }
+    } finally { peer?.resume(); ws.terminate(); await new Promise<void>(resolve => server.close(() => resolve())); await new Promise<void>(resolve => tcp.close(() => resolve())); }
   }));
   it("rejects starting on an unsupported viewer and requires a fresh connection", async () => fixture(async worker => {
     await worker.changeControl("user", { actor: "user", expectedEpoch: 1, operationId: randomUUID() }); worker.viewerConnected(); worker.viewerInputUnsupported();
