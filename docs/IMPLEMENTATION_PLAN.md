@@ -572,3 +572,9 @@ Search2 与继承的 Task3 同轮 **5/5 通过（40.3 秒）**，实际 app.isPa
 头像原子回执修复后重新构建 Main／Preload／Renderer，用已安装且核验版本的 Electron44.3 arm64 执行标准 ASAR／afterPack 未签名打包。最终真实包 Org、Avatar 与 typed API 同轮 **3/3（24.7 秒）** 通过，实际 packaged=true／版本41，所有自有进程正常退出。历史 Task3 仍按修复前六项包回执保留，不重记为最终三项。
 
 最终 Main SHA-256 `f851b04cb6fcac2b12ad1cec643dfef98382b3992bfec5ccc5999eaacc1bc636`，ASAR `e551a5091e67e08215480ff7b1f961ff91737552c931da02c6b5762880f5b00f`。17 项应用和216项Worker/parser文件逐字节一致；随包整理指南与打包时源文档相同。207 parser资产／235资源文件／9556 ASAR条目验证通过，四 Helper 麦克风用途声明通过，不作为签名或真实硬件证据。此处后续文档验收说明未重写已冻结的包内历史指南；生产业务字节不变。持久回执为 `organization41-actual-package-final.log`、`organization41-final-package-bytes.json`、`organization41-final-package-parser.json` 和 `organization41-final-package-microphone.json`。Windows／跨平台及签名发行待正常门禁，master 不晋级。
+
+### beta.41 完整普通回归与旧迁移断言
+
+完整单 worker 普通回归一次运行为 **1,822 通过／2 失败／45 条件跳过**，258.62 秒，173 文件。旧 v28 会话迁移 fixture 的 Bot 全字段比较因新增 avatar_image_json:null 失败；只改断言，逐一保留全部原字段并独立核对新列为空，原文件定向11/11通过。另一项是 Codex 受控子进程 EOF teardown 场景达到原5秒期限，原因仍在排查，不能归为全部绿；没有增加期限。完整 ESLint 通过。最终模型／包三项结果与上方回执分开，不把普通失败掩盖为成功。
+
+Codex EOF 失败文件独立定向为9通过／1失败，原5秒期限仍失败，不能仅归因整轮并发负载。排查继续，暂不晋级该候选。媒体编码夹具继承 beta.37 修复：原固定350毫秒停止会生成110字节 header-only WebM，现等真实有效媒体事件及帧；不改变产品解析或模型业务字节。
