@@ -1,3 +1,4 @@
+import { addMcpWriteProductHandlers, type McpWriteProductDependencies } from "./mcp-write-product-handlers";
 import { addNativeOutboundProductHandlers } from "./native-outbound-product-handlers";
 import type { NativeOutboundService } from "./native-outbound-service";
 import { clipboard } from "electron";
@@ -83,7 +84,7 @@ import { addSkillExecutionProductHandlers, type SkillExecutionProductDependencie
 import { addNativeConnectorProductHandlers, type NativeConnectorProductDependencies } from "./native-connector-product-handlers";
 import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 
-export type ProductDependencies = EnvironmentProductDependencies & BrowserProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
+export type ProductDependencies = McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
   nativeOutboundService?: NativeOutboundService;
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
@@ -143,6 +144,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   addSkillExecutionProductHandlers(handlers, dependencies, commit, libraryContext);
   addNativeConnectorProductHandlers(handlers, dependencies, commit, libraryContext);
   addNativeOutboundProductHandlers(handlers, dependencies, libraryContext);
+  addMcpWriteProductHandlers(handlers, dependencies, libraryContext);
   const handle = (channel: string, operation: (input?: unknown) => unknown): void => { handlers.set(channel, operation); };
   handle(IPC.roomRuntimeCancelMember, (input: unknown) => {
     const runId = runIdSchema.parse(input);
@@ -158,6 +160,9 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
       if (result.snapshot.kind === "skill-script") {
         if (!dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
         dependencies.skillExecutionService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
+      } else if (result.snapshot.kind === "mcp-write") {
+        if (!dependencies.mcpWriteService) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
+        dependencies.mcpWriteService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
       } else {
         if (!dependencies.nativeOutboundService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
         dependencies.nativeOutboundService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
@@ -413,6 +418,10 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   handle(IPC.runtimeCancel, (input: unknown) => {
     const runId = runIdSchema.parse(input), run = repository.getRuntimeRun(runId);
     if (libraryContext && run.sessionId !== libraryContext.sessionId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+    if (run.route === "host-mcp") {
+      if (!dependencies.mcpWriteService) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
+      return dependencies.mcpWriteService.cancelRuntime(runId);
+    }
     if (run.route === "host-outbound") {
       if (!dependencies.nativeOutboundService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
       return dependencies.nativeOutboundService.cancelRuntime(runId);

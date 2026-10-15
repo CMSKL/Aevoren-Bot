@@ -1244,6 +1244,7 @@ export type UserProfile = {
 };
 
 export interface AevorenBotApi {
+  mcpWrites: import("./mcp-write-contracts").McpWriteApi;
   browser: import("./browser-contracts").BrowserApi;
   computer: import("./browser-contracts").ComputerApi;
   preview: import("./browser-contracts").PreviewApi;
