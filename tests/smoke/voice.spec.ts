@@ -172,6 +172,7 @@ test("saves three independent editable voice configurations without echoing keys
     await openVoice(f); expect(await f.page.locator(".composer").evaluate(element => element.getBoundingClientRect().height)).toBe(height);
     const close = f.page.getByRole("button", { name: "关闭语音控制", exact: true }); await expect(close).toBeFocused(); await f.page.keyboard.press("Shift+Tab"); await f.page.keyboard.press("Tab"); await expect(close).toBeFocused();
     await f.application.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]!; window.setMinimumSize(320, 300); window.setSize(720, 520); window.webContents.setZoomFactor(2); });
+    await expect.poll(() => f.page.evaluate(() => innerWidth)).toBeLessThanOrEqual(360);
     await expect.poll(() => f.page.getByRole("dialog", { name: "语音控制", exact: true }).evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1; })).toBe(true);
     await f.page.screenshot({ path: test.info().outputPath("voice-controls-200-percent.png") });
     await f.page.keyboard.press("Escape"); await expect(trigger).toBeFocused(); await expect(trigger).toHaveAttribute("aria-expanded", "false");
