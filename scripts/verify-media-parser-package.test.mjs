@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
+import { runInNewContext } from "node:vm";
 import { test } from "node:test";
 import { verifyMediaParserPackage } from "./verify-media-parser-package.mjs";
 
@@ -13,6 +15,9 @@ async function fixture(callback) {
   const manifest = JSON.parse(readFileSync(resolve("out/media-parser/manifest.json")));
   cpSync(resolve("out/media-parser"), join(resources, "media-parser"), { recursive: true });
   writeFileSync(join(source, "package.json"), JSON.stringify({ version: manifest.applicationVersion }));
+  const dependency = join(source, "node_modules/@hono/node-server/index.js");
+  mkdirSync(dirname(dependency), { recursive: true });
+  writeFileSync(dependency, "export const fixture = true;\n");
   await asar.createPackage(source, join(resources, "app.asar"));
   try { await callback({ resources, source }); } finally { rmSync(root, { recursive: true, force: true }); }
 }
@@ -47,4 +52,25 @@ test("rejects original GPL font bytes with an uppercase extension inside ASAR", 
 test("rejects a changed embedded license", () => fixture(async f => {
   const target = join(f.resources, "media-parser/licenses/pdfjs-dist-LICENSE"); writeFileSync(target, "changed fixture license");
   assert.throws(() => verifyMediaParserPackage(f.resources), /digest mismatch/);
+}));
+
+test("accepts nested ASAR paths under the dependency's real Windows path semantics", () => fixture(async f => {
+  const libraryRequire = createRequire(require.resolve("app-builder-lib"));
+  const filesystemPath = join(dirname(libraryRequire.resolve("@electron/asar")), "filesystem.js");
+  const filesystemRequire = createRequire(filesystemPath), sandbox = { exports: {} };
+  runInNewContext(readFileSync(filesystemPath, "utf8"), {
+    exports: sandbox.exports,
+    require: name => name === "path" ? win32 : filesystemRequire(name),
+    Buffer, process,
+  }, { filename: filesystemPath });
+  const actual = filesystemRequire(filesystemPath).Filesystem.prototype;
+  const windows = sandbox.exports.Filesystem.prototype;
+  const names = ["listFiles", "searchNodeFromDirectory", "getNode"];
+  const original = names.map(name => actual[name]);
+  try {
+    for (const name of names) actual[name] = windows[name];
+    assert.ok(verifyMediaParserPackage(f.resources).asarFiles >= 2);
+  } finally {
+    names.forEach((name, index) => { actual[name] = original[index]; });
+  }
 }));

@@ -450,3 +450,11 @@ PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/act
 
 新构建的本机隐藏 beta.33 源码场景 1／1 通过，第一次关闭约 191 ms、最终清理约 52 ms，均有可信 flush 确认、exit 0、全部管道关闭且未强制终止。四套 TypeScript、正常构建和定向 lint 通过；没有重跑完整套件或打包。该本机成功不证明 Windows 根因已解决，新的正常 CI 将提供该平台的诊断证据。
 
+
+### beta.37 propagation of verified focus and platform fixtures
+
+The beta.37 source now incorporates exactly the beta.36 `ec820c4` BrowserEngine focus fix: only an explicit AI frame-focus request waits up to five seconds for isolated-world focus, then still verifies the unique target, document version, ownership epoch and owned operation before capture. Input focus checks and the separate capture-stage timeout are unchanged. Before applying selected files, the existing engine and frame-diagnostics source were verified byte-identical to the patch's base. This is the only production-code change relative to `064b9e8`; beta.37 voice/UI contracts and version are retained.
+
+The same narrowly selected update includes the deterministic raw mtime/CAS ctime fixtures, transactional legacy-connector migration fixture and native-ASAR-path verifier correction from beta.36. These modify tests and verification only; no deadline, skip, permission or asset-digest rule changes. Local Node 24 checks passed **62/62** (43 focus/browser, seven CAS, 12 native-connector), **8/8** parser-verifier cases including actual Windows ASAR traversal semantics, Node and Browser Worker TypeScript, targeted lint and documentation links. Logs are retained under the persistent local `phase5` evidence directory.
+
+The exact BrowserEngine production source already passed beta.36 Linux CI, including all **41/41** real Docker cases and six independently scoped profiles/frames; that is beta.36 evidence, not a beta.37 Docker run. No Docker Desktop, hidden Electron, full build or packaging was run for this propagation. The prior beta.37 full-source 158/32 and actual-package 39 results retain their earlier boundaries: its cached package still has engine `9788e576...` and has not been relabeled as testing the new focus source. Fresh beta.37 CI must build and verify the combined candidate before Beta promotion or release. Master remains deferred.
