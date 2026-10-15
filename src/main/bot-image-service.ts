@@ -33,7 +33,7 @@ export class BotImageService{
   const parsed=botImageReadSchema.parse(input),bot=this.repository.getBot(parsed.botId),reference=bot.avatarImage;if(!reference)return null;
   if(parsed.expectedImageId&&parsed.expectedImageId!==reference.id)throw new AevorenBotError("MEDIA_NOT_GRANTED");context.signal?.throwIfAborted();context.assertCurrent?.();
   const session=this.repository.getMainSession(bot.id),result=await this.media.readBinary({sessionId:session.id,id:reference.id,reference:{mediaId:reference.id,sha256:reference.sha256}},{signal:context.signal,assertCurrent:context.assertCurrent});
-  const isAuthorized=():boolean=>{try{context.assertCurrent?.();const current=this.repository.getBot(bot.id).avatarImage;return current?.id===reference.id&&current.sha256===reference.sha256&&result.isAuthorized();}catch{return false;}};
+  const isAuthorized=():boolean=>{try{context.assertCurrent?.();const current=this.repository.getBot(bot.id).avatarImage;return current?.id===reference.id&&current.sha256===reference.sha256&&this.media.metadata({sessionId:session.id,id:reference.id}).asset.version===result.item.asset.version&&result.isAuthorized();}catch{return false;}};
   if(!isAuthorized())throw new AevorenBotError("MEDIA_NOT_GRANTED");return {origin:"media",reference,dataBase64:Buffer.from(result.bytes).toString("base64"),isAuthorized};
  }
  async read(input:BotImageReadInput){const image=await this.image(input);return image?{reference:image.reference,dataBase64:image.dataBase64}:null;}
