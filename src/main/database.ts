@@ -3476,7 +3476,7 @@ export class AppRepository {
     const row = this.database.prepare(`SELECT
       EXISTS(SELECT 1 FROM runtime_runs WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested'))
       OR EXISTS(SELECT 1 FROM room_batches WHERE state IN ('queued', 'running'))
-      OR EXISTS(SELECT 1 FROM routine_runs WHERE state = 'running') AS active`).get() as { active: number };
+      OR EXISTS(SELECT 1 FROM routine_runs WHERE state IN ('dispatching', 'running', 'cancel-requested')) AS active`).get() as { active: number };
     return Boolean(row.active);
   }
 

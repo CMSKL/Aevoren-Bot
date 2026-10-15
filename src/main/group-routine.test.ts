@@ -183,8 +183,11 @@ describe("group Routine durable admission and execution", () => {
     try {
       await vi.waitFor(() => expect(f.service.listRuns(routine.id)[0]?.state).toBe("dispatching"));
       const pending = f.service.listRuns(routine.id)[0]!;
+      expect(f.repository.hasActiveTasks()).toBe(true);
       expect(await f.service.cancelRun({ runId: pending.id, expectedVersion: pending.version })).toMatchObject({ state: "cancel-requested", batchId: null });
+      expect(f.repository.hasActiveTasks()).toBe(true);
       release(); expect(await dispatch).toMatchObject({ id: pending.id, state: "cancelled", batchId: null });
+      expect(f.repository.hasActiveTasks()).toBe(false);
       expect(f.repository.listRoomBatches(group.detail.room.id)).toEqual([]); expect(f.repository.listTranscript(group.detail.session.id)).toEqual([]);
     } finally { release(); await dispatch; }
   });
