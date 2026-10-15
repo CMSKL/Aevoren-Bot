@@ -249,12 +249,6 @@ export class ProductOperationService {
   private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<ProductExecutionResult> {
     this.validate(tool, invocation.runtimeRunId);
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
-    if(tool.action==="execute"&&tool.operation==="bots.setImageAvatar"){
-      const service=this.dependencies.botImageService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
-      const input=this.libraryInput(tool.operation,tool.input,runtime) as import("@shared/bot-image-contracts").BotImageSetInput;
-      const result=await service.set(input,{executorBotId:runtime.executorBotId,runtimeRunId:runtime.id,signal,assertCurrent:()=>this.validate(tool,runtime.id)});
-      return this.result({status:"completed",operation:tool.operation,result});
-    }
     if(tool.action==="execute"&&tool.operation==="bots.readImageAvatar"){
       const service=this.dependencies.botImageService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
       const image=await service.image(tool.input as import("@shared/bot-image-contracts").BotImageReadInput,{signal,assertCurrent:()=>this.validate(tool,runtime.id)});
@@ -378,6 +372,11 @@ export class ProductOperationService {
     if (!PUBLIC_READS.has(tool.operation) && !mcpWriteOperation(tool.operation) && tool.operation !== "media.available") {
       const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
       if (previous) {
+        if (tool.operation === "bots.setImageAvatar") {
+          const receipt = JSON.parse(previous) as { result: unknown };
+          return this.result({ status: "previously_completed", operation: tool.operation, reused: true, result: receipt.result,
+            receiptNotice: "返回首次头像发布回执；当前 Bot 头像请重新读取，原图不会再次发布。" });
+        }
         if (tool.operation === "voice.configure") return this.result({ status: "previously_completed", operation: tool.operation, reused: true,
           result: this.dependencies.voiceService!.configurations().find(item => item.kind === (tool.input as { kind: string }).kind),
           receiptNotice: "原配置变更未再次执行；返回当前公开配置状态，不恢复旧密钥或启停状态。" });
@@ -459,6 +458,16 @@ export class ProductOperationService {
         }
         return { content: previous, metadata: { operation: tool.operation, reused: true } };
       }
+    }
+    if (tool.operation === "bots.setImageAvatar") {
+      const service = this.dependencies.botImageService;
+      if (!service) throw new AevorenBotError("INVALID_REQUEST");
+      this.dependencies.repository.assertProductReplaySafe(runtime.clientNonce, tool, runtime.executorBotId);
+      const input = this.libraryInput(tool.operation, tool.input, runtime) as import("@shared/bot-image-contracts").BotImageSetInput;
+      const result = await service.set(input, { executorBotId: runtime.executorBotId, runtimeRunId: runtime.id, signal, assertCurrent: () => this.validate(tool, runtime.id) }, operation =>
+        this.dependencies.repository.commitProductMutation(invocation.id, operation, value => this.result({ status: "completed", operation: tool.operation, result: value })));
+      this.dependencies.productChanged?.();
+      return this.result({ status: "completed", operation: tool.operation, result });
     }
     const taskPolicy=this.dependencies.repository.tasks.runtimeTaskPolicy(runtime.id);
     if(taskPolicy&&tool.operation==="memories.list"){

@@ -35,6 +35,11 @@ describe("published owned Bot image avatars",()=>{
   const current=f.repository.getBot(f.owner.bot.id);let resume!:()=>void;f.hold(new Promise<void>(resolve=>{resume=resolve;}));const second=f.service.set({botId:current.id,expectedVersion:current.version,sessionId:f.owner.session.id,reference:f.source.reference}).catch(error=>error);
   await expect.poll(f.parses).toBe(1);f.media.unbind({sessionId:f.owner.session.id,id:f.source.reference.mediaId});f.media.bind({sessionId:f.owner.session.id,id:f.source.reference.mediaId});resume();await expect(second).resolves.toMatchObject({code:"MEDIA_NOT_GRANTED"});expect(f.media.list({sessionId:f.owner.session.id})).toEqual(before);
  });
+ it("rolls back the published asset and Bot when its atomic tool receipt cannot commit",async()=>{
+  const f=await fixture(),before=f.media.list({sessionId:f.owner.session.id});
+  await expect(f.service.set({botId:f.owner.bot.id,expectedVersion:f.owner.bot.version,sessionId:f.owner.session.id,reference:f.source.reference},{},operation=>f.repository.demonstrationsTransaction(()=>{operation();throw new Error("Receipt rejected");}))).rejects.toThrow("Receipt rejected");
+  expect(f.repository.getBot(f.owner.bot.id).avatarImage).toBeUndefined();expect(f.repository.getBot(f.owner.bot.id).version).toBe(f.owner.bot.version);expect(f.media.list({sessionId:f.owner.session.id})).toEqual(before);
+ });
  it("cancels only its trusted UI image intent before publication",async()=>{
   const f=await fixture();let release!:()=>void;f.hold(new Promise<void>(resolve=>{release=resolve;}));const requestId=randomUUID();const outcome=f.service.set({botId:f.owner.bot.id,expectedVersion:f.owner.bot.version,sessionId:f.owner.session.id,reference:f.source.reference,requestId}).catch(error=>error);
   await expect.poll(f.parses).toBe(1);f.service.cancelUI(requestId);release();await expect(outcome).resolves.toMatchObject({code:"TOOL_EXECUTION_CANCELLED"});expect(f.repository.getBot(f.owner.bot.id).avatarImage).toBeUndefined();expect(f.media.list({sessionId:f.owner.session.id})).toHaveLength(1);
