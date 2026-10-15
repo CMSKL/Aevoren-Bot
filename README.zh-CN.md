@@ -14,7 +14,7 @@ Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联�
 
 > **源码版本：v0.3.0-beta.33（开发候选）。** 当前源码新增用户明确开始的电脑示范录制与待审阅 Skill 草稿，并保留 Gmail、Drive、Notion 固定草稿版本的外发审批。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
-[v0.3.0-beta.29](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.29) 已公开发布签名 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输和登记服务预览。脚本 Skill 与原生应用连接作为后续单元验收。真实 Windows Docker、真实第三方账号仍未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
+[v0.3.0-beta.31](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.31) 已公开发布签名 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输、登记服务预览、脚本 Skill、Gmail／Drive／Notion 原生读取及本地草稿。下方外发与示范能力属于本分支 beta.33 源码候选。真实 Windows Docker、真实第三方账号仍未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
 
 > **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 
@@ -92,7 +92,7 @@ Fake Provider 是确定性的，不需要账号或 API Key。源码构建、数�
 
 AI 操作与界面共用宿主校验和权限规则。创建 Bot 或群聊支持补充角色等多轮澄清，实际创建仍需要真实用户审批。工具回执区分实际执行与等待状态，模型文字本身不能证明操作成功。
 
-现在可创建、导入、发现并按需加载已授权文本 Skill。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用。Bash、Python、Node 脚本先授权固定版本、入口和环境镜像，再确认每次运行的参数，见[脚本 Skill](docs/SCRIPT_SKILLS.md)。当前开发候选新增[原生应用连接](docs/NATIVE_CONNECTORS.md)，可按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。外发／第三方写入、示范草稿与语音继续分交付实施；二进制预览及真实账号授权不能由受控测试证明。受限界面动作操作 Aevoren 自身界面。
+现在可创建、导入、发现并按需加载已授权文本 Skill。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用。Bash、Python、Node 脚本先授权固定版本、入口和环境镜像，再确认每次运行的参数，见[脚本 Skill](docs/SCRIPT_SKILLS.md)。[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。本分支 beta.33 源码候选增加[外发](docs/NATIVE_OUTBOUND.md)，需要独立账号／操作／目标授权及固定草稿审批；未知结果只读核验，不自动重发。同时支持用户明确开始的电脑示范录制与待审阅文本 Skill 草稿，发布固定保存版本后初始停用，输入与隐私边界见[示范 Skill](docs/SKILL_DEMONSTRATIONS.md)。多媒体／语音属于后续交付；真实第三方账号授权不能由受控测试证明。公开网页工具返回文本，受限界面动作操作 Aevoren 自身界面。
 
 ## 资料库与文本 Skill
 
