@@ -134,6 +134,7 @@ export class RoutineService {
     if (terminal(run.state)) return run;
     const cancelling = this.repository.routineTargets.transition(run.id, ["queued", "waiting"].includes(run.state) ? "cancelled" : "cancel-requested", null, run.version);
     await this.stopOwned(cancelling);
+    this.assertOperationScope("routines.cancelRun", parsed, context);
     return this.repository.getRoutineRun(run.id);
   }
   private async stopOwned(run: RoutineRun): Promise<void> {
