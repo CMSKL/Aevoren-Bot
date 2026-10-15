@@ -5,7 +5,7 @@
 - Add owned PNG/JPEG/PDF/DOCX storage, fixed message/extraction references, conversation bindings and immutable Runtime admission snapshots; revocation blocks later reads and rebinding does not revive old tasks.
 - Add bounded PDF text/page previews and DOCX plain-text extraction in independent hidden sandbox parser jobs, explicit assets and licenses, cancellation and shutdown.
 - Share twelve media operations with the UI and AI. Actual text/pixels travel as revocable ephemeral tool attachments across API, Claude and Codex; receipts contain metadata only.
-- Preserve composer drafts across late imports, sends and navigation with monotonic versions. Full cross-platform/package acceptance is pending; no OCR, audio/video or voice is claimed.
+- Preserve composer drafts across late imports, sends and navigation with monotonic versions. Node24 ordinary tests pass1,630/45 skipped; fresh hidden source150/32 skipped and actual unsigned macOS package34 scenarios pass after the CAS hardlink regression fix. Final cross-platform CI and signed publication remain pending; no OCR, audio/video or voice is claimed.
 
 ## v0.3.0-beta.35 (development candidate)
 
