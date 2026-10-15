@@ -195,7 +195,7 @@ async function finishClose(): Promise<void> {
 
 function requestRendererFlush(window: BrowserWindow): void {
   if (closeRequested) return;
-  if (!rendererReady) {
+  if (!rendererReady || window.webContents.isLoadingMainFrame()) {
     pendingClose = true;
     armCloseConfirmationTimer();
     return;
@@ -237,13 +237,19 @@ function createWindow(showOnCreate = !hideTestWindow): BrowserWindow {
     const currentUrl = window.webContents.getURL();
     if (url !== currentUrl) event.preventDefault();
   });
-  window.webContents.on("did-start-loading", () => {
+  window.webContents.on("did-navigate", () => {
     rendererReady = false;
+  });
+  window.webContents.on("did-start-loading", () => {
+    if (!window.webContents.isLoadingMainFrame()) return;
     if (!closeRequested) return;
     clearCloseConfirmationTimer();
     closeRequested = false;
     pendingClose = true;
     armCloseConfirmationTimer();
+  });
+  window.webContents.on("did-stop-loading", () => {
+    if (pendingClose && rendererReady) requestRendererFlush(window);
   });
   window.on("close", (event) => {
     if (allowClose) return;
