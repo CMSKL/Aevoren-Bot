@@ -149,6 +149,8 @@ Electron smoke tests use hidden windows and temporary user-data directories. A l
 
 For Windows x64 source validation, use `pnpm package:win`. This creates an unsigned NSIS installer for CI/development checks; the signed installer is produced only by the Windows release workflow after `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD` are configured. Use `pnpm package:win:dir` when an unpacked directory is needed for diagnostics.
 
+Successful [CI runs](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml) retain an **unsigned Windows validation installer** for 30 days. Its artifact name includes the exact package version and validated checkout head; the download contains the same x64 NSIS file used for installation acceptance, its SHA-256 and build identity. This is a manual validation download, outside signed Releases and automatic updates. See [download and checksum instructions](docs/INSTALLATION.md#unsigned-windows-validation-installer); real Windows Docker remains unverified.
+
 ## Data and privacy
 
 Application data is stored locally in Electron's user-data directory. Aevoren Bot stores Bots, Rooms, transcripts, explicit Memory, settings, Tool Journal metadata, Routine history, document/Skill revisions and conversation bindings in SQLite. Imported resource bytes live in application-owned content-addressed storage with verified digests. Development environment/task/browser metadata also uses SQLite; workspaces, Worker state and isolated browser profiles use separate named Docker volumes. Screenshot/download bytes use verified application-owned storage. Secret values are stored separately through `safeStorage`.
