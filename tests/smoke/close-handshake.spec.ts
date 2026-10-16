@@ -62,6 +62,15 @@ async function launch(userDataDir: string): Promise<{ application: ElectronAppli
     const record = (phase: string, state: Record<string, string | number | boolean> = {}): void => {
       console.error("AEVOREN_CLOSE_PHASE " + JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started), ...state }));
     };
+    // Observe the real synchronous close before the later app-quit listener runs.
+    const sqlite = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
+    const closeDatabase = sqlite.DatabaseSync.prototype.close;
+    sqlite.DatabaseSync.prototype.close = function(this: import("node:sqlite").DatabaseSync): void {
+      record("database-close-start");
+      try { return closeDatabase.call(this); }
+      finally { record("database-close-end"); }
+    };
+    process.once("exit", exitCode => record("process-exit", { exitCode }));
     app.on("before-quit", () => record("app-before-quit", { windows: BrowserWindow.getAllWindows().length }));
     app.on("will-quit", () => record("app-will-quit", { windows: BrowserWindow.getAllWindows().length }));
     app.on("quit", (_event, exitCode) => record("app-quit", { exitCode }));
