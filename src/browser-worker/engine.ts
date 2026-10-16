@@ -34,6 +34,7 @@ export class BrowserEngine {
   private activePageId: string | null = null;
   private readonly changeBinding = `aevoren_document_${randomUUID().replaceAll("-", "")}`;
   private readonly focusWorld = `aevoren_focus_${randomUUID().replaceAll("-", "")}`;
+  private lastFocusCheck: Array<{ focused: boolean; closed: boolean; stage: number; exception: boolean }> = [];
   private readonly operations = new Map<string, { cancelled: boolean; running: boolean; page: Page | null; processes: Set<ChildProcess> }>();
 
   constructor(readonly options: { browserSessionId: string; profileDirectory: string; downloadsDirectory: string }) {}
@@ -139,14 +140,16 @@ export class BrowserEngine {
 
   private async focusedPage(): Promise<PageRecord | null> {
     const candidates = await Promise.all([...this.pages.values()].map(async record => {
+      let stage = 0;
       try {
-        const tree = await record.session.send("Page.getFrameTree");
+        const tree = await record.session.send("Page.getFrameTree"); stage = 1;
         const world = await record.session.send("Page.createIsolatedWorld", { frameId: tree.frameTree.frame.id,
-          worldName: this.focusWorld, grantUniveralAccess: false });
-        const result = await record.session.send("Runtime.evaluate", { expression: "document.hasFocus()", contextId: world.executionContextId, returnByValue: true, silent: true });
-        return { record, focused: result.result.value === true };
-      } catch { return { record, focused: false }; }
+          worldName: this.focusWorld, grantUniveralAccess: false }); stage = 2;
+        const result = await record.session.send("Runtime.evaluate", { expression: "document.hasFocus()", contextId: world.executionContextId, returnByValue: true, silent: true }); stage = 3;
+        return { record, focused: result.result.value === true, stage, exception: Boolean(result.exceptionDetails) };
+      } catch { return { record, focused: false, stage, exception: false }; }
     }));
+    if (process.env.AEVOREN_BROWSER_DIAGNOSTICS === "1") this.lastFocusCheck = candidates.slice(0, 20).map(({ record, focused, stage, exception }) => ({ focused, closed: !this.pages.has(record.id), stage, exception }));
     const focused = candidates.filter(value => value.focused);
     return focused.length === 1 ? focused[0]!.record : null;
   }
@@ -287,7 +290,8 @@ export class BrowserEngine {
         await writeFile("/tmp/aevoren-frame-diagnostics.json", JSON.stringify({ phase, desktop, ai: input.actor === "ai", elapsedMs: Math.min(60_000, Math.max(0, Date.now() - startedAt)),
           expectedEpoch: version(input.expectedEpoch), currentEpoch: version(this.control.epoch), ownerIsAi: this.control.owner === "ai", needsObservation: this.control.needsObservation,
           pageKnown: Boolean(record && this.pages.get(record.id) === record), pageClosed: record?.page.isClosed() ?? true, pageCount: Math.min(this.pages.size, 20),
-          versionBefore: version(versionBefore), versionAfter: version(record?.version), observedVersion: version(observation?.documentVersion) }), { mode: 0o600 }).catch(() => undefined);
+          versionBefore: version(versionBefore), versionAfter: version(record?.version), observedVersion: version(observation?.documentVersion),
+          focusChecks: this.lastFocusCheck }), { mode: 0o600 }).catch(() => undefined);
       }
       throw error;
     }
