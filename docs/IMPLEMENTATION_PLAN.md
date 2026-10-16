@@ -200,6 +200,8 @@ Final Notion beta.35 source acceptance: one complete build passed all four TypeS
 
 Frozen SHA-256: main `51d6738f71a2d1f164dd7b7ab46d16da6e5f9ca83a3d98055422406b54be32cf`, preload `bb83458a39161e01f8f16983d811513c1ca1cc2a0b6b4ff9b0e27c433737a6ab`, renderer `f9d7ac861455cf013e2214dd0ff5a72c363a06b2b863655d7839d63799a1838d`. The final focused Notion/SQLite/evidence-label suite passed 21 tests; documentation link checking passed for 32 files. No third-party credentials were available.
 
+
+
 ### 阶段 4：示范录制与待审阅 Skill 草稿（独立开发单元）
 
 `codex/skill-demonstrations` 从已验证 dev 的 Script30 基线创建。Browser Worker 1.1.0 在真实接受的 WebSocket→VNC 输入转发之后解析有界分片 RFB，仅保存按钮/滚动坐标及白名单导航键；文字、Unicode 按键、修饰键和剪贴板以脱敏占位符替代，页面内容、截图和网址不进入录制。断线、epoch 变化、引擎停止、重启和 500 步上限会封存中断录制，不自动归还 AI。
@@ -275,6 +277,7 @@ ASAR SHA-256 is `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf
 
 > 合并 dev 保留的 beta.34 历史验证，不覆盖本文最新状态。
 
+
 历史冻结 beta.34 验收曾统计 20 项；复核确认当时 typed API fixture 忽略安装包路径，实际为包内 19 项与源码 typed API 1 项。MCP 包测试实查 isPackaged、精确版本以及 Resources 中的 MCP 指南；验证真实 opaque iframe、父级／Preload 隔离、工具输入／结果、真实 UI 调用审批、撤权、未知结果与延迟原生→MCP 模态交接。全部使用临时数据库、真实 IPC 与受控 HTTP，未触及真实外部账号；此处保留历史并纠正证据类别，最新包结果单列于下。
 
 示范基础的真实 Linux [CI 38666108922](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38666108922/job/116198324472) 在 12288fd 完整通过：普通 1,547／45 跳过，实际 Docker／Host 41／41；新增真实 RFB 示范用例 3.239 秒通过。此证据属于 Demo33 基础提交，MCP34 自身跨平台完整 CI 与签名发行仍须通过，真实 Windows Docker 仍未验证。
@@ -343,6 +346,7 @@ The updated fixture passed all three source MCP cases in 10.63 seconds and all t
 > 同步 dev 保留的历史记录；不覆盖本文开头的最新候选与验证状态。
 
 > 合并 dev 保留的 beta.34 历史验证，不覆盖本文最新状态。
+
 
 
 
@@ -416,6 +420,7 @@ The updated fixture passed all three source MCP cases in 10.63 seconds and all t
 
 > 合并 dev 保留的 beta.34 历史验证，不覆盖本文最新状态。
 
+
 ## MCP beta.34 integration of verified Native32 baseline
 
 Merged exact dev `36a48730002a5a8bd7115891a99a18a7cffa792c` into the MCP34 feature branch. That baseline contains verified Native32 PR #34 merge `a84e87f` and the published beta.31 README boundary; beta.34 remains the source version. Earlier `d016c974` had four successful CI checks, and its actual 28-case unsigned macOS package receipt remains historical. Those results were not relabeled as acceptance of this newly combined Worker.
@@ -450,12 +455,6 @@ PR #41 的一个完整跨平台检查已通过；另一个 Windows 检查的首�
 
 
 ## MCP34 Windows source fixture deadlines
-
-At `a5d674999d215a837e29101434060b6eddb78c91`, [Windows CI 38689015680](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38689015680/job/116270524225) passed 36/38 source smoke cases, including all three MCP App cases. The demonstration case exhausted its 30-second total budget: setup used 9.005 seconds and the second saved-v2 draft click began at 28.254 seconds; publication and application close were not reached. The Library group case had already verified all six requests, routing and pinned original prompt content when its 5-second completion poll expired. Its first actual snapshot IPC took 5.599 seconds and eventually reported `running`; batch completion and the final reference-badge assertion were not verified. Source close handshakes, Windows packaging and installed checks were consequently not run. These failed results remain separate from earlier green runs.
-
-The test-only correction gives the compound demonstration case a 60-second total budget on Windows, retaining 30 seconds on macOS. Only the observed Library completion poll is replaced: subscribe to the production RoomRuntime event before querying current state, match room/session/batch IDs, accept only `completed`, reject other terminal states and unsubscribe on settlement. Its existing 90-second whole-case budget and all business assertions remain unchanged; no sleep, retry or polling-timeout increase was added. Product code and the existing beta.34 package were not rebuilt or changed.
-
-Limited local macOS validation passed both affected source cases (2/2, 10.3 seconds) and the same cases in the existing actual unsigned beta.34 package (2/2, 8.7 seconds). Packaged identity/version checks passed, and package Main matched source out (`c8cd5865fd452e50dcfc074c2269eebbb111d574aae64e892085e0474524f746`); the ASAR digest was unchanged before/after. Targeted ESLint, documentation links and diff checks passed. Evidence is stored locally at `/tmp/aevoren-mcp34-windows-fixtures-evidence.json`, with separate `source` and `package` logs/JSON under the same prefix. Original log/artifacts and trace timing are retained at `/tmp/aevoren-mcp34-a5d6749-windows-failure-summary.json`. These are temporary local files, not repository attachments. This limited macOS rerun does not establish Windows success, a full-suite pass or a signed release; fresh cross-platform CI remains required.
 
 ### 媒体 CAS 并发回补（beta.36，重新验收中）
 
@@ -567,6 +566,7 @@ Main／Preload／Renderer 的 17 个 ASAR 文件及执行 Worker／Browser Worke
 > 同步 dev 保留的历史记录；不覆盖本文开头的最新候选与验证状态。
 
 > 合并 dev 保留的 beta.34 历史验证，不覆盖本文最新状态。
+
 
 
 ### beta.33 外发重启关闭诊断（未发布）
@@ -681,3 +681,13 @@ This test-only update extends that fixture's existing bounded diagnostics with a
 完整普通运行保留 **1,853通过／7失败／45条件跳过**。六项旧迁移夹具失败分别是旧Bot全字段比较新增空头像列、v44旧写入器调用v47 backfill、预期未列出新Routine外键和两个重建索引的空白差别。仅修fixture：旧写入器种子阶段跳过不存在的v47 backfill，真实升级完全使用未mock实现；保留旧字段／行／外键／触发器并独立断言明确新项。四文件38/38定向通过。另一Codex EOF 5秒失败与41相同，仍交因果诊断，不提高期限，不记录完整单轮全绿。
 
 最终真实未签名macOS arm64包同轮 **Routine2+typed API共3/3（16.9秒）** 通过，实际packaged=true／版本42，自有进程均正常退出。Main SHA-256 `df0ec88d73d50c286297cf735a21f46750a62b03082b0b9925562458fcf265a3`，ASAR `f6aed02c4131ebdbbf580cceec33d372bd25d719404e8c6a1592a91ab6ff04bd`。17应用与216Worker/parser文件逐字节匹配，随包Organization及Routine指南与打包时源文档相同。parser资产与麦克风用途声明检查通过，不代表物理设备或签名验收。后续验收文档不重写冻结包内历史指南。证据在 `$CODEX_HOME/aevoren-evidence/2026-10-15/phase5/routine42-*`，含full-unit、migration-fixtures-completed、package-three和final-package JSON。Windows、跨平台及签名发布待正常门禁；master不晋级。
+
+
+## Beta.35 refresh after MCP34 source acceptance
+
+This branch integrated dev `a743f7d835948a051d316a74fdc3752c190eacc2`, the normal PR #37 merge. MCP34 exact source head `2ccd1c9` passed all four checks in CI 38758776745, including actual Linux Docker and macOS/Windows source plus installed-package acceptance. Prior native focus/close failures above remain historical; no unproven production fix is inferred. The dev integration and Beta promotion are still running. Source version stays beta.35, preserving its separate Notion title/append functionality. This refreshed Notion merge requires new normal cross-platform gates; it has not been released, and master remains deferred.
+
+
+## Routine42 refresh from verified Notion35 dev integration
+
+This candidate integrated normal dev `80ab17ecdc037b3d3f6537f0d02e82f758e37034` after Notion35 PR38 exact source head1490b715 passed all four jobs in CI38832365006, including actual Linux Docker and macOS/Windows source plus installed acceptance. Current Routine42 features, package version and expanded workflow selections remain. Conflicts were only documentation history; Main/shared/Preload/Renderer production bytes are unchanged against5ae2e12. Earlier failed/package receipts remain tied to their original builds; this merge requires its own new normal CI. Beta34 remains unpublished pending its separate fixture staging repair, and master stays deferred.
