@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -38,6 +38,52 @@ void request('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'Fixtur
 </script>`;
 
 function data<T>(value: ApiResult<T>): T { if (!value.ok) throw new Error(`${value.error.code}: ${value.error.safeMessage}`); return value.data; }
+async function observeMcpClose(application: ElectronApplication): Promise<{ phases: Record<string, unknown>[]; record(phase: string): void; detach(): void }> {
+  const owned = application.process(), started = performance.now(), phases: Record<string, unknown>[] = [];
+  const prefix = "AEVOREN_MCP_CLOSE_PHASE ";
+  let buffered = "";
+  const record = (phase: string): void => {
+    if (phases.length < 120) phases.push({ source: "fixture", phase, elapsedMs: Math.round(performance.now() - started),
+      exitCode: owned.exitCode, signalCode: owned.signalCode, killed: owned.killed, stdioClosed: owned.stdio.map(stream => !stream || stream.destroyed) });
+  };
+  const exited = (): void => record("owned-exit"), closed = (): void => record("owned-close");
+  const stderr = (chunk: Buffer): void => {
+    buffered += chunk.toString("utf8");
+    const lines = buffered.split("\n"); buffered = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith(prefix) && phases.length < 120) {
+        try { phases.push({ source: "main", observedAtMs: Math.round(performance.now() - started), ...JSON.parse(line.slice(prefix.length)) as Record<string, unknown> }); }
+        catch { record("invalid-main-phase"); }
+      } else if (line.includes("Waiting for the debugger to disconnect")) record("inspector-disconnect-wait");
+    }
+    if (buffered.length > 4096) buffered = "";
+  };
+  owned.once("exit", exited); owned.once("close", closed); owned.stderr?.on("data", stderr);
+  try {
+    await application.evaluate(({ app, BrowserWindow, ipcMain }, channels) => {
+      const started = performance.now();
+      const record = (phase: string, values: Record<string, number | boolean | string> = {}): void => {
+        console.error("AEVOREN_MCP_CLOSE_PHASE " + JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started), ...values }));
+      };
+      app.on("before-quit", () => record("before-quit", { windows: BrowserWindow.getAllWindows().length }));
+      app.on("will-quit", () => record("will-quit", { windows: BrowserWindow.getAllWindows().length }));
+      app.on("quit", (_event, exitCode) => record("quit", { exitCode }));
+      const observeWindow = (window: InstanceType<typeof BrowserWindow>): void => {
+        record("window-observed", { windows: BrowserWindow.getAllWindows().length });
+        window.on("close", () => { try { record("window-close", { destroyed: window.isDestroyed(), loading: !window.isDestroyed() && !window.webContents.isDestroyed() && window.webContents.isLoadingMainFrame() }); } catch { record("window-close-state-unavailable"); } });
+        window.on("closed", () => record("window-closed", { windows: BrowserWindow.getAllWindows().length }));
+        window.webContents.on("render-process-gone", (_event, details) => record("renderer-gone", { reason: details.reason, exitCode: details.exitCode }));
+      };
+      app.on("browser-window-created", (_event, window) => observeWindow(window));
+      for (const window of BrowserWindow.getAllWindows()) observeWindow(window);
+      ipcMain.on(channels.ready, event => { try { record("renderer-ready", { mainFrame: !event.sender.isDestroyed() && event.senderFrame === event.sender.mainFrame }); } catch { record("renderer-ready-frame-unavailable"); } });
+      ipcMain.on(channels.confirm, (event, value: unknown) => { try { record("flush-ack", { mainFrame: !event.sender.isDestroyed() && event.senderFrame === event.sender.mainFrame, canClose: value === true }); } catch { record("flush-ack-frame-unavailable", { canClose: value === true }); } });
+    }, { ready: IPC.appRendererReady, confirm: IPC.appConfirmClose });
+  } catch { record("main-probe-unavailable"); }
+  record("probe-installed");
+  return { phases, record, detach() { owned.removeListener("exit", exited); owned.removeListener("close", closed); owned.stderr?.removeListener("data", stderr); } };
+}
+
 async function mcpCall<T>(page: Page, method: keyof McpWriteApi, input: unknown): Promise<T> {
   return data(await page.evaluate(async ({ method, input }) => {
     const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcpWrites;
@@ -92,10 +138,13 @@ async function withMcp(callback: (fixture: { page: Page; application: ElectronAp
   const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
   const environment = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !key.startsWith("AEVOREN_BOT_")));
   let application: ElectronApplication | undefined;
+  let closeProbe: Awaited<ReturnType<typeof observeMcpClose>> | undefined;
+  let businessCompleted = false;
   try {
     application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: [...(executablePath ? [] : ["."]), "--use-mock-keychain"], cwd: process.cwd(), env: {
       ...environment, AEVOREN_BOT_USER_DATA_DIR: directory, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_FAKE_PROVIDER: "1", AEVOREN_BOT_NATIVE_TEST_ORIGIN: `http://127.0.0.1:${address.port}`,
     } });
+    closeProbe = await observeMcpClose(application);
     expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("use-mock-keychain"))).toBe(true);
     if (executablePath) {
       const runtime = await application.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), resourcesPath: process.resourcesPath }));
@@ -144,13 +193,27 @@ async function withMcp(callback: (fixture: { page: Page; application: ElectronAp
       }, writes: () => writes, nativeWrites: () => nativeWrites, releaseWrite: () => { release?.(); release = undefined; hold = false; }, holdWrites: () => { hold = true; } });
     expect(errors).toEqual([]);
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
+    businessCompleted = true;
   } finally {
     release?.();
     try {
       if (application) {
         const owned = application.process();
-        await closeTestApplication(application);
-        expect({ code: owned.exitCode, signal: owned.signalCode }).toEqual({ code: 0, signal: null });
+        closeProbe?.record("close-request");
+        let closedNormally = false;
+        try {
+          await closeTestApplication(application);
+          closeProbe?.record("close-helper-returned");
+          expect({ code: owned.exitCode, signal: owned.signalCode }).toEqual({ code: 0, signal: null });
+          closedNormally = true;
+        } finally {
+          try {
+            closeProbe?.record(closedNormally ? "close-final" : "close-or-exit-failed");
+            const phasePath = test.info().outputPath("mcp-close-phases.json");
+            writeFileSync(phasePath, JSON.stringify({ businessCompleted, closedNormally, phases: closeProbe?.phases ?? [] }));
+            await test.info().attach("mcp-close-phases", { path: phasePath, contentType: "application/json" });
+          } finally { closeProbe?.detach(); }
+        }
       }
     } finally {
       await Promise.allSettled(remotes.map(remote => remote.close()));
