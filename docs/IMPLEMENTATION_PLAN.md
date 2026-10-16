@@ -695,3 +695,13 @@ This test-only update extends that fixture's existing bounded diagnostics with a
 正常 CI `38834434666` 的 Linux Validate/build 与真实 Docker 检查通过；Windows 普通单元记录 **1,905通过／1失败／61跳过**。唯一失败为本机 Webhook 负例集合中的 fetch `ECONNRESET`，原日志没有定位到集合内哪次请求；完整日志保留于 `templates44-ci-windows-second-raw.log`。不能由该日志推断为Memory迁移或已确定的服务端故障。
 
 仅修测试HTTP客户端的所有权与诊断：每次请求读取实际response body到EOF后才开始下一次，并用明确阶段、实际已收到状态和安全cause code/syscall包装异常；保留错误认证、重复幂等、非法JSON/UTF-8、Origin、Content-Type、缺key、超限413、精确上限202和撤销token的全部原始断言。不忽略网络异常、不加重试、不延长Windows60秒或hook10秒期限，不修改服务端响应规则。15项本地真实HTTP/SQLite测试、Node类型及lint通过；这不证明Windows reset原因已解决，后续正常CI仍需给出结果或更精确阶段证据。已验收生产/安装包字节不变，原运行继续，不手动取消或重试。
+
+### beta.44 第三轮 Windows 证据与 Webhook 早拒修复
+
+正常 CI `38835797353` Linux完整验证通过，Windows仍为1,905通过／1失败／61跳过。新诊断已确定失败阶段为 `oversized-body`，客户端没有收到HTTP状态，cause为ECONNRESET/read；完整日志 `templates44-ci-windows-third-raw.log`。这排除了“只因测试未消费前一个响应”的解释。宿主在Content-Length超过64KiB时直接生成413，但response.end回调在request.complete=false时销毁IncomingMessage，使未完成上传的连接发生破坏性关闭。
+
+新增受控真实TCP回归：声明131072字节请求，只送一个字节并保持上传未完，保留413响应断言、没有任何Routine或delivery准入，同时观察未完成请求不应被销毁。修复前该实际请求确证触发提前destroy（`templates44-http-early413-before.log`）；不把本机TCP表现等同Windows网络栈。最小修复为早拒后丢弃输入且不聚合/解析正文，响应flush后半关闭socket，并用原5秒绝对兜底deadline清理；关闭socket时清timer，持续trickle不会延长期限。维持127.0.0.1、32连接、64KiB、认证和全部原status规则。
+
+真实HTTP／宿主集成与绝对deadline控制测试25/25（3.28秒，`templates44-http-early413-final.log`）通过，定向lint通过；新增同一隐藏Events场景的实际超限fetch413／EOF及零准入断言。此修复改变生产Main字节，随后完整重构建与真实包重验单独登记，旧2b8包只作为历史证据，不推断当前包可用。Windows需新正常CI验证，没有取消或盲重试旧任务。
+
+修复后完整五配置类型、Main／Preload／Renderer／三个Worker资源构建通过（`templates44-http-fixed-build.log`）。新增源码隐藏同轮4/4（25.7秒，`templates44-httpfix-source-four.log`）通过：真实超限413并读取EOF且零接收准入、六成员并行与所属撤销、私有TASK元数据、typed API、模板自有二进制源删除／重启导入与离线HTML。自有进程正常退出。随后重新制作独立目录的实际未签名macOS包，后续回执不覆盖旧2b8业务包证据。
