@@ -28,8 +28,9 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [review, setReview] = useState<{ key: string; request: number; data: ScriptReviewLoad } | null>(null);
+  const [review, setReview] = useState<{ key: string; generation: number; data: ScriptReviewLoad } | null>(null);
   const reviewRequestRef = useRef(0);
+  const reviewGenerationRef = useRef(0);
   const [reloadReview, setReloadReview] = useState(0);
   const script = isScriptRun(invocation);
   const outbound = isOutboundSend(invocation);
@@ -50,7 +51,7 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
     ? invocation.arguments.query : invocation.targetPath || "文件夹根目录";
 
   async function decide(resolution: ApprovalResolution | "remember"): Promise<void> {
-    if (busyRef.current || resolution !== "deny" && (!canAllow || needsReview && review?.request !== reviewRequestRef.current)) return;
+    if (busyRef.current || resolution !== "deny" && (!canAllow || needsReview && review?.generation !== reviewGenerationRef.current)) return;
     busyRef.current = true;
     setBusy(true);
     setFailed(false);
@@ -66,14 +67,15 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
   useEffect(() => {
     if (!needsReview) return;
     const request = ++reviewRequestRef.current;
-    return loadScriptApprovalReview({ sessionId: approval.sessionId, executorBotId: approval.executorBotId, id: approval.id, expectedVersion: approval.version }, input => window.aevorenBot.approvals.review(input), data => { if (request === reviewRequestRef.current) setReview({ key: reviewKey, request, data }); });
+    const generation = ++reviewGenerationRef.current;
+    return loadScriptApprovalReview({ sessionId: approval.sessionId, executorBotId: approval.executorBotId, id: approval.id, expectedVersion: approval.version }, input => window.aevorenBot.approvals.review(input), data => { if (request === reviewRequestRef.current) setReview({ key: reviewKey, generation, data }); });
   }, [needsReview, approval.sessionId, approval.executorBotId, approval.id, approval.version, reviewKey, reloadReview]);
   const scriptSnapshot = currentReview?.status === "ready" && currentReview.result.snapshot?.kind === "skill-script" ? currentReview.result.snapshot : null;
   const reviewGrantId = scriptSnapshot?.target.grantId;
   const reviewResourceId = scriptSnapshot?.target.reference.resourceId;
   useEffect(() => {
     if (!script) return;
-    const invalidate = (): void => { reviewRequestRef.current += 1; setReview(null); setReloadReview(count => count + 1); };
+    const invalidate = (): void => { reviewRequestRef.current += 1; reviewGenerationRef.current += 1; setReview(null); setReloadReview(count => count + 1); };
     const stops = [window.aevorenBot.skillsExecution.onChanged(event => { if (event.sessionId === approval.sessionId && event.executorBotId === approval.executorBotId && (!reviewGrantId || event.grantId === reviewGrantId) && event.type !== "execution") invalidate(); }),
       window.aevorenBot.library.onChanged(event => { if (!reviewResourceId || event.resourceId === reviewResourceId) invalidate(); }),
       window.aevorenBot.environments.onChanged(event => { if (event.sessionId === approval.sessionId && event.executorBotId === approval.executorBotId && event.type === "environment") invalidate(); })];
@@ -87,11 +89,13 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
       if (inFlight) return;
       inFlight = true;
       const request = ++reviewRequestRef.current;
+      // Polling orders replies without invalidating the same displayed fixed review.
+      const generation = reviewGenerationRef.current;
       try {
         const result = await window.aevorenBot.approvals.review({ sessionId: approval.sessionId, executorBotId: approval.executorBotId, id: approval.id, expectedVersion: approval.version });
         if (disposed || request !== reviewRequestRef.current) return;
-        setReview({ key: reviewKey, request, data: result.ok ? { status: "ready", result: result.data } : { status: "unavailable", reason: result.error.safeMessage } });
-      } catch { if (!disposed && request === reviewRequestRef.current) { reviewRequestRef.current += 1; setReview(null); } }
+        setReview({ key: reviewKey, generation, data: result.ok ? { status: "ready", result: result.data } : { status: "unavailable", reason: result.error.safeMessage } });
+      } catch { if (!disposed && request === reviewRequestRef.current) { reviewRequestRef.current += 1; reviewGenerationRef.current += 1; setReview(null); } }
       finally { inFlight = false; }
     };
     const timer = setInterval(() => void refresh(), 1000);
@@ -136,7 +140,7 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
           : "仅授权当前操作，不会扩大这个 Bot 的其他权限。"}</p>
         <div className="tool-permission-target"><strong>{label}</strong><span>{target}</span></div>
         {needsReview ? currentReview?.status === "ready" && (scriptSnapshot || externalSnapshot || demoSnapshot || mcpSnapshot) ? <>{scriptSnapshot ? <SkillScriptReview snapshot={scriptSnapshot} /> : externalSnapshot ? <ExternalDraftReview snapshot={externalSnapshot} /> : demoSnapshot ? <DemonstrationReview snapshot={demoSnapshot} /> : mcpSnapshot ? <McpWriteReview snapshot={mcpSnapshot} /> : null}{!canAllow ? <p className="tool-permission-error" role="alert">{currentReview.result.reason ?? "快照与本次请求不一致，或授权已失效；此操作不能批准。"}</p> : null}</> : <p role="status">{currentReview?.status === "unavailable" ? currentReview.reason : outbound ? "正在核对本次外发的固定账号、目标与草稿版本…" : "正在核对本次审批保存的固定内容与授权…"}</p> : null}
-        {needsReview && !canAllow ? <button type="button" className="text-button" disabled={busy} onClick={() => { reviewRequestRef.current += 1; setReview(null); setReloadReview(count => count + 1); }}>{outbound ? "重新核对外发审批" : "重新核对本次审批"}</button> : null}
+        {needsReview && !canAllow ? <button type="button" className="text-button" disabled={busy} onClick={() => { reviewRequestRef.current += 1; reviewGenerationRef.current += 1; setReview(null); setReloadReview(count => count + 1); }}>{outbound ? "重新核对外发审批" : "重新核对本次审批"}</button> : null}
         {invocation.arguments.kind === "product-call" && invocation.arguments.action === "execute" ? <details><summary>查看本次操作内容</summary><pre>{JSON.stringify(invocation.arguments.input ?? null, null, 2)}</pre></details> : null}
         {localRead ? <p className="tool-permission-privacy">读取结果会进入模型上下文；使用云端模型时会发送至模型服务。请勿授权密码、密钥等敏感内容。</p> : null}
         {publicRead && onRememberPublicRead ? <p className="tool-permission-privacy">记住的范围仅包括公开网页搜索、抓取、天气与时间。文件、剪贴板、MCP 和外部写操作不包含在内，可在设置中随时关闭。</p> : null}
