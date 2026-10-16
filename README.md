@@ -20,6 +20,8 @@ Aevoren Bot is a local-first desktop messenger for persistent AI contacts and bo
 
 ## Highlights
 
+- Connected AI can request [application listener start/stop](docs/AUTOMATION_EVENTS.md) through fixed-port, current-revision approval from an active MAIN session. Token rotation remains trusted setup; stopping ingress leaves dispatched Routine work running.
+
 - [Development: portable templates and selective offline exports](docs/TEMPLATES_EXPORTS.md), explicit review, owned files, version conflicts and local JSON/HTML export; platform publication remains separately gated.
 
 - Reliable streamed conversations backed by SQLite Transcript, Send Journal, stable nonces, idempotent retry, cancellation, and crash recovery.

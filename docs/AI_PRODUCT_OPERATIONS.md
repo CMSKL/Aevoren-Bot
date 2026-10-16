@@ -80,3 +80,5 @@ AI 可以转交用户对具体审批的真实决定，但执行必须有该转�
 `routines.list/listRuns` 仅向 AI 返回当前 MAIN 会话的规则和运行；创建、修改、启停、版本化立即运行、取消指定运行与删除复用界面业务层和现有审批。群目标提交已审阅的成员版本与固定名单，之后的新成员不会自动参与。`runNow` 使用 `{id, expectedVersion}`，`cancelRun` 使用 `{runId, expectedVersion}`；审批后定义改变会拒绝旧运行请求。相同模型轮次的重试复用触发回执，不额外派发。TASK 模型不能借这些操作建立或控制 MAIN 自动化。恢复、未知结果和界面支持边界见 [群聊 Routine](GROUP_ROUTINES.md)。
 
 便携模板和选择范围导出请见[使用说明](TEMPLATES_EXPORTS.md)。入口为聊天选项或设置通用页；先选择并审阅，再保存或导入，Skill 初始停用。
+
+监听控制提供 `automationEvents.startListener/stopListener`：只允许实际活跃 MAIN 会话执行成员，审批显示固定非零端口、当前revision和影响全部会话的范围。UI可以选择0自动分配；UI/AI共享资源锁，旧审批、未知请求不重放。停止入站不取消已经派发的Routine。token轮换与内部事件发送不开放给AI，控制结果不返回凭据。
