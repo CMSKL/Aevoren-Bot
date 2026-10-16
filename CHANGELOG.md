@@ -6,7 +6,7 @@
 - Add an explicitly started loopback listener, once-displayed host-encrypted Bearer secrets, versioned URLs, bounded untrusted JSON attachments and durable idempotent receipts.
 - Preserve subscription drafts on conflicts, revoke only owned active runs, prevent event ancestry loops and reconcile uncertain acceptance without replay.
 - Share scoped subscription operations with connected AI through `automationEvents`; listener controls and secret rotation remain trusted settings operations. Existing Runtime `events` API is preserved.
-- Focused SQLite, actual HTTP, Runtime delegation and UI checks pass. Source/package/platform publication evidence is recorded separately; no new dependency is introduced.
+- Focused SQLite, actual HTTP and Runtime delegation checks pass, plus two hidden source cases and Events2/typed API in the actual unsigned macOS package (3/3). Cross-platform and signed publication remain pending; no new dependency is introduced.
 
 ## v0.3.0-beta.42 (development candidate)
 
