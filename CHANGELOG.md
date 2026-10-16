@@ -1,7 +1,14 @@
 # Changelog
 
+## Unreleased delivery tooling
+
+- Correct the Windows fixture cleanup budget: preserve the 3-second graceful close, share the previous 1.5-second command plus 2-second pipe allowance as one finite 3.5-second forced-cleanup window, and require the actual owned exit and closed pipes. Keep descendant/sibling checks and distinguish forced cleanup from a normal exit.
+- Preserve the exact installed-and-accepted unsigned Windows x64 NSIS file with its SHA-256 and version/head identity after successful CI gates, for a 30-day manual validation download. Official Release signing and automatic-update requirements remain unchanged.
+
 ## v0.3.0-beta.35 (development candidate)
 
+- Recheck retained Claude MCP image leases at the actual HTTP body write. A takeover or closed source refuses only its response; independent requests, redacted cached retries and normal cancellation errors retain their existing behavior.
+- Find the Docker CLI in standard macOS installation locations when a desktop launch has a minimal PATH, keeping an explicitly configured PATH first. Preserve local-context restrictions and distinguish an installed but stopped engine from a missing CLI.
 - Add distinct Notion saved-draft operations and exact page write grants for title-only updates and end-of-page paragraph appends. Preserve existing page body and ordinary/data-source title property identity.
 - Pin observed target metadata in the fixed approval review and recheck the current account and grant before a single PATCH. Changed drafts invalidate pending approval.
 - Verify appended blocks by returned or committed child IDs, parent and text; ambiguous attempts remain unknown and cannot resend. Label title reconciliation based only on current state without claiming the original request caused that state.

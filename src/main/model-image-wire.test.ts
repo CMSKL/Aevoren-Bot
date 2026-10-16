@@ -162,6 +162,57 @@ describe("real local model image wire", () => {
     } finally { await client.close(); await bridge.close(); rmSync(directory, { recursive: true, force: true }); }
   });
 
+  it.each(["revoked", "closed"] as const)("refuses retained MCP batch pixels when their source is %s without blocking another response", async mode => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-image-mcp-batch-"));
+    const pending: Extract<ModelEvent, { type: "network-tool" }>[] = [];
+    let owned = true, reads = 0, batchFinished = false;
+    const captured = image(() => { reads++; if (!owned && mode === "closed") throw new Error("Source closed"); return owned; });
+    const bridge = new ClaudeToolBridge(context(), event => { if (event.type === "network-tool") pending.push(event); }, new AbortController().signal);
+    const client = new Client({ name: "controlled-image-batch", version: "1" });
+    const abort = new AbortController();
+    try {
+      await bridge.start(directory); const configuration = config(bridge);
+      const transport = new StreamableHTTPClientTransport(new URL(configuration.url), { requestInit: { headers: configuration.headers } });
+      await client.connect(transport);
+      const post = async (body: unknown): Promise<{ status: number; body: string }> => {
+        const response = await fetch(configuration.url, { method: "POST", signal: AbortSignal.any([abort.signal, AbortSignal.timeout(4_000)]),
+          headers: { ...configuration.headers, "content-type": "application/json", Accept: "application/json, text/event-stream", "mcp-session-id": transport.sessionId!, "mcp-protocol-version": "2025-11-25" }, body: JSON.stringify(body) });
+        return { status: response.status, body: await response.text() };
+      };
+      const first = { jsonrpc: "2.0", id: "retained-image", method: "tools/call", params: { name: "time_now", arguments: { timezone: "UTC" } } };
+      const batch = post([first, { ...first, id: "held-peer", params: { name: "time_now", arguments: { timezone: "Asia/Shanghai" } } }])
+        .then(result => { batchFinished = true; return { ...result, error: undefined }; }, (error: unknown) => { batchFinished = true; return { status: 0, body: "", error }; });
+      await expect.poll(() => pending.length).toBe(2);
+      await pending[0]!.respond?.('{"ok":true}', [captured]);
+      await expect.poll(() => reads).toBe(1);
+      expect(batchFinished).toBe(false);
+      owned = false;
+
+      // A different HTTP response retains its own lease while this batch is held.
+      const independent = post({ ...first, id: "independent-image" });
+      await expect.poll(() => pending.length).toBe(3);
+      await pending[2]!.respond?.('{"ok":true}', [image()]);
+      const healthy = await independent;
+      expect(healthy.status).toBe(200);
+      const content = JSON.parse(healthy.body).result.content as { type: string; data?: string }[];
+      verifyPixels(content.find(block => block.type === "image")!.data!);
+      expect(batchFinished).toBe(false);
+
+      await pending[1]!.respond?.('{"ok":true}');
+      const denied = await batch;
+      expect(denied.body.includes(captured.dataBase64)).toBe(false);
+      expect(denied.error).toBeInstanceOf(TypeError);
+      expect(reads).toBeGreaterThan(1);
+
+      // A cached request gets a new response scope and can return its redaction notice.
+      const retry = await post(first);
+      expect(retry.status).toBe(200);
+      expect(retry.body.includes(captured.dataBase64)).toBe(false);
+      expect(retry.body).toContain("授权已失效");
+      expect(pending).toHaveLength(3);
+    } finally { abort.abort(); await client.close(); await bridge.close(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
   it("sends the published Codex inputImage/imageUrl shape through an actual fixture JSON-RPC process", async () => {
     const directory = mkdtempSync(join(tmpdir(), "aevoren-image-codex-"));
     isolateFixtureCli();

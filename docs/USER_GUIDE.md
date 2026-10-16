@@ -54,6 +54,8 @@ Text Skill metadata, including declared tool names, does not grant tool permissi
 
 ## Docker execution environments (development)
 
+On macOS, Docker installed in standard Docker Desktop, user or Homebrew locations is detected when the app launches from Finder. A stopped engine is reported separately; start Docker and check again before preparing an environment.
+
 Use your own running local Docker Linux engine. Open **Contacts → select Bot → Execution environment (执行环境)**, or **Group settings → Execution environment → select member**. Check Docker, prepare the Linux image, then start or wake the environment. Settings → General also provides a Docker status card. The first image build needs network access; remote Docker contexts and Windows containers are not supported.
 
 Enter a command and a workspace-relative directory (`.` means the workspace root), then choose **Run command** or **Run in background**. The panel shows real task status, stdout/stderr, exit codes and cancellation controls. Foreground tasks default to 120 seconds; background services have separate lifetimes. Six group members use independent environments; cancelling one foreground task does not stop a sibling or registered background service.
@@ -63,6 +65,8 @@ Enter a command and a workspace-relative directory (`.` means the workspace root
 Closing the application and clearing history retain background services while Docker remains running. **Sleep** interrupts the environment's tasks and retains its workspace. **Rebuild** replaces the execution container and retains the workspace. Neither wake nor rebuild replays old commands. Unknown acceptance/connectivity means check the existing task and logs before starting new work. Deleting a Bot or group releases its containers after the normal approval/busy checks and retains Docker volumes.
 
 For a running background service, register its listening port. The Worker verifies that the listener belongs to that process and reports its actual check time. **Preview** opens that registered service in the isolated browser; the original process's exit invalidates it. Execution Worker 1.1.0 is required, and older environments need an explicit rebuild. Setup, isolation, image versions, licenses and platform validation are documented in [Execution environments](EXECUTION_ENVIRONMENT.md) and [Browser/computer](BROWSER_COMPUTER.md).
+
+**Take over** pauses AI browser input, reads and screen uploads until you explicitly **Return to AI**. The development correction also refuses a Claude MCP batch that retained an old screenshot before takeover; separate requests can continue. A failed image response does not mean other tools in that batch were undone, so inspect their execution records before retrying.
 
 ## Content-team workflow UI
 
