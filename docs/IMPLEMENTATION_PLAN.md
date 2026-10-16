@@ -756,3 +756,11 @@ This candidate integrated normal dev `80ab17ecdc037b3d3f6537f0d02e82f758e37034` 
 CI38834471857 at5ae2e12 completed Linux verification/actual Docker and macOS package gates, Windows ordinary/source/NSIS installation, then installed acceptance55/57. Both failures occurred solely at optional final page.screenshot calls after six-member parallel/cancel/sibling-completion and stale-editor/review/fixed-subset business assertions had passed. They exhausted the screenshot's original30seconds after fonts loaded; final hidden-window assertions, cleanup and installed close gates were not established, so the overall installed gate failed.
 
 Only these two decorative screenshot attachments are now omitted on hidden Windows, consistent with existing platform fixtures. All actual API/Runtime, draft, roster, cancellation, rendered status, hidden-window and normal close checks and original60second case limits remain unchanged; macOS/Linux still collect their screenshots. This does not claim Windows pixels or full installed success. No production/package bytes change, and fresh normal platform/installed gates remain required.
+
+### beta.44 后续 Windows 源码门禁与 Routine 关闭诊断
+
+正常 CI `38837916945` Windows普通单元阶段通过，源码UI为69通过／2失败。核心Windows导航分类断言遗漏新增“事件与Webhook”，仅补准确第九项，不改产品。另一失败为群Routine陈旧编辑场景：下载的真实artifact `12020918013` trace表明全部业务、成员版本和子集断言已通过，之后Close context超既有3秒，清理器明确输出终止自有进程树，taskkill后exitCode=1、signal=null。因此不能把code1当作已有未处理崩溃证据；原artifact没有Main生命周期阶段和stderr，根因仍待Windows新证据。日志 `templates44-ci-windows-final.log`，artifact完整保存在 `templates44-windows-final-artifacts.zip`/解压目录；原close断言抛出前未执行失败库copy，不能声称原库已保留。
+
+仅补夹具诊断：Main close/flush ACK/window/app quit、拥有进程exit/stdio阶段，关闭前Routine不透明ID/状态与captures计数；stderr只保留固定已知phase和错误名/码，不保存任意正文或凭据。关闭断言失败时仍复制隔离库并清理fixture服务器；警告与exitCode=0断言及3秒预算不变。Windows已有decorative screenshot限制单独同步，不作为此关闭根因修复。
+
+同一最终已验收macOS包的单场景诊断第一次实际exit0约54毫秒，但新诊断finally在Playwright已dispose后再调app.process导致夹具TypeError，保留日志/trace，不记整项通过。保存原ownedChild引用后，同一场景1/1（7.2秒，`templates44-routine-close-diagnostic-final.log`）通过；持久safe JSONLines记录runs/captures均空、flush ACK、window/app quit齐全、owned正常exit0距close-request63毫秒。该Mac旁证不能替代Windows关闭根因或正常门禁，未改产品退出逻辑或包业务字节；后续正常CI收集准确Windows阶段，不盲重试旧运行。
