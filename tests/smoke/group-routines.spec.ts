@@ -1,14 +1,64 @@
-import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { _electron as electron, expect, test, type Page } from "@playwright/test";
+import { _electron as electron, expect, test, type Page, type ElectronApplication } from "@playwright/test";
 import type { AevorenBotApi, ApiResult } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
 const value=<T>(result:ApiResult<T>):T=>{if(!result.ok)throw new Error(`${result.error.code}: ${result.error.safeMessage}`);return result.data;};
 type Capture={model:string;response:ServerResponse;released:boolean;aborted:boolean};
 async function listRuns(page:Page){return value(await page.evaluate(()=>(window as unknown as {aevorenBot:AevorenBotApi}).aevorenBot.routines.listRuns()));}
+type CloseProbe = { record(phase: string): void; phases: Record<string, unknown>[]; detach(): void };
+const CLOSE_PHASE_PREFIX = "AEVOREN_CLOSE_PHASE ";
+
+/** Fixture-owned, bounded diagnostics only; no process arguments or application data. */
+async function installCloseProbe(application: ElectronApplication): Promise<CloseProbe> {
+  const owned = application.process(), started = performance.now(), phases: Record<string, unknown>[] = [];
+  let exitSeen = false, closeSeen = false, buffered = "";
+  const record = (phase: string): void => {
+    if (phases.length >= 120) return;
+    phases.push({ phase, elapsedMs: Math.round(performance.now() - started), pid: owned.pid ?? null, exitCode: owned.exitCode, signalCode: owned.signalCode,
+      killed: owned.killed, exitSeen, closeSeen, stdio: owned.stdio.map(stream => stream ? { destroyed: stream.destroyed } : null) });
+  };
+  const exited = (): void => { exitSeen = true; record("owned-exit"); };
+  const closed = (): void => { closeSeen = true; record("owned-close"); };
+  const streams = owned.stdio.flatMap((stream, index) => stream ? [{ stream, listener: () => record(`stdio-${index}-close`) }] : []);
+  const stderr = (chunk: Buffer): void => {
+    buffered += chunk.toString("utf8"); const lines = buffered.split("\n"); buffered = lines.pop() ?? "";
+    for (const line of lines) if (line.startsWith(CLOSE_PHASE_PREFIX) && phases.length < 120) {
+      try { phases.push({ source: "main", ...JSON.parse(line.slice(CLOSE_PHASE_PREFIX.length)) as Record<string, unknown> }); } catch { record("invalid-main-phase"); }
+    }
+    if (buffered.length > 4_096) buffered = "";
+  };
+  owned.once("exit", exited); owned.once("close", closed); owned.stderr?.on("data", stderr);
+  for (const { stream, listener } of streams) stream.once("close", listener);
+  record("probe-installed");
+  try {
+    await application.evaluate(({ app, BrowserWindow, ipcMain }) => {
+      const started = performance.now();
+      const record = (phase: string, state: Record<string, string | number | boolean> = {}): void => {
+        console.error("AEVOREN_CLOSE_PHASE " + JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started), ...state }));
+      };
+      app.on("before-quit", () => record("app-before-quit")); app.on("will-quit", () => record("app-will-quit")); app.on("quit", () => record("app-quit"));
+      for (const window of BrowserWindow.getAllWindows()) {
+        const contents = window.webContents, send = contents.send.bind(contents);
+        contents.send = (channel, ...args) => {
+          if (channel === "app:before-close" || channel === "app:close-blocked") record(channel, { loading: contents.isLoadingMainFrame(), destroyed: contents.isDestroyed() });
+          return send(channel, ...args);
+        };
+        window.on("close", () => record("window-close", { loading: contents.isLoadingMainFrame() })); window.on("closed", () => record("window-closed"));
+        contents.on("did-navigate", () => record("main-navigation-committed")); contents.on("did-stop-loading", () => record("loading-stopped"));
+        contents.on("render-process-gone", (_event, details) => record("renderer-gone", { reason: details.reason, exitCode: details.exitCode }));
+      }
+      ipcMain.on("app:renderer-ready", event => record("renderer-ready", { mainFrame: event.senderFrame === event.sender.mainFrame }));
+      ipcMain.on("app:confirm-close", (event, value: unknown) => record("flush-ack", { mainFrame: event.senderFrame === event.sender.mainFrame, canClose: value === true }));
+    });
+  } catch { record("main-probe-unavailable"); }
+  return { record, phases, detach() { owned.removeListener("exit", exited); owned.removeListener("close", closed); owned.stderr?.removeListener("data", stderr); for (const { stream, listener } of streams) stream.removeListener("close", listener); } };
+}
+
+
 async function fixture(count:number,work:(f:{page:Page;bots:{id:string;name:string;sessionId:string;model:string}[];room:ReturnType<AppRepository["createRoom"]>;captures:Capture[]})=>Promise<void>){
   const directory=mkdtempSync(join(tmpdir(),"aevoren-group-routines-")),path=join(directory,"aevoren-bot.sqlite"),repo=new AppRepository(path);
   const bots=Array.from({length:7},(_,index)=>{const made=repo.createBot(),model=`routine-fixture-${index+1}`,bot=repo.updateBot(made.bot.id,made.bot.version,{name:`任务成员${index+1}`,mcpServerIds:[],modelSelection:{providerInstanceId:"openai-compatible.default",modelId:model}});return{id:bot.id,name:bot.name,sessionId:made.session.id,model};});
@@ -18,7 +68,11 @@ async function fixture(count:number,work:(f:{page:Page;bots:{id:string;name:stri
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));const address=server.address();if(!address||typeof address==="string")throw Error("Missing loopback port");
   const executablePath=process.env.AEVOREN_PACKAGED_APP_PATH??process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE;
   const app=await electron.launch({...(executablePath?{executablePath}:{}),args:executablePath?[]:["."],cwd:process.cwd(),env:{...process.env,AEVOREN_BOT_USER_DATA_DIR:directory,AEVOREN_BOT_TEST_HIDDEN:"1",AEVOREN_BOT_FAKE_PROVIDER:"0",AEVOREN_BOT_DISABLE_UPDATES:"1",AEVOREN_BOT_ROUTINE_TICK_MS:"100"}});
-  const page=await app.firstWindow();let completed=false;
+  const page=await app.firstWindow();let completed=false,closeFailure:unknown;
+  const probe=await installCloseProbe(app);
+  let stderrTail="";
+  const stderr=(chunk:Buffer):void=>{stderrTail=(stderrTail+chunk.toString("utf8")).slice(-16_384);};
+  const ownedProcess=app.process();ownedProcess.stderr?.on("data",stderr);
   try{
     await expect(page).toHaveTitle("Aevoren Bot");await expect(page.locator(".app-shell")).toBeVisible();page.on("pageerror",error=>pageErrors.push(error.message));
     if(executablePath){const runtime=await app.evaluate(({app})=>({packaged:app.isPackaged,version:app.getVersion()}));expect(runtime).toEqual({packaged:true,version:JSON.parse(readFileSync(join(process.cwd(),"package.json"),"utf8")).version});await test.info().attach("actual-routine-package",{body:JSON.stringify(runtime),contentType:"application/json"});}
@@ -28,13 +82,22 @@ async function fixture(count:number,work:(f:{page:Page;bots:{id:string;name:stri
   }finally{
     if(!completed){await test.info().attach("routine-loopback-states",{body:JSON.stringify({captures:captures.map(({model,released,aborted})=>({model,released,aborted})),runs:await listRuns(page).catch(()=>[])}),contentType:"application/json"});}
     for(const capture of captures)capture.response.destroy();
+    const beforeClose={runs:await listRuns(page).then(runs=>runs.map(({id,state,runtimeRunId,batchId})=>({id,state,runtimeRunId,batchId}))).catch(()=>[]),captures:captures.map(({model,released,aborted})=>({model,released,aborted}))};
+    probe.record("fixture-close-requested");
     try {
-      const owned=app.process();await closeTestApplication(app);expect({code:owned.exitCode,signal:owned.signalCode}).toEqual({code:0,signal:null});
+      const owned=app.process();await closeTestApplication(app);probe.record("fixture-close-returned");expect({code:owned.exitCode,signal:owned.signalCode}).toEqual({code:0,signal:null});
+    } catch(error) {completed=false;closeFailure=error;}
+    finally {
+      const safeStderr=stderrTail.split("\n").filter(line=>line.startsWith(CLOSE_PHASE_PREFIX)).map(line=>line.slice(0,2048)).concat([...stderrTail.matchAll(/\b(?:[A-Za-z]*Error|ERR_[A-Z0-9_]+|E(?:CONNRESET|PIPE|INVAL|ACCES|PERM))\b/gu)].map(match=>match[0])).slice(-120).join("\n");
+      const diagnostic={test:test.info().title,beforeClose,phases:probe.phases,stderr:safeStderr};
+      await test.info().attach("routine-close-diagnostics",{body:JSON.stringify(diagnostic),contentType:"application/json"});
+      if(process.env.AEVOREN_ROUTINE_CLOSE_EVIDENCE_PATH)appendFileSync(process.env.AEVOREN_ROUTINE_CLOSE_EVIDENCE_PATH,JSON.stringify(diagnostic)+"\n",{encoding:"utf8",mode:0o600});
+      probe.detach();ownedProcess.stderr?.removeListener("data",stderr);
       if(!completed){const copy=test.info().outputPath("owned-routine.sqlite");copyFileSync(path,copy);await test.info().attach("owned-routine-database",{path:copy,contentType:"application/octet-stream"});}
-    } finally {
       server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));removeTestDirectory(directory);
     }
   }
+  if(closeFailure)throw closeFailure;
 }
 async function create(page:Page,name:string,target:string){await page.getByLabel("Routine 名称",{exact:true}).fill(name);await page.getByLabel("Routine 提示",{exact:true}).fill(`执行 ${name} 的固定指令`);await page.getByLabel("Routine 执行目标",{exact:true}).selectOption(target);await page.getByLabel("Routine 计划类型",{exact:true}).selectOption("interval");await page.getByRole("button",{name:"创建为暂停状态",exact:true}).click();const card=page.locator(".routine-card").filter({has:page.getByText(name,{exact:true})});await expect(card).toContainText("已暂停");return card;}
 
