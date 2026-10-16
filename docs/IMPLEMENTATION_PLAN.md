@@ -705,3 +705,32 @@ This test-only update extends that fixture's existing bounded diagnostics with a
 真实HTTP／宿主集成与绝对deadline控制测试25/25（3.28秒，`templates44-http-early413-final.log`）通过，定向lint通过；新增同一隐藏Events场景的实际超限fetch413／EOF及零准入断言。此修复改变生产Main字节，随后完整重构建与真实包重验单独登记，旧2b8包只作为历史证据，不推断当前包可用。Windows需新正常CI验证，没有取消或盲重试旧任务。
 
 修复后完整五配置类型、Main／Preload／Renderer／三个Worker资源构建通过（`templates44-http-fixed-build.log`）。新增源码隐藏同轮4/4（25.7秒，`templates44-httpfix-source-four.log`）通过：真实超限413并读取EOF且零接收准入、六成员并行与所属撤销、私有TASK元数据、typed API、模板自有二进制源删除／重启导入与离线HTML。自有进程正常退出。随后重新制作独立目录的实际未签名macOS包，后续回执不覆盖旧2b8业务包证据。
+### beta.43 跨平台迁移缺口诊断修复
+
+[正常 CI 38834467154](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38834467154) 在合并检查 `f039876` 上，Linux 普通套件 1,882 通过／3 失败／45 跳过，Windows 1,865 通过／4 失败／61 跳过；均未到达后续构建与实包门禁。共同三项来自独立只读 Room diagnostics CLI：它要求迁移总数等于最大版本，把合法已安装46／47／49但尚未安装独立48的数据库误报为不支持。原三项本机复现失败，新增高号缺口回归也在旧代码失败，缺必需基线3的负向检查通过，保留 before 与 new-before 日志。
+
+修正只要求诊断实际依赖的1–6迁移完整，同时保留原最低版本、实际表及每个查询字段检查；不修改数据库或把缺少所需字段的库视为有效。修后两文件20项通过，含CLI五项与HTTP十五项；Node 类型、定向 lint、文档／开源检查通过。独立CLI脚本不进入已冻结应用ASAR，应用／Preload／Renderer／Worker业务字节未变，不重建或重记实际包证据。
+
+Windows 另有一项 Webhook 负向 HTTP 测试 fetch ECONNRESET，原日志没有请求阶段或状态，不能推断产品根因。同步模板候选的 test-only 修正，完整消费每个实际 HTTP 响应至EOF并记录允许的阶段／状态／错误码，保持全部状态、鉴权和长度断言及原时限，无重试或生产改动。后续正常CI仍需验证该平台。原两平台完整日志保存在 `$CODEX_HOME/aevoren-evidence/2026-10-15/releases/events43-{linux,win}-current-failed.log`；新定向日志为 `event43-ci-fix-focused.log`，没有把本机20项称为完整跨平台全绿。
+
+### beta.43 超限 HTTP 拒绝与最终包复验
+
+后续模板候选 Windows CI 的阶段诊断定位到 `oversized-body`：尚未收到413时发生 ECONNRESET，完整消费响应的夹具仍复现。共享 HTTP 服务的受控真实 TCP 负向回归确认，未完成上传时在 response.end 回调直接销毁 IncomingMessage 会提前中断请求。模板单元修复后同步本候选：拒绝时仅用恒定内存丢弃剩余字节，先发送完整错误响应，再优雅结束 socket；独立绝对5秒关闭界限不会被持续上传延长。鉴权仍在解析前，64KiB边界、超限413、无任务准入及所有来源检查保留。
+
+本候选四文件30项（真实HTTP、关闭边界、CLI及内部委派）通过，五配置类型、完整构建和定向 lint 通过。按新业务字节重新执行标准未签名 macOS arm64 打包，Events2＋typed API 同轮 **3/3（30.0秒）** 通过。首项明确验证超限413及完整EOF、零接收／零模型调用，然后再验证六成员并行与所属撤销；第二项验证私有TASK元数据、冲突草稿及正常退出。拥有进程全部 exitCode=0，无强制清理，没有扩大原时限。前一轮包回执保留为修复前历史，不混为新字节结果。
+
+新Main SHA-256 `6e52d0c1ccd6378dee5df299c8e9d923eacde473476a84a457db03a3895fe85b`，ASAR `6c8dab1ee7ed089d414ef015fffd228ae6f3da97a8763e6ec7ded9c50dd38cea`；与前包相比17项应用输出仅Main变化，实际17项与216项Worker／parser输出逐字节匹配，事件指南一致。207 parser资产／237资源文件／9556 ASAR条目与四Helper声明验证通过。新持久回执为 `event43-http-{build,focused,actual-package}.log` 和 `event43-http-package-{bytes,parser,microphone}.json`。Windows及签名发行仍等待新正常门禁，不用本机成功替代其因果验证。
+
+
+## dev beta.35 historical validation retained
+
+These prior records do not replace the current beta.43 delivery status.
+
+## Beta.35 refresh after MCP34 source acceptance
+
+This branch integrated dev `a743f7d835948a051d316a74fdc3752c190eacc2`, the normal PR #37 merge. MCP34 exact source head `2ccd1c9` passed all four checks in CI 38758776745, including actual Linux Docker and macOS/Windows source plus installed-package acceptance. Prior native focus/close failures above remain historical; no unproven production fix is inferred. The dev integration and Beta promotion are still running. Source version stays beta.35, preserving its separate Notion title/append functionality. This refreshed Notion merge requires new normal cross-platform gates; it has not been released, and master remains deferred.
+
+
+### beta.43 dev beta.35 integration
+
+Merged verified dev `80ab17ecdc037b3d3f6537f0d02e82f758e37034`, retaining beta.43 functionality, version and current MCP authority checks. Relative to the freshly verified `6d2a5af` package source, only historical documentation differs; production source, shared contracts, package/build configuration and dependencies are byte-identical. Documentation and open-source checks pass. Existing package and business checks are retained without rebuilding or repeating them. Normal CI still must validate the refreshed merge.
