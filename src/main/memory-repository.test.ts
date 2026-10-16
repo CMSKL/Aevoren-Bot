@@ -8,6 +8,12 @@ import { AppRepository, MIGRATIONS } from "./database";
 
 const repositories: AppRepository[] = [];
 const temporaryDirectories: string[] = [];
+let migrationTimeline: Array<{ stage: string; elapsedMs: number }> | null = null;
+let migrationStarted = 0;
+function migrationStage(stage: string): void {
+  if (migrationTimeline) migrationTimeline.push({ stage, elapsedMs: Date.now() - migrationStarted });
+}
+function traceMigrationFixture(): void { migrationStarted = Date.now(); migrationTimeline = []; }
 
 function repository(filename = ":memory:"): AppRepository {
   const value = new AppRepository(filename);
@@ -59,11 +65,15 @@ function logicalV7Hash(database: DatabaseSync): string {
 }
 
 afterEach(() => {
+  migrationStage("cleanup-start");
   while (repositories.length > 0) repositories.pop()?.close();
   while (temporaryDirectories.length > 0) {
     const directory = temporaryDirectories.pop();
     if (directory) rmSync(directory, { recursive: true, force: true });
   }
+  migrationStage("cleanup-finished");
+  if (migrationTimeline && (process.env.GITHUB_ACTIONS === "true" || Date.now() - migrationStarted > 5_000)) console.info("[controlled-memory-migration]", migrationTimeline);
+  migrationTimeline = null;
 });
 
 describe("explicit Memory repository", () => {
@@ -122,10 +132,13 @@ describe("explicit Memory repository", () => {
   });
 
   it("migrates existing manual Memory to typed records without changing its content", () => {
+    traceMigrationFixture();
     const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-memory-v22-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
+    migrationStage("legacy-schema-start");
     migrateThrough(filename, 21);
+    migrationStage("legacy-schema-finished");
     const legacy = new DatabaseSync(filename);
     legacy.prepare(
       `INSERT INTO bots(
@@ -146,7 +159,9 @@ describe("explicit Memory repository", () => {
     );
     legacy.close();
 
+    migrationStage("upgrade-start");
     const migrated = repository(filename);
+    migrationStage("upgrade-finished");
     expect(migrated.listMemories("00000000-0000-4000-8000-000000000501")).toEqual([
       expect.objectContaining({ content: "保留原有内容", kind: "fact", source: "manual-user", sourceEntryId: null, expiresAt: null }),
     ]);
@@ -164,10 +179,13 @@ describe("explicit Memory repository", () => {
   });
 
   it("migrates v7 to v8 without changing existing logical data and only applies once", () => {
+    traceMigrationFixture();
     const directory = mkdtempSync(join(tmpdir(), "aevoren-bot-memory-v8-"));
     temporaryDirectories.push(directory);
     const filename = join(directory, "app.sqlite");
+    migrationStage("legacy-schema-start");
     migrateThroughV7(filename);
+    migrationStage("legacy-schema-finished");
     const seed = new DatabaseSync(filename);
     seed.prepare(
       `INSERT INTO bots(id,name,label,description,instructions,pinned_at,hidden_at,has_unread,deleted_at,version,created_at,updated_at)
@@ -176,10 +194,14 @@ describe("explicit Memory repository", () => {
     const beforeHash = logicalV7Hash(seed);
     seed.close();
 
+    migrationStage("upgrade-start");
     const first = repository(filename);
+    migrationStage("upgrade-finished");
     first.close();
+    migrationStage("close-finished");
     repositories.pop();
     const reopened = repository(filename);
+    migrationStage("reopen-finished");
     expect(reopened.listMemories("00000000-0000-4000-8000-000000000001")).toEqual([]);
 
     const inspected = new DatabaseSync(filename, { readOnly: true });
