@@ -1,3 +1,6 @@
+import { routineRunNowSchema, routineRunCancelSchema } from "@shared/routine-schemas";
+import { BOT_IMAGE_OPERATION_SCHEMAS } from "@shared/bot-image-product";
+import { ORGANIZATION_OPERATION_SCHEMAS } from "@shared/organization-product";
 import { SEARCH_OPERATION_SCHEMAS } from "@shared/search-product";
 import { TASK_SESSION_OPERATION_SCHEMAS } from "@shared/task-session-product";
 import { REALTIME_OPERATION_SCHEMAS } from "@shared/realtime-product";
@@ -22,6 +25,8 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...MEDIA_OPERATION_SCHEMAS,
   ...TASK_SESSION_OPERATION_SCHEMAS,
   ...SEARCH_OPERATION_SCHEMAS,
+  ...ORGANIZATION_OPERATION_SCHEMAS,
+  ...BOT_IMAGE_OPERATION_SCHEMAS,
   ...VOICE_OPERATION_SCHEMAS,
   ...REALTIME_OPERATION_SCHEMAS,
   ...LIBRARY_OPERATION_SCHEMAS,
@@ -47,11 +52,12 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "mcp.clearAuthorization": mcpServerMutationIdSchema,
   "mcp.delete": mcpServerMutationIdSchema,
   "routines.list": z.undefined(),
-  "routines.listRuns": routineIdSchema,
+  "routines.listRuns": routineIdSchema.optional(),
   "routines.create": routineCreateSchema,
   "routines.update": routineUpdateSchema,
   "routines.setEnabled": routineEnabledSchema,
-  "routines.runNow": routineIdSchema,
+  "routines.runNow": routineRunNowSchema,
+  "routines.cancelRun": routineRunCancelSchema,
   "routines.delete": routineMutationSchema,
   "conversations.list": z.undefined(),
   "conversations.setPinned": conversationPinnedSchema,

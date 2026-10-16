@@ -282,7 +282,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
         onClick={() => setMembersExpanded((expanded) => !expanded)}
       >
         {detail.members.slice(0, 3).map((member) => (
-          <BotAvatarIcon key={member.botId} shape={member.bot.avatarShape} color={member.bot.avatarColor} size={60} title={member.bot.name} />
+          <BotAvatarIcon key={member.botId} botId={member.bot.id} image={member.bot.avatarImage} shape={member.bot.avatarShape} color={member.bot.avatarColor} size={60} title={member.bot.name} />
         ))}
         {detail.members.length > 3 ? <span className="room-avatar-count">+{detail.members.length - 3}</span> : null}
       </button>
@@ -302,7 +302,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
               const identity = botIdentities.get(member.botId)!;
               return <div className="room-member-row settings-list-row" key={member.botId}>
                 <button className="member-main-link" type="button" title={identity.inline} onClick={() => { void flush().then(saved => { if (saved) onOpenBot(member.bot); }); }}>
-                  <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={20} />
+                  <BotAvatarIcon botId={member.bot.id} image={member.bot.avatarImage} shape={member.bot.avatarShape} color={member.bot.avatarColor} size={20} />
                   <span>{identity.inline}</span>
                 </button>
                 <button

@@ -1,8 +1,10 @@
 # User guide
 
-This guide covers the v0.3.0-beta.35 development candidate: documents and text/script Skills, isolated Docker execution and browser/computer use, reviewable demonstration Skills, native connections, approved external drafts and scoped MCP Apps. Native reads and writes require explicit conversation/Bot permissions; credentials remain in the host. See [Native connections](NATIVE_CONNECTORS.md), [External drafts](NATIVE_OUTBOUND.md) and [MCP Apps](MCP_APPS.md) for setup and exact boundaries.
+This guide covers the v0.3.0-beta.42 local implementation candidate: Bot/group MAIN Routines, personal organization, all-resource search, independent Task threads, media and voice, documents and text/script Skills, isolated Docker execution and browser/computer use, reviewable demonstration Skills, native connections, approved external drafts and scoped MCP Apps. Native reads and writes require explicit conversation/Bot permissions; credentials remain in the host. See [Native connections](NATIVE_CONNECTORS.md), [External drafts](NATIVE_OUTBOUND.md) and [MCP Apps](MCP_APPS.md) for setup and exact boundaries.
 
-The published signed macOS baseline is [v0.3.0-beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33). Source beta.39 adds Task threads; focused unit checks are complete, while its build, hidden UI, cross-platform and installer gates are pending. Phase 5 has local source/unsigned-package evidence, including 159 distinct Realtime source passes and 32 conditional skips across separate runs; it is not a single all-green full run. Real cloud accounts, physical audio devices and Windows Docker remain unverified. See the [implementation record](IMPLEMENTATION_PLAN.md) for exact evidence, failures and release boundaries. Search, organization, group automation, events/Webhooks and templates/exports remain separate Phase 6 work.
+Release status and exact source/package evidence are recorded separately in the [implementation record](IMPLEMENTATION_PLAN.md); a feature described in this guide is not proof that its signed release has shipped. Task threads, search and earlier media/voice work retain their recorded local source and unsigned-package evidence. The beta.42 [MAIN Bot/group Routine](GROUP_ROUTINES.md) integration is under validation: its targeted component tests and Web typecheck pass, while hidden Electron, actual-package, cross-platform and signed-release gates remain pending. Real cloud accounts, physical audio devices and Windows Docker remain unverified. Event subscriptions/Webhooks and templates/exports are separate later deliveries.
+
+[Chat organization and Bot image avatars](ORGANIZATION.md) have local business, hidden UI and actual unsigned macOS-package evidence; platform/signed checks remain pending.
 
 ## First run
 
@@ -19,6 +21,10 @@ The narrow left navigation switches between Chats and Contacts. Existing Workspa
 Choose **Dark** or **Daylight** in **Settings → General**. Both themes use the same layout and controls. Click the personal avatar at the top of the navigation to change your nickname or upload a PNG, JPEG or WebP image up to 5 MB. Cropping and storage happen on this computer; the app saves a centered 256-pixel PNG. The personal avatar updates in your messages and group collages. Bots receive stable cartoon-human portraits derived from their existing saved avatar identity.
 
 The conversation's **…** menu opens group management, files and execution records. Edit Bot profiles and model selection within **Contacts**; group management opens in a closable dialog. The next-message response mode sits beside **@** in the composer; explicit mentions still override it. **View collaboration details** or **View tool activity** above a related message expands that message's records without adding a permanent process panel. Enter sends; Shift, Ctrl or Cmd + Enter inserts a newline.
+
+## Chat organization and Bot pictures
+
+Choose **整理聊天** in the sidebar or **Settings → General → 聊天整理与通知** to create/order sections, move MAIN or TASK chats, choose the fallback default assistant and independently configure notifications/sound. Conflicts retain local edits. In **Contacts → Profile → 更换图片头像**, choose an authorized PNG/JPEG up to 2 MiB; the host publishes an owned 256×256 crop. The photo is visible as that Bot’s profile throughout its chats. Restore the default or duplicate a Bot without sharing mutable image identity. See [the detailed guide](ORGANIZATION.md).
 
 ## Documents and text Skills
 
@@ -56,7 +62,7 @@ Text Skill metadata, including declared tool names, does not grant tool permissi
 
 Choose **New task (新建任务)** in the current chat header. Enter a title and explicitly select each executor. All Memory, quoted history, documents/Skills, media, Workspaces, MCP tools, product actions, network and clipboard permissions start empty. Creation opens a separate TASK chat and does not start a Runtime. Open it from the sidebar **Task threads (任务线程)** section; clicking a contact or ordinary group continues to open MAIN.
 
-Each thread uses its own session ID, history and in-memory composer draft. Selected context is copied as fixed per-member revisions, not dynamically inherited from a parent or sibling. **Task details → Modify task authorization** reviews a separate selection revision. Existing runs and retries retain their original snapshot. A title conflict preserves the typed draft; reopen to review the current saved version. **Stop this task** cancels only this thread's active Runtime/Room batch; **Delete this task thread** requires an idle thread and preserves its Bot/group owner. See [Task threads](TASK_THREADS.md) for exact boundaries. This UI has not yet passed its hidden/package gate.
+Each thread uses its own session ID, history and in-memory composer draft. Selected context is copied as fixed per-member revisions, not dynamically inherited from a parent or sibling. **Task details → Modify task authorization** reviews a separate selection revision. Existing runs and retries retain their original snapshot. A title conflict preserves the typed draft; reopen to review the current saved version. **Stop this task** cancels only this thread's active Runtime/Room batch; **Delete this task thread** requires an idle thread and preserves its Bot/group owner. See [Task threads](TASK_THREADS.md) for exact boundaries. All three targeted source UI scenarios have passed across the recorded runs; the actual unsigned macOS package also passed Task3 plus typed API (4/4), with cross-platform and signed publication pending.
 
 ## Docker execution environments (development)
 
@@ -109,7 +115,18 @@ For a running background service, register its listening port. The Worker verifi
 - The first public-information approval offers **Allow public queries and remember**. This explicitly enables the existing public-read setting and approves the current query once; subsequent public search/fetch, weather and time queries run in the background. It does not authorize files, clipboard, MCP or external writes. Close/reject the dialog or stop the task if you do not consent. **Allow once** does not save a lasting permission.
 - Turn remembered public queries off in **Settings → General → Automatically approve public read-only tools**. Local and other protected operations keep their original per-Workspace or per-call authorization. Already-waiting unrelated requests are not silently approved by the new entry.
 - Built-in web search returns untrusted public-index results with source URLs and retrieval time. Verify consequential or time-sensitive claims against the returned sources.
-- Routines support one-time, interval, and five-field cron schedules. They depend on the selected Provider, permissions, and local app availability.
+- Routines support one-time, interval, and five-field cron schedules for Bot/group MAIN conversations. They depend on the selected Provider, permissions, and local app availability; see the workflow below.
+
+
+## Bot and group Routines (beta.42 local candidate)
+
+Open **Settings → 主动服务**, enter a name and saved task prompt, and choose **Routine 执行目标**. Only Bot and Room MAIN conversations are offered. A new rule starts paused; enable it after review or choose **立即运行** for one execution. TASK targets, event subscriptions and Webhooks are not available in this delivery.
+
+A Room defaults to **Everyone · 保存当前全部成员**. This saves a fixed roster and uses the existing parallel group path; a member waiting for approval does not block its siblings. **只运行勾选成员** saves an explicit subset instead. The saved card shows the chosen members, session generation, reviewed membership version and rule version. Adding a member never silently adds it to an existing rule.
+
+After a membership, selected Bot profile or authorization change, edit the rule and choose **重新选择并审阅目标**, check the members, then save. Explicit subsets retain only their still-present selected members; new members start unchecked. The UI refreshes the actual MAIN target before saving and the host checks the reviewed membership version. Conflicts preserve the draft. Changing the target conversation explicitly clears that rule's fixed document/media references; this editor currently has no resource picker.
+
+**取消本次运行** cancels only the selected accepted Runtime or Room batch. **正在取消** remains visible until the host confirms an outcome; pausing the definition affects future scheduling. Recent runs show actual durable states and can be refreshed. An unknown acceptance result is kept as **结果未知**, without replaying the saved task after restart. Tool approvals and external-write verification still apply. Connected AI uses the same business handlers and current version checks, scoped to its actual MAIN conversation. See [Group Routines](GROUP_ROUTINES.md) for scope, recovery and pending acceptance gates.
 
 ## Updating
 
@@ -154,3 +171,8 @@ The beta.35 candidate retains the beta.34 [scoped MCP tools and isolated Apps](M
 
 聊天面板选择业务 Bot 后主动连接，逐轮开始说话／结束并提交。停止语音与停止已委派业务任务分开；重新连接需要用户操作，不自动复播未知请求。详细流程、采样打断、授权和未验证边界见[实时语音](REALTIME_VOICE.md)。
 
+
+
+## Search saved resources
+
+Use the search icon beside the chat/contact filter to open **全资源搜索**. Choose the current conversation, current project or all local resources, enter a literal keyword and search. Results open their original message, immutable document/Skill revision or saved media/transcript source. A revoked or cleared source cannot redirect to another similar item. Connected AI searches only its actual current conversation and explicitly selected Task context. See [Search](SEARCH.md) for supported sources and verification limits.

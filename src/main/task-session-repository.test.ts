@@ -180,8 +180,8 @@ describe("explicit task context and immutable runtime admission",()=>{
 });
 
 function legacy44(filename:string){
-  const migrations=MIGRATIONS as unknown as Array<(typeof MIGRATIONS)[number]>,latest=migrations.pop()!;
-  try{expect(latest.version).toBe(45);return fixture(filename);}finally{migrations.push(latest);}
+  const migrations=MIGRATIONS as unknown as Array<(typeof MIGRATIONS)[number]>,later=migrations.splice(migrations.findIndex(item=>item.version>44));
+  try{expect(later[0]!.version).toBe(45);return fixture(filename);}finally{migrations.push(...later);}
 }
 describe("real v44 task migration",()=>{
   it("preserves populated v44 incoming foreign keys, triggers, media, voice and runtime data",()=>{
@@ -205,7 +205,7 @@ describe("real v44 task migration",()=>{
     const repository=new AppRepository(filename);repositories.push(repository);const inspected=new DatabaseSync(filename);
     for(const row of incoming)expect(inspected.prepare("SELECT sql FROM sqlite_master WHERE name=?").get(row.name)).toEqual({sql:row.sql});
     for(const row of triggers)expect(inspected.prepare("SELECT sql FROM sqlite_master WHERE name=?").get(row.name)).toEqual({sql:row.sql});
-    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);expect(inspected.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({version:45});
+    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);expect(inspected.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({version:MIGRATIONS.at(-1)!.version});expect(inspected.prepare("SELECT version FROM schema_migrations WHERE version=45").get()).toEqual({version:45});
     expect(inspected.prepare("SELECT generation,transcript_cursor FROM sessions WHERE id=?").get(f.session.id)).toEqual(cursor);
     expect(readdirSync(join(directory,"Backups")).filter(name=>name.endsWith(".sqlite"))).toHaveLength(1);inspected.close();
     expect(repository.getMemory(memory.id)).toEqual(memory);expect(repository.getRuntimeRun(run.id)).toEqual(run);expect(repository.listTranscript(f.session.id)).toEqual(transcript);

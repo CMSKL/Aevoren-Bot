@@ -1,3 +1,4 @@
+import { routineTargetSchema, routineResourcesShape } from "./routine-schemas";
 import { z } from "zod";
 import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "./bot-avatar";
 import { resourceReferencesSchema } from "./library-schemas";
@@ -422,17 +423,19 @@ export const routineScheduleSchema = z.discriminatedUnion("type", [
     timeZone: z.string().trim().min(1).max(128),
   }).strict(),
 ]);
-export const routineCreateSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  prompt: z.string().trim().min(1).max(20_000),
-  botId: botIdSchema,
-  schedule: routineScheduleSchema,
-  enabled: z.boolean().optional(),
-}).strict();
+const routineCreateFields = {
+  name: z.string().trim().min(1).max(120), prompt: z.string().trim().min(1).max(20_000),
+  schedule: routineScheduleSchema, enabled: z.boolean().optional(), ...routineResourcesShape,
+};
+export const routineCreateSchema = z.union([
+  z.object({ ...routineCreateFields, botId: botIdSchema }).strict(),
+  z.object({ ...routineCreateFields, target: routineTargetSchema }).strict(),
+]);
 export const routineUpdateSchema = z.object({
   id: routineIdSchema,
   expectedVersion: z.number().int().positive(),
   patch: z.object({
+    target: routineTargetSchema.optional(), ...routineResourcesShape,
     name: z.string().trim().min(1).max(120).optional(),
     prompt: z.string().trim().min(1).max(20_000).optional(),
     schedule: routineScheduleSchema.optional(),

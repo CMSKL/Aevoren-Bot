@@ -23,6 +23,7 @@ export type Bot = {
   modelSelection: ModelSelection;
   avatarShape: BotAvatarShape;
   avatarColor: BotAvatarColor;
+  avatarImage?:import("./library-contracts").MediaRef;
   mcpServerIds?: string[] | null;
   memoryWorkspaceIds?: string[];
   pinnedAt: string | null;
@@ -520,7 +521,13 @@ export type ProductToolRequest =
 
 export type AgentDelegationOrigin = {
   ancestorRunIds?: string[];
-  kind: "ai-delegation" | "routine"; routineId?: string; routineRunId?: string; fromBotNameSnapshot?: string; fromBotId: string; fromSessionId: string; fromRuntimeRunId: string; rootClientNonce: string; depth: number;
+  kind: "ai-delegation"; routineId?: never; routineRunId?: never; fromBotNameSnapshot?: string; fromBotId: string; fromSessionId: string; fromRuntimeRunId: string; rootClientNonce: string; depth: number;
+};
+
+/** A saved human-authored automation instruction, including genuine Room targets. */
+export type RoutineMessageOrigin = {
+  kind: "routine"; routineId: string; routineRunId: string; fromBotNameSnapshot: string;
+  fromBotId?: string; fromSessionId: string; fromRuntimeRunId: ""; rootClientNonce: string; depth: 0; ancestorRunIds?: never;
 };
 
 /** Final human speech provenance, verified against the host's durable turn journal. */
@@ -529,7 +536,7 @@ export type VoiceMessageOrigin = {
   fromRuntimeRunId?: never; fromSessionId?: never; fromBotId?: never; fromBotNameSnapshot?: never;
   rootClientNonce?: never; depth?: never; ancestorRunIds?: never;
 };
-export type DelegationOrigin = AgentDelegationOrigin | VoiceMessageOrigin;
+export type DelegationOrigin = AgentDelegationOrigin | RoutineMessageOrigin | VoiceMessageOrigin;
 
 export type ProjectToolRequest =
   | ProductToolRequest
@@ -1228,7 +1235,9 @@ export type Routine = {
   id: string;
   name: string;
   prompt: string;
-  botId: string;
+  botId: string | null;
+  target: import("./routine-contracts").RoutineTarget;
+  targetSnapshot: import("./routine-contracts").RoutineTargetSnapshot;
   enabled: boolean;
   schedule: RoutineSchedule;
   nextRunAt: number | null;
@@ -1241,13 +1250,16 @@ export type RoutineRun = {
   id: string;
   routineId: string;
   routineName: string;
-  botId: string;
+  botId: string | null;
+  version: number;
+  batchId: string | null;
+  targetSnapshot: import("./routine-contracts").RoutineTargetSnapshot;
   promptSnapshot: string;
   scheduleSnapshot: RoutineSchedule;
-  trigger: "schedule" | "manual";
+  trigger: "schedule" | "manual" | "event";
   triggerKey: string;
   scheduledFor: number;
-  state: "queued" | "waiting" | "running" | "completed" | "failed" | "cancelled" | "missed";
+  state: "queued" | "waiting" | "dispatching" | "running" | "cancel-requested" | "completed" | "failed" | "cancelled" | "missed" | "unknown";
   clientNonce: string;
   runtimeRunId: string | null;
   lastErrorCode: string | null;
@@ -1262,6 +1274,8 @@ export type UserProfile = {
 };
 
 export interface AevorenBotApi {
+  botImages:import("./bot-image-contracts").BotImageApi;
+  organization:import("./organization-contracts").OrganizationApi;
   search: import("./search-contracts").SearchApi;
   mcpWrites: import("./mcp-write-contracts").McpWriteApi;
   browser: import("./browser-contracts").BrowserApi;
@@ -1305,10 +1319,11 @@ export interface AevorenBotApi {
   routines: {
     list(): Promise<ApiResult<Routine[]>>;
     listRuns(routineId?: string): Promise<ApiResult<RoutineRun[]>>;
-    create(input: { name: string; prompt: string; botId: string; schedule: RoutineSchedule; enabled?: boolean }): Promise<ApiResult<Routine>>;
-    update(input: { id: string; expectedVersion: number; patch: Partial<Pick<Routine, "name" | "prompt" | "schedule">> }): Promise<ApiResult<Routine>>;
+    create(input: import("./routine-contracts").RoutineCreateInput): Promise<ApiResult<Routine>>;
+    update(input: { id: string; expectedVersion: number; patch: import("./routine-contracts").RoutineUpdatePatch }): Promise<ApiResult<Routine>>;
     setEnabled(input: { id: string; expectedVersion: number; enabled: boolean }): Promise<ApiResult<Routine>>;
-    runNow(id: string): Promise<ApiResult<RoutineRun>>;
+    runNow(input: import("./routine-contracts").RoutineRunNowInput): Promise<ApiResult<RoutineRun>>;
+    cancelRun(input: import("./routine-contracts").RoutineRunCancelInput): Promise<ApiResult<RoutineRun>>;
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<void>>;
   };
   conversations: {

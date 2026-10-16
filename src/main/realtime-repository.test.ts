@@ -44,10 +44,28 @@ describe("durable realtime sessions, turns and business admissions",()=>{
     const root=mkdtempSync(join(tmpdir(),"aevoren-realtime44-"));roots.push(root);const filename=join(root,"old.sqlite"),raw=new DatabaseSync(filename);raw.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)");
     for(const migration of MIGRATIONS.filter(value=>value.version<=43)){if("foreignKeysOff" in migration&&migration.foreignKeysOff)raw.exec("PRAGMA foreign_keys=OFF");raw.exec("BEGIN");raw.exec(migration.sql);raw.prepare("INSERT INTO schema_migrations VALUES(?,?)").run(migration.version,"2026-10-01T00:00:00Z");raw.exec("COMMIT");raw.exec("PRAGMA foreign_keys=ON");}
     raw.prepare("UPDATE voice_configurations SET encrypted_key=?,version=7 WHERE kind='realtime'").run("ENCRYPTED_OLD_KEY");
-    const schema=JSON.stringify(raw.prepare("SELECT type,name,sql FROM sqlite_master WHERE type IN('trigger','index') ORDER BY type,name").all());raw.close();
+    const schema=raw.prepare("SELECT type,name,sql FROM sqlite_master WHERE type IN('trigger','index') ORDER BY type,name").all() as {type:string;name:string;sql:string|null}[];raw.close();
     const repository=new AppRepository(filename);repositories.push(repository);const db=Reflect.get(repository,"database") as DatabaseSync;
     expect(repository.voice.configuration("realtime")).toMatchObject({configuration:{version:7,keyConfigured:true},encryptedKey:"ENCRYPTED_OLD_KEY"});
-    expect(JSON.stringify(db.prepare("SELECT type,name,sql FROM sqlite_master WHERE type IN('trigger','index') AND name NOT LIKE '%realtime%' ORDER BY type,name").all())).toBe(schema);
+    const compact=(sql:string):string=>sql.replace(/\s+/gu,"");
+    for(const old of schema){
+      const actual=db.prepare("SELECT type,name,sql FROM sqlite_master WHERE type=? AND name=?").get(old.type,old.name) as typeof old|undefined;
+      expect(actual,old.name).toBeDefined();
+      if(old.name==="sessions_one_main_per_bot"||old.name==="sessions_one_main_per_room"){
+        const owner=old.name.endsWith("bot")?"bot_id":"room_id";
+        expect(compact(actual!.sql!)).toBe(compact(`CREATE UNIQUE INDEX ${old.name} ON sessions(${owner}) WHERE ${owner} IS NOT NULL AND kind='MAIN'`));
+      }else if(old.name==="initialize_conversation"){
+        // Exact legacy body retained; only automatic initialization becomes MAIN-only.
+        expect(compact(actual!.sql!)).toBe(compact(old.sql!).replace("AFTERINSERTONsessionsBEGIN","AFTERINSERTONsessionsWHENNEW.kind='MAIN'BEGIN"));
+      }else if(old.name==="capture_runtime_media"){
+        expect(actual!.sql).toBe(old.sql!.replace("AFTER INSERT ON runtime_runs BEGIN","AFTER INSERT ON runtime_runs WHEN (SELECT kind FROM sessions WHERE id=NEW.session_id)='MAIN' BEGIN"));
+      }else if(old.name==="initialize_runtime_scope"){
+        // The one intentionally replaced body must equal migration45's complete
+        // immutable TASK/retry scope capture, not an arbitrary changed trigger.
+        const declared=MIGRATIONS.find(migration=>migration.version===45)!.sql.match(/CREATE TRIGGER initialize_runtime_scope\b[\s\S]*?\n[ ]{2}END;/u)?.[0];
+        expect(declared).toBeDefined();expect(actual!.sql).toBe(declared!.replace(/;$/u,""));
+      }else expect(actual).toEqual(old);
+    }
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);expect(readdirSync(join(root,"Backups")).some(name=>name.endsWith(".sqlite"))).toBe(true);
   });
 });

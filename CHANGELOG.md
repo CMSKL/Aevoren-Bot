@@ -1,12 +1,34 @@
 # Changelog
 
+## v0.3.0-beta.42 (development candidate)
+
+- Add MAIN group Routine targets with reviewed membership versions, immutable selected rosters, parallel Everyone/subset execution and a versioned editor shared with host business validation.
+- Expose exact run cancellation and versioned immediate execution to both UI and approved product tools. Constrain AI inspection/control to the current MAIN conversation; keep TASK automation outside this delivery.
+- Preserve accepted prompts/references and nonce receipts through edits, cancellation and restart. Mark partial group results failed while retaining completed member output; never replay an unknown dispatch.
+- Include migration 47 after organization/avatar migration 46, retain the private host event bridge and package the group Routine guide. Local/installed/platform gates remain separately recorded; no release is implied by this source entry.
+
+## v0.3.0-beta.41 (development candidate)
+
+- Persist session-based chat sections/order, a fallback default assistant and independent notification/sound preferences. Keep concurrent edits through explicit version conflicts.
+- Publish actual centered 256×256 Bot image avatars from authorized PNG/JPEG media; preserve owned copies through source removal/restart and independent Bot duplication.
+- Share validated organization/avatar operations with connected AI, retaining actual Runtime/TASK scope, approvals and revocable pixel transport.
+- Focused business checks, two hidden source UI scenarios and actual unsigned macOS-package checks pass. Platform and signed-release gates remain pending; group automation, events/Webhooks and templates/exports follow separately.
+
+## v0.3.0-beta.40 (development candidate)
+
+- Search saved messages, immutable document/Skill versions, media/transcripts, Task threads, routines and authorized local drafts from one scoped interface.
+- Recheck exact source identity, generation, version and grants; preserve original Task Runtime selections and prevent same-text replacements after history is cleared.
+- Share search with connected AI through host-scoped product operations. Keep private titles/snippets outside durable tool receipts and reauthorize text before provider serialization.
+- Local SQLite, guarded transport and two controlled UI cases pass. The actual unsigned macOS package passed Search2 plus Task3 in one run; platform and signed-release gates remain pending.
+
+
 ## v0.3.0-beta.39 (development candidate)
 
 - Add multiple independent TASK conversations beside each Bot/group's MAIN chat, migration 45, separate session identities and explicit executor admission.
 - Default all task context and permissions to empty. Capture selected per-member Memory/history/resource/media versions, Workspace ceilings, exact read-only MCP identities and product/network/clipboard permissions; Runtime retries retain their original snapshot.
 - Add task creation, separate sidebar rows, session-specific history/drafts, conflict-preserving titles, explicit authorization revision and task-only stop/delete controls. Preserve the owner Bot/group and ordinary MAIN entry points.
 - Scope capability metadata, model tools and live events to the actual task/executor, without inheriting global connection state or unselected authority.
-- Focused unit/static checks pass. Build, hidden Electron, actual-package and cross-platform acceptance remain pending; search and the remaining Phase 6B–6F deliveries are not included.
+- The source build, focused checks and all three distinct hidden Task scenarios pass across separate recorded runs. The actual unsigned macOS package passes Task3 plus typed API (4/4). Cross-platform and signed publication remain pending; search and the remaining Phase 6B–6F deliveries are not included.
 
 ## v0.3.0-beta.38 (development candidate)
 

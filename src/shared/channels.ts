@@ -23,6 +23,7 @@ export const IPC = {
   routinesUpdate: "routines:update",
   routinesSetEnabled: "routines:set-enabled",
   routinesRunNow: "routines:run-now",
+  routinesCancelRun: "routines:cancel-run",
   routinesDelete: "routines:delete",
   conversationsList: "conversations:list",
   conversationsSetPinned: "conversations:set-pinned",

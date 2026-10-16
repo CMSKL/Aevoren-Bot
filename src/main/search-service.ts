@@ -129,7 +129,7 @@ export class SearchService {
           { type: "local-draft", sessionId, id: draft.id, revisionId: content.revision.id, executorBotId, digest: content.revision.digest,
             authorityDigest: this.authority(sessionId, context, { bindingId: binding?.id, bindingVersion: binding?.version, authVersion: connection.authVersion }) });
       }
-      if (kinds.has("routine") && session.kind === "MAIN" && session.botId) for (const routine of repo.listRoutines().filter(value => value.botId === session.botId && (!expected || value.id === expected.id))) {
+      if (kinds.has("routine") && session.kind === "MAIN") for (const routine of repo.listRoutines().filter(value => value.target.sessionId === sessionId && (!expected || value.id === expected.id))) {
         yield this.candidate("routine", routine.name, `${routine.name}\n${routine.prompt}`, routine.updatedAt,
           { type: "routine", sessionId, id: routine.id, version: routine.version, digest: hash([routine.name, routine.prompt, routine.schedule]), authorityDigest });
       }

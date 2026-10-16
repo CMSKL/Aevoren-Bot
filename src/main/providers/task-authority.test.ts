@@ -82,6 +82,24 @@ createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line)
     expect(results).toHaveLength(repeated ? 1 : 0); expect(events.some(event => event.type === "completed")).toBe(false);
   });
 
+  it("does not settle the revoked Codex iterator until its owned child finishes EOF teardown", async () => {
+    const root = directory(), guard = lease(); let settled = false;
+    const script = install(root, `import {createInterface} from 'node:readline';import {existsSync,watch,writeFileSync} from 'node:fs';
+const input=createInterface({input:process.stdin});const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');
+input.on('line',line=>{const m=JSON.parse(line);if(m.method==='initialize'){writeFileSync('gate','ready');const watcher=watch('.',()=>{if(existsSync('release')){watcher.close();send({jsonrpc:'2.0',id:m.id,result:{}})}})}});
+input.on('close',()=>{writeFileSync('stdin-closed','ready');const finish=()=>{if(existsSync('exit-release')){writeFileSync('owned-exited','yes');process.exit(0)}};const watcher=watch('.',finish);finish()});`);
+    vi.spyOn(cliUtils, "resolveCliPath").mockReturnValue(script);
+    vi.spyOn(cliUtils, "isolatedCodexEnvironment").mockImplementation(runtimeHome => ({ PATH: process.env.PATH, CODEX_HOME: runtimeHome }));
+    const outcome = collect(new CodexCliProvider(script, "fixture-model", root).run([{ role: "user", content: "Guarded prompt" }], new AbortController().signal, guard.context)).then(value => { settled = true; return value; }, error => { settled = true; return error; });
+    try {
+      await vi.waitFor(() => expect(existsSync(join(root, "gate"))).toBe(true)); guard.revoke(); writeFileSync(join(root, "release"), "release");
+      await vi.waitFor(() => expect(existsSync(join(root, "stdin-closed"))).toBe(true));
+      expect(settled).toBe(false);
+      writeFileSync(join(root, "exit-release"), "release");
+      expect(await outcome).toMatchObject({ code: "APPROVAL_SCOPE_INVALID" }); expect(existsSync(join(root, "owned-exited"))).toBe(true);
+    } finally { writeFileSync(join(root, "exit-release"), "release"); await outcome; }
+  });
+
   it("does not spawn or feed Claude after a revoked asynchronous bridge startup", async () => {
     const root = directory(), guard = lease(); guard.context.networkTools = true;
     const script = install(root, `import {writeFileSync} from 'node:fs';writeFileSync('spawned','yes');for await(const chunk of process.stdin)writeFileSync('wire',chunk);`);
