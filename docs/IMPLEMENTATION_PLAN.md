@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.43**。阶段 6A 已实现 MAIN/TASK 隔离、固定上下文、权限、独立线程与共用业务入口，三项不同源码场景和真实未签名 macOS 包四项本地验收通过；普通回归原整轮 1,777 通过／9 失败／45 跳过，九项旧迁移断言修正后七文件 72 项定向通过，累计 1,786 个不同通过场景，不记为单轮全绿。阶段 6B 全资源搜索的 11 项 SQLite、2 项产品传输及2项实际界面场景通过，当前安装包和跨平台仍待验收。6C 分区／偏好／图片头像已通过业务、源码界面和实际未签名 macOS 包检查，跨平台／签名发行待验收；6D–6F 继续实施。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，后续版本按正常顺序晋级；master 不晋级。真实第三方账号、音频硬件及 Windows Docker 未验证。
+当前开发候选为 **v0.3.0-beta.43**。阶段 6A 已实现 MAIN/TASK 隔离、固定上下文、权限、独立线程与共用业务入口，三项不同源码场景和真实未签名 macOS 包四项本地验收通过；普通回归原整轮 1,777 通过／9 失败／45 跳过，九项旧迁移断言修正后七文件 72 项定向通过，累计 1,786 个不同通过场景，不记为单轮全绿。阶段 6B 全资源搜索的 11 项 SQLite、2 项产品传输及2项实际界面场景通过，实际未签名 macOS 包已有验收，跨平台／签名仍待完成。6C 分区／偏好／图片头像已通过业务、源码界面和实际未签名 macOS 包检查，跨平台／签名发行待验收；6D 群 Routine 与 6E 事件／本机 Webhook 已通过本地源码和真实未签名 macOS 包检查，6F 继续实施。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，后续版本按正常顺序晋级；master 不晋级。真实第三方账号、音频硬件及 Windows Docker 未验证。
 
 ## 已确定的方案
 
@@ -32,7 +32,7 @@
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
 | 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 开发组合候选四项 CI 通过，分单元晋级中 | `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1–5.3 源码及本地包证据完成，跨平台／签名发行待通过 | beta.38 源码累计 159 个不同通过、32 条件跳过；保留完整运行 3 项失败及定向 3/3，通过真实 Worklet／受控协议／普通 Runtime；云账号／硬件另行验证 |
-| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 6A TASK 与 6B 搜索已有本地包证据；6C 整理／偏好／图片通过源码检查；6D–6F 实施中 | beta.39 的迁移／授权／UI 身份与能力专项已有证据；完整构建与三个不同隐藏场景分轮通过，保留失败，真实未签名 macOS 包 4 项通过，跨平台／签名待完成 |
+| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 6A–6E 已有本地源码及实际未签名 macOS 包证据；6F 模板／导出实施中 | beta.39 的迁移／授权／UI 身份与能力专项已有证据；完整构建与三个不同隐藏场景分轮通过，保留失败，真实未签名 macOS 包 4 项通过，跨平台／签名待完成 |
 
 ## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
 
@@ -275,6 +275,7 @@ ASAR SHA-256 is `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf
 
 后续原生 Linux [CI 38666108922](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38666108922/job/116198324472) 在 12288fd 通过完整 Validate：普通 1,547 通过、45 跳过；真实 Docker／Host 7 文件 41／41 通过。新增实际桌面 RFB 示范用例 3.239 秒通过，包含输入脱敏、断线／重启封存和归还后观察边界。该证据来自 Linux 容器，不改变本机 daemon 未启动和真实 Windows Docker 未验证的记录。
 
+
 ## Windows TCP 录制夹具验收更正
 
 最新 TCP 录制夹具更正：MCP34 Windows 运行 38675963129 的五项进程清理通过，但普通测试 1,550 通过／60 跳过／1 失败；录制事件数先更新，接收端 TCP data 回调尚未交付 28 字节，后续构建／包验收未运行。真实 socket 暂停确定性复现旧断言失败；现先登记接收等待，再恢复并等待完整字节，保留原录制／控制和精确字节断言。相关 9 项、Node／浏览器 Worker 类型和 lint 通过。仅测试改变，安装包业务代码和既有本机回执不变；修正后的跨平台 CI 待验证。
@@ -340,6 +341,7 @@ The updated fixture passed all three source MCP cases in 10.63 seconds and all t
 
 历史完整套件失败、旧 Windows TCP 竞态和旧包 CSP 阻止 iframe 的记录继续保留；本次定向复验不将它们改记为完整 CI 全绿。合并后提交仍须通过当前跨平台 CI，未签名 macOS 本机包不代替签名发行、Windows 安装包或真实 Windows Docker 验收。可写 MCP／交互 Apps、Notion 页面更新／追加未进入此单元，阶段 5–6 仍未实现。
 
+
 ## Beta.32 同步 dev 后的验收
 
 `e83e91dd67ca665f2045fc378a3989605d87bb97` 合入已验证 dev `4f24f15`，保留版本 beta.32。相较原 `b922ca8`，生产代码仅增加主文档关闭修复与 Skill 私有 staging 发布修复，原生外发业务及 API 未改，也未引入示范或 MCP Apps。
@@ -394,6 +396,7 @@ The updated fixture passed all three source MCP cases in 10.63 seconds and all t
 示范提交 `b46a92143b647f355c4b771f84ed4b1bf2b63a17` 的[CI 38681547433](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38681547433) 四项全部通过：Windows 源码与 NSIS 安装后的功能、八项关闭握手均通过，未重复先前的初始化或复合关闭超时。随后合入固定 dev `36a48730002a5a8bd7115891a99a18a7cffa792c`，保留 beta.33、实际迁移 38→39→40、Browser Worker 1.1.0、示范扩展 CI 数组及原八项关闭夹具。公开安装包基线仍为 beta.31。
 
 本次相较 `b46a921` 的生产差异仅为 Browser Engine 的显式启用、无敏感内容的旧画面诊断；Main、业务契约、版本和关闭夹具不变，未纳入 MCP34、Notion35 或阶段 5。定向 frame 诊断 6 项与 CDP 下载 10 项（含本机符号链接边界）全部通过，Browser Worker TypeScript、目标 lint、Worker 构建、文档链接、三份工作流 YAML 及 diff 检查通过；日志和源文件／Worker 摘要保存在本机临时 `/tmp/aevoren-demo33-dev36-merge-evidence.json`，YAML／生产差异核验为 `/tmp/aevoren-demo33-dev36-merge-yaml-diff.json`。没有重跑完整套件或重新打包，前述 25 项包验收仍对应原冻结构建；新 Worker 的跨平台结果须由本次合并提交的 CI 单独验证。
+
 
 
 ### beta.32 Windows 关闭阶段诊断（未发布）
@@ -595,3 +598,74 @@ Search2 与继承的 Task3 同轮 **5/5 通过（40.3 秒）**，实际 app.isPa
 后续实际源码/未签名包证据补在本节；当前不把构建推断为安装包验证。证据前缀 `$CODEX_HOME/aevoren-evidence/2026-10-15/templates44-`。无新增依赖或许可，master不晋级。
 
 补充验证记录：模板后端20项和产品/事件/原子文件回归在分批日志中通过；原子回执两项保留修复前失败证据。`templates44-focused-first.log` 为72项通过加3项测试mock递归失败；修正mock后 `templates44-focused-after.log` 三文件55项通过（含3项持有link撤权/替换inode）。新增私密序列化回归首次错误为fixture仍有活跃Runtime，已先结束该Runtime后重跑，不作为生产缺陷。Renderer精确选择、完整预览、冲突保留、版本导出和取消7项通过，日志 `templates44-ui-unit.log`。
+
+### beta.43 实际未签名 macOS 包
+
+使用已安装且核验为 Electron44.3.0 arm64 的运行时执行标准 ASAR／afterPack 打包，没有改业务输出。实际包 Events2 与 typed API 同轮 **3/3（23.8 秒）** 通过，均验证 packaged=true／版本43；真实六成员 Webhook、所属取消、重启停止监听、TASK 元数据隐私、CAS 草稿和完整 API 命名空间均通过，拥有进程正常 exitCode=0，无强制清理。
+
+Main SHA-256 `5b3388f97038ab07f7b747e29274bf2bb23449582c7dee014372af4fa48951ff`，ASAR `df5189c65301d6303806b9cbd4fadf5c7830624c8dfc40941b5fc4192b9d0ef4`。17 项应用输出与216项Worker／parser文件逐字节相同；随包事件指南与打包时源码相同。207 parser资产／237资源文件／9556 ASAR条目及四Helper麦克风用途声明检查通过；不作为真实硬件或签名验证。持久回执为 `event43-actual-package-first.log`、`event43-package-bytes.json`、`event43-package-parser.json` 和 `event43-package-microphone.json`。
+
+本交付复用前阶段回归记录，并补充事件相关 70 项、9 项及最终 7 文件54项定向检查，不把它们相加为独立场景数，也未宣称新跑一轮完整普通套件。最终五配置类型、完整构建、全仓 lint、文档、开源及240包许可检查通过。平台 CI 和签名发行仍待正常门禁，公开版本按顺序晋级，master 不变。后续仅文档补充验收记录，不改变冻结的业务和包内指南字节。
+
+
+## 同步 dev beta.34 的历史验收与诊断
+
+以下记录保留 dev 的历史证据，不覆盖本文当前 beta.43 状态。
+
+历史冻结 beta.34 验收曾统计 20 项；复核确认当时 typed API fixture 忽略安装包路径，实际为包内 19 项与源码 typed API 1 项。MCP 包测试实查 isPackaged、精确版本以及 Resources 中的 MCP 指南；验证真实 opaque iframe、父级／Preload 隔离、工具输入／结果、真实 UI 调用审批、撤权、未知结果与延迟原生→MCP 模态交接。全部使用临时数据库、真实 IPC 与受控 HTTP，未触及真实外部账号；此处保留历史并纠正证据类别，最新包结果单列于下。
+
+示范基础的真实 Linux [CI 38666108922](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38666108922/job/116198324472) 在 12288fd 完整通过：普通 1,547／45 跳过，实际 Docker／Host 41／41；新增真实 RFB 示范用例 3.239 秒通过。此证据属于 Demo33 基础提交，MCP34 自身跨平台完整 CI 与签名发行仍须通过，真实 Windows Docker 仍未验证。
+
+最终只读复核发现离线 DNS／传输准备失败时 Client 已登记、但尚未进入清理 try，反复刷新目录会累积引用。f85c8cc 将准备过程纳入清理并在分配 HTTP Agent 前验证 Header；原代码重复失败回归复现引用保留，修正后通过。此后四配置重新构建、MCP／旧连接／能力专项 25 通过、1 跳过及针对性 lint 通过；修正后包 MCP3 与源码 typed1 分别通过。此前完整 1,565 与实际包 19 项是清理补丁前的回执，未混称为补丁后全量结果。
+
+## MCP beta.34 关闭修复后的本机验收
+
+主 Renderer 的 ready 状态现仅在主文档提交后清除；子框架、Hash、被阻止的导航和真实重载均有关闭／保存回归。真实 App 的关闭停滞在旧代码复现，修正后正常退出；未增加生产强制退出或绕过草稿确认。测试只清理确定归属的 PID 树／进程组，并支持已关闭 Playwright 通道的幂等清理。
+
+- 构建源 `ee0cbe2`、测试收尾 `40c29d3`：四套 TypeScript、lint、build、215 包／7 类许可与 34 份文档检查通过。
+- 完整本机普通测试为 1,560 通过、45 跳过、6 失败；五项达到原 5 秒测试上限，一项未在 60ms 协调截止前进入预期阶段。原文件无相关变更，106 项隔离串行检查全部通过，未提高超时或删减断言。全量成功仍待 CI 补齐。
+- 隐藏源码 12／12；同一真实未签名 macOS beta.34 包最终 28 个不同场景通过：资料库 8、原生读取 2、外发 5、示范 1、MCP 3、关闭 8、真实包 typed API 1。实查版本、isPackaged、指南和两套 Worker 资源；源码及包界面验收无强制关闭警告。
+- 首轮包 18 通过、示范收尾 1 失败：应用已正常关闭后，测试清理错误访问已销毁进程通道。幂等修正前负向回归失败、修正后五项进程检查通过；相同包的示范复验与后续关闭／typed API 均通过，应用包未重建。保留初次失败，不把收尾错误算作业务失败或抹去记录。
+
+跨平台检查、Beta 晋级与签名发行仍为门禁，master 不晋级；真实第三方账号与 Windows Linux Docker 未验证。阶段 5–6 未实施。
+
+## MCP beta.34 integration of verified Native32 baseline
+
+Merged exact dev `36a48730002a5a8bd7115891a99a18a7cffa792c` into the MCP34 feature branch. That baseline contains verified Native32 PR #34 merge `a84e87f` and the published beta.31 README boundary; beta.34 remains the source version. Earlier `d016c974` had four successful CI checks, and its actual 28-case unsigned macOS package receipt remains historical. Those results were not relabeled as acceptance of this newly combined Worker.
+
+The only production-code difference from d016c974 is the BrowserEngine's opt-in, bounded, sanitized stale-frame diagnostics from `65437c8`; existing capture order, provenance checks, 409 rejection and authority boundaries remain intact. Companion changes are the focused diagnostic tests and failure-only Docker diagnostic collection. MCP/native/demo production code, approvals, private metadata, App-only visibility, migrations and Main lifecycle are unchanged. All expanded native/outbound/demo/MCP workflow selections and the eight close scenarios remain selected. Notion title updates and appends from beta.35 were not imported.
+
+Local focused acceptance passed **15/15** (frame diagnostics 6, browser lease boundary 5, Chrome pipe/HTTP/WebSocket boundary 4), plus Browser Worker TypeScript, targeted ESLint and the Browser Worker build. Three workflow YAML files parsed with the expanded feature and close gates retained; 34-document link and diff checks passed. No full unit suite, full application build, package rebuild, Docker or real-account test was repeated. This integration needs its own new CI gate, including actual Docker and platform/package checks; the earlier Main/package evidence remains distinct from the new Worker context. Published beta.31, frozen dev, beta and master were not changed. Phase 5/6 remain unimplemented.
+
+The MCP34 feature subsequently integrated exact dev `a8469cbad078c7ace92c607ac227c3cd648e1f5a`, whose only change from 36a4873 is the two-line, evidence-based Windows main-document compound-test budget correction already described in the beta.35 record. It retains the 3-second per-close and 1.5-second immediate-startup limits and every UI/persistence assertion. Only the affected fixture's targeted lint and diff checks were repeated; application/Worker code and the earlier focused results were unchanged. The new feature head requires fresh CI rather than inheriting d016c974's successful checks.
+
+### MCP34 Windows 初始文档顺序校验
+
+[CI 38717680788](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38717680788) 的 Linux、macOS 和密钥检查通过，Windows 普通测试通过；源码 smoke 为 37 通过、1 失败。首个 MCP App 场景在初始化 `.app-shell` 的原有 5 秒断言失败，尚未进入 MCP 配置、审批或写入。保留的 trace 只有测试侧步骤，未包含页面快照或导航状态，不能据此确认产品根因；Windows 打包和安装后验收尚未执行。
+
+夹具现在先等待由 `app.getAppPath()` 确定的实际 Renderer 文件 URL 提交及 `DOMContentLoaded`，再执行不变的 `.app-shell` 断言。整体用例和断言时限均未扩大，没有休眠、重试或生产代码改动。失败时只记录 Main 就绪、窗口加载状态、预期文件类别、DOM readyState、Preload 是否存在及页面错误数量，不保存实际路径、正文或密钥。定向 ESLint 和 diff 检查通过；本机隐藏 Electron 正由另一阶段验收，本次未重复启动，Windows 结果仍待新的 CI 确认。
+
+### beta.33 签名发布核验
+
+`v0.3.0-beta.33` 已从正常合入 beta 的 `ffc4e858635ac98d5fc51e0446fa48a5ada2a5ff` 发布，标签／标题完全相同，公开 prerelease 含七个预期资源；master 未晋级。签名工作流 [38717619116](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38717619116) 首轮在签名包功能／关闭及 DMG 公证成功后，四次 stapler 请求均遭 Apple CloudKit `-1005` 连接中断，未创建 Release。核对该明确网络原因后，只重跑一次失败任务；同一不可变标签的第二次运行全部通过，包括下载后逐字节校验，再公开发布。
+
+发布后单独读取公开元数据和实际下载的 `beta-mac.yml`、`SHASUMS256.txt`、SBOM，核对它们的大小、GitHub SHA-256、五项校验和及更新清单版本／包大小。清单 SHA-256 为 `2a97ef83dece7d31ccc55184d5826ffb4422811b46468e71b320491a9a82ffc7`；DMG／ZIP 大文件的完整字节验收由成功的签名工作流下载门禁执行，没有将元数据比较写成重复本地下载。Windows 签名任务因缺少配置跳过，真实 Windows Docker、麦克风或第三方账号不在本次证明范围内。
+
+### MCP34 第二轮 Linux 原生标签焦点诊断
+
+`0059e4a` 的 [CI 38738887096](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38738887096) 普通测试 1,572 通过、45 跳过；真实 Linux Docker 为 40／41。原生标签场景已验证 B 内容点击与白色画面、旧 A 画面点击拒绝、接管后 RFB 点击、首次 Ctrl+Tab 到 A 及真实蓝色画面，但第二次 Ctrl+Tab 后两个页面均报告无焦点，原断言失败。截图成功且容器无 OOM，当前证据不能确认键盘、浏览器 chrome 焦点或 X11 状态的根因。
+
+为下一次门禁补充仅失败时的受控夹具诊断：有界 A／B 焦点、可见性和按钮焦点报告，以及 RFB 连接状态、X11 活动／输入焦点窗口与活动进程数字 ID。不记录页面正文、URL、标题、路径或密钥，不增加输入、重发、重新聚焦、休眠或断言时限；产品与镜像代码不变。Node TypeScript、定向 ESLint、文档和 diff 检查通过；本机 Docker 保持关闭，未将诊断代码称为问题已修复。
+
+同一 `0059e4a` 检查的 Windows 任务随后完整通过，包含原生源码、关闭握手、NSIS 打包／安装、安装后功能与关闭；初始 Renderer 顺序校验进入实际 MCP 业务断言并通过。macOS 与密钥检查也通过。Linux 40／41 的失败仍使整轮 CI 失败；未合入 dev 或 beta，也未将 Windows 成功视为 Linux 已修复。
+
+### beta.34 Windows main-document close diagnostics
+
+At `00a8ad07`, CI `38744993113` passed Linux verification/real Docker, macOS smoke/package and Secret scan. Windows passed source business scenarios, then seven of eight source close cases; the main-document reload case failed because the original three-second process-exit check returned false. The retained Main trace records a flush request, trusted successful acknowledgement about 25 ms later and window-closed about 38 ms after the request. It contains no application quit lifecycle or owned process/stdio observations, so it does not establish why process exit was not observed. Windows packaging/installed gates were not reached; the failure remains recorded.
+
+This test-only update extends that fixture's existing bounded diagnostics with application before-quit/will-quit/quit/window-all-closed events and window counts, the exact owned ChildProcess exit/close events and pipe-destroyed flags, plus request/evaluate/deadline/cleanup phases. Final diagnostic JSON is attached on both successful and failed requests, including the cleanup outcome, and listeners are removed afterward. Each process remains capped at 120 records; no URLs, arguments, file paths, contents or credentials are recorded. Product code, close helper, process-exit authority, all deadlines and business assertions are unchanged. Targeted lint, Node types, documentation and open-source checks pass. No local hidden scenario, rebuild, packaging or unchanged workflow rerun was performed; fresh normal CI is needed to obtain the missing causal observations.
+
+
+### beta.43 同步 dev beta.34
+
+本候选合并正常已晋级的 dev `a743f7d`。冲突保留 beta.43 的较新功能、MCP 实际 Runtime 发送前授权检查、完整检查列表和版本，两侧历史回执均保存。相对已验收的 `1d3b15b`，合并只增加历史文档及四个诊断／导航夹具，不改变业务源码、共享合同、package、依赖、构建或 Worker 输出；不重建或重复宣称实包业务验收。Node 类型、定向 lint、文档／开源及工作流 YAML 检查通过；新正常 CI 仍须验证。

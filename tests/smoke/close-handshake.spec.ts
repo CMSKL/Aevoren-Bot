@@ -16,7 +16,8 @@ function environment(userDataDir: string): Record<string, string> {
   return { ...inherited, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1", AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1" };
 }
 
-const closePhases = new WeakMap<ElectronApplication, string[]>();
+type CloseProbe = { record(phase: string): void; phases: Record<string, unknown>[]; detach(): void };
+const closePhases = new WeakMap<ElectronApplication, CloseProbe>();
 const CLOSE_PHASE_PREFIX = "AEVOREN_CLOSE_PHASE ";
 
 async function launch(userDataDir: string): Promise<{ application: ElectronApplication; page: Page }> {
@@ -29,20 +30,42 @@ async function launch(userDataDir: string): Promise<{ application: ElectronAppli
     await test.info().attach("actual-close-package", { body: JSON.stringify(runtime), contentType: "application/json" });
   }
   const page = await application.firstWindow();
-  const phases: string[] = [];
-  closePhases.set(application, phases);
-  let buffered = "";
-  application.process().stderr?.on("data", (chunk: Buffer) => {
+  const owned = application.process(), started = performance.now(), phases: Record<string, unknown>[] = [];
+  let exitSeen = false, closeSeen = false, buffered = "";
+  const record = (phase: string): void => {
+    if (phases.length >= 120) return;
+    phases.push({ source: "fixture", phase, elapsedMs: Math.round(performance.now() - started), pid: owned.pid ?? null,
+      exitCode: owned.exitCode, signalCode: owned.signalCode, killed: owned.killed, exitSeen, closeSeen,
+      stdio: owned.stdio.map(stream => stream ? { destroyed: stream.destroyed } : null) });
+  };
+  const exited = (): void => { exitSeen = true; record("owned-exit"); };
+  const closed = (): void => { closeSeen = true; record("owned-close"); };
+  const streams = owned.stdio.flatMap((stream, index) => stream ? [{ stream, listener: () => record(`stdio-${index}-close`) }] : []);
+  const stderr = (chunk: Buffer): void => {
     buffered += chunk.toString("utf8");
     const lines = buffered.split("\n"); buffered = lines.pop() ?? "";
-    for (const line of lines) if (line.startsWith(CLOSE_PHASE_PREFIX) && phases.length < 120) phases.push(line.slice(CLOSE_PHASE_PREFIX.length));
+    for (const line of lines) if (line.startsWith(CLOSE_PHASE_PREFIX) && phases.length < 120) {
+      try { phases.push({ source: "main", observedAtMs: Math.round(performance.now() - started), ...JSON.parse(line.slice(CLOSE_PHASE_PREFIX.length)) as Record<string, unknown> }); }
+      catch { record("invalid-main-phase"); }
+    }
     if (buffered.length > 4_096) buffered = "";
-  });
-  await application.evaluate(({ BrowserWindow, ipcMain }, channels) => {
+  };
+  owned.once("exit", exited); owned.once("close", closed); owned.stderr?.on("data", stderr);
+  for (const { stream, listener } of streams) stream.once("close", listener);
+  closePhases.set(application, { record, phases, detach() {
+    owned.removeListener("exit", exited); owned.removeListener("close", closed); owned.stderr?.removeListener("data", stderr);
+    for (const { stream, listener } of streams) stream.removeListener("close", listener);
+  } });
+  record("probe-installed");
+  await application.evaluate(({ app, BrowserWindow, ipcMain }, channels) => {
     const started = performance.now();
     const record = (phase: string, state: Record<string, string | number | boolean> = {}): void => {
       console.error("AEVOREN_CLOSE_PHASE " + JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started), ...state }));
     };
+    app.on("before-quit", () => record("app-before-quit", { windows: BrowserWindow.getAllWindows().length }));
+    app.on("will-quit", () => record("app-will-quit", { windows: BrowserWindow.getAllWindows().length }));
+    app.on("quit", (_event, exitCode) => record("app-quit", { exitCode }));
+    app.on("window-all-closed", () => record("app-window-all-closed", { windows: BrowserWindow.getAllWindows().length }));
     for (const window of BrowserWindow.getAllWindows()) {
       const contents = window.webContents;
       const send = contents.send.bind(contents);
@@ -51,7 +74,7 @@ async function launch(userDataDir: string): Promise<{ application: ElectronAppli
         return send(channel, ...args);
       };
       window.on("close", () => record("window-close", { loading: contents.isLoadingMainFrame() }));
-      window.on("closed", () => record("window-closed"));
+      window.on("closed", () => record("window-closed", { windows: BrowserWindow.getAllWindows().length }));
       contents.on("did-navigate", () => record("main-navigation-committed"));
       contents.on("did-stop-loading", () => record("loading-stopped"));
       contents.on("render-process-gone", (_event, details) => record("renderer-gone", { reason: details.reason, exitCode: details.exitCode }));
@@ -70,11 +93,14 @@ async function createBot(page: Page): Promise<void> {
 }
 
 async function requestWindowClose(application: ElectronApplication, timeoutMs = 3_000): Promise<boolean> {
-  const process = application.process();
+  const process = application.process(), probe = closePhases.get(application);
+  probe?.record("window-close-request");
   const exited = new Promise<boolean>((resolve) => process.once("exit", () => resolve(true)));
   try {
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
+    probe?.record("window-close-evaluate-resolved");
   } catch {
+    probe?.record("window-close-evaluate-interrupted");
     // A successful immediate close can destroy Playwright's main-process context
     // before evaluate resolves. The process exit below remains the authority.
   }
@@ -82,28 +108,47 @@ async function requestWindowClose(application: ElectronApplication, timeoutMs = 
     exited,
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
   ]);
-  if (!didExit) {
-    await test.info().attach("close-phase-diagnostics", { body: JSON.stringify({ timeoutMs, phases: closePhases.get(application) ?? [] }), contentType: "application/json" });
-    await closeTestApplication(application);
-    await exited;
+  probe?.record(didExit ? "window-close-exit-observed" : "window-close-exit-deadline");
+  try {
+    if (!didExit) {
+      await test.info().attach("close-phase-diagnostics", { body: JSON.stringify({ timeoutMs, phases: probe?.phases ?? [] }), contentType: "application/json" });
+      probe?.record("window-close-cleanup-start");
+      await closeTestApplication(application);
+      await exited;
+      probe?.record("window-close-cleanup-resolved");
+    }
+    return didExit;
+  } finally {
+    probe?.record("window-close-final");
+    await test.info().attach("close-phase-diagnostics-final", { body: JSON.stringify({ timeoutMs, didExit, phases: probe?.phases ?? [] }), contentType: "application/json" });
+    probe?.detach();
   }
-  return didExit;
 }
 
 async function requestAppQuit(application: ElectronApplication, timeoutMs = 3_000): Promise<boolean> {
-  const process = application.process();
+  const process = application.process(), probe = closePhases.get(application);
+  probe?.record("app-quit-request");
   const exited = new Promise<boolean>((resolve) => process.once("exit", () => resolve(true)));
   await application.evaluate(({ app }) => app.quit());
   const didExit = await Promise.race([
     exited,
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
   ]);
-  if (!didExit) {
-    await test.info().attach("close-phase-diagnostics", { body: JSON.stringify({ timeoutMs, phases: closePhases.get(application) ?? [] }), contentType: "application/json" });
-    await closeTestApplication(application);
-    await exited;
+  probe?.record(didExit ? "app-quit-exit-observed" : "app-quit-exit-deadline");
+  try {
+    if (!didExit) {
+      await test.info().attach("close-phase-diagnostics", { body: JSON.stringify({ timeoutMs, phases: probe?.phases ?? [] }), contentType: "application/json" });
+      probe?.record("app-quit-cleanup-start");
+      await closeTestApplication(application);
+      await exited;
+      probe?.record("app-quit-cleanup-resolved");
+    }
+    return didExit;
+  } finally {
+    probe?.record("app-quit-final");
+    await test.info().attach("close-phase-diagnostics-final", { body: JSON.stringify({ timeoutMs, didExit, phases: probe?.phases ?? [] }), contentType: "application/json" });
+    probe?.detach();
   }
-  return didExit;
 }
 
 function databaseHash(databasePath: string): string {

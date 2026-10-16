@@ -63,7 +63,15 @@ test("organizes MAIN and TASK rows by session, preserves concurrent edits and re
     await dialog().getByRole("button", { name: "保存分区 远端研究名称", exact: true }).click(); await expect(dialog().getByLabel("分区名称 我的研究草稿", { exact: true })).toHaveValue("我的研究草稿"); await expect(dialog().getByLabel("通知声音", { exact: true })).toBeChecked(); await dialog().getByLabel("通知声音", { exact: true }).uncheck();
     await dialog().getByRole("button", { name: "完成", exact: true }).click(); await expect(page!.getByRole("heading", { name: firstBot.name, exact: true })).toBeVisible();
     await expect(page!.getByRole("region", { name: "聊天分区 我的研究草稿", exact: true }).getByRole("listitem")).toHaveCount(2);
-    await page!.getByRole("listitem", { name: `任务：${firstTask.title}`, exact: true }).click(); await page!.getByLabel("消息", { exact: true }).fill("此任务尚未发送的草稿"); await page!.getByRole("listitem", { name: firstBot.name, exact: true }).click(); await expect(page!.getByLabel("消息", { exact: true })).toHaveValue(""); await page!.getByRole("listitem", { name: `任务：${firstTask.title}`, exact: true }).click(); await expect(page!.getByLabel("消息", { exact: true })).toHaveValue("此任务尚未发送的草稿");
+    await page!.getByRole("listitem", { name: `任务：${firstTask.title}`, exact: true }).click();
+    await expect(page!.getByRole("heading", { name: firstTask.title, exact: true })).toBeVisible();
+    await page!.getByLabel("消息", { exact: true }).fill("此任务尚未发送的草稿");
+    await page!.getByRole("listitem", { name: firstBot.name, exact: true }).click();
+    await expect(page!.getByRole("heading", { name: firstBot.name, exact: true })).toBeVisible();
+    await expect(page!.getByLabel("消息", { exact: true })).toHaveValue("");
+    await page!.getByRole("listitem", { name: `任务：${firstTask.title}`, exact: true }).click();
+    await expect(page!.getByRole("heading", { name: firstTask.title, exact: true })).toBeVisible();
+    await expect(page!.getByLabel("消息", { exact: true })).toHaveValue("此任务尚未发送的草稿");
     await page!.reload(); await expect(page!.getByRole("heading", { name: firstTask.title, exact: true })).toBeVisible();
     await page!.evaluate(() => sessionStorage.removeItem("aevoren-bot:selected")); await page!.reload(); await expect(page!.getByRole("heading", { name: secondBot.name, exact: true })).toBeVisible();
     await close(); await launch(); await expect(page!.getByRole("heading", { name: secondBot.name, exact: true })).toBeVisible();
