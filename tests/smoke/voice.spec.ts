@@ -174,7 +174,18 @@ test("saves three independent editable voice configurations without echoing keys
     await expect(trigger).toHaveAttribute("aria-expanded", "false"); await expect(f.page.getByRole("dialog", { name: "语音控制", exact: true })).toHaveCount(0);
     const height = await f.page.locator(".composer").evaluate(element => element.getBoundingClientRect().height);
     await openVoice(f); expect(await f.page.locator(".composer").evaluate(element => element.getBoundingClientRect().height)).toBe(height);
-    const close = f.page.getByRole("button", { name: "关闭语音控制", exact: true }); await expect(close).toBeFocused(); await f.page.keyboard.press("Shift+Tab"); await f.page.keyboard.press("Tab"); await expect(close).toBeFocused();
+    // Configuration loads asynchronously; test the settled keyboard order after
+    // the final action has actually become available.
+    await expect(f.page.getByRole("dialog", { name: "语音控制", exact: true }).getByRole("button", { name: "连接实时语音", exact: true })).toBeEnabled();
+    const close = f.page.getByRole("button", { name: "关闭语音控制", exact: true });
+    const focusStates: unknown[] = [];
+    const recordFocus = async (phase: string): Promise<void> => { focusStates.push(await f.page.evaluate(label => ({ phase: label, active: document.activeElement?.outerHTML.slice(0, 500), controls: [...document.querySelectorAll<HTMLElement>('.voice-controls-popover button, .voice-controls-popover input, .voice-controls-popover select, .voice-controls-popover textarea')].map(node => ({ label: node.getAttribute('aria-label') ?? node.textContent?.slice(0, 70), disabled: node.matches(':disabled'), tabIndex: node.tabIndex, visible: node.getClientRects().length > 0 })) }), phase)); };
+    try {
+      await expect(close).toBeFocused(); await recordFocus("opened");
+      await f.page.keyboard.press("Shift+Tab"); await recordFocus("shift-tab");
+      await f.page.keyboard.press("Tab"); await recordFocus("tab");
+      await expect(close).toBeFocused();
+    } finally { await test.info().attach("voice-keyboard-focus", { body: JSON.stringify(focusStates), contentType: "application/json" }); }
     await f.application.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]!; window.setMinimumSize(320, 300); window.setSize(720, 520); window.webContents.setZoomFactor(2); });
     await expect.poll(() => f.page.evaluate(() => innerWidth)).toBeLessThanOrEqual(360);
     await expect.poll(() => f.page.getByRole("dialog", { name: "语音控制", exact: true }).evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1; })).toBe(true);
