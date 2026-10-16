@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.43**。阶段 6A 已实现 MAIN/TASK 隔离、固定上下文、权限、独立线程与共用业务入口，三项不同源码场景和真实未签名 macOS 包四项本地验收通过；普通回归原整轮 1,777 通过／9 失败／45 跳过，九项旧迁移断言修正后七文件 72 项定向通过，累计 1,786 个不同通过场景，不记为单轮全绿。阶段 6B 全资源搜索的 11 项 SQLite、2 项产品传输及2项实际界面场景通过，实际未签名 macOS 包已有验收，跨平台／签名仍待完成。6C 分区／偏好／图片头像已通过业务、源码界面和实际未签名 macOS 包检查，跨平台／签名发行待验收；6D 群 Routine 与 6E 事件／本机 Webhook 已通过本地源码和真实未签名 macOS 包检查，6F 继续实施。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，后续版本按正常顺序晋级；master 不晋级。真实第三方账号、音频硬件及 Windows Docker 未验证。
+当前开发候选为 **v0.3.0-beta.44**。阶段 6A 已实现 MAIN/TASK 隔离、固定上下文、权限、独立线程与共用业务入口，三项不同源码场景和真实未签名 macOS 包四项本地验收通过；普通回归原整轮 1,777 通过／9 失败／45 跳过，九项旧迁移断言修正后七文件 72 项定向通过，累计 1,786 个不同通过场景，不记为单轮全绿。阶段 6B 全资源搜索的 11 项 SQLite、2 项产品传输及2项实际界面场景通过，实际未签名 macOS 包已有验收，跨平台／签名仍待完成。6C 分区／偏好／图片头像已通过业务、源码界面和实际未签名 macOS 包检查，跨平台／签名发行待验收；6D 群 Routine 与 6E 事件／本机 Webhook 已通过本地源码和真实未签名 macOS 包检查，6F 模板／选择范围离线导出的界面和 AI 集成、源码专项与真实未签名 macOS 包验收亦已完成。六阶段本地实现可审阅，不代表后续 Beta 已发布或跨平台／签名门禁通过。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，后续版本按正常顺序晋级；master 不晋级。真实第三方账号、音频硬件及 Windows Docker 未验证。
 
 ## 已确定的方案
 
@@ -32,7 +32,7 @@
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
 | 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 开发组合候选四项 CI 通过，分单元晋级中 | `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
 | 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1–5.3 源码及本地包证据完成，跨平台／签名发行待通过 | beta.38 源码累计 159 个不同通过、32 条件跳过；保留完整运行 3 项失败及定向 3/3，通过真实 Worklet／受控协议／普通 Runtime；云账号／硬件另行验证 |
-| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 6A–6E 已有本地源码及实际未签名 macOS 包证据；6F 模板／导出实施中 | beta.39 的迁移／授权／UI 身份与能力专项已有证据；完整构建与三个不同隐藏场景分轮通过，保留失败，真实未签名 macOS 包 4 项通过，跨平台／签名待完成 |
+| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 6A–6F 已有本地源码及实际未签名 macOS 包证据；跨平台、签名和顺序发布仍单独验收 | beta.39 的迁移／授权／UI 身份与能力专项已有证据；完整构建与三个不同隐藏场景分轮通过，保留失败，真实未签名 macOS 包 4 项通过，跨平台／签名待完成 |
 
 ## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
 
@@ -597,7 +597,7 @@ Search2 与继承的 Task3 同轮 **5/5 通过（40.3 秒）**，实际 app.isPa
 
 后续实际源码/未签名包证据补在本节；当前不把构建推断为安装包验证。证据前缀 `$CODEX_HOME/aevoren-evidence/2026-10-15/templates44-`。无新增依赖或许可，master不晋级。
 
-补充验证记录：模板后端20项和产品/事件/原子文件回归在分批日志中通过；原子回执两项保留修复前失败证据。`templates44-focused-first.log` 为72项通过加3项测试mock递归失败；修正mock后 `templates44-focused-after.log` 三文件55项通过（含3项持有link撤权/替换inode）。新增私密序列化回归首次错误为fixture仍有活跃Runtime，已先结束该Runtime后重跑，不作为生产缺陷。Renderer精确选择、完整预览、冲突保留、版本导出和取消7项通过，日志 `templates44-ui-unit.log`。
+补充验证记录：模板后端20项和产品/事件/原子文件回归在分批日志中通过；原子回执两项保留修复前失败证据。`templates44-focused-first.log` 为72项通过加3项测试mock递归失败；修正mock后 `templates44-focused-after.log` 三文件55项通过（含3项持有link撤权/替换inode）。新增私密序列化回归首次错误为fixture仍有活跃Runtime，已先结束该Runtime后重跑，不作为生产缺陷。Renderer精确选择、完整预览、冲突保留、版本导出和取消7项通过，日志 `templates44-ui-target-after.log`（后续目标隔离回归共9项）。
 
 ### beta.43 实际未签名 macOS 包
 
@@ -610,7 +610,7 @@ Main SHA-256 `5b3388f97038ab07f7b747e29274bf2bb23449582c7dee014372af4fa48951ff`�
 
 ## 同步 dev beta.34 的历史验收与诊断
 
-以下记录保留 dev 的历史证据，不覆盖本文当前 beta.43 状态。
+以下记录保留 dev 的历史证据，不覆盖本文当前 beta.44 状态。
 
 历史冻结 beta.34 验收曾统计 20 项；复核确认当时 typed API fixture 忽略安装包路径，实际为包内 19 项与源码 typed API 1 项。MCP 包测试实查 isPackaged、精确版本以及 Resources 中的 MCP 指南；验证真实 opaque iframe、父级／Preload 隔离、工具输入／结果、真实 UI 调用审批、撤权、未知结果与延迟原生→MCP 模态交接。全部使用临时数据库、真实 IPC 与受控 HTTP，未触及真实外部账号；此处保留历史并纠正证据类别，最新包结果单列于下。
 
@@ -669,3 +669,15 @@ This test-only update extends that fixture's existing bounded diagnostics with a
 ### beta.43 同步 dev beta.34
 
 本候选合并正常已晋级的 dev `a743f7d`。冲突保留 beta.43 的较新功能、MCP 实际 Runtime 发送前授权检查、完整检查列表和版本，两侧历史回执均保存。相对已验收的 `1d3b15b`，合并只增加历史文档及四个诊断／导航夹具，不改变业务源码、共享合同、package、依赖、构建或 Worker 输出；不重建或重复宣称实包业务验收。Node 类型、定向 lint、文档／开源及工作流 YAML 检查通过；新正常 CI 仍须验证。
+
+### beta.44 本地验收记录
+
+最终关联后端4文件77项通过（`templates44-gate-unit.log`，同轮Renderer因新useCallback未mock失败，未把整轮误记全绿）；Renderer补齐hook后9/9（`templates44-ui-target-after.log`）通过，包含真实fail-first保存目标被历史查看意外改写的回归。独立captureTarget固定ID/version且只列当前会话owned模板，历史审阅仍可浏览其他已保存模板。完整五配置类型与构建（`templates44-build-reviewed.log`）、目标lint、文档链接、开源门禁及许可均通过。真实迁移48缺口追加表存在断言单独验证。
+
+隐藏Electron源码最终同轮2/2（8.4秒，`templates44-hidden-source-accepted.log`）通过：typed API、UI完全未勾选默认、真实Skill资源包只选一个二进制文件、模板CAS后原目录删除、重启后nativeJSON导入、初始停用Skill、明确启用后的实际文件字节一致、只选一条消息的离线HTML保存和无preload/无Node隐藏窗口真实渲染、无HTTP访问/脚本未执行，以及自有进程正常退出。原三次fixture失败分别为子串checkbox选择歧义、Electron不支持context.newPage、未load的窗口无window事件；均修fixture，无产品/超时变更。首轮只保留原日志，后两失败trace保留在持久证据目录，不虚称已保存第一轮trace。
+
+### beta.44 最终真实未签名 macOS 包
+
+标准 ASAR／afterPack 打包使用已核验版本44.3 arm64 Electron 分发目录，避免重新下载；不改变打包清单或权限。实际 packaged=true／version44 包同轮 **2/2（22.6 秒）** 通过 typed API 与完整模板／导出场景，所有自有进程正常退出。源构建与包内17项应用文件、216项Worker/parser逐字节一致；随包模板指南与打包时源文档一致。Main SHA-256 `b82d0e5e1e11b686ee7d4f0e744bc680c725aa73cc7b28f38dcff2cfbf18f80f`；ASAR `c5040c5492dabad1f3b10edfeceada3dbba5b8267ffef56641186f02f7c91171`。207 parser资产、238资源文件、9556 ASAR条目和四Helper麦克风用途声明检查通过；未签名／无真实物理麦克风证据。
+
+回执为 `templates44-hidden-package.log`、`templates44-package-bytes.json`、`templates44-package-parser.json`、`templates44-package-microphone.json`，真实48缺口表断言7项通过于 `templates44-real48-migration.log`。本次后续文档总结不重写已经冻结的包内指南；业务字节不变。Windows、真实外部账号／硬件、跨平台CI与签名发布仍待正常门禁，按dev→beta与版本顺序推进，master不晋级。未运行新的完整普通单元套件，不把77项后端加9项Renderer表述成一次全量全绿。

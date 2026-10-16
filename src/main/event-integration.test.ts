@@ -133,6 +133,7 @@ describe("automation host integration", () => {
       const after = new DatabaseSync(path);
       expect(after.prepare("SELECT * FROM sessions ORDER BY id").all()).toEqual(oldRows);
       expect(after.prepare("SELECT version FROM schema_migrations WHERE version>=46 ORDER BY version").all()).toEqual([{ version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }]);
+      expect(after.prepare("SELECT name FROM sqlite_master WHERE name IN ('portable_templates','portable_runtime_admissions','portable_native_attempts') ORDER BY name").all()).toEqual([{name:"portable_native_attempts"},{name:"portable_runtime_admissions"},{name:"portable_templates"}]);
       expect(after.prepare("PRAGMA foreign_key_check").all()).toEqual([]); after.close();
       expect(readdirSync(join(root, "Backups")).filter(name => name.endsWith(".sqlite"))).toHaveLength(1);
     } finally { /* The real migration remains registered after recovery. */ }
