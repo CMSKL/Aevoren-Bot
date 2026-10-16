@@ -732,3 +732,10 @@ The earlier UI-state package receipts and old364 CI remain historical and do not
 ### Voice37 generation correction preparation
 
 The old8b3eb6e disabled-state Renderer proof above is historical and superseded. This local-only normal merge includes candidate76e5ada generation correction and strict MCP fixture, matching those two complete source files exactly. Version37, Voice settings/runtime and all media/private-text/TASK authority remain; no Realtime38 source enters. Linux and macOS source/package CI for76e5ada passed; Windows installed checks are still pending at preparation. Actual accepted-dev identity, its complete push gate and a fresh exact-head Voice37 normal CI remain required. Given the recorded local native-exit failure and old-package control, no unchanged local exit suite is blindly rerun or relabelled successful; actual package acceptance will be established by the required new normal CI.
+
+
+### Actual generation-correction development identity in Voice37
+
+PR71 source76e5ada passed all four normal jobs in38918904604, including Windows source51/close8, installed43/close8 and verified artifact upload. Its normal protected dev merge86a9dc836135f2c7bf286d051c24a0f297037a59 has the exact tested tree93f7404e7c8b80d91a1378df709ffc7397096aee. This branch normally incorporates that actual identity with zero content delta before this status note. The shared dialog and whole MCP fixture match accepted dev exactly.
+
+Actual dev push38926440451 and this refreshed Voice37 exact-head CI remain separate required checks. Older f99 Voice37 actual-package receipts are historical; no unchanged failed local native-exit suite is repeated. Current source/package and strict exits will be verified by new normal CI, retaining all real AudioContext/AV cases there. Beta34→35→36→37 signed-public order and master deferral remain.
