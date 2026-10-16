@@ -37,13 +37,13 @@ export class EventHttpServer {
       || action === "start" && this.state.listening
       || action === "stop" && (!this.state.listening || input.port !== this.state.port)) throw new AevorenBotError("EVENT_VERSION_CONFLICT");
   }
-  startControlled(input: EventListenerControl, context?: { signal?: AbortSignal; assertCurrent(): void }): Promise<EventListenerState> {
+  startControlled(input: EventListenerControl, context?: { signal?: AbortSignal; assertCurrent(): void }, complete?: (value: EventListenerState) => unknown): Promise<EventListenerState> {
     context?.signal?.throwIfAborted(); context?.assertCurrent(); this.assertControl("start", input);
-    return this.start({ port: input.port }, context);
+    return this.start({ port: input.port }, context, complete);
   }
-  stopControlled(input: EventListenerControl, context?: { signal?: AbortSignal; assertCurrent(): void }): Promise<EventListenerState> {
+  stopControlled(input: EventListenerControl, context?: { signal?: AbortSignal; assertCurrent(): void }, complete?: (value: EventListenerState) => unknown): Promise<EventListenerState> {
     context?.signal?.throwIfAborted(); context?.assertCurrent(); this.assertControl("stop", input);
-    return this.stop(context);
+    return this.stop(context, complete);
   }
   private track(work: Promise<EventListenerState>): Promise<EventListenerState> {
     this.pending = work;
@@ -54,7 +54,7 @@ export class EventHttpServer {
     await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
   }
   /** Trusted setup and shutdown use the same ownership lock as reviewed controls. */
-  start(input: { port?: number } = {}, context?: { signal?: AbortSignal; assertCurrent(): void }): Promise<EventListenerState> {
+  start(input: { port?: number } = {}, context?: { signal?: AbortSignal; assertCurrent(): void }, complete?: (value: EventListenerState) => unknown): Promise<EventListenerState> {
     const parsed = eventListenerSchema.parse(input);
     if (this.closing) return Promise.reject(new AevorenBotError("EVENT_STOPPED"));
     if (this.pending) return Promise.reject(new AevorenBotError("EVENT_VERSION_CONFLICT"));
@@ -71,28 +71,30 @@ export class EventHttpServer {
         const address = server.address();
         if (!address || typeof address === "string" || address.address !== "127.0.0.1") throw new EventStateError("EVENT_INVALID");
         this.state = { listening: true, host: "127.0.0.1", port: address.port, revision: randomUUID(), busy: false };
-        return this.snapshot();
+        this.changed(); context?.signal?.throwIfAborted(); context?.assertCurrent();
+        const result = this.snapshot(); complete?.(result); return result;
       } catch (error) {
         await this.closeServer(server); this.server = null;
         this.state = { listening: false, host: "127.0.0.1", port: null, revision: randomUUID(), busy: false };
-        throw error;
-      } finally { this.changed(); }
+        this.changed(); throw error;
+      }
     })());
-    this.changed(); return work;
+    return work;
   }
-  stop(context?: { signal?: AbortSignal; assertCurrent(): void }): Promise<EventListenerState> {
+  stop(context?: { signal?: AbortSignal; assertCurrent(): void }, complete?: (value: EventListenerState) => unknown): Promise<EventListenerState> {
     const pending = this.pending;
-    if (pending) return pending.then(() => this.stop(context), () => this.stop(context));
+    if (pending) return pending.then(() => this.stop(context, complete), () => this.stop(context, complete));
     context?.signal?.throwIfAborted(); context?.assertCurrent();
     const server = this.server;
     if (!server) return Promise.resolve(this.snapshot());
     this.state = { ...this.state, listening: false, busy: true, revision: randomUUID() };
     const work = this.track((async () => {
-      try { await this.closeServer(server); this.server = null;
-        this.state = { listening: false, host: "127.0.0.1", port: null, revision: randomUUID(), busy: false }; return this.snapshot();
-      } finally { this.changed(); }
+      await this.closeServer(server); this.server = null;
+      this.state = { listening: false, host: "127.0.0.1", port: null, revision: randomUUID(), busy: false };
+      this.changed(); context?.signal?.throwIfAborted(); context?.assertCurrent();
+      const result = this.snapshot(); complete?.(result); return result;
     })());
-    this.changed(); return work;
+    return work;
   }
   async shutdown(): Promise<void> { this.closing = true; await this.stop(); }
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {

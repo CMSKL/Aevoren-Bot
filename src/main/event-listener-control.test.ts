@@ -51,6 +51,23 @@ describe("one owned application Webhook listener", () => {
     await expect(pending).rejects.toThrow("actor no longer admitted"); expect(second.listening).toBe(false);
   });
 
+  it("cleans up its owned start when publishing live state synchronously cancels the task", async () => {
+    const controller = new AbortController();
+    const host: EventHttpServer = new EventHttpServer({} as EventService, () => { if (host.snapshot().listening) controller.abort(); });
+    const start = host.startControlled({ expectedRevision: host.snapshot().revision, port: 0 }, { signal: controller.signal, assertCurrent: () => {} });
+    const server = Reflect.get(host, "server") as Server; owned.push(server);
+    await expect(start).rejects.toThrow();
+    expect(server.listening).toBe(false); expect(host.snapshot()).toMatchObject({ listening: false, busy: false });
+  });
+
+  it("cleans up a failed state notification before committing any result", async () => {
+    const complete = vi.fn();
+    const host: EventHttpServer = new EventHttpServer({} as EventService, () => { if (host.snapshot().listening) throw Error("controlled notification failure"); });
+    const pending = host.startControlled({ expectedRevision: host.snapshot().revision, port: 0 }, undefined, complete);
+    const server = Reflect.get(host, "server") as Server; owned.push(server);
+    await expect(pending).rejects.toThrow("controlled notification failure"); expect(complete).not.toHaveBeenCalled(); expect(server.listening).toBe(false); expect(host.snapshot()).toMatchObject({ listening: false, busy: false });
+  });
+
   it("does not close a foreign occupied port and consumes the rejected attempt revision", async () => {
     const foreign = new EventHttpServer({} as EventService), occupied = await foreign.start(); owned.push(Reflect.get(foreign, "server") as Server);
     const host = new EventHttpServer({} as EventService), initial = host.snapshot();

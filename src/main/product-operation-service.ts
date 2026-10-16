@@ -609,7 +609,10 @@ export class ProductOperationService {
     }
     const scopedHandlers = createProductHandlers(this.dependencies, (operation) => this.dependencies.repository.commitProductMutation(invocation.id, () => {
       signal.throwIfAborted();
-      this.validate(tool, invocation.runtimeRunId);
+      if (listenerOperation(tool.operation)) {
+        this.dependencies.repository.tasks.assertToolAllowed(runtime.id, tool);
+        this.dependencies.routineService.assertOperationScope("routines.list", undefined, { runtimeRunId: runtime.id, executorBotId: runtime.executorBotId, sessionId: runtime.sessionId });
+      } else this.validate(tool, invocation.runtimeRunId);
       const value = operation();
       if (["library.importPath", "library.pickImport", "documents.import", "skills.import"].includes(tool.operation)) createdCount = (value as { imported: unknown[] }).imported.length;
       if (tool.operation === "teams.createContentTeam" && (value as { disposition?: string }).disposition === "existing") createdCount = 0;
