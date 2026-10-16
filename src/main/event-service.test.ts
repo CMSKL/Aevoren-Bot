@@ -2,7 +2,8 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { request as httpRequest } from "node:http";
+import { request as httpRequest, IncomingMessage } from "node:http";
+import { createConnection } from "node:net";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AttachmentDraft, Routine, RoutineRun } from "@shared/contracts";
@@ -214,6 +215,32 @@ describe("explicit loopback Webhook ingress", () => {
       await f.service.rotateToken({ id: hook.id, expectedVersion: hook.version });
       request.end("1}"); expect(await status).toBe(401); expect(f.calls).toHaveLength(0); expect(f.repository.deliveries()).toHaveLength(0);
     } finally { request.destroy(); }
+  });
+
+  it("flushes an early 413 without destroying an incomplete upload before the response reaches the peer", async () => {
+    const f = fixture(), { subscription: hook, token } = await f.setup(), server = new EventHttpServer(f.service);
+    cleanup.push(async () => { await server.stop(); });
+    const listening = await server.start(), peer = createConnection({ host: "127.0.0.1", port: listening.port! });
+    const originalDestroy = IncomingMessage.prototype.destroy;
+    const prematureDestroy: string[] = [];
+    const destroyed = vi.spyOn(IncomingMessage.prototype, "destroy").mockImplementation(function (this: IncomingMessage, error?: Error) {
+      if (this.method === "POST" && !this.complete) prematureDestroy.push(this.url ?? "missing");
+      return originalDestroy.call(this, error);
+    });
+    const response = new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      peer.on("data", chunk => chunks.push(chunk));
+      peer.once("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      peer.once("error", reject);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => { peer.once("connect", resolve); peer.once("error", reject); });
+      // Advertise an oversized request and hold the remaining bytes open. The host must not parse or wait for the payload.
+      peer.write(`POST ${hook.webhookPath} HTTP/1.1\r\nHost: 127.0.0.1:${listening.port}\r\nAuthorization: Bearer ${token}\r\nContent-Type: application/json\r\nIdempotency-Key: early-oversize\r\nContent-Length: 131072\r\nConnection: close\r\n\r\n{`);
+      expect(await response).toMatch(/^HTTP\/1\.1 413 /u);
+      expect(prematureDestroy).toEqual([]);
+      expect(f.calls).toHaveLength(0); expect(f.repository.deliveries()).toHaveLength(0);
+    } finally { peer.destroy(); destroyed.mockRestore(); }
   });
 
   it("authenticates before parsing, limits UTF-8 JSON, rejects browser origins, and stops cleanly", async () => {
