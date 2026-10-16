@@ -71,6 +71,17 @@ export class EventHttpServer {
     } catch (error) {
       status = error instanceof HttpEventError ? error.status : error instanceof EventStateError ? error.code === "EVENT_UNAUTHORIZED" ? 401 : error.code === "EVENT_VERSION_CONFLICT" ? 409 : error.code === "EVENT_LIMIT" ? 429 : 400 : 400;
     }
-    if (!response.destroyed) { response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store", "Connection": "close" }); response.end(JSON.stringify({ error: status }), () => { if (!request.complete) request.destroy(); }); }
+    if (!response.destroyed) {
+      const socket = request.socket;
+      if (!request.complete) {
+        // Discard without buffering/parsing. A destructive close here can reset an early 413 before the peer receives it.
+        request.resume();
+        const closeDeadline = setTimeout(() => socket.destroy(), 5_000);
+        closeDeadline.unref();
+        socket.once("close", () => clearTimeout(closeDeadline));
+      }
+      response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store", "Connection": "close" });
+      response.end(JSON.stringify({ error: status }), () => { if (!request.complete) socket.end(); });
+    }
   }
 }
