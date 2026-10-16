@@ -228,7 +228,7 @@ describe.skipIf(!enabled)("real isolated Chromium and desktop Worker", () => {
   }, 90_000);
 
   it("records sanitized human RFB input in the actual desktop and seals captures across disconnect and restart", async () => {
-    await withSite(async (site, clicks) => withContainer(async f => {
+    await withSite(async (site, clicks, focused, focusReports) => withContainer(async f => {
       const page = await navigate(f, `${site}/?focusFixture=A`);
       await f.request("/v1/computer/takeover", "POST", mutation(1, "user"));
       const rfb = new RfbFixture(f, 2), id = randomUUID();
@@ -254,6 +254,14 @@ describe.skipIf(!enabled)("real isolated Chromium and desktop Worker", () => {
         expect(JSON.stringify(snapshot)).not.toMatch(/SECRET|RAW_CLIPBOARD|example/);
         expect((await f.request<BrowserWorkerControl>("/v1/computer/control")).owner).toBe("user");
         await expect(f.request("/v1/demonstrations/start", "POST", { ...access(2), id: randomUUID() })).rejects.toThrow("BROWSER_CONTROL_FORBIDDEN");
+      } catch (error) {
+        const capture = await f.request<DemonstrationCapture>("/v1/demonstrations/status").then(value => ({ state: value.state, eventCount: value.eventCount }), () => null);
+        const control = await f.request<BrowserWorkerControl>("/v1/computer/control").then(value => ({ owner: value.owner, epoch: value.controlEpoch, connectionState: value.connectionState }), () => null);
+        const currentPages = await pages(f, 2, "user").then(values => ({ count: values.length, expectedPresent: values.some(value => value.id === page.id),
+          matchingControlledPage: values.filter(value => value.url === `${site}/?focusFixture=A`).length, blank: values.filter(value => value.url === "about:blank").length }), () => null);
+        const native = await docker(["exec", "--user", "1000", "--env", "DISPLAY=:99", f.name, "node", "-e", `const {spawnSync}=require('node:child_process');const run=args=>spawnSync('xdotool',args,{encoding:'utf8',timeout:1000});const window=run(['getactivewindow']);const id=/^\\d+$/.test(window.stdout.trim())?Number(window.stdout.trim()):null;const geometry=id?run(['getwindowgeometry','--shell',String(id)]):null;const pointer=run(['getmouselocation','--shell']);const parse=text=>Object.fromEntries(String(text||'').split('\\n').flatMap(line=>{const match=/^(X|Y|WIDTH|HEIGHT|SCREEN|WINDOW)=(\\d+)$/.exec(line);return match?[[match[1],Number(match[2])]]:[]}));console.log(JSON.stringify({active:id,geometry:parse(geometry?.stdout),pointer:parse(pointer.stdout),windowExit:window.status,geometryExit:geometry?.status??null,pointerExit:pointer.status}))`]).catch(() => "Native geometry unavailable");
+        console.error("Controlled RFB first-click failure:", JSON.stringify({ clickCount: clicks(), focus: focused(), focusReports: focusReports(), capture, control, pages: currentPages, native }));
+        throw error;
       } finally { rfb.close(); }
       const again = new RfbFixture(f, 2), interruptedId = randomUUID();
       try {
