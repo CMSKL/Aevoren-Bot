@@ -691,3 +691,10 @@ This branch integrated dev `a743f7d835948a051d316a74fdc3752c190eacc2`, the norma
 ## Routine42 refresh from verified Notion35 dev integration
 
 This candidate integrated normal dev `80ab17ecdc037b3d3f6537f0d02e82f758e37034` after Notion35 PR38 exact source head1490b715 passed all four jobs in CI38832365006, including actual Linux Docker and macOS/Windows source plus installed acceptance. Current Routine42 features, package version and expanded workflow selections remain. Conflicts were only documentation history; Main/shared/Preload/Renderer production bytes are unchanged against5ae2e12. Earlier failed/package receipts remain tied to their original builds; this merge requires its own new normal CI. Beta34 remains unpublished pending its separate fixture staging repair, and master stays deferred.
+
+
+### Routine42 hidden Windows diagnostic screenshots
+
+CI38834471857 at5ae2e12 completed Linux verification/actual Docker and macOS package gates, Windows ordinary/source/NSIS installation, then installed acceptance55/57. Both failures occurred solely at optional final page.screenshot calls after six-member parallel/cancel/sibling-completion and stale-editor/review/fixed-subset business assertions had passed. They exhausted the screenshot's original30seconds after fonts loaded; final hidden-window assertions, cleanup and installed close gates were not established, so the overall installed gate failed.
+
+Only these two decorative screenshot attachments are now omitted on hidden Windows, consistent with existing platform fixtures. All actual API/Runtime, draft, roster, cancellation, rendered status, hidden-window and normal close checks and original60second case limits remain unchanged; macOS/Linux still collect their screenshots. This does not claim Windows pixels or full installed success. No production/package bytes change, and fresh normal platform/installed gates remain required.
