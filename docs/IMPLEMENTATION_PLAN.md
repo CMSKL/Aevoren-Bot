@@ -764,3 +764,11 @@ Only these two decorative screenshot attachments are now omitted on hidden Windo
 仅补夹具诊断：Main close/flush ACK/window/app quit、拥有进程exit/stdio阶段，关闭前Routine不透明ID/状态与captures计数；stderr只保留固定已知phase和错误名/码，不保存任意正文或凭据。关闭断言失败时仍复制隔离库并清理fixture服务器；警告与exitCode=0断言及3秒预算不变。Windows已有decorative screenshot限制单独同步，不作为此关闭根因修复。
 
 同一最终已验收macOS包的单场景诊断第一次实际exit0约54毫秒，但新诊断finally在Playwright已dispose后再调app.process导致夹具TypeError，保留日志/trace，不记整项通过。保存原ownedChild引用后，同一场景1/1（7.2秒，`templates44-routine-close-diagnostic-final.log`）通过；持久safe JSONLines记录runs/captures均空、flush ACK、window/app quit齐全、owned正常exit0距close-request63毫秒。该Mac旁证不能替代Windows关闭根因或正常门禁，未改产品退出逻辑或包业务字节；后续正常CI收集准确Windows阶段，不盲重试旧运行。
+
+### beta.44 后续 Windows Realtime 缺失控制诊断
+
+正常 CI `38841701225` 的Linux、macOS与secret门禁通过；Windows普通单元1,911通过／61跳过，源码UI70通过／1失败，前次Routine关闭和导航两项本轮均通过。唯一失败位于Realtime首轮：开始说话点击耗约5秒，随后PCM采样超过2400，下一步“结束本轮并提交”按钮未出现，原30秒locator期限超时。后面的response计数断言尚未执行，不能将其当作缺失按钮的原因。日志 `templates44-ci-windows-diagnostic-raw.log`，artifact `12023165333`经只读网络失败后完整下载为 `templates44-windows-realtime-artifact.zip`，trace及errorcontext没有DOM快照/实时session状态/alert/数据库，不能据此猜测录音队列超限、页面隐藏或授权变化。
+
+仅补测试诊断：记录Main现有Realtime IPC handler的sequence/耗时/结果码，状态事件的ID/state/version/errorcode，首Startclick及PCMbarrier后的按钮/告警/visibility/audio context状态和生成麦克风stop计数；不记录PCM、ASR正文、tool参数、密钥。保持实际handler返回/异常和receiver，finally恢复原handler；失败时保存受控隔离SQLite，安全JSON可显式写本地。桥接方法为只读，初次renderer赋值包装没记录IPC，因此删去无效部分并改Main handler包装；初次UI状态有效但不虚称其append数据链有效。
+
+同最终已验收macOS包单项插桩验证1/1（3.1秒case，`templates44-realtime-ipc-diagnostic.log`）通过，实际36次append seq0..35、server16896samples、无IPC错误、最长append4.63毫秒、两次commit/三次response、两生成麦克风均stop/context closed、无alert；`templates44-realtime-ipc-diagnostic.jsonl`持久保存，另加非零append断言避免诊断再次静默失效。此结果仅证明诊断链有效，不证明Windows按钮消失已解决。原90秒it/30秒click/录音队列及业务约束均未改变，无重试或forceclick；未修改生产/包字节。独立同步原已验证的委派response frame等待（test-only）以保持旧断言的异步顺序，明确不是按钮故障修复。后续正常Windows门禁给出真实阶段证据。
