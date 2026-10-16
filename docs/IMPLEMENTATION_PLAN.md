@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前 **v0.3.0-beta.36 是仅限本地的整合草稿**：从实际 dev `ffd5dab99d153097ff8971a8895647d0b5d7dae6` 出发，正常合入待验收 PR #65 `f1629278fdbf4fdb3e1b0bda1dcf75f959ddea7c`，再整合原 Media36 `a8e0980fe7b4b5bfab90801b5a56e41687c0c065`。PR #65 尚未获准进入受保护 dev，此草稿也尚未推送或建立 PR；新组合本机专测、解析器与实际 Mac 包验证通过，正常 CI 与分支晋级仍待完成。beta 保持 `0cfd2b9` 的 beta.34 候选，最新公开版本为 **v0.3.0-beta.33**，master 暂不晋级。此单元仅包含图片／PDF／DOCX；音视频、语音与阶段 6 属于后续交付。
+当前开发候选为 **v0.3.0-beta.36**。PR #65 的准确源提交 `f1629278fdbf4fdb3e1b0bda1dcf75f959ddea7c` 通过自身四项正常 CI 后，正常合入实际 dev `d0c2ec4d28507b8707420b5a424b516e240cc3d7`，合并树与已验收源完全相同；beta.35 固定快照已建立。本候选已正常整合这个实际 dev 身份，整合前后整棵内容树相同，本机专测、解析器与真实 Mac 包证据保持原范围。它自身的新组合 CI 和合入 dev 仍待完成；实际 dev 的推送 CI 38874946550 也仍在运行，不能当作已通过。beta 仍为 beta.34，最新公开版本仍是 **v0.3.0-beta.33**，master 暂不晋级。本单元仅包含图片／PDF／DOCX；音视频、语音与阶段 6 属于后续交付。
 
 下文验收段落保留各自原始提交和安装包的历史证据；旧候选的 CI 或本机通过不代表当前本地组合已验收，也不代替实际 Beta／签名发行门禁。
 
@@ -613,3 +613,10 @@ Fresh Main SHA-256: `2e752322c563b110dff1e37d9ad09343b63217448c49f6672e43074b79e
 No Media36 push, new PR, protected merge or release occurred during this local acceptance. After PR65's own required gates, normal protected-dev merge/tree equality and fixed beta.35 snapshot, this work must normally integrate that actual dev identity and verify unchanged production/resource inputs or validate any real delta before its ordinary feature PR and full CI. Actual Beta installation gates and exact-version signing/publication remain required in 34 → 35 → 36 order, with master deferred.
 
 The production notice generator reproduced the staged inventory unchanged. Whole-feature whitespace checking reports whitespace in the inherited verbatim OFL license; its exact bytes match original Media36 (SHA-256 `93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b`) and remain unmodified. The rest of the staged feature passes whitespace checking with only that single upstream license excluded; no repository validation policy or Git attribute was weakened.
+
+
+### Media36 normal integration of the actually accepted dev identity
+
+After PR65 completed its own four normal checks, the release owner normally merged it to actual protected dev `d0c2ec4d28507b8707420b5a424b516e240cc3d7`, with tree equality to the tested source, and fixed the separate beta.35 snapshot before further development. This branch normally merged that actual identity as `600c1f2d78c3a9b7faabff73bd2a98c4ffc300f5`. Its entire tree `77dded19e0db0d8b686032dab084803d4091bc59` equals local acceptance `f091ebd37dc72ac638ab0d7b92aac6f8be6f5c3d`: zero tracked content changed, including every product, Worker, parser, dependency, build and packaged guide input. Only excluded source-status README/matrix/implementation records were then updated for the ordinary feature PR. No rebuild or unchanged test repeat was substituted for the required new normal CI.
+
+The actual dev push run 38874946550 remains pending at this handoff. This candidate still needs its own normal CI and protected promotion; actual Beta gates and signed publication remain separate. The beta.35 fixed snapshot prevents later dev/media changes from entering that earlier release, and the release owner preserves the 34 → 35 → 36 order with master deferred.

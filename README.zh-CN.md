@@ -12,7 +12,7 @@
 
 Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联系人组织长期使用的 Bot 与群协作，通过按会话授权的工作区访问本地项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
 
-> **源码版本：v0.3.0-beta.36（本地整合草稿）。** 当前候选增加图片／PDF／DOCX 导入、固定引用、隔离解析及真实工具图片传输，并保留既有 MCP／Apps、示范 Skill 和原生应用外发审批。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
+> **源码版本：v0.3.0-beta.36（开发候选）。** 当前候选增加图片／PDF／DOCX 导入、固定引用、隔离解析及真实工具图片传输，并保留既有 MCP／Apps、示范 Skill 和原生应用外发审批。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
 [v0.3.0-beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开发布签名公证 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输、登记服务预览、脚本 Skill、可审阅的示范草稿、Gmail／Drive／Notion 原生读取、本地草稿，以及独立审批的 Gmail 发信、Drive 普通文本文件写入和 Notion 页面创建。可写 MCP／Apps、Notion 页面更新及后续媒体／语音仍属源码候选。真实 Windows Docker、真实第三方账号未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
 
@@ -96,7 +96,7 @@ AI 操作与界面共用宿主校验和权限规则。创建 Bot 或群聊支持
 
 文本 Skill 可创建、导入并按需加载到明确授权的会话。`SKILL.md` 与 references/scripts/assets 存为应用拥有的内容，移动原目录后仍可使用。Bash、Python、Node 脚本先授权固定版本、入口和环境镜像，再确认每次运行参数，见[脚本 Skill](docs/SCRIPT_SKILLS.md)。明确开始的[人类示范](docs/SKILL_DEMONSTRATIONS.md)产生可审阅草稿，发布审阅固定保存版本并创建停用 Skill，不授予执行权限。
 
-[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权与固定草稿审批，Notion 仅改标题和末尾追加保留已有正文。[MCP 工具与 Apps](docs/MCP_APPS.md)共用同一授权审批层，并明确区分服务器回执与外部实际效果。此前阶段 4 源码候选通过过四项 CI 门禁，含 Linux Docker 与 macOS／Windows 安装包，回执仍对应各自原始构建。阶段 5.1 [媒体与文档](docs/MEDIA.md)仍是本地整合草稿：106 项专测、6 项源码解析器及 10 项实际未签名 macOS 包场景通过，含私有文本回复授权。新组合正常 CI 与受保护开发分支整合仍待完成。音视频、语音和阶段 6 属于后续交付。公开安装包和真实第三方账号另行验证。受限界面动作操作 Aevoren 自身界面。
+[原生应用连接](docs/NATIVE_CONNECTORS.md)按会话／Bot 授权读取 Gmail、Drive 和 Notion，凭据由宿主加密保存，本地草稿保留版本。[外发](docs/NATIVE_OUTBOUND.md)需要独立账号／操作／目标授权与固定草稿审批，Notion 仅改标题和末尾追加保留已有正文。[MCP 工具与 Apps](docs/MCP_APPS.md)共用同一授权审批层，并明确区分服务器回执与外部实际效果。此前阶段 4 源码候选通过过四项 CI 门禁，含 Linux Docker 与 macOS／Windows 安装包，回执仍对应各自原始构建。阶段 5.1 [媒体与文档](docs/MEDIA.md)本机组合已通过 106 项专测、6 项源码解析器及 10 项实际未签名 macOS 包场景，含私有文本回复授权。新组合正常 CI 与合入 dev 的门禁仍待完成。音视频、语音和阶段 6 属于后续交付。公开安装包和真实第三方账号另行验证。受限界面动作操作 Aevoren 自身界面。
 
 ## 资料库与文本 Skill
 
