@@ -704,3 +704,13 @@ Focused frame/Worker tests passed15/15, with the same409, capture counts and acc
 监听快照新增不复用的状态 revision 和 busy；审批前、执行前及绑定完成后重新检查实际执行成员，UI／AI 并发控制使用同一资源锁，旧批准／结果未知请求不会重放。已完成工具回执只返回历史结果与当前状态，不恢复旧监听；内部关闭等待已经拥有的启动／停止操作，避免遗漏清理。
 
 真实 Node loopback 启动与立即停止的旧实现回归已确定性失败：启动尚未完成时停止直接清空资源引用；这不是对旧 CI 的 runner 失联或关闭失败作归因。修复后实际并发、取消、占用端口、旧 revision、重启、真实 SQLite 审批／回执及成员撤销等五文件74项检查通过，Node／Web 类型与定向 lint 通过。新增 AI 批准启停隐藏场景及更新后的真实安装包验收待完成；前述包证据保留为新控制功能之前的历史。
+
+### beta.43 监听控制完成回执与最终验收
+
+独立只读审查发现状态通知后的取消窗口：受控 changed 回调在 live 状态发布时同步取消，旧承诺仍成功。负向测试已确定性复现。修复后通知、最后实际成员／Runtime／MAIN／代次／signal 检查及同步完成回执均位于 owned start 的可清理范围，socket I/O 始终在 SQL 外；通知失败或回执拒绝仅关闭此次新监听，不影响以后资源。成功回执后不再执行通知或可能回滚的动作；完成的 stop 不会重新开端口。审查复核通过，五文件76项通过，包含真实审批链取消、真实 SQLite 回执拒绝和绑定后成员退休。首次回执拒绝测试期待未脱敏错误文本的夹具问题已更正并保留日志，不将其记为另一个产品缺陷。
+
+最终完整构建与五配置类型通过；源码 Event2、AI 监听批准启停及 typed API 首轮同组 **4/4（32.1秒）**，对应新真实未签名 macOS 包首轮 **4/4（25.3秒）**，每个场景验证实际 package/version43 与正常 exitCode=0。AI 场景走真实受控模型 HTTP → product_execute → 权限弹窗批准 → loopback bind／stop → SQLite 工具回执，批准前无效果，结果无密钥。测试随后补充精确 Renderer 导航与失败时保留 DB／关闭 owned 模型服务；cleanup helper 的 lint 修正后，同一包仅新增场景定向 **1/1（7.1秒）**，没有重建业务或重复其余三项。所有历史失败记录保留，不提高时限。
+
+新 Main SHA-256 `d8c7e82d80163a1d813a3c15ca4723b1446942d88bfa4e18051c9375adc9216a`，ASAR `f2f35a7f8ba41a2f2dc4a48e155052d1cab94a03e0da3eecb210f899a8b60f91`；17项应用文件与216项Worker／parser资源逐字节匹配，事件指南一致。207 parser资产／237资源文件／9556 ASAR条目及四Helper声明通过。相对HTTP修复旧包，Main／Preload／Renderer JS及入口HTML变化；资源中仅 Browser Worker engine 因同步 dev `28ad959` 的被动焦点诊断变化，SHA-256 `02e4b1083efd0cec14487356a0714d100ba0d7316b6e99aaf130dbd78fd7e96a`，保留原取消点，不称为焦点修复。无新依赖／许可。
+
+旧 `1fdb35b` 的正常 CI `38841437426` 中 Linux／密钥与完整 Windows（含安装后关闭）通过；macOS source／打包／parser／麦克风检查通过，但安装后功能步骤遇 GitHub 明确的 hosted runner lost communication，日志 blob 缺失且未上传 macOS 诊断，不能判定具体业务失败。授权的单个失败任务 rerun API 因原run仍运行而403拒绝，没有创建实际 attempt；之后的新监听业务提交替代旧head，不是将 runner 失联归因为产品问题或暗中重跑成功任务。新正常跨平台与签名发行仍待门禁，master 不晋级。持久证据为 `event43-listener-*`、`event43-mac-infrastructure-evidence.json` 和 `event43-mac-rerun-initial-rejected.json`。

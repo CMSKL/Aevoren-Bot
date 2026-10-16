@@ -230,7 +230,7 @@ SQLite 保存资源、不可变版本和会话绑定，导入文件保存为应�
 | 6B 全资源搜索（beta.40） | [搜索](SEARCH.md)已实现实际来源搜索与精确定位，本地 SQLite／传输专项及隐藏界面已有通过记录；实际未签名 macOS 包有验收记录。后续布局修复与平台／签名门禁单独记录 |
 | 6C 整理与偏好（beta.41） | 源码提供会话分区、默认助理、Bot 图片头像及通知类别／声音设置；最终集成和发行门禁独立记录，不由源码存在推断安装包可用 |
 | 6D MAIN Bot／群 Routine（beta.42） | 本地集成候选：固定目标、审阅成员版本、Everyone／指定子集并行、编辑版本冲突、单次运行取消与原 nonce 恢复；19 项 Routine 组件测试及 5 项设置回归通过；隐藏两场景、真实未签名 macOS 包 Routine2 与 typed API 同轮3项通过，跨平台及签名发行待验收，详见[群 Routine](GROUP_ROUTINES.md) |
-| 6E 事件／Webhook（beta.43） | 设置界面与 `automationEvents.*` 共用业务层；真实 loopback HTTP、私有 TASK 元数据、固定 MAIN Routine 目标、密钥撤销及去重已实现；源码隐藏2项及真实未签名 macOS 包 Events2＋typed API 同轮3项通过；平台及签名发行另行验收，详见[使用说明](AUTOMATION_EVENTS.md) |
+| 6E 事件／Webhook（beta.43） | 设置界面与 `automationEvents.*` 共用业务层；AI 经固定端口及应用级影响审批启停监听，凭据轮换留在可信设置；真实 loopback HTTP、私有 TASK 元数据、固定 MAIN Routine 目标、密钥撤销及去重已实现；最新源码4项及真实未签名 macOS 包 Events2＋AI监听控制＋typed API 同轮4项通过；平台及签名发行另行验收，详见[使用说明](AUTOMATION_EVENTS.md) |
 | 6F 模板／选择性离线导出 | 后续独立交付；不从模型文本或内部模块推断已有界面和安装包支持 |
 
 ### 6D 范围与恢复
