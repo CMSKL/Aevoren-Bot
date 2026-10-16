@@ -13,6 +13,7 @@ import { openInspector } from "./navigation";
 const parentId = "11111111-1111-4111-8111-111111111111";
 const accountId = "22222222-2222-4222-8222-222222222222";
 const createdId = "33333333-3333-4333-8333-333333333333";
+const targetPageId = "55555555-5555-4555-8555-555555555555";
 const blockId = "44444444-4444-4444-8444-444444444444";
 function unwrap<T>(result: ApiResult<T>): T { if (!result.ok) throw new Error(result.error.code); return result.data; }
 function json(response: ServerResponse, value: unknown, status = 200): void { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(value)); }
@@ -76,13 +77,28 @@ async function withOutbound(callback: (fixture: Fixture) => Promise<void>): Prom
   });
   const room = repository.createRoom({ name: "外发并行验收群", memberBotIds: bots.map(bot => bot.id), leadBotId: null });
   repository.setSetting("memory.capture.enabled", "false", false); repository.close();
-  const writes: Record<string, unknown>[] = []; const errors: string[] = []; let mode: "confirmed" | "ambiguous" = "confirmed";
+  const writes: Record<string, unknown>[] = []; const errors: string[] = []; let mode: "confirmed" | "ambiguous" = "confirmed"; let targetTitle = "ORIGINAL_TARGET_TITLE"; let appendedText = "";
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (request.headers["x-aevoren-native-host"] !== "api.notion.com" || request.headers.authorization !== "Bearer outbound-fixture-token" || request.headers["notion-version"] !== "2026-03-11") throw new Error("Unexpected provider credentials");
       if (url.pathname === "/v1/users/me") json(response, { type: "bot", id: accountId, name: "fixture", bot: { workspace_name: "Fixed fixture account" } });
-      else if (url.pathname === "/v1/pages" && request.method === "POST") {
+      else if (url.pathname === `/v1/pages/${targetPageId}`) {
+        if (request.method === "PATCH") {
+          let body = ""; for await (const chunk of request) body += chunk;
+          const content = JSON.parse(body) as Record<string, unknown>; writes.push(content);
+          targetTitle = (content.properties as { "frozen-title-id": { title: { text: { content: string } }[] } })["frozen-title-id"].title[0]!.text.content;
+          if (mode === "ambiguous") { json(response, { additional_data: { retry_guidance: "read_object" } }, 503); return; }
+        }
+        json(response, { object: "page", id: targetPageId, parent: { type: "data_source_id", data_source_id: parentId }, last_edited_time: "2026-10-14T00:00:00.000Z", properties: { CustomName: { id: "frozen-title-id", type: "title", title: [{ type: "text", text: { content: targetTitle }, plain_text: targetTitle }] } } });
+      } else if (url.pathname === `/v1/blocks/${targetPageId}/children` && request.method === "PATCH") {
+        let body = ""; for await (const chunk of request) body += chunk;
+        const content = JSON.parse(body) as Record<string, unknown>; writes.push(content);
+        appendedText = (content.children as { paragraph: { rich_text: { text: { content: string } }[] } }[])[0]!.paragraph.rich_text[0]!.text.content;
+        json(response, { additional_data: { committed_resource_id: targetPageId, committed_child_ids: [blockId], retry_guidance: "read_object" } }, 503);
+      } else if (url.pathname === `/v1/blocks/${blockId}` && request.method === "GET") {
+        json(response, { object: "block", id: blockId, parent: { type: "page_id", page_id: targetPageId }, type: "paragraph", has_children: false, paragraph: { rich_text: [{ type: "text", text: { content: appendedText }, plain_text: appendedText }] } });
+      } else if (url.pathname === "/v1/pages" && request.method === "POST") {
         let body = ""; for await (const chunk of request) body += chunk;
         const content = JSON.parse(body) as Record<string, unknown>; writes.push(content);
         if (mode === "confirmed") json(response, { id: createdId, object: "page" });
@@ -309,5 +325,45 @@ test("group Apps owns one outbound approval portal while the conversation is beh
     expect(f.writes).toHaveLength(0);
     await inspector.getByRole("button", { name: "关闭群聊设置", exact: true }).click();
     await expect(inspector).toBeHidden();
+  });
+});
+
+
+test("Notion title update approval pins actual title property and rejects later edits", async () => {
+  test.setTimeout(90_000);
+  await withOutbound(async f => {
+    await setup(f);
+    await f.page.getByRole("button", { name: "新建本地草稿", exact: true }).click();
+    await f.page.getByLabel("Notion 草稿操作").selectOption("notion-page-title");
+    await f.page.getByLabel("Notion 草稿目标页面").fill(targetPageId);
+    await f.page.getByLabel("Notion 草稿新标题").fill("FIXED_NEW_TITLE");
+    await f.page.getByRole("button", { name: "保存本地草稿", exact: true }).click();
+    await expect(f.page.getByLabel("Notion 草稿操作")).toBeDisabled();
+    await grantAndPrepare(f);
+    await f.page.getByRole("button", { name: "审阅并批准此版本", exact: true }).click();
+    const dialog = f.page.getByTestId("tool-permission-dialog");
+    await expect(dialog.getByRole("button", { name: "仅允许一次", exact: true })).toBeEnabled();
+    await expect(dialog).toContainText("frozen-title-id"); await expect(dialog).toContainText("ORIGINAL_TARGET_TITLE");
+    const list = unwrap(await f.page.evaluate(async scope => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.drafts.list(scope), { sessionId: f.bot.sessionId, executorBotId: f.bot.id }));
+    unwrap(await f.page.evaluate(async input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.drafts.update(input), { sessionId: f.bot.sessionId, executorBotId: f.bot.id, id: list[0]!.id, expectedVersion: 1, content: { kind: "notion-page-title" as const, pageId: targetPageId, title: "CHANGED_AFTER_APPROVAL" } }));
+    await expect(dialog.getByRole("button", { name: "仅允许一次", exact: true })).toBeDisabled(); await expect(dialog).toContainText("FIXED_NEW_TITLE"); expect(f.writes).toHaveLength(0);
+    await dialog.getByRole("button", { name: "拒绝", exact: true }).click();
+    await f.page.getByRole("button", { name: "新建本地草稿", exact: true }).click();
+    await f.page.getByLabel("Notion 草稿操作").selectOption("notion-page-title"); await f.page.getByLabel("Notion 草稿目标页面").fill(targetPageId); await f.page.getByLabel("Notion 草稿新标题").fill("APPROVED_NEW_TITLE"); await f.page.getByRole("button", { name: "保存本地草稿", exact: true }).click();
+    await f.page.getByRole("button", { name: "准备此保存版本外发", exact: true }).click(); await f.page.getByRole("button", { name: "审阅并批准此版本", exact: true }).click(); await expect(dialog.getByRole("button", { name: "仅允许一次", exact: true })).toBeEnabled(); await dialog.getByRole("button", { name: "仅允许一次", exact: true }).click();
+    await expect.poll(async () => (await intents(f)).find(item => item.review.content.kind === "notion-page-title" && item.state === "confirmed")?.state).toBe("confirmed"); expect(f.writes).toEqual([{ properties: { "frozen-title-id": { type: "title", title: [{ type: "text", text: { content: "APPROVED_NEW_TITLE" } }] } } }]);
+  });
+});
+
+test("Notion append unknown survives restart and exact child proof never repeats PATCH", async () => {
+  test.setTimeout(90_000);
+  await withOutbound(async f => {
+    const connection = await setup(f);
+    await f.page.getByRole("button", { name: "新建本地草稿", exact: true }).click(); await f.page.getByLabel("Notion 草稿操作").selectOption("notion-page-append"); await f.page.getByLabel("Notion 草稿目标页面").fill(targetPageId); await f.page.getByLabel("Notion 草稿追加正文").fill("FIXED_APPEND_BODY"); await f.page.getByRole("button", { name: "保存本地草稿", exact: true }).click(); await grantAndPrepare(f);
+    await f.page.getByRole("button", { name: "审阅并批准此版本", exact: true }).click(); const dialog = f.page.getByTestId("tool-permission-dialog"); await expect(dialog).toContainText("FIXED_APPEND_BODY"); await expect(dialog).toContainText("末尾追加"); await expect(dialog.getByRole("button", { name: "仅允许一次", exact: true })).toBeEnabled(); await dialog.getByRole("button", { name: "仅允许一次", exact: true }).click();
+    await expect.poll(async () => (await intents(f))[0]?.state).toBe("unknown"); expect(f.writes).toHaveLength(1); expect(Object.keys(f.writes[0]!)).toEqual(["children"]);
+    await f.restart(); await openApps(f, connection.id);
+    await expect(f.page.getByRole("button", { name: "只读核对此次结果", exact: true })).toBeVisible(); await f.page.getByRole("button", { name: "只读核对此次结果", exact: true }).click(); await expect.poll(async () => (await intents(f))[0]?.state).toBe("confirmed"); expect(f.writes).toHaveLength(1);
+    await expect(f.page.getByText(`第三方结果 ID：${targetPageId}`, { exact: true })).toBeVisible();
   });
 });

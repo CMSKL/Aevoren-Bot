@@ -1,6 +1,6 @@
 # Scoped MCP tools and Apps
 
-This guide covers the v0.3.0-beta.34 development candidate. Published installers and candidate validation are tracked separately in the [implementation record](IMPLEMENTATION_PLAN.md). Configure a server using the existing **Settings → MCP** form; native Gmail/Drive/Notion setup remains in [Native connections](NATIVE_CONNECTORS.md).
+This guide describes MCP tools and Apps introduced in beta.34 and retained in the beta.35 development candidate. Published installers and candidate validation are tracked separately in the [implementation record](IMPLEMENTATION_PLAN.md). Configure a server using the existing **Settings → MCP** form; native Gmail/Drive/Notion setup remains in [Native connections](NATIVE_CONNECTORS.md).
 
 ## Grant one conversation and executing Bot
 
@@ -33,6 +33,10 @@ Protocol `_meta` is retained privately for an authorized App. Public intents, mo
 ## Evidence and limits
 
 Controlled SDK servers, real local HTTP, real SQLite, real approval/Runtime handling and hidden Electron views verify the implementation. These tests do not establish a real third-party account's permissions or prove a remote service's side effects. Local unsigned packages and signed Releases are separate acceptance gates.
+
+The current diagnostic beta.35 candidate passed Linux CI with 1,593 ordinary tests (45 skipped) and 41 real Docker checks; its rebuilt actual macOS package passed 30 scenarios with no forced-cleanup warnings. The earlier 22 source-interface scenarios remain separately recorded. Earlier package business receipts did not establish graceful exit; those remain historical. Cross-platform CI and signed publication are pending. See the implementation record for exact build hashes and the separate beta.31 backport receipts.
+
+Historical MCP34 local acceptance (before this Notion refresh):
 
 Latest local acceptance passed 12 source scenarios and 28 unique actual packaged scenarios, with the precise beta.34 version and bundled resources checked. Embedded Apps now retain the main renderer's close handshake, and the source/package runs contained no forced-close warnings. The full local unit run recorded 1,560 passes, 45 skips and six existing timing failures; the 106 affected tests passed serial isolation with unchanged assertions and limits. The implementation record preserves these distinct results and the earlier disposed-channel test-cleanup failure. Cross-platform CI and signing remain required.
 

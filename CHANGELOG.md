@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.0-beta.35 (development candidate)
+
+- Add distinct Notion saved-draft operations and exact page write grants for title-only updates and end-of-page paragraph appends. Preserve existing page body and ordinary/data-source title property identity.
+- Pin observed target metadata in the fixed approval review and recheck the current account and grant before a single PATCH. Changed drafts invalidate pending approval.
+- Verify appended blocks by returned or committed child IDs, parent and text; ambiguous attempts remain unknown and cannot resend. Label title reconciliation based only on current state without claiming the original request caused that state.
+- Real SQLite, controlled HTTP and Renderer unit checks pass. The combined source build, 1,586 ordinary tests (45 skipped) and 14 hidden Electron source cases passed before the final MCP setup cleanup. Post-cleanup focused checks and 22 actual unsigned macOS-package business cases passed at the earlier candidate; its old cleanup helper did not establish normal exit. These remain historical receipts. The current diagnostic candidate passed Linux CI with 1,593 ordinary tests (45 skipped) and 41 real Docker checks, and a fresh unsigned macOS rebuild passed 30 package scenarios with no forced-cleanup warnings. Full cross-platform CI, validated Beta promotion and signed publication remain pending. Real Notion credentials are unavailable and unverified.
+
 ## v0.3.0-beta.34 (development candidate)
 
 - Add conversation/executor-scoped MCP grants, fixed schema/configuration/credential approvals and durable send-once tool receipts. Unknown results do not replay; confirmation is explicitly server-reported.
@@ -21,7 +28,7 @@
 - Preserve full immutable approval content, detect draft/authorization changes, and retire removed group members' old intent content permanently. Keep internal receipts across history clearing and Runtime removal.
 - Use genuine host-outbound Runtime records for interface actions, retain six independent group members and route Stop to the exact owned task. Existing model Runtime controls stay separate.
 - Fix duplicate approval portals in hidden surfaces and group inspectors. Migration 39 preserves existing records, pending approvals/tools, environment provenance, foreign keys, indexes and triggers.
-- Local ordinary tests: 1,528 passed, 44 skipped; TypeScript, ESLint, build, license, documentation, open-source and security gates passed. Hidden source acceptance passed six cases; the frozen unsigned macOS package passed eight. Controlled HTTP is not real third-party account verification; cross-platform CI and signed publication remain pending.
+- Local ordinary tests: 1,528 passed, 44 skipped; TypeScript, ESLint, build, license, documentation, open-source and security gates passed. Hidden source acceptance passed six cases; the frozen unsigned macOS package passed seven native/outbound scenarios. The formerly included typed-API case is source evidence only; the actual-package fixture was corrected in beta.35. Controlled HTTP is not real third-party account verification; cross-platform CI and signed publication remain pending.
 
 ## v0.3.0-beta.31 (development candidate)
 
