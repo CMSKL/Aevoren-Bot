@@ -1,3 +1,5 @@
+import { VOICE_CHANNELS, VOICE_CHANGED_CHANNEL } from "@shared/voice-channels";
+import type { VoiceEvent } from "@shared/voice-contracts";
 import { MCP_WRITE_CHANNELS } from "@shared/mcp-write-channels";
 import { NATIVE_OUTBOUND_CHANNELS, NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "@shared/native-outbound-channels";
 import { contextBridge, ipcRenderer } from "electron";
@@ -190,6 +192,24 @@ const api: AevorenBotApi = {
       return () => ipcRenderer.removeListener(IPC.libraryEvent, handler);
     },
   },
+  voice: {
+    configurations: () => ipcRenderer.invoke(VOICE_CHANNELS.configurations),
+    saveConfiguration: input => ipcRenderer.invoke(VOICE_CHANNELS.saveConfiguration, input),
+    beginCapture: input => ipcRenderer.invoke(VOICE_CHANNELS.beginCapture, input),
+    commitCapture: input => ipcRenderer.invoke(VOICE_CHANNELS.commitCapture, input),
+    cancelCapture: input => ipcRenderer.invoke(VOICE_CHANNELS.cancelCapture, input),
+    transcribe: input => ipcRenderer.invoke(VOICE_CHANNELS.transcribe, input),
+    speak: input => ipcRenderer.invoke(VOICE_CHANNELS.speak, input),
+    get: input => ipcRenderer.invoke(VOICE_CHANNELS.get, input),
+    list: input => ipcRenderer.invoke(VOICE_CHANNELS.list, input),
+    stop: input => ipcRenderer.invoke(VOICE_CHANNELS.stop, input),
+    audio: input => ipcRenderer.invoke(VOICE_CHANNELS.audio, input),
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, event: VoiceEvent): void => listener(event);
+      ipcRenderer.on(VOICE_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(VOICE_CHANGED_CHANNEL, handler);
+    },
+  },
   media: {
     list: input => ipcRenderer.invoke(MEDIA_CHANNELS.list, input),
     available: input => ipcRenderer.invoke(MEDIA_CHANNELS.available, input),
@@ -313,6 +333,11 @@ const api: AevorenBotApi = {
     removeMember: (input) => ipcRenderer.invoke(IPC.roomsRemoveMember, input),
   },
   sessions: {
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, event: { session: import("@shared/contracts").Session }): void => listener(event);
+      ipcRenderer.on(IPC.sessionChangedEvent, handler);
+      return () => ipcRenderer.removeListener(IPC.sessionChangedEvent, handler);
+    },
     getMain: (botId) => ipcRenderer.invoke(IPC.sessionsGetMain, botId),
   },
   transcript: {

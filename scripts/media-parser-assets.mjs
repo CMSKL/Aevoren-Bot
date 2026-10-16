@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 
 const require = createRequire(import.meta.url);
 export const parserName = "aevoren-browser-media";
-export const parserVersion = "1.0.0/pdfjs-6.4.299/mammoth-1.13.0/zip-2.23.0/fonts-2.1.5";
+export const parserVersion = "1.1.0/pdfjs-6.4.299/mammoth-1.13.0/zip-2.23.0/fonts-2.1.5";
 const pins = { "pdfjs-dist": "6.4.299", mammoth: "1.13.0", "@zip.js/zip.js": "2.23.0" };
 const roots = Object.fromEntries(Object.entries(pins).map(([name, version]) => {
   const manifest = require.resolve(`${name}/package.json`);

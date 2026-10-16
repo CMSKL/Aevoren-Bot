@@ -15,10 +15,10 @@ module.exports = async function afterPack(context) {
     "NSBluetoothAlwaysUsageDescription",
     "NSBluetoothPeripheralUsageDescription",
     "NSCameraUsageDescription",
-    "NSMicrophoneUsageDescription",
   ]) {
     spawnSync("/usr/bin/plutil", ["-remove", key, infoPlist], { stdio: "ignore" });
   }
+  run("/usr/bin/plutil", ["-replace", "NSMicrophoneUsageDescription", "-string", "Aevoren 使用麦克风录制你主动发起的语音，供已配置的语音服务转写。", infoPlist]);
   run("/usr/bin/plutil", [
     "-replace",
     "NSAppTransportSecurity",

@@ -1,8 +1,9 @@
 import type { ApiResult } from "./contracts";
 import type { MediaRef } from "./library-contracts";
 
-export type MediaKind = "image" | "pdf" | "docx";
-export type SupportedMediaMime = "image/png" | "image/jpeg" | "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+export type MediaKind = "image" | "pdf" | "docx" | "audio" | "video";
+export type SupportedMediaMime = "image/png" | "image/jpeg" | "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  | "audio/wav" | "audio/mpeg" | "audio/ogg" | "video/ogg" | "audio/webm" | "video/webm" | "audio/mp4" | "video/mp4";
 export type MessageMediaReference = { mediaId: string; sha256: string; extraction?: { id: string; digest: string } };
 export type MediaSpan = { kind: "page" | "section"; index: number; start: number; end: number };
 export type MediaAsset = {
@@ -12,6 +13,7 @@ export type MediaAsset = {
   enabled: boolean;
   width: number | null;
   height: number | null;
+  durationMs: number | null;
   deletedAt: string | null;
   createdAt: string;
 };
@@ -33,8 +35,9 @@ export type MediaReadMetadata = {
 export type MediaTextPage = MediaReadMetadata & { text: string };
 export type MediaPreviewInput = MediaScope & { id: string; reference?: MessageMediaReference; pageIndex?: number };
 export type MediaPreviewMetadata = { sourceReference: MessageMediaReference; image: MediaRef; width: number; height: number; pageIndex: number | null };
-/** Pixels are returned only by the scoped trusted UI operation, never persisted in tool receipts. */
-export type MediaPreview = MediaPreviewMetadata & { dataBase64: string };
+export type MediaPlaybackMetadata = { sourceReference: MessageMediaReference; media: MediaRef; width: number | null; height: number | null; durationMs: number };
+/** Preview bytes are returned only by the scoped trusted UI operation, never persisted in tool receipts. */
+export type MediaPreview = (MediaPreviewMetadata | MediaPlaybackMetadata) & { dataBase64: string };
 export type MediaMutationInput = MediaScope & { id: string; expectedVersion: number };
 export type MediaBindingInput = MediaScope & { id: string };
 export type MediaImportPathInput = MediaScope & { workspaceId: string; path: string };

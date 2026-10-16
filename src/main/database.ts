@@ -88,6 +88,7 @@ import { messageAttachmentsSchema, toolInvocationCommandSchema } from "@shared/s
 import { AevorenBotError } from "./errors";
 import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
 import { MediaRepository, MEDIA_MIGRATION } from "./media-repository";
+import { VoiceRepository, VOICE_MIGRATION } from "./voice-repository";
 import { messageMediaReferencesSchema } from "@shared/media-schemas";
 import type { MessageMediaReference } from "@shared/media-contracts";
 import { EnvironmentRepository, ENVIRONMENT_MIGRATION } from "./environment-repository";
@@ -2082,6 +2083,7 @@ export const MIGRATIONS = [
   DEMONSTRATION_MIGRATION,
   MCP_WRITE_MIGRATION,
   MEDIA_MIGRATION,
+  VOICE_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3257,6 +3259,7 @@ export class AppRepository {
   private readonly database: DatabaseSync;
   readonly library: LibraryRepository;
   readonly media: MediaRepository;
+  readonly voice: VoiceRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
   readonly demonstrations: DemonstrationRepository;
@@ -3284,6 +3287,11 @@ export class AppRepository {
         if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
         else if (session.botId) this.getBot(session.botId);
         else if (session.roomId) this.getRoom(session.roomId);
+      });
+      this.voice = new VoiceRepository(this.database, (sessionId, executorBotId) => {
+        const session = this.getSession(sessionId);
+        if (session.roomId && this.getRoom(session.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
+        if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
       });
       this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.demonstrations = new DemonstrationRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));

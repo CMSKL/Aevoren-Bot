@@ -1,6 +1,6 @@
 # Media and documents
 
-The beta.36 local integration draft adds a separate **Media** section to the existing private and Room Library panels. Use the media button beside text attachments to import or select a saved item, then send through the ordinary composer. Text/code attachments keep their existing behavior. This unit is under acceptance testing; published beta.33 does not contain it.
+The media implementation introduced in beta.36 and extended in the beta.37 local integration draft provides a separate **Media** section to the existing private and Room Library panels. Use the media button beside text attachments to import or select a saved item, then send through the ordinary composer. Text/code attachments keep their existing behavior. This new combination awaits its own acceptance; published beta.33 does not contain these media additions.
 
 ## Supported content
 
@@ -10,7 +10,7 @@ The beta.36 local integration draft adds a separate **Media** section to the exi
 | PDF | 16 MiB, 200 physical pages | Extracted text with page offsets; bounded page-image preview |
 | DOCX | 8 MiB | Escaped extracted text with section offsets; no physical-page or layout fidelity claim |
 
-One import accepts at most six files and 32 MiB total. Extracted text is limited to 512 KiB. An unsupported or rejected file has an explicit failure; accepted items publish together after preparation. Cancellation publishes none of the prepared items. Encrypted PDFs, OCR, audio/video and cloud voice are outside this delivery.
+One import accepts at most six files and 32 MiB total. Extracted text is limited to 512 KiB. An unsupported or rejected file has an explicit failure; accepted items publish together after preparation. Cancellation publishes none of the prepared items. Encrypted PDFs and OCR remain unsupported. The later beta.37 candidate adds bounded audio/video and cloud transcription/speech; see [Voice](VOICE.md).
 
 Imported bytes belong to the application and are checked by size and SHA-256. Moving or deleting the original does not remove an imported item. A message pins the original digest and, when present, the exact extraction ID and digest. A retry uses the original pair. Parsed text is untrusted content, never a new instruction or permission grant.
 

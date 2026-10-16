@@ -1,3 +1,4 @@
+import type { VoiceConfiguration } from "@shared/voice-contracts";
 import type {
   CapabilityConnection,
   CapabilityDescriptor,
@@ -33,13 +34,16 @@ type SnapshotContext = {
   nativeWriteReady: boolean;
   browserReady: boolean;
   browserUserControlled: boolean;
+  voiceSttReady: boolean;
+  voiceTtsReady: boolean;
 };
 
 const unsupported: Array<Pick<CapabilityDescriptor, "id" | "name" | "category" | "description" | "effectClass" | "adapterKind">> = [
   { id: "device.location", name: "定位", category: "device", description: "读取用户授权的位置。", effectClass: "read-local", adapterKind: "none" },
   { id: "device.personal-data", name: "设备个人数据", category: "device", description: "访问相册、日历或通讯录。", effectClass: "read-local", adapterKind: "none" },
   { id: "external.actions", name: "其他外部操作", category: "external", description: "尚未适配的订票、下单或其他服务操作；原生应用草稿另按具体授权提供。", effectClass: "write-external", adapterKind: "none" },
-  { id: "multimodal.audio-video", name: "音视频输入", category: "multimodal", description: "音视频解析与语音功能尚未接入。", effectClass: "read-local", adapterKind: "none" },
+  { id: "voice.realtime", name: "实时语音", category: "multimodal", description: "实时语音连接、打断和宿主委派尚未实现，配置可独立保存。", effectClass: "read-remote", adapterKind: "none" },
+  { id: "multimodal.video-understanding", name: "模型视频理解", category: "multimodal", description: "当前视频只提供本地预览；未接入模型视频传输或视频理解。", effectClass: "read-local", adapterKind: "none" },
 ];
 
 function localTime(now: Date): Pick<CapabilityPromptSnapshot, "generatedAt" | "timezone" | "utcOffsetMinutes"> {
@@ -111,6 +115,26 @@ function capabilityDescriptors(
       id: "media.documents", name: "媒体与文档", category: "multimodal", effectClass: "read-local", adapterKind: "core",
       description: "导入 PNG/JPEG/PDF/DOCX，按会话授权读取固定解析版本；PDF 逐页预览，扫描件不提供 OCR。撤销授权后不再传输正文或图片。",
       availability: executionTools ? "available" : "unavailable", reason: executionTools ? null : "当前来源未接入宿主工具。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "media.audio-video", name: "音视频引用与预览", category: "multimodal", effectClass: "read-local", adapterKind: "core",
+      description: "保存并预览实际可解码的有界音视频，按会话授权和原始摘要引用；音频可另行转写，视频不会直接传入模型。",
+      availability: executionTools ? "available" : "unavailable", reason: executionTools ? null : "当前来源未接入宿主工具。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "voice.transcription", name: "云语音转写", category: "multimodal", effectClass: "read-remote", adapterKind: "core",
+      description: "使用独立配置的云服务转写固定授权音频；逐次审批，结果未知不重发。转录不会自动覆盖草稿或发送消息。麦克风由用户在界面主动开启。",
+      availability: executionTools && context.voiceSttReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前来源未接入宿主工具。" : context.voiceSttReady ? "已配置，账号与模型可用性以真实请求结果为准。" : "请在语音设置中独立启用并配置转写服务。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "voice.speech", name: "AI 合成语音", category: "multimodal", effectClass: "read-remote", adapterKind: "core",
+      description: "把固定回复或指定文字生成真实语音引用；使用独立语音密钥和音色，群模型并行、朗读按新回复完成顺序排队，可单独停止。",
+      availability: executionTools && context.voiceTtsReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前来源未接入宿主工具。" : context.voiceTtsReady ? "已配置，账号与模型可用性以真实请求结果为准。" : "请在语音设置中独立启用并配置朗读服务。",
       permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
@@ -357,6 +381,7 @@ export class CapabilityRegistry {
     private readonly clock: () => Date = () => new Date(),
     private readonly mcp?: Pick<McpService, "list" | "availableTools"> & Partial<Pick<McpService, "scopedCredentialDigest">>,
     private readonly routineList: () => Routine[] = () => [],
+    private readonly voiceConfigurations: () => VoiceConfiguration[] = () => [],
   ) {}
 
   async getSnapshot(input: { botId?: string; sessionId?: string } = {}): Promise<CapabilitySnapshot> {
@@ -409,6 +434,8 @@ export class CapabilityRegistry {
         this.mcp?.scopedCredentialDigest?.(server.id) === this.repository.mcpWrites.credentialForGrant(grant.id); } catch { return false; }
     }));
     const routines = this.routineList();
+    const voiceConfigurations = this.voiceConfigurations();
+    const voiceReady = (kind: "stt" | "tts"): boolean => voiceConfigurations.some(item => item.kind === kind && item.enabled && item.keyConfigured);
     const environment = botId && sessionId ? this.repository.environments.get({ sessionId, executorBotId: botId }) : null;
     const executionReady = environment?.state === "running";
     const browser = botId && sessionId ? this.repository.browsers.get({ sessionId, executorBotId: botId }) : null;
@@ -421,7 +448,7 @@ export class CapabilityRegistry {
       try { this.repository.outbound.assertGrant({ sessionId, executorBotId: botId }, grant.id, grant.version); return true; }
       catch { return false; }
     }));
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, voiceSttReady: voiceReady("stt"), voiceTtsReady: voiceReady("tts"), room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
       browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));

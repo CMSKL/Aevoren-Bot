@@ -18,8 +18,8 @@ export const MEDIA_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
 const descriptions: Record<keyof typeof MEDIA_CHANNELS, string> = {
   list: "列出当前会话和任务准入的媒体元信息", available: "经批准列出可复用媒体元信息；不读取其他会话正文或图片",
   metadata: "读取当前范围媒体的固定引用与元信息", read: "分页读取任务已准入媒体的固定解析版本；图片通过真实像素通道发送",
-  preview: "读取授权图片或生成 PDF 指定页的有界图片预览；原文件保持不变",
-  pickImport: "由用户选择 PNG、JPEG、PDF 或 DOCX，校验后导入当前会话",
+  preview: "读取授权图片或 PDF 页真实像素；音视频仅返回预览元信息，不直接传入模型",
+  pickImport: "由用户选择图片、PDF、DOCX 或可解码音视频，真实校验后导入当前会话",
   importPath: "从当前会话已授权工作区导入媒体，保存应用拥有的内容与固定解析版本",
   bind: "将媒体明确授权给当前会话的后续任务；不刷新旧任务准入", unbind: "撤销当前会话媒体授权，立即阻止后续读取",
   setEnabled: "按版本启用或停用媒体；旧任务授权不自动恢复", delete: "按版本软删除媒体，阻止读取并保留恢复记录",

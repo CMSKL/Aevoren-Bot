@@ -5,6 +5,8 @@ export const MEDIA_IMPORT_MAX_BYTES = 32 * 1_048_576;
 export const MEDIA_IMAGE_MAX_BYTES = 2 * 1_048_576;
 export const MEDIA_PDF_MAX_BYTES = 16 * 1_048_576;
 export const MEDIA_DOCX_MAX_BYTES = 8 * 1_048_576;
+export const MEDIA_AV_MAX_BYTES = 16 * 1_048_576;
+export const MEDIA_AV_MAX_DURATION_MS = 600_000;
 export const MEDIA_TEXT_MAX_BYTES = 512 * 1_024;
 export const MEDIA_MAX_IMAGE_PIXELS = 16_000_000;
 export const MEDIA_MAX_PDF_PAGES = 200;
@@ -14,7 +16,8 @@ export const MEDIA_ZIP_ENTRY_MAX_BYTES = 16 * 1_048_576;
 export const MEDIA_ZIP_TOTAL_MAX_BYTES = 64 * 1_048_576;
 const id = z.string().uuid();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
-export const supportedMediaMimeSchema = z.enum(["image/png", "image/jpeg", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]);
+export const supportedMediaMimeSchema = z.enum(["image/png", "image/jpeg", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "audio/wav", "audio/mpeg", "audio/ogg", "video/ogg", "audio/webm", "video/webm", "audio/mp4", "video/mp4"]);
 export const messageMediaReferenceSchema = z.object({ mediaId: id, sha256, extraction: z.object({ id, digest: sha256 }).strict().optional() }).strict();
 export const messageMediaReferencesSchema = z.array(messageMediaReferenceSchema).max(MEDIA_MAX_FILES)
   .refine(refs => new Set(refs.map(ref => ref.mediaId)).size === refs.length, "Media references must be unique");

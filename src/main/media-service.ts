@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { MediaAsset, MediaAvailableInput, MediaBindingInput, MediaChangedEvent, MediaImportPathInput, MediaImportResult,
-  MediaItem, MediaListInput, MediaMutationInput, MediaPreview, MediaPreviewInput, MediaPreviewMetadata, MediaReadInput,
+  MediaItem, MediaListInput, MediaMutationInput, MediaPlaybackMetadata, MediaPreview, MediaPreviewInput, MediaPreviewMetadata, MediaReadInput,
   MediaReadMetadata, MediaScope, MediaTextPage, SupportedMediaMime } from "@shared/media-contracts";
-import { MEDIA_DOCX_MAX_BYTES, MEDIA_IMAGE_MAX_BYTES, MEDIA_IMPORT_MAX_BYTES, MEDIA_MAX_FILES, MEDIA_MAX_IMAGE_PIXELS,
-  MEDIA_MAX_PDF_PAGES, MEDIA_PARSE_TIMEOUT_MS, MEDIA_TEXT_MAX_BYTES, mediaImportPathSchema, mediaPreviewSchema, mediaReadSchema, mediaSpanSchema, mediaTextSchema } from "@shared/media-schemas";
+import { MEDIA_AV_MAX_BYTES, MEDIA_AV_MAX_DURATION_MS, MEDIA_DOCX_MAX_BYTES, MEDIA_IMAGE_MAX_BYTES, MEDIA_IMPORT_MAX_BYTES, MEDIA_MAX_FILES, MEDIA_MAX_IMAGE_PIXELS,
+  MEDIA_MAX_PDF_PAGES, MEDIA_PARSE_TIMEOUT_MS, MEDIA_TEXT_MAX_BYTES, mediaImportPathSchema, mediaPreviewSchema, mediaReadSchema, mediaScopeSchema, mediaSpanSchema, mediaTextSchema } from "@shared/media-schemas";
+import { avMime, inspectAvHeader, isAvMime, normalizedMediaMime, sameAvFamily } from "@shared/media-av-format";
 import type { AppRepository } from "./database";
 import { AevorenBotError } from "./errors";
 import { assertMediaNotCancelled, MediaBlobStore, readMediaSource } from "./media-blob-store";
@@ -29,15 +30,26 @@ function mimeFor(bytes: Buffer): SupportedMediaMime {
   if (bytes[0] === 255 && bytes[1] === 216 && bytes.at(-2) === 255 && bytes.at(-1) === 217) return "image/jpeg";
   if (bytes.subarray(0, 5).toString("ascii") === "%PDF-") return "application/pdf";
   if (bytes.subarray(0, 4).equals(Buffer.from([80, 75, 3, 4]))) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  try { const header = inspectAvHeader(bytes); if (header) return avMime(header, header.video ? "video" : "audio"); }
+  catch { throw new AevorenBotError("MEDIA_CONTENT_INVALID"); }
   throw new AevorenBotError("MEDIA_UNSUPPORTED");
 }
 function dimensions(width: number | null, height: number | null): void {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width! < 1 || height! < 1 || width! * height! > MEDIA_MAX_IMAGE_PIXELS)
     throw new AevorenBotError("MEDIA_IMPORT_TOO_LARGE");
 }
-function validateParsed(result: MediaParseResult, mimeType: SupportedMediaMime): void {
+function validateParsed(result: MediaParseResult, mimeType: SupportedMediaMime, bytes: Uint8Array): void {
   if (!result.parserName || result.parserName.length > 100 || !result.parserVersion || result.parserVersion.length > 100
-    || result.kind !== (mimeType.startsWith("image/") ? "image" : mimeType === "application/pdf" ? "pdf" : "docx")) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
+    || (!isAvMime(mimeType) && result.kind !== (mimeType.startsWith("image/") ? "image" : mimeType === "application/pdf" ? "pdf" : "docx"))) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
+  if (isAvMime(mimeType)) {
+    const header = inspectAvHeader(bytes);
+    if (!header || !sameAvFamily(mimeType, header) || !["audio", "video"].includes(result.kind) || result.extraction
+      || !Number.isSafeInteger(result.durationMs) || result.durationMs! < 1 || result.durationMs! > MEDIA_AV_MAX_DURATION_MS) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
+    if (result.kind === "audio") { if (!header.audio || header.video || result.width !== null || result.height !== null) throw new AevorenBotError("MEDIA_CONTENT_INVALID"); }
+    else { if (!header.video) throw new AevorenBotError("MEDIA_CONTENT_INVALID"); dimensions(result.width, result.height); }
+    return;
+  }
+  if (result.durationMs !== null) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
   if (result.kind === "image") { dimensions(result.width, result.height); if (result.extraction) throw new AevorenBotError("MEDIA_CONTENT_INVALID"); return; }
   if (result.width !== null || result.height !== null || !result.extraction) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
   const e = result.extraction;
@@ -124,6 +136,41 @@ export class MediaService {
   delete(input: MediaMutationInput, context: MediaExecutionContext = {}): MediaAsset { return this.mutate(input, "deleted", context); }
   restore(input: MediaMutationInput, context: MediaExecutionContext = {}): MediaAsset { return this.mutate(input, "restored", context); }
 
+  private async stageBytes(name: string, bytes: Buffer, current: MediaExecutionContext, check: () => void, hint?: string, requiredKind?: "audio"): Promise<StoredMediaImport> {
+    check(); const mimeType = mimeFor(bytes), header = isAvMime(mimeType) ? inspectAvHeader(bytes) : null;
+    if (hint && (header ? !sameAvFamily(normalizedMediaMime(hint), header) : normalizedMediaMime(hint) !== mimeType)) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
+    if ((isAvMime(mimeType) && bytes.length > MEDIA_AV_MAX_BYTES) || (mimeType.startsWith("image/") && bytes.length > MEDIA_IMAGE_MAX_BYTES)
+      || (mimeType.includes("wordprocessingml") && bytes.length > MEDIA_DOCX_MAX_BYTES)) throw new AevorenBotError("MEDIA_IMPORT_TOO_LARGE");
+    const sha256 = await this.blobs.put(bytes, current.signal); check();
+    const parsed = await this.parseJob(current, signal => this.parser.parse({ bytes, mimeType, sha256 }, signal));
+    check(); validateParsed(parsed, mimeType, bytes);
+    if (requiredKind && parsed.kind !== requiredKind) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
+    const canonical = header && (parsed.kind === "audio" || parsed.kind === "video") ? avMime(header, parsed.kind) : mimeType;
+    const id = randomUUID(), e = parsed.extraction;
+    const extraction = e ? { id: randomUUID(), mediaId: id, sourceSha256: sha256, parserName: parsed.parserName, parserVersion: parsed.parserVersion,
+      ...structuredClone(e), digest: mediaExtractionDigest({ sourceSha256: sha256, parserName: parsed.parserName, parserVersion: parsed.parserVersion, ...e }) } : null;
+    return { asset: { reference: { id, name, size: bytes.length, mimeType: canonical, sha256 }, kind: parsed.kind, width: parsed.width, height: parsed.height, durationMs: parsed.durationMs }, extraction };
+  }
+  /** Private capture/voice publisher. No host path or caller-declared duration is accepted. */
+  importBytes(input: { sessionId: string; bytes: Uint8Array; mimeType: string; name: string; requiredKind?: "audio" }, context: MediaExecutionContext = {}): Promise<MediaImportResult> {
+    const { sessionId } = mediaScopeSchema.parse({ sessionId: input.sessionId });
+    if (!(input.bytes instanceof Uint8Array) || !input.bytes.length || typeof input.name !== "string" || (input.requiredKind !== undefined && input.requiredKind !== "audio")) return Promise.reject(new AevorenBotError("MEDIA_CONTENT_INVALID"));
+    if (input.bytes.length > MEDIA_AV_MAX_BYTES) return Promise.reject(new AevorenBotError("MEDIA_IMPORT_TOO_LARGE"));
+    const bytes = Buffer.from(input.bytes), name = nameFor(input.name), requiredKind = input.requiredKind;
+    let hint: string;
+    try { hint = normalizedMediaMime(input.mimeType); } catch { return Promise.reject(new AevorenBotError("MEDIA_CONTENT_INVALID")); }
+    return this.track(sessionId, undefined, context, async current => {
+      const check = (): void => this.check(sessionId, current);
+      try {
+        const value = await this.stageBytes(name, bytes, current, check, hint, requiredKind); check();
+        const imported = this.repository.media.publishImport(sessionId, [value], current.executorBotId, current.runtimeRunId);
+        for (const item of imported) this.changed(sessionId, item.asset.reference.id, "created");
+        return { imported, failed: [] };
+      } catch (error) { check(); if (!(error instanceof AevorenBotError) || !error.code.startsWith("MEDIA_")) throw error;
+        return { imported: [], failed: [{ name, code: error.code, reason: new AevorenBotError(error.code).message }] }; }
+    });
+  }
+
   /** Host-only: caller supplies picker paths, or paths resolved by WorkspaceService. */
   prepareImportPaths(sessionId: string, paths: readonly string[], context: MediaExecutionContext = {}, checkAccess?: () => void): Promise<PreparedMediaImport> {
     return this.track(sessionId, undefined, context, async current => {
@@ -140,16 +187,8 @@ export class MediaService {
           const canonical = checkAccess ? path : join(await realpath(dirname(path)), basename(path)); check();
           const bytes = await readMediaSource(canonical, check); check();
           total += bytes.length;
-          const mimeType = mimeFor(bytes);
-          if (total > MEDIA_IMPORT_MAX_BYTES || (mimeType.startsWith("image/") && bytes.length > MEDIA_IMAGE_MAX_BYTES)
-            || (mimeType.includes("wordprocessingml") && bytes.length > MEDIA_DOCX_MAX_BYTES)) throw new AevorenBotError("MEDIA_IMPORT_TOO_LARGE");
-          const sha256 = await this.blobs.put(bytes, current.signal); check();
-          const parsed = await this.parseJob(current, signal => this.parser.parse({ bytes, mimeType, sha256 }, signal));
-          check(); validateParsed(parsed, mimeType);
-          const id = randomUUID(), e = parsed.extraction;
-          const extraction = e ? { id: randomUUID(), mediaId: id, sourceSha256: sha256, parserName: parsed.parserName, parserVersion: parsed.parserVersion,
-            ...structuredClone(e), digest: mediaExtractionDigest({ sourceSha256: sha256, parserName: parsed.parserName, parserVersion: parsed.parserVersion, ...e }) } : null;
-          values.push({ asset: { reference: { id, name, size: bytes.length, mimeType, sha256 }, kind: parsed.kind, width: parsed.width, height: parsed.height }, extraction });
+          if (total > MEDIA_IMPORT_MAX_BYTES) throw new AevorenBotError("MEDIA_IMPORT_TOO_LARGE");
+          values.push(await this.stageBytes(name, bytes, current, check));
         } catch (error) {
           check();
           if (error instanceof AevorenBotError && !error.code.startsWith("MEDIA_")) throw error;
@@ -206,6 +245,15 @@ export class MediaService {
     return { item, offset, nextOffset: end < text.length ? end : null, totalCharacters: text.length,
       spans: extraction?.spans.filter(span => span.end >= offset && span.start <= end) ?? [], text: text.slice(offset, end) };
   }
+  /** Private, revocable bytes for voice adapters; never exposed by the product catalog or ordinary Preload. */
+  readBinary(input: MediaReadInput, context: MediaExecutionContext = {}): Promise<{ item: MediaItem; bytes: Uint8Array; isAuthorized(): boolean }> {
+    const parsed = mediaReadSchema.parse(input);
+    return this.track(parsed.sessionId, parsed.id, context, async current => {
+      const access = this.access(parsed, current), { item } = access.current(), reference = item.asset.reference;
+      const bytes = await this.blobs.read(reference.sha256, reference.size, current.signal); access.current();
+      return { item, bytes: new Uint8Array(bytes), isAuthorized: access.authorized };
+    });
+  }
   async read(input: MediaReadInput, context: MediaExecutionContext = {}): Promise<MediaModelRead> {
     const parsed = mediaReadSchema.parse(input);
     return this.track(parsed.sessionId, parsed.id, context, async current => {
@@ -223,7 +271,7 @@ export class MediaService {
   }
   private async previewPixels(input: MediaPreviewInput, context: MediaExecutionContext): Promise<{ metadata: MediaPreviewMetadata; image: ModelImageAttachment }> {
     const access = this.access(input, context), { item } = access.current(), source = item.asset.reference;
-    if (item.asset.kind === "docx") throw new AevorenBotError("MEDIA_UNSUPPORTED");
+    if (item.asset.kind !== "image" && item.asset.kind !== "pdf") throw new AevorenBotError("MEDIA_UNSUPPORTED");
     const bytes = await this.blobs.read(source.sha256, source.size, context.signal); access.current();
     if (item.asset.kind === "image") return { metadata: { sourceReference: item.reference, image: source, width: item.asset.width!, height: item.asset.height!, pageIndex: null },
       image: { origin: "media", reference: source, dataBase64: bytes.toString("base64"), isAuthorized: access.authorized } };
@@ -239,13 +287,28 @@ export class MediaService {
     return { metadata: { sourceReference: item.reference, image, width: pixels.width, height: pixels.height, pageIndex },
       image: { origin: "media", reference: image, dataBase64: imageBytes.toString("base64"), isAuthorized: access.authorized } };
   }
-  preview(input: MediaPreviewInput, context: MediaExecutionContext = {}): Promise<{ metadata: MediaPreviewMetadata; images: ModelImageAttachment[] }> {
+  preview(input: MediaPreviewInput, context: MediaExecutionContext = {}): Promise<{ metadata: MediaPreviewMetadata | MediaPlaybackMetadata; images: ModelImageAttachment[] }> {
     const parsed = mediaPreviewSchema.parse(input);
-    return this.track(parsed.sessionId, parsed.id, context, async current => { const result = await this.previewPixels(parsed, current); return { metadata: result.metadata, images: [result.image] }; });
+    return this.track(parsed.sessionId, parsed.id, context, async current => {
+      const access = this.access(parsed, current), { item } = access.current();
+      if (item.asset.kind === "audio" || item.asset.kind === "video") return { metadata: this.playbackMetadata(item), images: [] };
+      const result = await this.previewPixels(parsed, current); return { metadata: result.metadata, images: [result.image] };
+    });
   }
   previewForUi(input: MediaPreviewInput, context: MediaExecutionContext = {}): Promise<MediaPreview> {
     const parsed = mediaPreviewSchema.parse(input);
-    return this.track(parsed.sessionId, parsed.id, context, async current => { const result = await this.previewPixels(parsed, current); return { ...result.metadata, dataBase64: result.image.dataBase64 }; });
+    return this.track(parsed.sessionId, parsed.id, context, async current => {
+      const access = this.access(parsed, current), { item } = access.current();
+      if (item.asset.kind === "audio" || item.asset.kind === "video") {
+        const bytes = await this.blobs.read(item.asset.reference.sha256, item.asset.reference.size, current.signal); access.current();
+        return { ...this.playbackMetadata(item), dataBase64: bytes.toString("base64") };
+      }
+      const result = await this.previewPixels(parsed, current); return { ...result.metadata, dataBase64: result.image.dataBase64 };
+    });
+  }
+  private playbackMetadata(item: MediaItem): MediaPlaybackMetadata {
+    if (!item.asset.durationMs || !isAvMime(item.asset.reference.mimeType)) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
+    return { sourceReference: item.reference, media: item.asset.reference, width: item.asset.width, height: item.asset.height, durationMs: item.asset.durationMs };
   }
   shutdown(): Promise<void> {
     if (!this.closing) {
