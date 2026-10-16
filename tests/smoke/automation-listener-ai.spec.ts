@@ -71,8 +71,14 @@ test("requires actual AI approval for a fixed application listener port and veri
         const copy = test.info().outputPath("owned-listener.sqlite"); copyFileSync(filename, copy); await test.info().attach("owned-listener-database", { path: copy, contentType: "application/octet-stream" });
       }
     } finally {
-      try { model.closeAllConnections(); await new Promise<void>(resolve => model.close(() => resolve())); }
-      finally { try { removeTestDirectory(directory); } finally { if (closeFailure) throw closeFailure; } }
+      await finishOwnedCleanup();
+    }
+    async function finishOwnedCleanup(): Promise<void> {
+      let cleanupFailure: unknown;
+      try { model.closeAllConnections(); await new Promise<void>(resolve => model.close(() => resolve())); } catch (error) { cleanupFailure = error; }
+      try { removeTestDirectory(directory); } catch (error) { cleanupFailure ??= error; }
+      if (closeFailure) throw closeFailure;
+      if (cleanupFailure) throw cleanupFailure;
     }
   }
 });
