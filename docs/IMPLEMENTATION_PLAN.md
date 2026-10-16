@@ -6,6 +6,12 @@
 
 下文验收段落保留各自原始提交和安装包的历史证据；旧候选的 CI 或本机通过不代表当前本地组合已验收，也不代替实际 Beta／签名发行门禁。
 
+PR #67 的首个完整组合 CI（`0444b749`／38875596148）保留为失败记录：Linux、macOS、Secret 检查通过；Windows 单元 1,632 项通过、66 项跳过，源码场景 49／50。唯一失败为 MCP App 的不支持能力请求：隐藏 iframe 中按钮处理器没有进入，`requestPosted=false`，尚无 RPC 请求，不能据此认定宿主拒绝响应或产品权限错误。Windows 指针投递的具体原因仍未确定。
+
+当前仅调整这项协议验证：检查可见按钮及其文档内 activeElement，再使用一次真实 Enter，断言可信处理器与实际请求已触发，继续核验 HTTP 200、相同请求 ID、错误码 -32601 和原有 App 写入审批。未使用 DOM click、强制点击、重发、重试或放宽时间。初次键盘探针在 Playwright `toBeFocused` 前置检查失败；其实现同时要求 document.hasFocus，当次未分别记录两个条件，不能反推具体失败分支。修正后源码与真实既有 beta.36 包各 1／1 通过，均记录 `activeElement=true`、`documentHasFocus=false`、可信事件及完整响应，静默窗口无需取得系统焦点。测试启动显式使用并核验 mock-keychain；真实系统密钥库不由此验收。原 Windows 日志和两次本地探针均保留。
+
+这一变更不修改应用、Worker、构建配置、依赖或打包资源，沿用逐字节核验过的同一 Main／ASAR；新的完整组合 CI、实际 Beta 和签名门禁仍须完成。Mac 本地通过不等于原 Windows 指针原因已解决。
+
 ## 已确定的方案
 
 - 电脑首期使用本机 Docker 隔离 Linux 环境，自托管服务器后置。

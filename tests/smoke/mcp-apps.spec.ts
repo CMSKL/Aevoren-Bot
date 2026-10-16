@@ -92,9 +92,10 @@ async function withMcp(callback: (fixture: { page: Page; application: ElectronAp
   const environment = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !key.startsWith("AEVOREN_BOT_")));
   let application: ElectronApplication | undefined;
   try {
-    application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: {
+    application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: [...(executablePath ? [] : ["."]), "--use-mock-keychain"], cwd: process.cwd(), env: {
       ...environment, AEVOREN_BOT_USER_DATA_DIR: directory, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_FAKE_PROVIDER: "1", AEVOREN_BOT_NATIVE_TEST_ORIGIN: `http://127.0.0.1:${address.port}`,
     } });
+    expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("use-mock-keychain"))).toBe(true);
     if (executablePath) {
       const runtime = await application.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), resourcesPath: process.resourcesPath }));
       expect(runtime.packaged).toBe(true);
@@ -195,6 +196,12 @@ test("MCP fixed operation uses a real approval and an opaque App sandbox with sc
     const phases: { httpResponseReceived: boolean; httpStatus: number | null; responseIdMatches: boolean; errorCode: number | null } = {
       httpResponseReceived: false, httpStatus: null, responseIdMatches: false, errorCode: null,
     };
+    const unsupportedButton = inner.getByRole("button", { name: "Request unsupported capability", exact: true });
+    await expect(unsupportedButton).toBeVisible();
+    await unsupportedButton.focus();
+    const focus = await unsupportedButton.evaluate(button => ({ targetIsActive: button.ownerDocument.activeElement === button, documentHasFocus: button.ownerDocument.hasFocus() }));
+    await test.info().attach("mcp-rpc-target-focus", { body: JSON.stringify(focus), contentType: "application/json" });
+    expect(focus.targetIsActive).toBe(true);
     const unsupportedResponse = f.page.waitForResponse(response => {
       const request = response.request();
       if (request.method() !== "POST" || response.url() !== `${proxyUrl}/rpc`) return false;
@@ -203,7 +210,14 @@ test("MCP fixed operation uses a real approval and an opaque App sandbox with sc
     try {
       const [response] = await Promise.all([
         unsupportedResponse,
-        inner.getByRole("button", { name: "Request unsupported capability", exact: true }).click(),
+        (async () => {
+          // Exercise the RPC with one trusted activation inside the opaque frame.
+          // Hidden Windows pointer delivery is a separate, unresolved input path.
+          await unsupportedButton.press("Enter");
+          await expect(inner.locator("body")).toHaveAttribute("data-unknown-handler-entered", "true");
+          await expect(inner.locator("body")).toHaveAttribute("data-unknown-trusted", "true");
+          await expect(inner.locator("body")).toHaveAttribute("data-unknown-request-posted", "true");
+        })(),
       ]);
       phases.httpResponseReceived = true;
       phases.httpStatus = response.status();
@@ -226,7 +240,7 @@ test("MCP fixed operation uses a real approval and an opaque App sandbox with sc
         responseReceived: body.dataset.unknownResponseReceived === "true",
       }), undefined, { timeout: 1_000 }).catch(() => null);
       await test.info().attach("mcp-unsupported-rpc-phases", {
-        body: JSON.stringify({ ...phases, fixture }), contentType: "application/json",
+        body: JSON.stringify({ activation: "trusted-keyboard-enter", ...phases, fixture }), contentType: "application/json",
       });
     }
     expect(f.writes()).toBe(1);
