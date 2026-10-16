@@ -222,17 +222,29 @@ describe("explicit loopback Webhook ingress", () => {
     const listening = await server.start(), base = `http://127.0.0.1:${listening.port}`, url = `${base}${hook.webhookPath}`;
     expect(listening.host).toBe("127.0.0.1");
     const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "Idempotency-Key": "http:one" };
-    const send = (body: string | Uint8Array<ArrayBuffer>, extra: Record<string, string> = {}) => fetch(url, { method: "POST", headers: { ...headers, ...extra }, body });
-    expect((await send("invalid json", { Authorization: "Bearer wrong" })).status).toBe(401);
-    expect((await send('{"x":1}')).status).toBe(202); expect((await send('{"x":1}')).status).toBe(202); expect(f.calls).toHaveLength(1);
-    expect((await send("invalid json")).status).toBe(400);
-    expect((await send(new Uint8Array([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d]))).status).toBe(400);
-    expect((await send("{}", { Origin: "https://example.invalid" })).status).toBe(403);
-    expect((await send("{}", { "Content-Type": "text/plain" })).status).toBe(415);
-    expect((await send("{}", { "Idempotency-Key": "" })).status).toBe(400);
-    expect((await send(JSON.stringify({ x: "x".repeat(65_536) }))).status).toBe(413);
-    expect((await send(JSON.stringify({ x: "x".repeat(65_528) }), { "Idempotency-Key": "http:limit" })).status).toBe(202);
-    await f.service.rotateToken({ id: hook.id, expectedVersion: hook.version }); expect((await send("{}")).status).toBe(401);
+    const send = async (phase: string, body: string | Uint8Array<ArrayBuffer>, extra: Record<string, string> = {}) => {
+      let status: number | null = null;
+      try {
+        const response = await fetch(url, { method: "POST", headers: { ...headers, ...extra }, body });
+        status = response.status;
+        // Own every response until EOF rather than leaving pooled client bodies unread.
+        await response.arrayBuffer();
+        return { status };
+      } catch (error) {
+        const cause = error instanceof Error ? error.cause as { code?: unknown; syscall?: unknown } | undefined : undefined;
+        throw new Error(`Webhook fixture request ${phase} failed: status=${status ?? "not-received"}, cause=${typeof cause?.code === "string" ? cause.code : "unknown"}, syscall=${typeof cause?.syscall === "string" ? cause.syscall : "unknown"}`, { cause: error });
+      }
+    };
+    expect((await send("invalid-token", "invalid json", { Authorization: "Bearer wrong" })).status).toBe(401);
+    expect((await send("accepted", '{"x":1}')).status).toBe(202); expect((await send("idempotent-repeat", '{"x":1}')).status).toBe(202); expect(f.calls).toHaveLength(1);
+    expect((await send("invalid-json", "invalid json")).status).toBe(400);
+    expect((await send("invalid-utf8", new Uint8Array([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d]))).status).toBe(400);
+    expect((await send("browser-origin", "{}", { Origin: "https://example.invalid" })).status).toBe(403);
+    expect((await send("content-type", "{}", { "Content-Type": "text/plain" })).status).toBe(415);
+    expect((await send("missing-key", "{}", { "Idempotency-Key": "" })).status).toBe(400);
+    expect((await send("oversized-body", JSON.stringify({ x: "x".repeat(65_536) }))).status).toBe(413);
+    expect((await send("exact-limit", JSON.stringify({ x: "x".repeat(65_528) }), { "Idempotency-Key": "http:limit" })).status).toBe(202);
+    await f.service.rotateToken({ id: hook.id, expectedVersion: hook.version }); expect((await send("revoked-token", "{}")).status).toBe(401);
     expect(await server.stop()).toEqual({ listening: false, host: "127.0.0.1", port: null });
     await expect(fetch(url)).rejects.toThrow();
   });
