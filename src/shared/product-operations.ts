@@ -1,3 +1,4 @@
+import { MEDIA_PRODUCT_OPERATIONS } from "./media-product";
 import { MCP_WRITE_PRODUCT_OPERATIONS } from "./mcp-write-product";
 import { DEMONSTRATION_PRODUCT_OPERATIONS } from "./demonstration-product";
 import { NATIVE_OUTBOUND_PRODUCT_OPERATIONS } from "./native-outbound-product";
@@ -14,6 +15,7 @@ export type ProductOperationDefinition = { name: string; channel: string; descri
 /** User-facing host operations; lifecycle acknowledgements are intentionally excluded. */
 export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   ...LIBRARY_PRODUCT_OPERATIONS,
+  ...MEDIA_PRODUCT_OPERATIONS,
   ...ENVIRONMENT_PRODUCT_OPERATIONS,
   ...BROWSER_PRODUCT_OPERATIONS,
   ...DEMONSTRATION_PRODUCT_OPERATIONS,

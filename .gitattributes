@@ -1,1 +1,3 @@
 patches/*.patch whitespace=-blank-at-eol
+# Asset digests and redistributed license provenance use exact upstream bytes.
+resources/media-parser-fonts/** -text

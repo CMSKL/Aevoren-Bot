@@ -60,6 +60,7 @@ export type WorkspaceToolExecutionResult = {
   invocation: ToolInvocation;
   content: string;
   images?: import("./model-image").ModelImageAttachment[];
+  modelText?: import("./model-image").ModelTextAttachment;
 };
 
 function sameIdentity(left: Stats, right: Stats): boolean {
@@ -186,7 +187,7 @@ export class WorkspaceToolExecutor {
       const invocation = this.repository.getToolInvocation(id).state === "succeeded" ? this.repository.getToolInvocation(id) : initial.arguments.kind === "product-call"
         ? this.repository.completeProductToolInvocation(id, digestResult(result.content), result.content, result.metadata)
         : this.repository.completeToolInvocation(id, digestResult(result.content), result.metadata);
-      return { invocation, content: result.content, ...(result.images ? { images: result.images } : {}) };
+      return { invocation, content: result.content, ...(result.images ? { images: result.images } : {}), ...(result.modelText ? { modelText: result.modelText } : {}) };
     } catch (error) {
       const normalized = signal.aborted ? cancelled() : stableError(error);
       const current = this.repository.getToolInvocation(id);
@@ -220,7 +221,7 @@ export class WorkspaceToolExecutor {
     tool: ToolRequest,
     signal: AbortSignal,
     invocation: ToolInvocation,
-  ): Promise<{ content: string; metadata: ResultMetadata; images?: import("./model-image").ModelImageAttachment[] }> {
+  ): Promise<{ content: string; metadata: ResultMetadata; images?: import("./model-image").ModelImageAttachment[]; modelText?: import("./model-image").ModelTextAttachment }> {
     if (tool.kind === "product-call") {
       if (!this.productOperations) throw new AevorenBotError("TOOL_STATE_INVALID");
       return this.productOperations.execute(tool, invocation, signal);

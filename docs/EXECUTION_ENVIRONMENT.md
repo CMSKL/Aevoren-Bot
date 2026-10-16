@@ -1,6 +1,6 @@
 # Local Docker execution environments
 
-Stage 2 is implemented in the `v0.3.0-beta.28` development candidate. Local quality gates, real Linux Docker integration, hidden source-Electron checks and final unsigned macOS package checks have passed; branch promotion and signing/release are pending. This document describes the candidate implementation; consult [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases) for published installers and the [implementation record](IMPLEMENTATION_PLAN.md) for completed checks.
+Stage 2 was developed in beta.28 and included in the signed public [v0.3.0-beta.29 release](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.29). Beta.28 itself did not have a public Release; its original local and unsigned-package receipts remain historical below. Consult the current [README](../README.md), [Changelog](../CHANGELOG.md), [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases) and [implementation record](IMPLEMENTATION_PLAN.md) for current availability and platform evidence.
 
 ## Setup and interface
 
@@ -48,7 +48,7 @@ The same validated host service backs the interface and these 23 product operati
 
 Models discover them through `product_catalog → product_describe → product_execute`. The host supplies the current conversation and executing Bot and rejects a different scope. Mutations require genuine approval; tool declarations and loaded Skill instructions do not grant permission. Model-supplied Runtime identities or command nonces are rejected. The host derives stable command intent from the original message, executor and normalized arguments; retry reads an existing task rather than blindly launching it again.
 
-Saved text Skills load instructions and auxiliary text. The current development candidate adds the separate [script-Skill runner](SCRIPT_SKILLS.md), with exact revision/entry/image grants and approval of each run. Native Gmail/Drive/Notion and voice remain later deliveries.
+Saved text Skills load instructions and auxiliary text. The separate [script-Skill runner](SCRIPT_SKILLS.md) uses exact revision/entry/image grants and approval of each run. [Native Gmail/Drive/Notion connections](NATIVE_CONNECTORS.md) and [approved external drafts](NATIVE_OUTBOUND.md) are implemented as separate features with their own authorization and validation boundaries. Voice is a later delivery and is outside the beta.36 image/document unit.
 
 ## Storage and isolation
 
@@ -58,7 +58,7 @@ Host SQLite stores environment configuration, task state, logs and port registra
 
 ## Images and third-party licenses
 
-Worker and protocol versions are independent of the app version. The current script-Skill candidate builds Worker `1.2.0`, protocol `1`, with local image tag `aevoren-execution-worker:1.2.0`. Worker `1.1.0` introduced service previews; `1.0.0` provides the original execution interface. Existing environments retain their recorded version and require explicit rebuild for newer features. [The Dockerfile](../workers/execution/Dockerfile) pins the multi-architecture base:
+Worker and protocol versions are independent of the app version. The script-Skill execution image uses Worker `1.2.0`, protocol `1`, with local image tag `aevoren-execution-worker:1.2.0`. Worker `1.1.0` introduced service previews; `1.0.0` provides the original execution interface. Existing environments retain their recorded version and require explicit rebuild for newer features. [The Dockerfile](../workers/execution/Dockerfile) pins the multi-architecture base:
 
 ```text
 node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
@@ -79,9 +79,11 @@ The [generated production dependency inventory](../THIRD_PARTY_NOTICES.md) cover
 
 The image keeps its Debian copyright/license files. Local inspection verified the Python, Git, tini, util-linux and build-essential notices in the built arm64 image. Before redistributing a built image, inventory that exact image and retain the applicable notices and source obligations; this npm table does not serve as an operating-system SBOM. Docker itself is user-provided and governed by its own distribution terms.
 
-## Validation status
+## Historical beta.28 local acceptance
 
-| Check | Evidence available in development |
+The counts and unsigned-package results below belong to the original beta.28 local snapshot. The final rows distinguish later public inclusion and the still-unverified Windows Docker boundary; current candidate checks remain in the implementation record.
+
+| Check | Historical evidence and later status |
 | --- | --- |
 | Full local unit suite | 1,285 passed, 20 skipped; opt-in Docker scenarios are verified separately below |
 | Focused Worker/Docker/gateway suite | 33 passed without skips: 15 Worker unit cases, nine real Linux Docker Worker cases, five real Docker host-service cases and four AI product-gateway cases |
@@ -91,6 +93,6 @@ The image keeps its Debian copyright/license files. Local inspection verified th
 | Hidden source Electron | Three execution-environment scenarios passed using isolated data and controlled fixtures |
 | Packaged app | Final unsigned v0.3.0-beta.28 macOS package: all three execution-environment scenarios passed, with `appVersion=0.3.0-beta.28`, `isPackaged=true`, and Worker/license guide loaded from Resources; this is not a signed/public release |
 | Windows with a real Linux Docker engine | Not verified; CI without a Docker daemon does not prove this workflow |
-| Published Stage 2 Beta | Pending branch promotion, installation validation and signing/release gates |
+| Later published Stage 2 delivery | Included in signed public beta.29; see the [beta.29 release record](IMPLEMENTATION_PLAN.md). This does not reclassify the earlier unsigned beta.28 package as signed evidence |
 
 Tests use temporary application data and fixture environments. No user chat database, credentials or browser profile is used. See [the implementation plan](IMPLEMENTATION_PLAN.md) for later stages and final release evidence.

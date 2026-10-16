@@ -3,7 +3,7 @@ import { projectRoomSummary, type PromptMessage } from "./prompt";
 import type { ComputationToolRequest, DeviceToolRequest, ExecutionEvidenceReceipt, McpToolInfo, McpToolRequest, NetworkToolRequest, ProjectToolRequest, RoomRunSummary, WorkspaceToolRequest } from "@shared/contracts";
 import { computationToolRequestSchema, deviceToolRequestSchema, mcpToolRequestSchema, networkToolRequestSchema, projectToolRequestSchema, productToolRequestSchema, workspaceToolRequestSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
-import { imageAwareChatMessages, type ModelImageAttachment } from "./model-image";
+import { imageAwareChatMessages, type ModelImageAttachment, type ModelTextAttachment } from "./model-image";
 
 export type ChatMessage = PromptMessage | {
   role: "assistant";
@@ -18,6 +18,7 @@ export type ChatMessage = PromptMessage | {
   tool_call_id: string;
   content: string;
   images?: ModelImageAttachment[];
+  modelText?: ModelTextAttachment;
 };
 
 export type RoomPeer = {
@@ -61,7 +62,7 @@ export type RoomContinuationDecision =
     };
 
 export type ModelToolResponder = {
-  respond?(content: string, images?: readonly ModelImageAttachment[]): Promise<void>;
+  respond?(content: string, images?: readonly ModelImageAttachment[], modelText?: ModelTextAttachment): Promise<void>;
   providerToolName?: string;
   /** Native MCP request cancellation, in addition to the owning Runtime's signal. */
   toolSignal?: AbortSignal;

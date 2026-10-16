@@ -39,7 +39,7 @@ const unsupported: Array<Pick<CapabilityDescriptor, "id" | "name" | "category" |
   { id: "device.location", name: "定位", category: "device", description: "读取用户授权的位置。", effectClass: "read-local", adapterKind: "none" },
   { id: "device.personal-data", name: "设备个人数据", category: "device", description: "访问相册、日历或通讯录。", effectClass: "read-local", adapterKind: "none" },
   { id: "external.actions", name: "其他外部操作", category: "external", description: "尚未适配的订票、下单或其他服务操作；原生应用草稿另按具体授权提供。", effectClass: "write-external", adapterKind: "none" },
-  { id: "multimodal.input", name: "多模态输入", category: "multimodal", description: "理解图片、音频、视频或屏幕内容。", effectClass: "read-local", adapterKind: "none" },
+  { id: "multimodal.audio-video", name: "音视频输入", category: "multimodal", description: "音视频解析与语音功能尚未接入。", effectClass: "read-local", adapterKind: "none" },
 ];
 
 function localTime(now: Date): Pick<CapabilityPromptSnapshot, "generatedAt" | "timezone" | "utcOffsetMinutes"> {
@@ -106,6 +106,19 @@ function capabilityDescriptors(
       reason: null,
       permissionState: "not-required",
       toolNames: [],
+    },
+    {
+      id: "media.documents", name: "媒体与文档", category: "multimodal", effectClass: "read-local", adapterKind: "core",
+      description: "导入 PNG/JPEG/PDF/DOCX，按会话授权读取固定解析版本；PDF 逐页预览，扫描件不提供 OCR。撤销授权后不再传输正文或图片。",
+      availability: executionTools ? "available" : "unavailable", reason: executionTools ? null : "当前来源未接入宿主工具。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "media.tool-images", name: "媒体图片传递", category: "multimodal", effectClass: "read-local", adapterKind: "core",
+      description: "把授权图片和 PDF 页的真实像素传入模型协议；不依赖浏览器环境。适配器支持传输不代表所选模型已确认视觉理解。",
+      availability: executionTools && context.providerCapabilities?.toolImageInput ? "available" : "unavailable",
+      reason: executionTools && context.providerCapabilities?.toolImageInput ? null : "当前适配器未接入工具图片传输；仍可读取已解析文字。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
       id: "library.documents", name: "会话资料库", category: "workspace",

@@ -11,6 +11,17 @@ type ErrorDescriptor = {
 };
 
 export const ERROR_REGISTRY = {
+  MEDIA_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这份媒体。", allowedDetailKeys: [] },
+  MEDIA_NOT_GRANTED: { domain: "security", retryable: false, safeMessage: "当前会话或任务没有这份媒体的有效授权，请重新选择并发送。", allowedDetailKeys: [] },
+  MEDIA_REFERENCE_INVALID: { domain: "security", retryable: false, safeMessage: "媒体或解析版本引用未通过校验，请重新选择。", allowedDetailKeys: [] },
+  MEDIA_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "媒体状态已改变，请刷新后重试。", allowedDetailKeys: [] },
+  MEDIA_UNSUPPORTED: { domain: "validation", retryable: false, safeMessage: "当前支持 PNG、JPEG、PDF 和 DOCX 文件。", allowedDetailKeys: [] },
+  MEDIA_IMPORT_TOO_LARGE: { domain: "validation", retryable: false, safeMessage: "媒体超过当前文件、像素、页数或导入总量限制。", allowedDetailKeys: [] },
+  MEDIA_CONTENT_INVALID: { domain: "security", retryable: false, safeMessage: "媒体内容、编码或摘要未通过校验。", allowedDetailKeys: [] },
+  MEDIA_PARSE_FAILED: { domain: "storage", retryable: false, safeMessage: "无法解析这份媒体，未发布不完整内容。", allowedDetailKeys: [] },
+  MEDIA_PARSE_TIMEOUT: { domain: "storage", retryable: true, safeMessage: "媒体解析超时，已停止所属任务，未发布不完整内容。", allowedDetailKeys: [] },
+  MEDIA_ENCRYPTED: { domain: "validation", retryable: false, safeMessage: "当前不支持加密或需要密码的媒体。", allowedDetailKeys: [] },
+  MEDIA_PARSER_UNAVAILABLE: { domain: "storage", retryable: true, safeMessage: "媒体解析组件不可用，请检查应用安装或构建资源。", allowedDetailKeys: [] },
   DEMONSTRATION_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到当前会话成员的示范草稿或录制。", allowedDetailKeys: [] },
   DEMONSTRATION_STATE_INVALID: { domain: "tool", retryable: false, safeMessage: "示范状态已变化，请刷新后再处理。", allowedDetailKeys: [] },
   DEMONSTRATION_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "示范草稿已更新，当前编辑仍保留；请读取最新版本后再保存。", allowedDetailKeys: ["currentVersion"] },

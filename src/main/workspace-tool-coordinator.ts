@@ -15,6 +15,7 @@ export type WorkspaceToolOutcome = {
   tool: ToolRequest;
   content: string;
   images?: import("./model-image").ModelImageAttachment[];
+  modelText?: import("./model-image").ModelTextAttachment;
 };
 
 type Waiter = {
@@ -30,7 +31,7 @@ type ToolExecutor = {
   productRequestRequiresApproval?(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId?: string): boolean;
   productRequestApprovalReview?(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined;
   validateProductRequest?(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): void;
-  execute(id: string, signal?: AbortSignal): Promise<{ invocation: ToolApprovalResult["invocation"]; content: string; images?: import("./model-image").ModelImageAttachment[] }>;
+  execute(id: string, signal?: AbortSignal): Promise<{ invocation: ToolApprovalResult["invocation"]; content: string; images?: import("./model-image").ModelImageAttachment[]; modelText?: import("./model-image").ModelTextAttachment }>;
 };
 
 export class WorkspaceToolCoordinator {
@@ -117,7 +118,7 @@ export class WorkspaceToolCoordinator {
       const current = { invocation: result.invocation, approval: this.repository.getApprovalRequest(approvalId) };
       void this.recordToolResultShadow(current.invocation, current.approval, result.content);
       this.emitCurrent(approvalId);
-      return { toolCallId: result.invocation.toolCallId, tool: result.invocation.arguments, content: result.content, ...(result.images ? { images: result.images } : {}) };
+      return { toolCallId: result.invocation.toolCallId, tool: result.invocation.arguments, content: result.content, ...(result.images ? { images: result.images } : {}), ...(result.modelText ? { modelText: result.modelText } : {}) };
     } catch (error) {
       const appError = asAppError(error);
       let current = this.repository.getToolInvocation(pending.toolInvocationId);
@@ -247,6 +248,7 @@ export class WorkspaceToolCoordinator {
         tool: result.invocation.arguments,
         content: result.content,
         ...(result.images ? { images: result.images } : {}),
+        ...(result.modelText ? { modelText: result.modelText } : {}),
       });
       return current;
     } catch (error) {
