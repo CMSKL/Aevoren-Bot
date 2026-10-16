@@ -48,7 +48,15 @@ pnpm package:mac
 
 This local package is for development verification only. It is not signed, notarized, or eligible for distribution.
 
-On Windows x64, run the same source commands from PowerShell. `pnpm package:win` creates an unsigned NSIS installer for local validation; `pnpm package:win:dir` creates an unpacked directory. A distributable Windows installer requires the signed release workflow; do not treat a local package as an official update source.
+On Windows x64, run the same source commands from PowerShell. `pnpm package:win` creates an unsigned NSIS installer for local validation; `pnpm package:win:dir` creates an unpacked directory. An official Windows Release installer requires the signed release workflow; do not treat a local package as an official update source.
+
+## Unsigned Windows validation installer
+
+For manual Windows validation, select a fully successful run from this repository's [CI workflow](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml). Download the artifact named `aevoren-bot-v<version>-windows-x64-unsigned-<checkout-head>-attempt<N>`; artifacts are retained for **30 days**. GitHub may require sign-in to download an Actions artifact. Match the version and head to the intended validated build.
+
+The archive contains the same x64 NSIS `.exe` used for that run's isolated installation, business and close checks, plus `UNSIGNED-WINDOWS-SHASUMS256.txt` and `UNSIGNED-WINDOWS-BUILD.json`. After extraction, compare the installer's PowerShell `Get-FileHash -Algorithm SHA256` result with the checksum entry before running it. The build JSON identifies its version, checkout head and unsigned status.
+
+This **unsigned Windows validation installer** is for manual validation, not a signed Beta Release or automatic-update source. Windows signing credentials remain required for official Windows Release assets. Actual Windows Linux-container/Docker execution is not established by these installer checks.
 
 ## Data location and backups
 

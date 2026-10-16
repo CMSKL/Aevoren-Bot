@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
+import { delimiter, join } from "node:path";
 import { ENV_WORKER_VERSION } from "@shared/environment-contracts";
 
 export type DockerPlatform = "linux/arm64" | "linux/amd64";
@@ -25,6 +27,11 @@ async function runCommand(args: string[], options: CommandOptions = {}): Promise
   options.signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     const env = { ...process.env, ...options.env };
+    if (process.platform === "darwin") {
+      // Finder-launched apps do not inherit the terminal's Docker CLI paths.
+      env.PATH = [env.PATH, join(homedir(), ".docker", "bin"), "/Applications/Docker.app/Contents/Resources/bin",
+        "/usr/local/bin", "/opt/homebrew/bin"].filter(Boolean).join(delimiter);
+    }
     if (args[0] === "--context") { delete env.DOCKER_HOST; delete env.DOCKER_CONTEXT; }
     const child = spawn("docker", args, { shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env });
     let stdout = "", stderr = "";

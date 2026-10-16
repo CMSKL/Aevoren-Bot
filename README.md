@@ -102,6 +102,8 @@ Choose `/Skill` or the `@` **Documents / Skill** group in the composer. The sele
 
 ## Docker execution environments (development)
 
+On macOS, desktop launches find Docker in standard installation locations and distinguish a missing CLI from a stopped engine.
+
 Bring your own local Docker Linux runtime and keep the same local Docker context selected while using existing environments; switching Docker engines is not validated. Open **Contacts → select Bot → Execution environment (执行环境)**, or choose a member in **Group settings → Execution environment**. Check Docker, prepare the Linux image and start the environment. Each `(conversation, executing Bot)` has its own container and persistent workspace; six group members can run independently.
 
 Run Node, Python or shell commands, inspect real output/exit codes, stop an individual task, or start a separately managed background service. Environment files support bounded uploads/downloads and create-only writes; replacing a file requires its previously read SHA-256. Background services survive closing the app and clearing chat history while Docker remains running. Sleeping the environment interrupts its tasks and retains the workspace; waking it does not replay old commands. See [environment setup, limits and validation](docs/EXECUTION_ENVIRONMENT.md). Final unsigned macOS package scenarios passed; Windows Linux-container execution remains unverified.
@@ -110,7 +112,7 @@ Run Node, Python or shell commands, inspect real output/exit codes, stop an indi
 
 Open the selected Bot's **Browser / Computer** panel after starting its execution environment. Chromium login data and desktop state are isolated by conversation and executing Bot. **Take over** pauses AI reads, screen uploads and inputs. Disconnecting retains user control; **Return to AI** explicitly returns it and requires a fresh observation.
 
-Downloads contain verified bytes and use a create-only save destination. Service previews use the registered process's actual listener; stopping it invalidates the preview even if another process reuses the port. API, Claude MCP and supported Codex adapters carry actual screenshot bytes with fresh authorization checks; transport support does not prove the selected model understands images. See [setup, lifecycle and support boundaries](docs/BROWSER_COMPUTER.md).
+Downloads contain verified bytes and use a create-only save destination. Service previews use the registered process's actual listener; stopping it invalidates the preview even if another process reuses the port. API, Claude MCP and supported Codex adapters carry actual screenshot bytes with fresh authorization checks; transport support does not prove the selected model understands images. The development correction also checks retained Claude MCP batch images at the actual HTTP write, refusing a revoked response while independent requests remain usable. See [setup, lifecycle and support boundaries](docs/BROWSER_COMPUTER.md).
 
 ## Security model
 
@@ -146,6 +148,8 @@ pnpm verify
 Electron smoke tests use hidden windows and temporary user-data directories. A local unsigned macOS package can be created with `pnpm package:mac`; it is not a distributable release.
 
 For Windows x64 source validation, use `pnpm package:win`. This creates an unsigned NSIS installer for CI/development checks; the signed installer is produced only by the Windows release workflow after `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD` are configured. Use `pnpm package:win:dir` when an unpacked directory is needed for diagnostics.
+
+Successful [CI runs](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml) retain an **unsigned Windows validation installer** for 30 days. Its artifact name includes the exact package version and validated checkout head; the download contains the same x64 NSIS file used for installation acceptance, its SHA-256 and build identity. This is a manual validation download, outside signed Releases and automatic updates. See [download and checksum instructions](docs/INSTALLATION.md#unsigned-windows-validation-installer); real Windows Docker remains unverified.
 
 ## Data and privacy
 
