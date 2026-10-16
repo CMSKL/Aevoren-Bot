@@ -254,9 +254,10 @@ describe("persistent conversation resource library", () => {
         raw.prepare(`INSERT OR REPLACE INTO ${table}(${columns.join(",")}) VALUES(${columns.map(() => "?").join(",")})`).run(...columns.map((column) => row[column]!));
       }
     }
+    const originalColumns = new Map(tables.map(table => [table, (raw.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(column => column.name)]));
     const snapshot = (database: DatabaseSync): string => JSON.stringify(Object.fromEntries(tables.map((table) => {
       const info = database.prepare(`PRAGMA table_info(${table})`).all() as { name: string; pk: number }[];
-      const columns = info.map((column) => column.name).filter((name) => name !== "resource_references_json");
+      const columns = originalColumns.get(table)!;
       const keys = info.filter((column) => column.pk).toSorted((a, b) => a.pk - b.pk).map((column) => column.name);
       return [table, database.prepare(`SELECT ${columns.join(",")} FROM ${table} ORDER BY ${keys.join(",")}`).all()];
     })));
@@ -268,6 +269,7 @@ describe("persistent conversation resource library", () => {
     const verified = new DatabaseSync(filename);
     const after = createHash("sha256").update(snapshot(verified)).digest("hex");
     expect(after).toBe(before);
+    expect(verified.prepare("SELECT DISTINCT media_references_json FROM transcript_entries").all()).toEqual([{ media_references_json: "[]" }]);
     expect(verified.prepare("SELECT version FROM schema_migrations WHERE version = 34").get()).toEqual({ version: 34 });
     expect(verified.prepare("SELECT * FROM session_resource_bindings").all()).toEqual([]);
     expect((verified.prepare("PRAGMA table_info(transcript_entries)").all() as { name: string }[]).some((column) => column.name === "resource_references_json")).toBe(true);

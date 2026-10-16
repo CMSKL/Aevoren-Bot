@@ -1,3 +1,4 @@
+import type { VoiceConfiguration } from "@shared/voice-contracts";
 import type {
   CapabilityConnection,
   CapabilityDescriptor,
@@ -16,6 +17,8 @@ import type { AppRepository } from "./database";
 import type { ProviderService } from "./provider-service";
 import type { McpService } from "./mcp-service";
 import { SKILL_SCRIPT_WORKER_VERSION } from "@shared/skill-execution-contracts";
+import type { TaskSessionPolicy } from "./task-session-repository";
+import { AevorenBotError } from "./errors";
 
 export type CapabilityAppEnvironment = CapabilityPromptSnapshot["app"];
 
@@ -33,13 +36,16 @@ type SnapshotContext = {
   nativeWriteReady: boolean;
   browserReady: boolean;
   browserUserControlled: boolean;
+  voiceSttReady: boolean;
+  voiceTtsReady: boolean;
+  voiceRealtimeReady: boolean;
 };
 
 const unsupported: Array<Pick<CapabilityDescriptor, "id" | "name" | "category" | "description" | "effectClass" | "adapterKind">> = [
   { id: "device.location", name: "定位", category: "device", description: "读取用户授权的位置。", effectClass: "read-local", adapterKind: "none" },
   { id: "device.personal-data", name: "设备个人数据", category: "device", description: "访问相册、日历或通讯录。", effectClass: "read-local", adapterKind: "none" },
   { id: "external.actions", name: "其他外部操作", category: "external", description: "尚未适配的订票、下单或其他服务操作；原生应用草稿另按具体授权提供。", effectClass: "write-external", adapterKind: "none" },
-  { id: "multimodal.input", name: "多模态输入", category: "multimodal", description: "理解图片、音频、视频或屏幕内容。", effectClass: "read-local", adapterKind: "none" },
+  { id: "multimodal.video-understanding", name: "模型视频理解", category: "multimodal", description: "当前视频只提供本地预览；未接入模型视频传输或视频理解。", effectClass: "read-local", adapterKind: "none" },
 ];
 
 function localTime(now: Date): Pick<CapabilityPromptSnapshot, "generatedAt" | "timezone" | "utcOffsetMinutes"> {
@@ -106,6 +112,46 @@ function capabilityDescriptors(
       reason: null,
       permissionState: "not-required",
       toolNames: [],
+    },
+    {
+      id: "media.documents", name: "媒体与文档", category: "multimodal", effectClass: "read-local", adapterKind: "core",
+      description: "导入 PNG/JPEG/PDF/DOCX，按会话授权读取固定解析版本；PDF 逐页预览，扫描件不提供 OCR。撤销授权后不再传输正文或图片。",
+      availability: executionTools ? "available" : "unavailable", reason: executionTools ? null : "当前来源未接入宿主工具。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "media.audio-video", name: "音视频引用与预览", category: "multimodal", effectClass: "read-local", adapterKind: "core",
+      description: "保存并预览实际可解码的有界音视频，按会话授权和原始摘要引用；音频可另行转写，视频不会直接传入模型。",
+      availability: executionTools ? "available" : "unavailable", reason: executionTools ? null : "当前来源未接入宿主工具。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "voice.realtime", name: "实时语音", category: "multimodal", effectClass: "read-remote", adapterKind: "core",
+      description: "用户主动开启麦克风，逐轮提交实时语音；实际播放采样支持打断，工具委派进入普通 Runtime 与审批。停止语音不自动取消已接受的业务任务。",
+      availability: executionTools && context.voiceRealtimeReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前来源未接入宿主工具。" : context.voiceRealtimeReady ? "已配置；账号、模型与物理设备以实际连接结果为准。麦克风只能由用户主动开启。" : "请独立启用并配置实时语音服务。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "voice.transcription", name: "云语音转写", category: "multimodal", effectClass: "read-remote", adapterKind: "core",
+      description: "使用独立配置的云服务转写固定授权音频；逐次审批，结果未知不重发。转录不会自动覆盖草稿或发送消息。麦克风由用户在界面主动开启。",
+      availability: executionTools && context.voiceSttReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前来源未接入宿主工具。" : context.voiceSttReady ? "已配置，账号与模型可用性以真实请求结果为准。" : "请在语音设置中独立启用并配置转写服务。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "voice.speech", name: "AI 合成语音", category: "multimodal", effectClass: "read-remote", adapterKind: "core",
+      description: "把固定回复或指定文字生成真实语音引用；使用独立语音密钥和音色，群模型并行、朗读按新回复完成顺序排队，可单独停止。",
+      availability: executionTools && context.voiceTtsReady ? "available" : "unavailable",
+      reason: !executionTools ? "当前来源未接入宿主工具。" : context.voiceTtsReady ? "已配置，账号与模型可用性以真实请求结果为准。" : "请在语音设置中独立启用并配置朗读服务。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
+    },
+    {
+      id: "media.tool-images", name: "媒体图片传递", category: "multimodal", effectClass: "read-local", adapterKind: "core",
+      description: "把授权图片和 PDF 页的真实像素传入模型协议；不依赖浏览器环境。适配器支持传输不代表所选模型已确认视觉理解。",
+      availability: executionTools && context.providerCapabilities?.toolImageInput ? "available" : "unavailable",
+      reason: executionTools && context.providerCapabilities?.toolImageInput ? null : "当前适配器未接入工具图片传输；仍可读取已解析文字。",
+      permissionState: "not-required", toolNames: executionTools ? ["product_catalog", "product_describe", "product_execute"] : [],
     },
     {
       id: "library.documents", name: "会话资料库", category: "workspace",
@@ -336,6 +382,39 @@ function mcpConnection(server: McpServerInfo): CapabilityConnection {
   };
 }
 
+const forbiddenTaskProducts = new Set(["messages.send", "roomRuntime.send", "bots.create", "bots.duplicate", "teams.createContentTeam", "rooms.create", "approvals.resolve"]);
+
+function taskCapability(capability: CapabilityDescriptor, policy: TaskSessionPolicy): CapabilityDescriptor {
+  const selected = policy.selection;
+  const operations = selected.productOperations.filter(name => !forbiddenTaskProducts.has(name));
+  const denied = (): CapabilityDescriptor => ({ ...capability, availability: "unavailable", permissionState: "not-granted", toolNames: [], reason: "当前任务未选择此能力所需的权限或产品动作。" });
+  if (capability.id === "product.operations") return { ...capability,
+    description: operations.length ? `本任务只可按现有审批执行以下明确选择的产品动作：${operations.join("、")}。` : "本任务未选择可执行的产品动作；查询目录不会增加授权。",
+    reason: operations.length ? `仅限本任务明确选择的 ${operations.length} 个产品动作；实际列表请查询 product_catalog。` : "当前任务的可执行产品动作目录为空。",
+    toolNames: capability.toolNames.filter(name => name === "product_catalog" || operations.length > 0),
+  };
+  if (capability.id === "project.provisioning") return denied();
+  if (["network.search", "network.realtime-data"].includes(capability.id) && !selected.network) return denied();
+  if (capability.id === "device.clipboard" && !selected.clipboard) return denied();
+  if (capability.id === "memory.manual") return policy.memories.length || operations.some(name => name.startsWith("memories."))
+    ? { ...capability, description: `本任务仅使用 ${policy.memories.length} 条明确选择的固定记忆；不动态继承 user、Bot 或 Workspace 记忆。` }
+    : denied();
+  const groups: Record<string, string[]> = {
+    "media.documents": ["media."], "media.audio-video": ["media."], "media.tool-images": ["media.read", "media.preview", "bots.readImageAvatar"],
+    "library.documents": ["library."], "skills.text": ["library.", "skills.load"], "skills.scripts": ["skills.runScript"],
+    "voice.transcription": ["voice.transcribe"], "voice.speech": ["voice.speak"], "voice.realtime": ["voice.realtime."],
+    "mcp.scoped-tools": ["mcp."], "apps.read": ["connectors.", "drafts."], "apps.write": ["outbound."],
+    "environment.execution": ["environments.", "execution.", "processes."], "computer.control": ["browser.", "computer.", "preview."],
+    "skills.demonstrations": ["demonstrations."], "browser.tool-images": ["browser.observe", "computer.screenshot"],
+    "automation.scheduler": ["routines."],
+  };
+  const prefixes = groups[capability.id];
+  if (!prefixes) return capability;
+  const permitted = operations.filter(name => prefixes.some(prefix => prefix.endsWith(".") ? name.startsWith(prefix) : name === prefix));
+  if (!permitted.length) return denied();
+  return { ...capability, description: `本任务明确选择的相关产品动作：${permitted.join("、")}。实际调用仍校验当前状态、授权与审批。` };
+}
+
 export class CapabilityRegistry {
   constructor(
     private readonly repository: AppRepository,
@@ -344,20 +423,24 @@ export class CapabilityRegistry {
     private readonly clock: () => Date = () => new Date(),
     private readonly mcp?: Pick<McpService, "list" | "availableTools"> & Partial<Pick<McpService, "scopedCredentialDigest">>,
     private readonly routineList: () => Routine[] = () => [],
+    private readonly voiceConfigurations: () => VoiceConfiguration[] = () => [],
   ) {}
 
   async getSnapshot(input: { botId?: string; sessionId?: string } = {}): Promise<CapabilitySnapshot> {
+    const session = input.sessionId ? this.repository.getSession(input.sessionId) : null;
+    const botId = input.botId ?? (session?.kind === "TASK" ? session.botId ?? undefined : undefined);
+    if (session?.kind === "TASK" && !botId) throw new AevorenBotError("INVALID_REQUEST");
     const providerList = await this.providers.list();
-    const selection = input.botId
-      ? this.repository.getBot(input.botId).modelSelection
+    const selection = botId
+      ? this.repository.getBot(botId).modelSelection
       : this.repository.getDefaultModelSelection();
     const provider = providerList.find((candidate) => candidate.id === selection.providerInstanceId) ?? null;
-    return this.build(selection, provider, providerList, this.mcp?.list() ?? [], Boolean(input.sessionId && this.repository.getSession(input.sessionId).roomId), input.botId, input.sessionId);
+    return this.build(selection, provider, providerList, this.mcp?.list() ?? [], Boolean(session?.roomId), botId, input.sessionId);
   }
 
-  forPrompt(botId: string, selection: ModelSelection, room: boolean, sessionId?: string): CapabilityPromptSnapshot {
+  forPrompt(botId: string, selection: ModelSelection, room: boolean, sessionId?: string, runtimeRunId?: string): CapabilityPromptSnapshot {
     this.repository.getBot(botId);
-    const snapshot = this.build(selection, this.providers.getCached(selection.providerInstanceId), [], this.mcp?.list() ?? [], room, botId, sessionId);
+    const snapshot = this.build(selection, this.providers.getCached(selection.providerInstanceId), [], this.mcp?.list() ?? [], room, botId, sessionId, runtimeRunId);
     return {
       schemaVersion: snapshot.schemaVersion,
       generatedAt: snapshot.generatedAt,
@@ -378,8 +461,14 @@ export class CapabilityRegistry {
     room: boolean,
     botId?: string,
     sessionId?: string,
+    runtimeRunId?: string,
   ): CapabilitySnapshot {
-    const workspaces = botId
+    const taskPolicy = botId && sessionId ? runtimeRunId ? this.repository.tasks.runtimeTaskPolicy(runtimeRunId) : this.repository.tasks.taskSessionPolicy(sessionId, botId) : null;
+    if (taskPolicy && (taskPolicy.sessionId !== sessionId || taskPolicy.executorBotId !== botId)) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+    const workspaces = taskPolicy ? taskPolicy.selection.workspaces.filter(item => item.read).flatMap(limit => {
+      try { const workspace = this.repository.getWorkspace(limit.id); return [{ ...workspace, writeEnabled: workspace.writeEnabled && limit.write, automationEnabled: workspace.automationEnabled && limit.automation }]; }
+      catch { return []; }
+    }) : botId
       ? this.repository.listSessionWorkspaces(sessionId ?? this.repository.getMainSession(botId).id, botId)
       : this.repository.listWorkspaces();
     const providerCapabilities: ProviderCapabilities | null = (() => {
@@ -389,13 +478,16 @@ export class CapabilityRegistry {
         return null;
       }
     })();
-    const mcpTools = this.mcp?.availableTools(botId) ?? [];
+    const mcpTools = (this.mcp?.availableTools(botId) ?? []).filter(tool => !taskPolicy || taskPolicy.selection.mcp.some(item => item.serverId === tool.serverId && item.toolNames.includes(tool.name)));
     const mcpScopedReady = Boolean(botId && sessionId && this.repository.mcpWrites.grants({ sessionId, executorBotId: botId }).some(grant => {
       if (grant.revokedAt) return false;
+      if (taskPolicy && !taskPolicy.selection.mcp.some(item => item.serverId === grant.serverId && item.toolNames.includes(grant.toolName))) return false;
       try { const server = this.repository.getMcpServerConfig(grant.serverId); return server.enabled && server.version === grant.serverVersion &&
         this.mcp?.scopedCredentialDigest?.(server.id) === this.repository.mcpWrites.credentialForGrant(grant.id); } catch { return false; }
     }));
-    const routines = this.routineList();
+    const routines = taskPolicy ? [] : this.routineList();
+    const voiceConfigurations = this.voiceConfigurations();
+    const voiceReady = (kind: "stt" | "tts" | "realtime"): boolean => voiceConfigurations.some(item => item.kind === kind && item.enabled && item.keyConfigured);
     const environment = botId && sessionId ? this.repository.environments.get({ sessionId, executorBotId: botId }) : null;
     const executionReady = environment?.state === "running";
     const browser = botId && sessionId ? this.repository.browsers.get({ sessionId, executorBotId: botId }) : null;
@@ -408,8 +500,8 @@ export class CapabilityRegistry {
       try { this.repository.outbound.assertGrant({ sessionId, executorBotId: botId }, grant.id, grant.version); return true; }
       catch { return false; }
     }));
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
-      browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map((capability) => {
+    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, voiceSttReady: voiceReady("stt"), voiceTtsReady: voiceReady("tts"), voiceRealtimeReady: voiceReady("realtime"), room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
+      browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map(original => taskPolicy ? taskCapability(original, taskPolicy) : original).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));
       return toolNames.length > 0 ? { ...capability, toolNames } : {
@@ -448,7 +540,7 @@ export class CapabilityRegistry {
       availableTools: [...new Set(capabilities.flatMap((capability) => capability.toolNames))],
       capabilities,
       permissions,
-      connections: [...providerList.map(connection), ...mcpServers.map(mcpConnection)],
+      connections: [...providerList.filter(item => !taskPolicy || item.id === selection.providerInstanceId).map(connection), ...mcpServers.filter(server => !taskPolicy || taskPolicy.selection.mcp.some(item => item.serverId === server.id)).map(mcpConnection)],
       workspaceCount: workspaces.length,
       backgroundMode: routines.some((routine) => routine.enabled) ? "background-while-routines-enabled" : "foreground-only",
     };

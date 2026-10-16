@@ -1,6 +1,6 @@
 import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
 import { productOperation } from "@shared/product-operations";
-import { useEffectEvent, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffectEvent, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import type {
   AppError,
   AttachmentDraft,
@@ -20,6 +20,10 @@ import type {
 } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import type { LibraryResource, LibraryResourceKind, ResourceReference } from "@shared/library-contracts";
+import type { MessageMediaReference } from "@shared/media-contracts";
+import type { VoiceCaptureBegin, VoiceTask } from "@shared/voice-contracts";
+import type { RealtimeStartInput } from "@shared/realtime-contracts";
+import { voiceTextDigest } from "../voice-ui-state";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
 import { shouldShowBriefApproval } from "../brief-approval-state";
 import { initialRoomRouteAgentIds, latestRoomTurnsByLogicalTurn, roomHandoffProgress } from "../room-runtime-state";
@@ -42,6 +46,13 @@ import { AtIcon, AttachmentIcon, CheckIcon, CloseIcon, DocumentIcon, FolderIcon,
 import { ExpandableTrace, type ExpandableTraceKind, type ExpandableTraceTone } from "./ExpandableTrace";
 import { ToolPermissionDialog } from "./ToolPermissionDialog";
 import { LibraryResourcePicker } from "./LibraryResourcePicker";
+import { MediaLibraryPanel } from "./MediaLibraryPanel";
+import { MediaReferenceBadge } from "./MediaReferenceBadge";
+import { VoiceCapturePanel } from "./VoiceCapturePanel";
+import { VoiceTaskPanel } from "./VoiceTaskPanel";
+import { VoicePlaybackBar, type VoicePlaybackHandle } from "./VoicePlaybackBar";
+import { RealtimeVoicePanel } from "./RealtimeVoicePanel";
+import { VoiceControlsPopover } from "./VoiceControlsPopover";
 import {
   ArtifactStatusBar,
   ArtifactCard,
@@ -82,8 +93,10 @@ const ResourceReferenceBadge = memo(function ResourceReferenceBadge({ sessionId,
     : <span className="message-attachment" title={reference.revisionId}><DocumentIcon /><span>{label}</span></span>;
 });
 
-export type ConversationComposerDraft = { text: string; attachments: AttachmentDraft[]; roomMentions: RoomMention[]; routingMode: UserRoomRoutingMode; resourceRefs: ResourceReference[] };
-export type ConversationResourceInsertion = { id: string; sessionId: string; reference: ResourceReference; text?: string };
+export type ConversationComposerDraft = { text: string; attachments: AttachmentDraft[]; roomMentions: RoomMention[]; routingMode: UserRoomRoutingMode; resourceRefs: ResourceReference[]; mediaRefs: MessageMediaReference[]; draftVersion: number };
+export type ConversationResourceInsertion = { id: string; sessionId: string; reference: ResourceReference; text?: string; expectedDraftVersion: number };
+export type ConversationMediaInsertion = { id: string; sessionId: string; reference: MessageMediaReference; expectedDraftVersion: number };
+function emptyComposerDraft(draftVersion = 0): ConversationComposerDraft { return { text: "", attachments: [], roomMentions: [], routingMode: "automatic", resourceRefs: [], mediaRefs: [], draftVersion }; }
 
 function localDayKey(value: string | Date): string {
   const date = typeof value === "string" ? new Date(value) : value;
@@ -160,6 +173,7 @@ type TranscriptItemProps = {
   onRevealWorkspaceArtifact(workspaceId: string, path: string): void;
   onOpenWorkspaces(): void;
   onWorkflowAction(action: WorkflowAction): Promise<boolean>;
+  onReadAloud(entry: TranscriptEntry): void;
 };
 
 const toolStateLabels: Record<ToolInvocation["state"], string> = {
@@ -350,6 +364,7 @@ const TranscriptItem = memo(function TranscriptItem({
   onRevealWorkspaceArtifact,
   onOpenWorkspaces,
   onWorkflowAction,
+  onReadAloud,
 }: TranscriptItemProps): React.JSX.Element {
   const evidenceId = useId();
   const [evidenceExpanded, setEvidenceExpanded] = useState(false);
@@ -364,13 +379,14 @@ const TranscriptItem = memo(function TranscriptItem({
   const hasVisibleBody = entry.role === "user" || assistantBody.trim().length > 0;
   const speakerName = entry.role === "assistant"
     ? speakerDisplayName ?? speakerBot?.name ?? entry.speakerNameSnapshot ?? "Bot"
-    : entry.origin ? `${entry.origin.fromBotNameSnapshot ?? "Bot"} · ${entry.origin.kind === "routine" ? "定时任务" : "AI 委派"}` : userProfile.name;
+    : entry.origin?.kind === "voice-input" ? `${userProfile.name} · 语音输入` : entry.origin ? `${entry.origin.fromBotNameSnapshot ?? "Bot"} · ${entry.origin.kind === "routine" ? "定时任务" : "AI 委派"}` : userProfile.name;
   const hasEvidence = toolInvocations.length > 0 || handoffs.length > 0 || handoffRejections.length > 0 || coordinationErrorCode !== null;
   const hasCollaboration = handoffs.length > 0 || handoffRejections.length > 0 || turnPurpose !== undefined;
 
   return (
     <article
       className={`message message-${entry.role}${longAssistant ? " message-long" : ""}${groupedWithPrevious ? " message-group-continuation" : ""}${groupedWithNext ? " message-group-has-next" : ""}${isSuperseded ? " message-superseded" : ""}`}
+      data-transcript-entry={entry.id}
       data-status={entry.status}
       data-runtime-run-id={run?.id}
       data-turn-purpose={turnPurpose}
@@ -381,7 +397,7 @@ const TranscriptItem = memo(function TranscriptItem({
             className={`message-avatar message-avatar-with-bot${groupedWithPrevious ? " message-avatar-placeholder" : ""}`}
             aria-hidden="true"
           >
-            {groupedWithPrevious ? null : <BotAvatarIcon shape={speakerBot?.avatarShape} color={speakerBot?.avatarColor} size={48} />}
+            {groupedWithPrevious ? null : <BotAvatarIcon botId={speakerBot?.id} image={speakerBot?.avatarImage} shape={speakerBot?.avatarShape} color={speakerBot?.avatarColor} size={48} />}
           </span>
         ) : null}
         <div className="message-stack">
@@ -470,7 +486,9 @@ const TranscriptItem = memo(function TranscriptItem({
               </div>
             ) : null}
             {entry.resourceRefs?.length ? <div className="message-attachments" aria-label="消息资源引用">{entry.resourceRefs.map(reference => <ResourceReferenceBadge key={`${reference.resourceId}:${reference.revisionId}`} sessionId={entry.sessionId} reference={reference} />)}</div> : null}
+            {entry.mediaRefs?.length ? <div className="message-attachments" aria-label="消息媒体引用">{entry.mediaRefs.map(reference => <MediaReferenceBadge key={JSON.stringify(reference)} sessionId={entry.sessionId} reference={reference} />)}</div> : null}
           </div> : null}
+          {entry.role === "assistant" && entry.status === "completed" && assistantBody.trim() ? <button className="text-button message-read-aloud" type="button" aria-label={`朗读 ${speakerName} 的回复`} onClick={() => onReadAloud(entry)}>朗读 · AI 合成语音</button> : null}
           {entry.role === "assistant"
             ? <ArtifactStatusBar
                 writes={toolInvocations}
@@ -534,7 +552,7 @@ const TranscriptItem = memo(function TranscriptItem({
             </div>
           ) : null}
         </div>
-        {entry.role === "user" ? <span className="message-avatar message-avatar-user">{entry.origin ? <BotAvatarIcon size={48} /> : <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={48} />}</span> : null}
+        {entry.role === "user" ? <span className="message-avatar message-avatar-user">{entry.origin && entry.origin.kind !== "voice-input" ? <BotAvatarIcon size={48} /> : <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={48} />}</span> : null}
       </div>
     </article>
   );
@@ -542,6 +560,11 @@ const TranscriptItem = memo(function TranscriptItem({
 
 type ConversationProps = {
   sessionId?: string;
+  sessionGeneration?: number;
+  taskTitle?: string;
+  searchFocus?:{entryId:string;nonce:number};
+  onCreateTask?(): void;
+  onOpenTaskDetails?(): void;
   approvalVisible?: boolean;
   userProfile?: ConversationUserProfile;
   bot: Bot | null;
@@ -566,11 +589,13 @@ type ConversationProps = {
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
   onRememberPublicRead?(approval: ApprovalRequest): Promise<boolean>;
   onRevealWorkspaceArtifact(workspaceId: string, path: string): Promise<boolean>;
-  onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode, attachments?: AttachmentDraft[], resourceRefs?: ResourceReference[]): Promise<boolean>;
+  onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode, attachments?: AttachmentDraft[], resourceRefs?: ResourceReference[], mediaRefs?: MessageMediaReference[]): Promise<boolean>;
   initialDraft?: ConversationComposerDraft;
-  onDraftChange?(sessionId: string, draft: ConversationComposerDraft): void;
+  onDraftChange?(sessionId: string, draft: ConversationComposerDraft): ConversationComposerDraft | void;
   resourceInsertion?: ConversationResourceInsertion | null;
   onResourceInsertionHandled?(id: string): void;
+  mediaInsertion?: ConversationMediaInsertion | null;
+  onMediaInsertionHandled?(id: string): void;
   onApproveBrief?(input: { roomId: string; sourceRuntimeRunId: string; briefInvocationId: string; sha256: string; candidate: "A" | "B" | "C"; clientNonce: string }): Promise<boolean>;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
@@ -583,6 +608,11 @@ type ConversationProps = {
 
 export function Conversation({
   sessionId,
+  sessionGeneration = 1,
+  taskTitle,
+  searchFocus,
+  onCreateTask,
+  onOpenTaskDetails,
   approvalVisible = true,
   userProfile = defaultUserProfile,
   bot,
@@ -620,12 +650,54 @@ export function Conversation({
   onDraftChange,
   resourceInsertion,
   onResourceInsertionHandled,
+  mediaInsertion,
+  onMediaInsertionHandled,
 }: ConversationProps): React.JSX.Element {
-  const [draft, setDraft] = useState(initialDraft?.text ?? "");
-  const [attachments, setAttachments] = useState<AttachmentDraft[]>(initialDraft?.attachments ?? []);
-  const [roomMentions, setRoomMentions] = useState<RoomMention[]>(initialDraft?.roomMentions ?? []);
-  const [routingPreference, setRoutingPreference] = useState<UserRoomRoutingMode>(initialDraft?.routingMode ?? "automatic");
-  const [resourceRefs, setResourceRefs] = useState<ResourceReference[]>(initialDraft?.resourceRefs ?? []);
+  useEffect(()=>{if(!searchFocus)return;const node=document.querySelector<HTMLElement>(`[data-transcript-entry="${searchFocus.entryId}"]`);if(!node)return;node.scrollIntoView({block:"center",behavior:"instant"});node.classList.add("search-result-focus");return()=>node.classList.remove("search-result-focus");},[searchFocus]);
+
+  const [composer, setComposer] = useState<ConversationComposerDraft>(() => initialDraft ?? emptyComposerDraft());
+  const { text: draft, attachments, roomMentions, routingMode: routingPreference, resourceRefs, mediaRefs, draftVersion } = composer;
+  const composerStateRef = useRef(composer);
+  const composerSnapshotRef = useRef({ sessionId, draft, attachments, roomMentions, routingPreference, resourceRefs, mediaRefs, draftVersion });
+  const updateComposer = useCallback((update: (current: ConversationComposerDraft) => ConversationComposerDraft): void => {
+    const previous = composerStateRef.current;
+    const candidate = { ...update(previous), draftVersion: previous.draftVersion + 1 };
+    const next = sessionId ? onDraftChange?.(sessionId, candidate) ?? candidate : candidate;
+    composerStateRef.current = next;
+    composerSnapshotRef.current = { sessionId, draft: next.text, attachments: next.attachments, roomMentions: next.roomMentions, routingPreference: next.routingMode, resourceRefs: next.resourceRefs, mediaRefs: next.mediaRefs, draftVersion: next.draftVersion };
+    setComposer(next);
+  }, [sessionId, onDraftChange]);
+  const setDraft = useCallback((value: SetStateAction<string>): void => updateComposer(current => ({ ...current, text: typeof value === "function" ? value(current.text) : value })), [updateComposer]);
+  const setAttachments = useCallback((value: SetStateAction<AttachmentDraft[]>): void => updateComposer(current => ({ ...current, attachments: typeof value === "function" ? value(current.attachments) : value })), [updateComposer]);
+  const setRoomMentions = useCallback((value: SetStateAction<RoomMention[]>): void => updateComposer(current => ({ ...current, roomMentions: typeof value === "function" ? value(current.roomMentions) : value })), [updateComposer]);
+  const setRoutingPreference = useCallback((value: SetStateAction<UserRoomRoutingMode>): void => updateComposer(current => ({ ...current, routingMode: typeof value === "function" ? value(current.routingMode) : value })), [updateComposer]);
+  const setResourceRefs = useCallback((value: SetStateAction<ResourceReference[]>): void => updateComposer(current => ({ ...current, resourceRefs: typeof value === "function" ? value(current.resourceRefs) : value })), [updateComposer]);
+  const setMediaRefs = useCallback((value: SetStateAction<MessageMediaReference[]>): void => updateComposer(current => ({ ...current, mediaRefs: typeof value === "function" ? value(current.mediaRefs) : value })), [updateComposer]);
+  useLayoutEffect(() => {
+    if (!initialDraft || initialDraft.draftVersion <= composerStateRef.current.draftVersion) return;
+    composerStateRef.current = initialDraft;
+    composerSnapshotRef.current = { sessionId, draft: initialDraft.text, attachments: initialDraft.attachments, roomMentions: initialDraft.roomMentions, routingPreference: initialDraft.routingMode, resourceRefs: initialDraft.resourceRefs, mediaRefs: initialDraft.mediaRefs, draftVersion: initialDraft.draftVersion };
+    setComposer(initialDraft);
+  }, [sessionId, initialDraft]);
+  const [mediaMenuOpen, setMediaMenuOpen] = useState(false);
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  const [mediaImporting, setMediaImporting] = useState(false);
+  const mediaImportRequestRef = useRef(0);
+  const mediaMenuRef = useRef<HTMLDivElement>(null);
+  const mediaTriggerRef = useRef<HTMLButtonElement>(null);
+  const mediaPickerCloseRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!mediaMenuOpen) return;
+    const close = (event: PointerEvent): void => { if (!mediaMenuRef.current?.contains(event.target as Node)) setMediaMenuOpen(false); };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [mediaMenuOpen]);
+  useEffect(() => {
+    if (!mediaPickerOpen) return;
+    const trigger = mediaTriggerRef.current;
+    mediaPickerCloseRef.current?.focus();
+    return () => trigger?.focus();
+  }, [mediaPickerOpen]);
   const [resourceGroup, setResourceGroup] = useState<"bot" | LibraryResourceKind>(room ? "bot" : "document");
   const [skillQuery, setSkillQuery] = useState<ActiveMentionQuery | null>(null);
   const [resourceError, setResourceError] = useState<string | null>(null);
@@ -644,17 +716,24 @@ export function Conversation({
   const dismissedMentionRef = useRef<{ start: number; text: string } | null>(null);
   const approvalNonceRef = useRef<{ key: string; nonce: string } | null>(null);
   const followTranscriptTailRef = useRef(true);
-  const composerSnapshotRef = useRef({ sessionId, draft, attachments, roomMentions, routingPreference, resourceRefs });
   const consumedInsertionRef = useRef<string | null>(null);
+  const consumedMediaInsertionRef = useRef<string | null>(null);
   const composerMountedRef = useRef(true);
+  const voicePlaybackRef = useRef<VoicePlaybackHandle>(null);
+  const [latestVoiceTask, setLatestVoiceTask] = useState<VoiceTask | null>(null);
+  const [realtimeActive, setRealtimeActive] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [pendingReadAloud, setPendingReadAloud] = useState<TranscriptEntry | null>(null);
+  const voiceTriggerRef = useRef<HTMLButtonElement>(null);
+  const voiceControlsId = useId();
+  const closeVoice = useCallback((restoreFocus = true): void => { setVoiceOpen(false); setPendingReadAloud(null); if (restoreFocus && voiceTriggerRef.current?.getClientRects().length) voiceTriggerRef.current.focus(); }, []);
   useEffect(() => { composerMountedRef.current = true; return () => { composerMountedRef.current = false; }; }, []);
-  useLayoutEffect(() => {
-    composerSnapshotRef.current = { sessionId, draft, attachments, roomMentions, routingPreference, resourceRefs };
-    if (sessionId) onDraftChange?.(sessionId, { text: draft, attachments, roomMentions, routingMode: routingPreference, resourceRefs });
-  }, [sessionId, draft, attachments, roomMentions, routingPreference, resourceRefs, onDraftChange]);
   const applyResourceInsertion = useEffectEvent((): void => {
     if (!resourceInsertion || resourceInsertion.sessionId !== sessionId || resourceInsertion.id === consumedInsertionRef.current) return;
     consumedInsertionRef.current = resourceInsertion.id;
+    if (resourceInsertion.expectedDraftVersion !== composerStateRef.current.draftVersion) {
+      setResourceError("草稿已变化，未加入迟到的资料引用，请重新选择。"); onResourceInsertionHandled?.(resourceInsertion.id); return;
+    }
     if (resourceRefs.length >= 20 && !resourceRefs.some(reference => reference.resourceId === resourceInsertion.reference.resourceId)) {
       setResourceError("一条消息最多引用 20 份资源，请先移除部分引用。");
       onResourceInsertionHandled?.(resourceInsertion.id);
@@ -669,6 +748,19 @@ export function Conversation({
     queueMicrotask(() => { if (!cancelled) applyResourceInsertion(); });
     return () => { cancelled = true; };
   }, [resourceInsertion, sessionId]);
+  const applyMediaInsertion = useEffectEvent((): void => {
+    if (!mediaInsertion || mediaInsertion.sessionId !== sessionId || mediaInsertion.id === consumedMediaInsertionRef.current) return;
+    consumedMediaInsertionRef.current = mediaInsertion.id;
+    if (mediaInsertion.expectedDraftVersion !== composerStateRef.current.draftVersion) {
+      setResourceError("草稿已变化，未加入迟到的媒体引用，请重新选择。"); onMediaInsertionHandled?.(mediaInsertion.id); return;
+    }
+    if (mediaRefs.length >= 6 && !mediaRefs.some(item => item.mediaId === mediaInsertion.reference.mediaId)) {
+      setResourceError("一条消息最多引用 6 个媒体。"); onMediaInsertionHandled?.(mediaInsertion.id); return;
+    }
+    setMediaRefs(current => [...current.filter(item => item.mediaId !== mediaInsertion.reference.mediaId), mediaInsertion.reference]);
+    onMediaInsertionHandled?.(mediaInsertion.id);
+  });
+  useEffect(() => { let cancelled = false; queueMicrotask(() => { if (!cancelled) applyMediaInsertion(); }); return () => { cancelled = true; }; }, [mediaInsertion, sessionId]);
   const activeRunId = liveState?.activeRunId ?? null;
   const activeBatch = roomBatches.toReversed().find((batch) => batch.state === "queued" || batch.state === "running") ?? null;
   const latestBatch = roomBatches.at(-1) ?? null;
@@ -679,7 +771,49 @@ export function Conversation({
   const hasInvalidRoomMentions = invalidRoomMentions.length > 0;
   const targetBotIds = room ? resolveRoomTargetIds(roomMentions, memberBotIds) : [];
   const explicitRoutingBlocked = Boolean(room && routingPreference === "explicit" && targetBotIds.length === 0);
-  const subjectName = bot?.name ?? room?.room.name ?? "选择对话";
+  const readVoiceDraft = useCallback(async (): Promise<VoiceCaptureBegin> => {
+    if (!sessionId) throw new Error("请先选择聊天。");
+    const base = composerSnapshotRef.current;
+    const targets = room ? resolveRoomTargetIds(base.roomMentions, memberBotIds) : [];
+    const baseDigest = await voiceTextDigest(JSON.stringify({ sessionId, text: base.draft, attachments: base.attachments.map(item => item.id), routingPreference: base.routingPreference, targets, resourceRefs: base.resourceRefs, mediaRefs: base.mediaRefs }));
+    if (!composerMountedRef.current || composerSnapshotRef.current !== base) throw new Error("草稿已变化，请重新操作。");
+    return { sessionId, draftVersion: base.draftVersion, baseDigest };
+  }, [sessionId, room, memberBotIds]);
+  const insertVoiceTranscript = useCallback(async (task: VoiceTask, useCurrentDraft: boolean, isCurrent: () => boolean): Promise<boolean> => {
+    if (!sessionId || task.sessionId !== sessionId) return false;
+    const base = await readVoiceDraft();
+    const result = await window.aevorenBot.voice.get({ sessionId, id: task.id });
+    if (!result.ok) throw new Error(result.error.safeMessage);
+    const latest = result.data;
+    if (latest.state !== "completed" || latest.kind !== "transcription" || !latest.transcript) throw new Error("转写尚未完成或已不可读取。");
+    if (!useCurrentDraft && latest.capture && (latest.capture.captureId !== task.capture?.captureId || latest.capture.draftVersion !== base.draftVersion || latest.capture.baseDigest !== base.baseDigest)) return false;
+    if (!composerMountedRef.current || composerStateRef.current.draftVersion !== base.draftVersion || !isCurrent()) return false;
+    const current = composerStateRef.current;
+    const text = `${current.text}${current.text && !current.text.endsWith("\n") ? "\n" : ""}${latest.transcript}`;
+    if (text.length > 100_000) throw new Error("插入后超过草稿长度上限，转写内容仍保留。");
+    updateComposer(value => ({ ...value, text }));
+    return true;
+  }, [sessionId, readVoiceDraft, updateComposer]);
+  const readAloud = useCallback((entry: TranscriptEntry): void => { setVoiceOpen(true); if (realtimeActive) { setResourceError("请先停止实时语音通话，再朗读这条回复。"); return; } setPendingReadAloud(entry); }, [realtimeActive]);
+  const playVoiceTask = useCallback((task: VoiceTask): void => { if (realtimeActive) { setResourceError("请先停止实时语音通话，再播放朗读。"); return; } voicePlaybackRef.current?.play(task); }, [realtimeActive]);
+  const readRealtimeSelection = useCallback((executorBotId: string): Omit<RealtimeStartInput, "expectedConfigVersion"> => {
+    const base = composerSnapshotRef.current;
+    if (!sessionId || !composerMountedRef.current || composerSnapshotRef.current !== base) throw new Error("草稿已变化，请重新连接语音。");
+    const routingMode = room ? base.routingPreference : "automatic";
+    const targets = routingMode === "everyone" ? memberBotIds : routingMode === "explicit" ? resolveRoomTargetIds(base.roomMentions, memberBotIds) : [];
+    if (room && !memberBotIds.includes(executorBotId) || !room && bot?.id !== executorBotId || routingMode !== "automatic" && !targets.length) throw new Error("语音业务 Bot 或群聊目标已变化，请重新选择。");
+    return { sessionId, executorBotId, routingMode, targetBotIds: targets, resourceRefs: base.resourceRefs, mediaRefs: base.mediaRefs };
+  }, [sessionId, room, memberBotIds, bot?.id]);
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (!approvalVisible) { setVoiceOpen(false); setPendingReadAloud(null); return; }
+      if (voiceOpen && pendingReadAloud) { if (!realtimeActive) voicePlaybackRef.current?.enqueue(pendingReadAloud); setPendingReadAloud(null); }
+    });
+    return () => { cancelled = true; };
+  }, [approvalVisible, voiceOpen, pendingReadAloud, realtimeActive]);
+  const subjectName = taskTitle ?? bot?.name ?? room?.room.name ?? "选择对话";
   const currentDate = new Date();
   const conversationScopeId = room?.room.id ?? bot?.id ?? null;
   const conversationMenuScopeId = conversationScopeId ?? "empty-conversation";
@@ -921,7 +1055,7 @@ export function Conversation({
 
   async function submit(): Promise<void> {
     const text = draft.trim();
-    if (!text || (!bot && !room) || busy || hasInvalidRoomMentions || explicitRoutingBlocked) return;
+    if ((!text && mediaRefs.length === 0) || (!bot && !room) || busy || hasInvalidRoomMentions || explicitRoutingBlocked) return;
     followTranscriptTailRef.current = true;
     const routingMode: UserRoomRoutingMode | undefined = !room
       ? undefined
@@ -933,14 +1067,10 @@ export function Conversation({
         : routingPreference === "explicit"
           ? targetBotIds
           : [];
-    const sent = { draft, attachments, roomMentions, resourceRefs, routingPreference };
-    const accepted = await onSend(text, routedTargetIds, routingMode, attachments, resourceRefs);
-    if (accepted) {
-      setDraft(current => current === sent.draft ? "" : current);
-      setAttachments(current => current === sent.attachments ? [] : current);
-      setRoomMentions(current => current === sent.roomMentions ? [] : current);
-      setResourceRefs(current => current === sent.resourceRefs ? [] : current);
-      setRoutingPreference(current => current === sent.routingPreference ? "automatic" : current);
+    const sentVersion = composerStateRef.current.draftVersion;
+    const accepted = await onSend(text, routedTargetIds, routingMode, attachments, resourceRefs, mediaRefs);
+    if (accepted && composerMountedRef.current && composerStateRef.current.draftVersion === sentVersion) {
+      updateComposer(current => emptyComposerDraft(current.draftVersion));
       setSkillQuery(null);
       setMentionQuery(null);
       dismissedMentionRef.current = null;
@@ -1010,6 +1140,36 @@ export function Conversation({
     setMenuScopeId(null);
   }
 
+  async function pickTextAttachments(): Promise<void> {
+    const base = composerStateRef.current;
+    const picked = await onPickAttachments();
+    if (!composerMountedRef.current) return;
+    if (composerStateRef.current.draftVersion !== base.draftVersion) { setResourceError("草稿已变化，未加入迟到的附件。"); return; }
+    if (picked.length) setAttachments(current => [...current, ...picked.filter(item => !current.some(existing => existing.sha256 === item.sha256))].slice(0, 6));
+  }
+
+  async function importMedia(): Promise<void> {
+    if (!sessionId || mediaImporting) return;
+    const request = ++mediaImportRequestRef.current, base = composerStateRef.current;
+    setMediaMenuOpen(false); setMediaImporting(true); setResourceError(null);
+    try {
+      const result = await window.aevorenBot.media.pickImport({ sessionId });
+      if (!composerMountedRef.current || request !== mediaImportRequestRef.current) return;
+      if (!result.ok) { setResourceError(result.error.safeMessage); return; }
+      if (!result.data) return;
+      if (composerStateRef.current.draftVersion !== base.draftVersion) { setResourceError("媒体已导入原会话资料库；草稿已变化，未加入消息。"); return; }
+      if (result.data.imported.length) setMediaRefs(current => [...current, ...result.data!.imported.map(item => item.reference).filter(item => !current.some(existing => existing.mediaId === item.mediaId))].slice(0, 6));
+      if (result.data.failed.length) setResourceError(result.data.failed.map(item => `${item.name}：${item.reason}`).join("；"));
+    } catch { if (composerMountedRef.current && request === mediaImportRequestRef.current) setResourceError("媒体导入未完成，请重试。"); }
+    finally { if (composerMountedRef.current && request === mediaImportRequestRef.current) setMediaImporting(false); }
+  }
+
+  function selectMedia(reference: MessageMediaReference): void {
+    if (mediaRefs.length >= 6 && !mediaRefs.some(item => item.mediaId === reference.mediaId)) { setResourceError("一条消息最多引用 6 个媒体。"); return; }
+    setMediaRefs(current => [...current.filter(item => item.mediaId !== reference.mediaId), reference]);
+    setMediaPickerOpen(false);
+  }
+
   function openMentionPicker(): void {
     if (!sessionId) return;
     const textarea = composerInputRef.current;
@@ -1027,34 +1187,41 @@ export function Conversation({
     if (!sessionId || input.sessionId && input.sessionId !== sessionId) { respond({ status: "waiting_user", reason: "请先打开指定聊天。" }); return; }
     if (input.action === "task_details") { openTaskDetails(input.tab ?? "artifacts"); respond({ status: "completed" }); return; }
     const base = composerSnapshotRef.current;
-    const value = JSON.stringify({ sessionId, text: draft, attachments: attachments.map((item) => item.id), routingPreference, targets: targetBotIds, resourceRefs });
-    const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    if (!composerMountedRef.current || composerSnapshotRef.current !== base) { respond({ status: "waiting_user", reason: "草稿已变化，请重新读取。" }); return; }
-    if (input.action === "draft_get") { respond({ status: "completed", result: { sessionId, text: draft, attachments: attachments.map(({ content: _content, ...item }) => item), routingMode: routingPreference, targetBotIds, resourceRefs, digest } }); return; }
-    if (!composerMountedRef.current || composerSnapshotRef.current !== base || input.expectedDigest !== digest || composerInputRef.current?.value !== draft) { respond({ status: "waiting_user", reason: "草稿已变化或聊天正忙，请重新读取草稿后操作。" }); return; }
-    if (input.targetBotIds?.some((id) => !memberBotIds.includes(id))) { respond({ status: "failed", reason: "提及对象不是当前群成员。" }); return; }
+    const targets = room ? resolveRoomTargetIds(base.roomMentions, memberBotIds) : [];
+    const value = JSON.stringify({ sessionId, text: base.draft, attachments: base.attachments.map(item => item.id), routingPreference: base.routingPreference, targets, resourceRefs: base.resourceRefs, mediaRefs: base.mediaRefs });
+    const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map(byte => byte.toString(16).padStart(2, "0")).join("");
+    const unchanged = (): boolean => composerMountedRef.current && composerSnapshotRef.current === base;
+    if (!unchanged()) { respond({ status: "waiting_user", reason: "草稿已变化，请重新读取。" }); return; }
+    if (input.action === "draft_get") { respond({ status: "completed", result: { sessionId, text: base.draft, attachments: base.attachments.map(({ content: _content, ...item }) => item), routingMode: base.routingPreference, targetBotIds: targets, resourceRefs: base.resourceRefs, mediaRefs: base.mediaRefs, draftVersion: base.draftVersion, digest } }); return; }
+    if (input.expectedDraftVersion !== base.draftVersion || input.expectedDigest !== digest || composerInputRef.current?.value !== base.draft) { respond({ status: "waiting_user", reason: "草稿已变化，请重新读取摘要与草稿版本后操作。" }); return; }
+    if (input.targetBotIds?.some(id => !memberBotIds.includes(id))) { respond({ status: "failed", reason: "提及对象不是当前群成员。" }); return; }
     if (input.action === "draft_remove_attachment") {
-      if (!attachments.some((item) => item.id === input.attachmentId)) { respond({ status: "failed", reason: "附件不存在。" }); return; }
-      setAttachments((current) => current.filter((item) => item.id !== input.attachmentId)); respond({ status: "completed" }); return;
+      if (!base.attachments.some(item => item.id === input.attachmentId)) { respond({ status: "failed", reason: "附件不存在。" }); return; }
+      setAttachments(current => current.filter(item => item.id !== input.attachmentId)); respond({ status: "completed" }); return;
     }
     if (input.action === "draft_add_attachments") {
       const picked = await onPickAttachments();
-      if (!composerMountedRef.current || composerSnapshotRef.current !== base) { respond({ status: "waiting_user", reason: "草稿或聊天已变化，未修改附件。" }); return; }
-      setAttachments((current) => [...current, ...picked.filter((item) => !current.some((existing) => existing.sha256 === item.sha256))].slice(0, 6));
+      if (!unchanged()) { respond({ status: "waiting_user", reason: "草稿或聊天已变化，未修改附件。" }); return; }
+      if (picked.length) setAttachments(current => [...current, ...picked.filter(item => !current.some(existing => existing.sha256 === item.sha256))].slice(0, 6));
       respond({ status: picked.length ? "completed" : "cancelled", result: picked.map(({ content: _content, ...item }) => item) }); return;
     }
     if (input.resourceRefs) {
-      for (const reference of input.resourceRefs) {
-        const result = await window.aevorenBot.library.read({ sessionId, id: reference.resourceId, revisionId: reference.revisionId });
-        if (!result.ok || result.data.reference.digest !== reference.digest) { respond({ status: "failed", reason: "引用资源未授权或固定版本不匹配。" }); return; }
-      }
-      if (!composerMountedRef.current || composerSnapshotRef.current !== base || composerInputRef.current?.value !== draft) { respond({ status: "waiting_user", reason: "验证期间草稿或聊天已变化，请重新读取草稿。" }); return; }
-      setResourceRefs(input.resourceRefs);
+      const results = await Promise.all(input.resourceRefs.map(reference => window.aevorenBot.library.read({ sessionId, id: reference.resourceId, revisionId: reference.revisionId })));
+      if (results.some((result, index) => !result.ok || result.data.reference.digest !== input.resourceRefs![index]!.digest)) { respond({ status: "failed", reason: "引用资源未授权或固定版本不匹配。" }); return; }
     }
-    if (input.text !== undefined) setDraft(input.text);
-    if (input.routingMode) setRoutingPreference(input.routingMode);
-    if (input.targetBotIds) setRoomMentions(input.targetBotIds.map((id) => ({ kind: "bot", id, label: roomMemberIdentities.get(id)?.inline ?? id })));
-    respond({ status: "completed" });
+    if (input.mediaRefs) {
+      const results = await Promise.all(input.mediaRefs.map(reference => window.aevorenBot.media.metadata({ sessionId, id: reference.mediaId })));
+      if (results.some((result, index) => !result.ok || !result.data.asset.enabled || result.data.asset.deletedAt || result.data.asset.reference.sha256 !== input.mediaRefs![index]!.sha256)) { respond({ status: "failed", reason: "媒体未授权、已停用或原始摘要不匹配。草稿仍保留。" }); return; }
+    }
+    if (!unchanged() || composerInputRef.current?.value !== base.draft) { respond({ status: "waiting_user", reason: "验证期间草稿或聊天已变化，请重新读取草稿。" }); return; }
+    updateComposer(current => ({ ...current,
+      ...(input.resourceRefs ? { resourceRefs: input.resourceRefs } : {}),
+      ...(input.mediaRefs ? { mediaRefs: input.mediaRefs } : {}),
+      ...(input.text !== undefined ? { text: input.text } : {}),
+      ...(input.routingMode ? { routingMode: input.routingMode } : {}),
+      ...(input.targetBotIds ? { roomMentions: input.targetBotIds.map(id => ({ kind: "bot" as const, id, label: roomMemberIdentities.get(id)?.inline ?? id })) } : {}),
+    }));
+    respond({ status: "completed", result: { draftVersion: composerStateRef.current.draftVersion } });
   });
   useEffect(() => { const handler = (event: Event): void => { void handleProductView(event); }; window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   return (
@@ -1062,14 +1229,16 @@ export function Conversation({
       <header className="conversation-header">
         {room ? (
           <span className="conversation-group-avatar" aria-label={`${room.members.length} 位 Agent 和你`}>
-            {room.members.slice(0, 3).map((member) => <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={24} key={member.botId} />)}
+            {room.members.slice(0, 3).map((member) => <BotAvatarIcon botId={member.bot.id} image={member.bot.avatarImage} shape={member.bot.avatarShape} color={member.bot.avatarColor} size={24} key={member.botId} />)}
             <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={24} />
           </span>
-        ) : bot ? <span className="conversation-bot-avatar"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span> : null}
+        ) : bot ? <span className="conversation-bot-avatar"><BotAvatarIcon botId={bot.id} image={bot.avatarImage} shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span> : null}
         <div className="conversation-title">
           <h1>{subjectName}</h1>
-          {room ? <p className="conversation-header-counts">{room.members.length} 位 Agent</p> : bot ? <p className="conversation-header-counts">Bot</p> : null}
+          {taskTitle ? <p className="conversation-header-counts">任务线程 · {room ? `${room.members.length} 位 Agent` : bot?.name}</p> : room ? <p className="conversation-header-counts">{room.members.length} 位 Agent</p> : bot ? <p className="conversation-header-counts">Bot</p> : null}
         </div>
+        {onCreateTask ? <button type="button" className="conversation-task-trigger" onClick={onCreateTask} disabled={loading || submitting}>新建任务</button> : null}
+        {onOpenTaskDetails ? <button type="button" className="conversation-task-trigger" onClick={onOpenTaskDetails} disabled={loading}>任务详情</button> : null}
         <div className="conversation-menu-anchor" ref={menuRef}>
           <button
             className="conversation-menu-trigger"
@@ -1103,7 +1272,7 @@ export function Conversation({
               {bot || room ? <>
               <button className="conversation-menu-item" type="button" role="menuitem" aria-label={artifacts.length > 0 ? `打开会话成果，共 ${artifacts.length} 个` : "打开任务详情"} aria-expanded={artifactShelfOpen} onClick={() => openTaskDetails("artifacts")}><FolderIcon /><span>{room ? "群文件" : "会话文件"}</span><small>{artifacts.length}</small></button>
               <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => openTaskDetails("records")}><span>执行记录</span><small>{toolInvocations.length}</small></button>
-              {room ? <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => { setMenuScopeId(null); onOpenRoomSettings(); }}><PanelIcon /><span>群聊管理</span></button> : null}
+              {room && !taskTitle ? <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => { setMenuScopeId(null); onOpenRoomSettings(); }}><PanelIcon /><span>群聊管理</span></button> : null}
               {latestFailedTurn ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); void retryRoomTurn(latestFailedTurn.id); }}>重试{latestFailedTurn.turnPurpose === "summary" ? "汇总" : "此成员"}</button> : null}
               {latestRetryRun ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); onRetryRun(latestRetryRun.id); }}>重新生成回复</button> : null}
               {retryableUserEntry?.clientNonce ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); onRetryMessage(retryableUserEntry.clientNonce!); }}>安全重试发送</button> : null}
@@ -1247,6 +1416,7 @@ export function Conversation({
               onRevealWorkspaceArtifact={revealWorkspaceArtifact}
               onOpenWorkspaces={onOpenWorkspaces}
               onWorkflowAction={handleWorkflowAction}
+              onReadAloud={readAloud}
             />
             </Fragment>
           );
@@ -1345,7 +1515,7 @@ export function Conversation({
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => selectMention(item.id)}
                   >
-                    <span className="mention-option-icon bot-avatar-container"><BotAvatarIcon shape={mentionBot?.avatarShape} color={mentionBot?.avatarColor} size={24} /></span>
+                    <span className="mention-option-icon bot-avatar-container"><BotAvatarIcon botId={mentionBot?.id} image={mentionBot?.avatarImage} shape={mentionBot?.avatarShape} color={mentionBot?.avatarColor} size={24} /></span>
                     <span className="mention-option-copy">
                       <strong>{item.label}</strong>
                       <small>{item.id === EVERYONE_MENTION_ID ? "Bot · 群聊中的全部成员" : "Bot"}</small>
@@ -1364,11 +1534,13 @@ export function Conversation({
               aria-label="添加文本附件"
               title="添加文本附件"
               disabled={busy || attachments.length >= 6 || (!bot && !room)}
-              onClick={() => void onPickAttachments().then((picked) => {
-                if (picked.length === 0) return;
-                setAttachments((current) => [...current, ...picked.filter((item) => !current.some((existing) => existing.sha256 === item.sha256))].slice(0, 6));
-              })}
+              onClick={() => void pickTextAttachments()}
             ><AttachmentIcon /></button>
+            <div className="composer-media-menu" ref={mediaMenuRef} onKeyDown={event => { if (event.key === "Escape") { setMediaMenuOpen(false); mediaTriggerRef.current?.focus(); } }}>
+              <button ref={mediaTriggerRef} className="attachment-button" type="button" aria-label="添加媒体" title="添加图片或文档" aria-haspopup="menu" aria-expanded={mediaMenuOpen} disabled={busy || mediaImporting || mediaRefs.length >= 6 || !sessionId} onClick={() => setMediaMenuOpen(current => !current)}><DocumentIcon /></button>
+              {mediaMenuOpen ? <div role="menu" aria-label="添加媒体方式"><button className="text-button" role="menuitem" type="button" onClick={() => void importMedia()}>导入媒体文件</button><button className="text-button" role="menuitem" type="button" onClick={() => { setMediaMenuOpen(false); setMediaPickerOpen(true); }}>引用已有媒体</button></div> : null}
+            </div>
+            <button ref={voiceTriggerRef} className="composer-voice-trigger" type="button" aria-label="语音" aria-haspopup="dialog" aria-controls={voiceControlsId} aria-expanded={voiceOpen && approvalVisible} disabled={!sessionId} onClick={() => { if (voiceOpen) closeVoice(); else setVoiceOpen(true); }}>语音</button>
             {sessionId ? <>
               <button className="composer-mention-button" type="button" aria-label={room ? "提及 Bot" : "引用资料"} title="提及 Bot 或引用资料" onClick={openMentionPicker}><AtIcon /></button>
               <button className="composer-mention-button" type="button" aria-label="选择 Skill" title="选择 Skill" onClick={() => {
@@ -1399,6 +1571,8 @@ export function Conversation({
               </>
             ) : null}
             {sessionId && resourceRefs.length > 0 ? <div className="attachment-chips" aria-label="已引用的资源">{resourceRefs.map(reference => <ResourceReferenceBadge key={`${reference.resourceId}:${reference.revisionId}`} sessionId={sessionId} reference={reference} onRemove={() => setResourceRefs(current => current.filter(item => item.resourceId !== reference.resourceId))} />)}</div> : null}
+            {sessionId && mediaRefs.length > 0 ? <div className="attachment-chips" aria-label="已引用的媒体">{mediaRefs.map(reference => <MediaReferenceBadge key={JSON.stringify(reference)} sessionId={sessionId} reference={reference} onRemove={() => setMediaRefs(current => current.filter(item => item.mediaId !== reference.mediaId))} />)}</div> : null}
+            {mediaImporting ? <p className="field-help" role="status">正在导入媒体；继续编辑会保留新草稿，导入结果仍留在原会话资料库。</p> : null}
             {attachments.length > 0 ? <div className="attachment-chips" aria-label="已添加的附件">
               {attachments.map((attachment) => (
                 <button
@@ -1430,11 +1604,7 @@ export function Conversation({
                     aria-label={`移除 @${label}`}
                     aria-invalid={invalid || undefined}
                     disabled={busy}
-                    onClick={() => setRoomMentions((current) => {
-                      const next = current.filter((item) => item.id !== mention.id);
-                      if (next.length === 0) setRoutingPreference("automatic");
-                      return next;
-                    })}
+                    onClick={() => updateComposer(current => { const next = current.roomMentions.filter(item => item.id !== mention.id); return { ...current, roomMentions: next, routingMode: next.length ? current.routingMode : "automatic" }; })}
                   >@{label}<span aria-hidden="true">×</span></button>
                 );
               })}
@@ -1537,15 +1707,17 @@ export function Conversation({
               className="send-button"
               type="button"
               onClick={() => void submit()}
-              disabled={(!bot && !room) || !draft.trim() || busy || hasInvalidRoomMentions || explicitRoutingBlocked}
+              disabled={(!bot && !room) || (!draft.trim() && mediaRefs.length === 0) || busy || hasInvalidRoomMentions || explicitRoutingBlocked}
               aria-label="发送"
             >
               发送
             </button>
           )}
           </div>
+          {sessionId ? <VoiceControlsPopover id={voiceControlsId} open={voiceOpen && approvalVisible} trigger={voiceTriggerRef} onClose={closeVoice}><VoiceCapturePanel sessionId={sessionId} active={approvalVisible && voiceOpen && !realtimeActive} readDraft={readVoiceDraft} onTask={setLatestVoiceTask} /><VoiceTaskPanel sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible && voiceOpen} latestTask={latestVoiceTask} onInsert={insertVoiceTranscript} onPlay={playVoiceTask} /><VoicePlaybackBar ref={voicePlaybackRef} sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible && voiceOpen && !realtimeActive} entries={entries} speakerName={entry => entry.speakerBotId ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? bot?.name ?? "AI" : bot?.name ?? "AI"} /><RealtimeVoicePanel sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible && voiceOpen} executors={bot ? [{ id: bot.id, name: bot.name }] : room?.members.map(member => ({ id: member.botId, name: roomMemberIdentities.get(member.botId)?.inline ?? member.bot.name })) ?? []} readSelection={readRealtimeSelection} onActiveChange={setRealtimeActive} /></VoiceControlsPopover> : null}
         </div>
       </footer>
+      {mediaPickerOpen && sessionId ? <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMediaPickerOpen(false); }}><section className="media-selection-dialog" role="dialog" aria-modal="true" aria-label="选择媒体引用" onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setMediaPickerOpen(false); } }}><header><h2>引用当前会话媒体</h2><button ref={mediaPickerCloseRef} className="icon-button" type="button" aria-label="关闭媒体选择" onClick={() => setMediaPickerOpen(false)}><CloseIcon /></button></header><MediaLibraryPanel key={sessionId} sessionId={sessionId} onUse={selectMedia} /></section></div> : null}
     </main>
   );
 }

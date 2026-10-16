@@ -37,6 +37,7 @@ export function addLibraryProductHandlers(
 ): void {
   const library = dependencies.repository.library;
   const actor = context?.executorBotId;
+  const runtimeId = context?.runtimeRunId;
   const signal = context?.signal;
   const service = (): LibraryService => {
     if (!dependencies.libraryService) throw new AevorenBotError("INTERNAL_ERROR", "资料服务尚未初始化。");
@@ -64,7 +65,7 @@ export function addLibraryProductHandlers(
   const requireKind = (input: { sessionId: string; id: string }, kind?: LibraryResourceKind): void => {
     if (!kind) return;
     // A mutation can recover an inactive resource; this read stays internal and exposes no body to AI.
-    const current = library.read({ sessionId: input.sessionId, id: input.id, includeDisabled: true, includeDeleted: true }, actor);
+    const current = library.read({ sessionId: input.sessionId, id: input.id, includeDisabled: true, includeDeleted: true }, actor, runtimeId);
     if (current.resource.kind !== kind) throw new AevorenBotError("INVALID_REQUEST", "资源类型与操作不一致。");
   };
   const changed = <T>(action: LibraryChangedEvent["action"], sessionId: string, operation: () => T, ids: (value: T) => string[]): T => {
@@ -84,16 +85,20 @@ export function addLibraryProductHandlers(
       const [namespace, action] = definition.name.split(".");
       const kind = namespace === "documents" ? "document" : namespace === "skills" ? "skill" : undefined;
       // The reuse directory is metadata-only and intentionally has no conversation body access.
-      if (action === "available") return library.available(libraryAvailableSchema.parse(input ?? {}));
+      if (action === "available") {
+        const available = libraryAvailableSchema.parse(input ?? {});
+        if (context && dependencies.repository.getSession(context.sessionId).kind === "TASK") return library.list({ ...available, sessionId: context.sessionId }, actor, runtimeId);
+        return library.available(available);
+      }
       const parsed = LIBRARY_OPERATION_SCHEMAS[definition.name]!.parse(scopedInput(input)) as Record<string, unknown>;
       const sessionId = libraryListSchema.parse({ sessionId: parsed.sessionId }).sessionId;
       if (action === "list" || action === "search") {
-        return library.list(libraryListSchema.parse({ ...parsed, ...(kind ? { kind } : {}) }), actor);
+        return library.list(libraryListSchema.parse({ ...parsed, ...(kind ? { kind } : {}) }), actor, runtimeId);
       }
       if (action === "read" || action === "load") {
         const { offset, maxCharacters, ...fields } = parsed;
         const readInput = libraryReadSchema.parse({ ...fields, ...(context ? { includeDisabled: false, includeDeleted: false } : {}) });
-        const content = library.read(readInput, actor);
+        const content = library.read(readInput, actor, runtimeId);
         if (kind && content.resource.kind !== kind) throw new AevorenBotError("INVALID_REQUEST", "资源类型与操作不一致。");
         const result = contentResult(content, { offset: offset as number | undefined, maxCharacters: maxCharacters as number | undefined }, Boolean(kind));
         return action === "load" ? { ...(result as object), loaded: true, scriptsExecutable: false,
@@ -101,9 +106,9 @@ export function addLibraryProductHandlers(
       }
       if (action === "readFile") {
         const readInput = libraryReadSchema.parse({ sessionId, id: parsed.id, revisionId: parsed.revisionId });
-        const content = library.read(readInput, actor);
+        const content = library.read(readInput, actor, runtimeId);
         if (content.resource.kind !== "skill") throw new AevorenBotError("INVALID_REQUEST");
-        const file = await service().readResourceFile({ sessionId, id: content.resource.id, revisionId: content.revision.id, path: parsed.path as string }, signal, actor);
+        const file = await service().readResourceFile({ sessionId, id: content.resource.id, revisionId: content.revision.id, path: parsed.path as string }, signal, actor, runtimeId);
         if (!context) return file;
         if (file.encoding === "base64") {
           const { relativePath, size, mimeType, sha256 } = file;
@@ -139,7 +144,7 @@ export function addLibraryProductHandlers(
       if (action === "versions") {
         const versionsInput = libraryVersionsSchema.parse(parsed);
         requireKind(versionsInput, kind);
-        return library.versions(versionsInput, actor);
+        return library.versions(versionsInput, actor, runtimeId);
       }
       if (action === "restoreVersion") {
         const restoreInput = libraryRestoreVersionSchema.parse(parsed);
@@ -176,12 +181,12 @@ export function addLibraryProductHandlers(
       if (action === "export") {
         const exportInput = libraryExportSchema.parse(parsed);
         const readInput: LibraryReadInput = { ...exportInput };
-        const content = library.read(readInput, actor);
+        const content = library.read(readInput, actor, runtimeId);
         if (kind && content.resource.kind !== kind) throw new AevorenBotError("INVALID_REQUEST");
         if (!dependencies.exportLibraryResource) throw new AevorenBotError("INTERNAL_ERROR", "文件导出服务尚未初始化。");
         const result = await dependencies.exportLibraryResource({ ...exportInput, revisionId: content.revision.id }, signal);
         assertLibraryNotCancelled(signal);
-        library.read({ ...readInput, revisionId: content.revision.id }, actor);
+        library.read({ ...readInput, revisionId: content.revision.id }, actor, runtimeId);
         return result;
       }
       throw new AevorenBotError("INVALID_REQUEST");

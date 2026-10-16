@@ -35,7 +35,10 @@ describe("owned host outbound Runtime",()=>{
  db.prepare("INSERT INTO environment_ports VALUES(?,?,?,3000,'Legacy server','listening','t')").run(randomUUID(),environmentId,executionId);
  db.exec("COMMIT");
  const tables=(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name<>'schema_migrations' ORDER BY name").all() as{name:string}[]).map(value=>value.name);
- const tableRows=(database:DatabaseSync,name:string)=>database.prepare(`SELECT * FROM "${name}"`).all().sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+ const originalColumns=new Map(tables.map(name=>[name,(db.prepare(`PRAGMA table_info("${name}")`).all() as {name:string}[]).map(column=>`"${column.name}"`).join(",")]));
+ // Compare every original column, including every legacy Runtime field. New
+ // TASK-only columns are checked separately rather than changing this digest.
+ const tableRows=(database:DatabaseSync,name:string)=>database.prepare(`SELECT ${originalColumns.get(name)} FROM "${name}"`).all().sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
  const rows=new Map(tables.map(name=>[name,tableRows(db,name)]));
  const foreignKeys=new Map(tables.map(name=>[name,db.prepare(`PRAGMA foreign_key_list("${name}")`).all()]));
  const indexes=db.prepare("SELECT name FROM sqlite_master WHERE type IN ('index','trigger') AND sql IS NOT NULL ORDER BY name").all();
@@ -43,7 +46,14 @@ describe("owned host outbound Runtime",()=>{
  const repository=new AppRepository(filename);repositories.push(repository);const database=(repository as unknown as{database:DatabaseSync}).database;
  expect(database.prepare("SELECT * FROM runtime_runs WHERE id=?").get(legacyRun)).toEqual(before);
  expect(database.prepare("SELECT scope_version FROM runtime_session_scopes WHERE runtime_run_id=?").get(legacyRun)).toEqual({scope_version:1});
- for(const name of tables){expect(tableRows(database,name),name).toEqual(rows.get(name));expect(database.prepare(`PRAGMA foreign_key_list("${name}")`).all(),`${name} FKs`).toEqual(foreignKeys.get(name));}
+ for(const name of tables){
+   expect(tableRows(database,name),name).toEqual(rows.get(name));
+   const previous=foreignKeys.get(name)!;
+   const expected=name==="sessions"?[{id:0,seq:0,table:"sessions",from:"task_parent_id",to:"id",on_update:"NO ACTION",on_delete:"SET NULL",match:"NONE"},...previous.map(row=>({...row,id:Number(row.id)+1}))]:previous;
+   expect(database.prepare(`PRAGMA foreign_key_list("${name}")`).all(),`${name} FKs`).toEqual(expected);
+ }
+ for(const row of database.prepare("SELECT task_selection_version,task_selection_digest,task_executor_incarnation FROM runtime_session_scopes").all())expect(row).toEqual({task_selection_version:null,task_selection_digest:null,task_executor_incarnation:null});
+ for(const row of database.prepare("SELECT task_title,task_parent_id,task_version,task_client_nonce,task_request_digest FROM sessions").all())expect(row).toEqual({task_title:"",task_parent_id:null,task_version:1,task_client_nonce:null,task_request_digest:null});
  const migratedIndexes=database.prepare("SELECT name FROM sqlite_master WHERE type IN ('index','trigger') AND sql IS NOT NULL ORDER BY name").all();
  expect(migratedIndexes).toEqual(expect.arrayContaining(indexes));
  expect(repository.getApprovalRequest(approvalId)).toMatchObject({state:"pending",runtimeRunId:legacyRun});
