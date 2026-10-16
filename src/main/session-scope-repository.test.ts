@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PROJECT_ID, type MemoryProposal, type Session, type ToolRequest } from "@shared/contracts";
@@ -9,6 +10,7 @@ import { AppRepository, MIGRATIONS } from "./database";
 
 const repositories: AppRepository[] = [];
 const directories: string[] = [];
+let reportMigrationPhases: (() => void) | undefined;
 function folder(): string {
   const root = mkdtempSync(join(tmpdir(), "aevoren-session-scope-"));
   directories.push(root);
@@ -50,17 +52,30 @@ function proposal(value: AppRepository, botId: string, sessionId: string, conten
     reason: "Explicit preference", sourceEntryId: message(value, sessionId).id, supersedesMemoryId })!;
 }
 
-function legacyFixture() {
+function legacyFixture(mark: (phase: string) => void = () => {}) {
+  mark("legacy-schema-start");
   const filename = join(folder(), "legacy.sqlite");
   const db = new DatabaseSync(filename);
   db.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
   for (const migration of MIGRATIONS.filter((item) => item.version <= 29)) {
     const foreignKeysOff = "foreignKeysOff" in migration && migration.foreignKeysOff;
     if (foreignKeysOff) db.exec("PRAGMA foreign_keys = OFF");
-    db.exec(migration.sql);
-    db.prepare("INSERT INTO schema_migrations VALUES (?, '2026-01-01')").run(migration.version);
-    if (foreignKeysOff) db.exec("PRAGMA foreign_keys = ON");
+    try {
+      // Match the real migrator's version transaction instead of committing every DDL statement.
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.exec(migration.sql);
+        db.prepare("INSERT INTO schema_migrations VALUES (?, '2026-01-01')").run(migration.version);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    } finally {
+      if (foreignKeysOff) db.exec("PRAGMA foreign_keys = ON");
+    }
   }
+  mark("legacy-schema-finished");
   const ids = Object.fromEntries(["a", "b", "free", "lazy", "wa", "wb", "pa", "pb", "room", "sa", "sb", "sf", "sr", "memory", "lazyMemory"].map((name) => [name, randomUUID()])) as Record<string, string>;
   for (const key of ["a", "b"]) {
     const root = join(folder(), key);
@@ -91,20 +106,35 @@ function legacyFixture() {
       VALUES (?,'bot',?,?,?,?,'fact','manual-user',1,'t','t')`)
       .run(ids[memoryKey!]!, ids[botKey!]!, ids[botKey!]!, content, createHash("sha256").update(content).digest("hex"));
   }
+  mark("legacy-seed-finished");
   const memories = db.prepare("SELECT * FROM memory_items ORDER BY id").all();
   db.close();
+  mark("legacy-fixture-closed");
   return { filename, ids, memories };
 }
 
 afterEach(() => {
-  for (const value of repositories.splice(0)) value.close();
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  try {
+    for (const value of repositories.splice(0)) value.close();
+    for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  } finally {
+    const report = reportMigrationPhases;
+    reportMigrationPhases = undefined;
+    report?.();
+  }
 });
 
 describe("Session scope repository", () => {
   it("migrates finite folder and memory snapshots, including lazy legacy MAIN sessions, without changing old memories", () => {
-    const { filename, ids, memories } = legacyFixture();
+    const started = performance.now(), phases: { phase: string; elapsedMs: number }[] = [];
+    const mark = (phase: string): void => { phases.push({ phase, elapsedMs: Math.round(performance.now() - started) }); };
+    reportMigrationPhases = () => {
+      mark("cleanup-attempt-ended");
+      process.stderr.write(`Controlled legacy scope migration phases: ${JSON.stringify({ legacyVersions: 29, explicitSeedRows: 17, phases })}\n`);
+    };
+    const { filename, ids, memories } = legacyFixture(mark);
     const value = repository(filename);
+    mark("backup-and-upgrade-opened");
     const readIds = (session: string, bot: string) => value.listSessionWorkspaces(session, bot).map((item) => item.id).toSorted();
     expect(readIds(ids.sa!, ids.a!)).toEqual([ids.wa!]);
     expect(readIds(ids.sr!, ids.b!)).toEqual([ids.wa!]);
@@ -119,13 +149,16 @@ describe("Session scope repository", () => {
     const newRoom = value.createRoom({ memberBotIds: [ids.a!, ids.b!] });
     expect(value.listRuntimeMemories(ids.a!, newRoom.session.id)).toEqual([]);
     expect(value.listSessionWorkspaces(newRoom.session.id, ids.a!)).toEqual([]);
+    mark("scope-assertions-finished");
     const inspected = new DatabaseSync(filename, { readOnly: true });
     expect(inspected.prepare("SELECT * FROM memory_items ORDER BY id").all()).toEqual(memories);
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     inspected.close();
+    mark("memories-and-foreign-keys-checked");
     const reopened = repository(filename);
     expect(reopened.listSessionWorkspaces(ids.sf!, ids.free!).map((item) => item.id).toSorted()).toEqual([ids.wa!, ids.wb!].toSorted());
     expect(reopened.listRuntimeMemories(ids.a!, newRoom.session.id)).toEqual([]);
+    mark("reopen-checked");
   });
 
   it("keeps new and duplicated private chats empty and lets globally selected group members use only the group's explicit project", () => {
