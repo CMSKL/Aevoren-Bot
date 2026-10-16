@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased delivery tooling
+
+- Preserve the exact installed-and-accepted unsigned Windows x64 NSIS file with its SHA-256 and version/head identity after successful CI gates, for a 30-day manual validation download. Official Release signing and automatic-update requirements remain unchanged.
+
 ## v0.3.0-beta.35 (development candidate)
 
 - Add distinct Notion saved-draft operations and exact page write grants for title-only updates and end-of-page paragraph appends. Preserve existing page body and ordinary/data-source title property identity.

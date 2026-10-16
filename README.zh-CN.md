@@ -147,6 +147,8 @@ pnpm verify
 
 Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac` 生成的本地未签名 macOS 包只用于开发验证，不是可分发发行版。
 
+全部通过的 [CI 运行](https://github.com/CMSKL/Aevoren-Bot/actions/workflows/ci.yml)会保留 **未签名 Windows 验证安装包** 30 天。产物名包含精确版本和已验证 checkout head，下载内容包括同一个已实装验收的 x64 NSIS 文件、SHA-256 和构建标识。它用于手动验证，不进入签名 Release 或自动更新。下载和校验步骤见[安装指南](docs/INSTALLATION.md#unsigned-windows-validation-installer)；真实 Windows Docker 仍未验证。
+
 ## 数据和隐私
 
 应用数据存储在 Electron 的 user-data 目录。Aevoren Bot 会在 SQLite 中保存 Bot、Room、Transcript、显式 Memory、设置、Tool Journal 元数据和 Routine 历史；密钥值通过 `safeStorage` 单独存储。

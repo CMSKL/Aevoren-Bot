@@ -135,15 +135,30 @@ jobs:
             if (!(Test-Path $path) -or (Get-Item $path).Length -le 0) { throw "Missing or empty Windows locale: $locale" }
           }
       - name: Verify unsigned Windows installer artifact
+        id: windows_installer
         shell: pwsh
         run: |
+          $validationVersion = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { throw "Cannot read package version" }
+          node scripts/verify-release-version.mjs "v$validationVersion"
+          if ($LASTEXITCODE -ne 0) { throw "Invalid installer version" }
+          $validationHead = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $validationHead -ne $env:GITHUB_SHA) { throw "Installer checkout differs from the CI head" }
           $installers = @(Get-ChildItem dist -File -Filter "Aevoren-Bot-*.exe")
           if ($installers.Count -ne 1) { throw "Expected one Windows NSIS installer, found $($installers.Count)" }
           if ($installers[0].Length -le 0) { throw "Windows installer is empty" }
+          if ($installers[0].Name -ne "Aevoren-Bot-${validationVersion}-x64.exe") { throw "Installer name differs from package version" }
+          if ((Get-AuthenticodeSignature $installers[0].FullName).Status -ne "NotSigned") { throw "CI validation installer must be explicitly unsigned" }
+          $validationSha256 = (Get-FileHash $installers[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "head=$validationHead" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "name=$($installers[0].Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "sha256=$validationSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
       - name: Install and launch Windows package in isolation
         shell: pwsh
+        env:
+          CI_WINDOWS_INSTALLER_NAME: ${{ steps.windows_installer.outputs.name }}
         run: |
-          $installer = (Get-ChildItem dist -File -Filter "Aevoren-Bot-*.exe")[0]
+          $installer = Get-Item (Join-Path "dist" $env:CI_WINDOWS_INSTALLER_NAME)
           $installDir = Join-Path $env:RUNNER_TEMP "Aevoren Bot"
           Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -Wait -NoNewWindow
           $app = Join-Path $installDir "Aevoren Bot.exe"
@@ -172,6 +187,31 @@ jobs:
         env:
           AEVOREN_PACKAGED_APP_PATH: "${{ runner.temp }}/Aevoren Bot/Aevoren Bot.exe"
         run: pnpm exec playwright test tests/smoke/close-handshake.spec.ts
+      - name: Prepare verified unsigned Windows validation download
+        if: ${{ success() }}
+        shell: pwsh
+        env:
+          CI_WINDOWS_INSTALLER_NAME: ${{ steps.windows_installer.outputs.name }}
+          CI_WINDOWS_INSTALLER_VERSION: ${{ steps.windows_installer.outputs.version }}
+          CI_WINDOWS_INSTALLER_HEAD: ${{ steps.windows_installer.outputs.head }}
+          CI_WINDOWS_INSTALLER_SHA256: ${{ steps.windows_installer.outputs.sha256 }}
+        run: |
+          $validationInstaller = Get-Item (Join-Path "dist" $env:CI_WINDOWS_INSTALLER_NAME)
+          $validationSha256 = (Get-FileHash $validationInstaller.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($validationSha256 -ne $env:CI_WINDOWS_INSTALLER_SHA256) { throw "Installer bytes changed after installation acceptance" }
+          [System.IO.File]::WriteAllText((Join-Path $PWD "dist/UNSIGNED-WINDOWS-SHASUMS256.txt"), "$validationSha256  $env:CI_WINDOWS_INSTALLER_NAME`n", [System.Text.UTF8Encoding]::new($false))
+          @{ version = $env:CI_WINDOWS_INSTALLER_VERSION; head = $env:CI_WINDOWS_INSTALLER_HEAD; architecture = "x64"; signature = "NotSigned"; purpose = "manual-validation"; workflowRun = $env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content "dist/UNSIGNED-WINDOWS-BUILD.json" -Encoding utf8
+      - name: Preserve verified unsigned Windows validation installer
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aevoren-bot-v${{ steps.windows_installer.outputs.version }}-windows-x64-unsigned-${{ steps.windows_installer.outputs.head }}-attempt${{ github.run_attempt }}
+          path: |
+            dist/${{ steps.windows_installer.outputs.name }}
+            dist/UNSIGNED-WINDOWS-SHASUMS256.txt
+            dist/UNSIGNED-WINDOWS-BUILD.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Preserve failed Windows UI diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
