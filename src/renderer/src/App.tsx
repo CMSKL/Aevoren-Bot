@@ -34,7 +34,8 @@ import type {
   UserProfile,
   Workspace,
 } from "@shared/contracts";
-import { Conversation, type ConversationComposerDraft, type ConversationResourceInsertion } from "./components/Conversation";
+import { Conversation, type ConversationComposerDraft, type ConversationResourceInsertion, type ConversationMediaInsertion } from "./components/Conversation";
+import type { MessageMediaReference } from "@shared/media-contracts";
 import type { ResourceReference } from "@shared/library-contracts";
 import { ContactDetail, type ContactDetailHandle } from "./components/ContactDetail";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -85,7 +86,9 @@ export function App(): React.JSX.Element {
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [contactLibraryScope, setContactLibraryScope] = useState<{ botId: string; sessionId: string } | null>(null);
   const [resourceInsertion, setResourceInsertion] = useState<ConversationResourceInsertion | null>(null);
+  const [mediaInsertion, setMediaInsertion] = useState<ConversationMediaInsertion | null>(null);
   const composerDraftsRef = useRef(new Map<string, ConversationComposerDraft>());
+  const [, refreshComposerCache] = useState(0);
   const resourceUseRequestRef = useRef(0);
   const selectedContactIdRef = useRef(selectedContactId);
   useEffect(() => { selectedContactIdRef.current = selectedContactId; }, [selectedContactId]);
@@ -98,8 +101,14 @@ export function App(): React.JSX.Element {
     }).catch(() => { if (!cancelled) setCloseNotice("暂时无法读取当前 Bot 的私聊资源范围，请重新选择联系人。"); });
     return () => { cancelled = true; };
   }, [selectedContactId]);
-  const rememberComposerDraft = useCallback((sessionId: string, draft: ConversationComposerDraft): void => { composerDraftsRef.current.set(sessionId, draft); }, []);
+  const rememberComposerDraft = useCallback((sessionId: string, draft: ConversationComposerDraft): ConversationComposerDraft => {
+    const previous = composerDraftsRef.current.get(sessionId);
+    const next = { ...draft, draftVersion: Math.max(draft.draftVersion, (previous?.draftVersion ?? -1) + 1) };
+    composerDraftsRef.current.set(sessionId, next);
+    return next;
+  }, []);
   const resourceInsertionHandled = useCallback((id: string): void => { setResourceInsertion(current => current?.id === id ? null : current); }, []);
+  const mediaInsertionHandled = useCallback((id: string): void => { setMediaInsertion(current => current?.id === id ? null : current); }, []);
   const [contactEditingRequested, setContactEditingRequested] = useState(0);
   const [clearTarget, setClearTarget] = useState<ConversationSummary | null>(null);
   const [clearingConversation, setClearingConversation] = useState(false);
@@ -155,6 +164,7 @@ export function App(): React.JSX.Element {
   const contactRef = useRef<ContactDetailHandle>(null);
   const roomRef = useRef<RoomInspectorHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const sessionGenerationRef = useRef<number | null>(null);
   const selectedRoomIdRef = useRef<string | null>(null);
   const loadingSessionIdRef = useRef<string | null>(null);
   const bufferedTranscriptRef = useRef<TranscriptEvent[]>([]);
@@ -262,6 +272,7 @@ export function App(): React.JSX.Element {
     };
     window.addEventListener("focus", scheduleRefresh);
     const unsubscribeTranscript = window.aevorenBot.events.subscribeTranscript((event) => {
+      if (event.sessionId === sessionIdRef.current && event.entry.generation !== sessionGenerationRef.current) return;
       scheduleRefresh();
       if (event.sessionId === sessionIdRef.current && sidebarTabRef.current !== "contacts" && !settingsOpenRef.current
         && document.visibilityState === "visible" && event.entry.role === "assistant"
@@ -283,6 +294,7 @@ export function App(): React.JSX.Element {
       }
     });
     const unsubscribeRuntime = window.aevorenBot.events.subscribeRuntime((event) => {
+      if (event.sessionId === sessionIdRef.current && event.run.inputGeneration !== sessionGenerationRef.current) return;
       scheduleRefresh();
       if (event.sessionId === loadingSessionIdRef.current) {
         bufferedRuntimeRef.current.push(event);
@@ -307,6 +319,7 @@ export function App(): React.JSX.Element {
       }
     });
     const unsubscribeRoom = window.aevorenBot.events.subscribeRoomRuntime((event) => {
+      if (event.sessionId === sessionIdRef.current && event.turns.length && event.turns.every(turn => turn.inputGeneration !== sessionGenerationRef.current)) return;
       scheduleRefresh();
       if (event.sessionId === loadingSessionIdRef.current) {
         bufferedRoomRef.current.push(event);
@@ -411,6 +424,25 @@ export function App(): React.JSX.Element {
     };
   }, [flushActive, mergeConversation, refreshConversations, reportDirectError]);
 
+  const sessionChanged = useEffectEvent((next: Session): void => {
+    if (next.id !== sessionIdRef.current || next.generation <= (sessionGenerationRef.current ?? 0)) return;
+    sessionGenerationRef.current = next.generation;
+    const selection = openRequestRef.current;
+    setSession(current => current?.id === next.id && current.generation < next.generation ? next : current);
+    setEntries([]); setRuns([]); runtimeRunsRef.current = []; runtimeVersionsRef.current.clear();
+    setToolInvocations([]); setApprovalRequests([]); setRoomBatches([]); setRoomTurns([]); setRoomHandoffs([]); setRoomHandoffRejections([]); roomBatchVersionsRef.current.clear();
+    runtimeErrorRef.current = null; roomErrorRef.current = null; setError(null); setLiveState(null);
+    void window.aevorenBot.runtime.getSessionSnapshot(next.id).then(result => {
+      if (selection !== openRequestRef.current || sessionIdRef.current !== next.id || sessionGenerationRef.current !== next.generation) return;
+      if (!result.ok) { setError(result.error); return; }
+      if (result.data.generation !== next.generation) return;
+      setEntries(current => result.data.entries.reduce(mergeTranscriptEntry, current.filter(entry => entry.generation === next.generation)));
+      const merged = result.data.runs.reduce(mergeRuntimeRun, runtimeRunsRef.current.filter(run => run.inputGeneration === next.generation));
+      runtimeRunsRef.current = merged; runtimeVersionsRef.current = new Map(merged.map(run => [run.id, run.version])); setRuns(merged); setLiveState(result.data.liveState);
+    }).catch(() => { if (selection === openRequestRef.current && sessionIdRef.current === next.id && sessionGenerationRef.current === next.generation) setCloseNotice("聊天已清空，暂时无法重新读取任务状态。"); });
+  });
+  useEffect(() => window.aevorenBot.sessions.onChanged(event => sessionChanged(event.session)), []);
+
   useEffect(() => {
     let active = true;
     const refreshWorkspaces = (): void => {
@@ -445,6 +477,7 @@ export function App(): React.JSX.Element {
 
   const openBot = useCallback(async (bot: Bot, flushCurrent = true, localError = false): Promise<boolean> => {
     const requestId = ++openRequestRef.current;
+    setResourceInsertion(null); setMediaInsertion(null);
     if (flushCurrent && !(await flushActive())) return false;
     setLoading(true);
     const reportError = (failure: AppError): void => {
@@ -507,17 +540,19 @@ export function App(): React.JSX.Element {
     const buffered = mergeBufferedEvents(
       snapshotResult.data.entries,
       snapshotResult.data.runs,
-      bufferedTranscriptRef.current,
-      bufferedRuntimeRef.current,
+      bufferedTranscriptRef.current.filter(event => event.entry.generation === snapshotResult.data.generation),
+      bufferedRuntimeRef.current.filter(event => event.run.inputGeneration === snapshotResult.data.generation),
     );
     const toolState = mergeToolEvents(toolsResult.data, approvalsResult.data, bufferedToolRef.current);
+    if (sessionIdRef.current === nextSession.id && (sessionGenerationRef.current ?? 0) > snapshotResult.data.generation) { loadingSessionIdRef.current = null; setLoading(false); return false; }
     sessionIdRef.current = nextSession.id;
+    sessionGenerationRef.current = snapshotResult.data.generation;
     selectedRoomIdRef.current = null;
     sessionStorage.setItem("aevoren-bot:selected", `bot:${bot.id}`);
     loadingSessionIdRef.current = null;
     setSelectedBot(bot);
     setSelectedRoom(null);
-    setSession(nextSession);
+    setSession({ ...nextSession, generation: snapshotResult.data.generation });
     setEntries(buffered.entries);
     runtimeRunsRef.current = buffered.runs;
     roomBatchVersionsRef.current.clear();
@@ -539,6 +574,7 @@ export function App(): React.JSX.Element {
 
   const openRoom = useCallback(async (room: Room, flushCurrent = true, localError = false): Promise<RoomOpenResult> => {
     const requestId = ++openRequestRef.current;
+    setResourceInsertion(null); setMediaInsertion(null);
     const openingTab = sidebarTabRef.current;
     const isCurrent = () => requestId === openRequestRef.current && (!localError || openingTab === sidebarTabRef.current);
     const superseded = (): RoomOpenResult => {
@@ -611,8 +647,8 @@ export function App(): React.JSX.Element {
     const buffered = mergeBufferedEvents(
       snapshotResult.data.entries,
       snapshotResult.data.runs,
-      bufferedTranscriptRef.current,
-      bufferedRuntimeRef.current,
+      bufferedTranscriptRef.current.filter(event => event.entry.generation === snapshotResult.data.detail.session.generation),
+      bufferedRuntimeRef.current.filter(event => event.run.inputGeneration === snapshotResult.data.detail.session.generation),
     );
     const roomState = mergeRoomRuntimeEvents(
       snapshotResult.data.batches,
@@ -622,13 +658,15 @@ export function App(): React.JSX.Element {
       bufferedRoomRef.current,
     );
     const toolState = mergeToolEvents(toolsResult.data, approvalsResult.data, bufferedToolRef.current);
+    if (sessionIdRef.current === nextSession.id && (sessionGenerationRef.current ?? 0) > snapshotResult.data.detail.session.generation) return superseded();
     sessionIdRef.current = nextSession.id;
+    sessionGenerationRef.current = snapshotResult.data.detail.session.generation;
     selectedRoomIdRef.current = room.id;
     sessionStorage.setItem("aevoren-bot:selected", `room:${room.id}`);
     loadingSessionIdRef.current = null;
     setSelectedBot(null);
     setSelectedRoom(snapshotResult.data.detail);
-    setSession(nextSession);
+    setSession(snapshotResult.data.detail.session);
     setEntries(buffered.entries);
     runtimeRunsRef.current = buffered.runs;
     roomBatchVersionsRef.current = new Map(roomState.batches.map(batch => [batch.id, batch.version]));
@@ -913,7 +951,9 @@ export function App(): React.JSX.Element {
   }
 
   function clearSelection(): void {
+    setResourceInsertion(null); setMediaInsertion(null);
     sessionIdRef.current = null;
+    sessionGenerationRef.current = null;
     selectedRoomIdRef.current = null;
     sessionStorage.removeItem("aevoren-bot:selected");
     setSelectedBot(null);
@@ -1214,7 +1254,7 @@ export function App(): React.JSX.Element {
     return true;
   }
 
-  async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone", attachments: AttachmentDraft[] = [], resourceRefs: ResourceReference[] = []): Promise<boolean> {
+  async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone", attachments: AttachmentDraft[] = [], resourceRefs: ResourceReference[] = [], mediaRefs: MessageMediaReference[] = []): Promise<boolean> {
     if (!session || submitting) return false;
     setSubmitting(true);
     setError(null);
@@ -1229,26 +1269,32 @@ export function App(): React.JSX.Element {
           text,
           attachments,
           resourceRefs,
+          mediaRefs,
           targetBotIds: targetBotIds ?? [],
           routingMode: routingMode ?? "automatic",
         })
-      : await window.aevorenBot.messages.send({ sessionId: session.id, clientNonce, text, attachments, resourceRefs });
+      : await window.aevorenBot.messages.send({ sessionId: session.id, clientNonce, text, attachments, resourceRefs, mediaRefs });
     setSubmitting(false);
     if (!result.ok) {
       if (selectedRoom) setError(result.error);
       else reportDirectError(result.error, session.id, clientNonce);
       return false;
     }
-    if (composerDraftsRef.current.get(session.id) === submittedDraft) composerDraftsRef.current.delete(session.id);
+    if (submittedDraft && composerDraftsRef.current.get(session.id) === submittedDraft && submittedDraft.text.trim() === text && submittedDraft.attachments === attachments && submittedDraft.resourceRefs === resourceRefs && submittedDraft.mediaRefs === mediaRefs) {
+      composerDraftsRef.current.set(session.id, { text: "", attachments: [], roomMentions: [], routingMode: "automatic", resourceRefs: [], mediaRefs: [], draftVersion: submittedDraft.draftVersion + 1 });
+      refreshComposerCache(current => current + 1);
+    }
     return true;
   }
 
   async function prepareLibraryResource(reference: ResourceReference, text: string | undefined, expectedSessionId: string, target: { bot: Bot } | { room: Room }): Promise<void> {
     const request = ++resourceUseRequestRef.current;
     const originalOpenRequest = openRequestRef.current;
+    const expectedDraftVersion = composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0;
     try {
     if (!(await flushActive())) return;
     const stillCurrent = (): boolean => request === resourceUseRequestRef.current && originalOpenRequest === openRequestRef.current
+      && (composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) === expectedDraftVersion
       && ("bot" in target ? selectedContactIdRef.current === target.bot.id : selectedRoomIdRef.current === target.room.id);
     if (!stillCurrent()) return;
     const result = await window.aevorenBot.library.read({ sessionId: expectedSessionId, id: reference.resourceId, revisionId: reference.revisionId });
@@ -1260,9 +1306,32 @@ export function App(): React.JSX.Element {
     }
     if ("bot" in target ? selectedContactIdRef.current !== target.bot.id : selectedRoomIdRef.current !== target.room.id) return;
     if (sessionIdRef.current !== expectedSessionId) return;
-    setResourceInsertion({ id: crypto.randomUUID(), sessionId: expectedSessionId, reference, ...(text ? { text } : {}) });
+    if ((composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) !== expectedDraftVersion) return;
+    setResourceInsertion({ id: crypto.randomUUID(), sessionId: expectedSessionId, reference, expectedDraftVersion, ...(text ? { text } : {}) });
     setSettingsOpen(false); setSidebarTab("chats"); setMobilePanel(null); setCloseNotice(null);
     } catch { if (request === resourceUseRequestRef.current) setCloseNotice("无法准备资源引用，草稿仍然保留，请重试。"); }
+  }
+
+  async function prepareMediaResource(reference: MessageMediaReference, expectedSessionId: string, target: { bot: Bot } | { room: Room }): Promise<void> {
+    const request = ++resourceUseRequestRef.current, originalOpenRequest = openRequestRef.current;
+    const expectedDraftVersion = composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0;
+    const stillCurrent = (): boolean => request === resourceUseRequestRef.current && originalOpenRequest === openRequestRef.current
+      && (composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) === expectedDraftVersion
+      && ("bot" in target ? selectedContactIdRef.current === target.bot.id : selectedRoomIdRef.current === target.room.id);
+    try {
+      if (!(await flushActive()) || !stillCurrent()) return;
+      const result = await window.aevorenBot.media.metadata({ sessionId: expectedSessionId, id: reference.mediaId });
+      if (!stillCurrent()) return;
+      if (!result.ok || !result.data.asset.enabled || result.data.asset.deletedAt || result.data.asset.reference.sha256 !== reference.sha256) { setCloseNotice(result.ok ? "媒体不可读取或摘要不匹配，请重新选择。" : result.error.safeMessage); return; }
+      if (sessionIdRef.current !== expectedSessionId) {
+        const opened = "bot" in target ? await openBot(target.bot, false, true) : (await openRoom(target.room, false, true)).status === "opened";
+        if (!opened || request !== resourceUseRequestRef.current) return;
+      }
+      if (sessionIdRef.current !== expectedSessionId || (composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) !== expectedDraftVersion) return;
+      if ("bot" in target ? selectedContactIdRef.current !== target.bot.id : selectedRoomIdRef.current !== target.room.id) return;
+      setMediaInsertion({ id: crypto.randomUUID(), sessionId: expectedSessionId, reference, expectedDraftVersion });
+      setSettingsOpen(false); setSidebarTab("chats"); setMobilePanel(null); setCloseNotice(null);
+    } catch { if (request === resourceUseRequestRef.current) setCloseNotice("无法准备媒体引用，草稿仍然保留，请重试。"); }
   }
 
   async function hideConversations(input: ConversationBatchDeleteInput): Promise<boolean> {
@@ -1583,6 +1652,7 @@ export function App(): React.JSX.Element {
         editingRequested={contactEditingRequested}
         librarySessionId={selectedContact && contactLibraryScope?.botId === selectedContact.id ? contactLibraryScope.sessionId : undefined}
         onUseResource={(reference, text) => { if (selectedContact && contactLibraryScope?.botId === selectedContact.id) void prepareLibraryResource(reference, text, contactLibraryScope.sessionId, { bot: selectedContact }); }}
+        onUseMedia={reference => { if (selectedContact && contactLibraryScope?.botId === selectedContact.id) void prepareMediaResource(reference, contactLibraryScope.sessionId, { bot: selectedContact }); }}
         onBotUpdated={updateBot}
         onOpenBots={() => setMobilePanel("bots")}
         onSend={async (bot) => {
@@ -1597,13 +1667,16 @@ export function App(): React.JSX.Element {
       <div className="app-surface" hidden={settingsOpen || sidebarTab === "contacts"}>
       <Conversation
         sessionId={session?.id}
-        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile"}
+        sessionGeneration={session?.generation}
+        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile" && clearTarget === null}
         userProfile={userProfile}
-        key={session?.id ?? selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
+        key={session ? `${session.id}:${session.generation}` : selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
         initialDraft={session ? composerDraftsRef.current.get(session.id) : undefined}
         onDraftChange={rememberComposerDraft}
         resourceInsertion={resourceInsertion}
         onResourceInsertionHandled={resourceInsertionHandled}
+        mediaInsertion={mediaInsertion}
+        onMediaInsertionHandled={mediaInsertionHandled}
         bot={selectedBot}
         room={selectedRoom}
         roomBatches={roomBatches}
@@ -1748,6 +1821,7 @@ export function App(): React.JSX.Element {
           onOpenBot={(bot) => void editBot(bot)}
           onMobileClose={() => void closeInspector()}
           onUseResource={(reference, text) => { void prepareLibraryResource(reference, text, selectedRoom.session.id, { room: selectedRoom.room }); }}
+          onUseMedia={reference => { void prepareMediaResource(reference, selectedRoom.session.id, { room: selectedRoom.room }); }}
         />
         </div>
       ) : null}

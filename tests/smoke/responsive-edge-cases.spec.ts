@@ -202,7 +202,11 @@ test("keeps contact editing, model configuration and settings usable at 200 perc
     writeFileSync("/tmp/aevoren-bot-sidebar-zoom-200-native.png", Buffer.from(sidebarCapture, "base64"));
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await expect(page.getByRole("region", { name: "设置", exact: true })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Docker 执行环境", exact: true }).getByRole("button", { name: "准备 Linux 镜像", exact: true })).toBeVisible();
+    try { await expect(page.getByRole("region", { name: "Docker 执行环境", exact: true }).getByRole("button", { name: "准备 Linux 镜像", exact: true })).toBeVisible(); }
+    catch (failure) {
+      const diagnostic = await page.getByRole("region", { name: "Docker 执行环境", exact: true }).evaluate(element => ({ text: element.textContent?.slice(0, 2000), buttons: [...element.querySelectorAll("button")].map(button => ({ text: button.textContent, disabled: button.disabled })) })).catch(() => ({ diagnostic: "Docker card unavailable" }));
+      await test.info().attach("docker-card-layout-diagnostic", { body: JSON.stringify(diagnostic), contentType: "application/json" }); throw failure;
+    }
     const settingsLayout = await page.locator(".settings-dialog").evaluate((dialog) => {
       const dialogRect = dialog.getBoundingClientRect();
       const panel = dialog.querySelector('.settings-panel:not([hidden])');
@@ -250,7 +254,7 @@ test("keeps contact editing, model configuration and settings usable at 200 perc
       (await BrowserWindow.getAllWindows()[0]!.webContents.capturePage()).toPNG().toString("base64"),
     );
     writeFileSync("/tmp/aevoren-bot-responsive-settings-zoom-200-fixed.png", Buffer.from(settingsCapture, "base64"));
-    const sections = ["通用", "能力与权限", "长期记忆", "应用连接", "MCP", "主动服务", "版本更新"];
+    const sections = ["通用", "能力与权限", "长期记忆", "应用连接", "语音", "MCP", "主动服务", "版本更新"];
     await page.getByRole("button", { name: sections[0], exact: true }).focus();
     for (const [index, name] of sections.entries()) {
       const category = page.getByRole("button", { name, exact: true });

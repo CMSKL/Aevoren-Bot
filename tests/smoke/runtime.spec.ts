@@ -1,4 +1,6 @@
-import { removeTestDirectory } from "./test-cleanup";
+import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
+import { createServer, type ServerResponse } from "node:http";
+import { AppRepository } from "../../src/main/database";
 import { closeInspector } from "./navigation";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -39,11 +41,12 @@ async function launch(
   return { application, page: await application.firstWindow() };
 }
 
-async function createAndSend(page: Page, text: string): Promise<void> {
+async function createAndSend(page: Page, text: string, beforeSend?: () => Promise<void>): Promise<void> {
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();
   await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
   await closeInspector(page);
+  await beforeSend?.();
   await page.locator('textarea[aria-label="消息"]').fill(text);
   await page.getByRole("button", { name: "发送", exact: true }).click();
 }
@@ -83,56 +86,72 @@ async function forceKill(application: ElectronApplication): Promise<void> {
 
 test("reattaches the active runtime after renderer reloads in three phases", async () => {
   test.setTimeout(120_000);
-  const phases: Array<{ name: string; overrides: Record<string, string>; state: SessionLiveStateName }> = [
-    {
-      name: "dispatching",
-      overrides: { AEVOREN_BOT_FAKE_START_DELAY_MS: "500", AEVOREN_BOT_FAKE_DELAY_MS: "80" },
-      state: "starting",
-    },
-    {
-      name: "running",
-      overrides: { AEVOREN_BOT_FAKE_DELAY_MS: "500" },
-      state: "running",
-    },
-    {
-      name: "streaming",
-      overrides: { AEVOREN_BOT_FAKE_DELAY_MS: "250" },
-      state: "composing",
-    },
+  const phases: Array<{ name: string; state: SessionLiveStateName }> = [
+    { name: "dispatching", state: "starting" },
+    { name: "running", state: "running" },
+    { name: "streaming", state: "composing" },
   ];
-
-  for (const phase of phases) {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const userDataDir = mkdtempSync(join(tmpdir(), `aevoren-bot-reload-${phase.name}-`));
-      let application: ElectronApplication | undefined;
-      try {
-        const launched = await launch(userDataDir, phase.overrides);
-        application = launched.application;
-        const page = launched.page;
-        await createAndSend(page, `reload ${phase.name} ${attempt}`);
-        await waitForLiveState(page, phase.state);
-        await page.reload();
-        await expect(page.getByRole("button", { name: "停止回复" })).toBeVisible({ timeout: 2_000 });
-        await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1, {
-          timeout: 10_000,
-        });
-        await application.close();
-        application = undefined;
-
-        const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
-        expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 1 });
-        expect(database.prepare("SELECT state FROM runtime_runs").get()).toEqual({ state: "completed" });
-        expect(database.prepare("SELECT role, COUNT(*) AS count FROM transcript_entries GROUP BY role ORDER BY role").all()).toEqual([
-          { role: "assistant", count: 1 },
-          { role: "user", count: 1 },
-        ]);
-        database.close();
-      } finally {
-        if (application) application.process().kill("SIGKILL");
-        removeTestDirectory(userDataDir);
+  type Gate = { model: string; phase: string; count: number; response: ServerResponse | null; released: boolean; aborted: boolean };
+  let gate: Gate | undefined;
+  const errors: string[] = [];
+  const delta = (text: string, done = false): string => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text }, finish_reason: done ? "stop" : null }] })}\n\n`;
+  const server = createServer(async (request, response) => {
+    try {
+      let body = ""; for await (const chunk of request) body += chunk;
+      const model = (JSON.parse(body) as { model: string }).model, active = gate;
+      if (!active || active.model !== model || request.headers.authorization !== "Bearer reload-fixture-token") throw new Error("Unexpected controlled provider request");
+      active.count += 1; if (active.count !== 1) throw new Error("Duplicate controlled provider request");
+      active.response = response; response.on("close", () => { if (!active.released) active.aborted = true; });
+      // Headers produce started/running; a first content delta produces composing.
+      // The next boundary stays held until the reloaded Renderer shows Stop.
+      if (active.phase !== "dispatching") { response.writeHead(200, { "content-type": "text/event-stream", "x-request-id": active.model }); response.flushHeaders(); }
+      if (active.phase === "streaming") response.write(delta("CONTROLLED_RELOAD_ACTIVE "));
+    } catch (error) { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end(); }
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); if (!address || typeof address === "string") throw new Error("Controlled provider unavailable");
+  try {
+    for (const phase of phases) {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const userDataDir = mkdtempSync(join(tmpdir(), `aevoren-bot-reload-${phase.name}-`));
+        const repository = new AppRepository(join(userDataDir, "aevoren-bot.sqlite")); repository.setSetting("memory.capture.enabled", "false", false); repository.close();
+        const active: Gate = { model: `reload-${phase.name}-${attempt}`, phase: phase.name, count: 0, response: null, released: false, aborted: false }; gate = active;
+        let application: ElectronApplication | undefined;
+        try {
+          const launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_PROVIDER: "0" }); application = launched.application;
+          const page = launched.page;
+          await createAndSend(page, `reload ${phase.name} ${attempt}`, async () => {
+            await page.evaluate(async input => {
+              const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+              const providers = await api.providers.list(), bots = await api.bots.list();
+              const provider = providers.ok ? providers.data.find(item => item.id === "openai-compatible.default") : undefined, bot = bots.ok ? bots.data[0] : undefined;
+              if (!provider || !bot) throw new Error("Controlled source unavailable");
+              const saved = await api.providers.saveOpenAiCompatible({ instanceId: provider.id, expectedVersion: provider.version, baseUrl: input.baseUrl, apiKey: "reload-fixture-token" }); if (!saved.ok) throw new Error(saved.error.code);
+              const updated = await api.bots.update({ id: bot.id, expectedVersion: bot.version, patch: { modelSelection: { providerInstanceId: provider.id, modelId: input.model }, mcpServerIds: [] } }); if (!updated.ok) throw new Error(updated.error.code);
+            }, { baseUrl: `http://127.0.0.1:${address.port}/v1`, model: active.model });
+          });
+          await expect.poll(() => active.count).toBe(1);
+          await waitForLiveState(page, phase.state);
+          await page.reload();
+          await expect(page.getByRole("button", { name: "停止回复" })).toBeVisible({ timeout: 2_000 });
+          expect(active.aborted).toBe(false); expect(active.released).toBe(false);
+          active.released = true;
+          if (!active.response) throw new Error("Controlled response missing");
+          if (!active.response.headersSent) active.response.writeHead(200, { "content-type": "text/event-stream", "x-request-id": active.model });
+          active.response.end(`${delta("CONTROLLED_RELOAD_DONE", true)}data: [DONE]\n\n`);
+          await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1, { timeout: 10_000 });
+          expect(active.count).toBe(1); expect(errors).toEqual([]);
+          await closeTestApplication(application); application = undefined;
+          const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
+          try {
+            expect(database.prepare("SELECT COUNT(*) AS count FROM runtime_runs").get()).toEqual({ count: 1 });
+            expect(database.prepare("SELECT state FROM runtime_runs").get()).toEqual({ state: "completed" });
+            expect(database.prepare("SELECT role, COUNT(*) AS count FROM transcript_entries GROUP BY role ORDER BY role").all()).toEqual([{ role: "assistant", count: 1 }, { role: "user", count: 1 }]);
+          } finally { database.close(); }
+        } finally { if (application) await closeTestApplication(application); removeTestDirectory(userDataDir); }
       }
     }
-  }
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
 test("regenerates a failed accepted run without duplicating its user entry", async () => {
@@ -401,8 +420,30 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "library", "mcp", "mcpWrites", "memories", "messages", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "library", "mcp", "mcpWrites", "media", "memories", "messages", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "voice", "workspaces",
     ]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media,
+    ).toSorted())).toEqual(["available", "bind", "delete", "importPath", "list", "metadata", "onChanged", "pickImport", "preview", "read", "restore", "setEnabled", "unbind"]);
+    const mediaResult = await launched.page.evaluate(() =>
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media.metadata({ sessionId: "not-a-uuid", id: "not-a-uuid" }),
+    );
+    expect(mediaResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.voice,
+    ).toSorted())).toEqual(["audio", "beginCapture", "cancelCapture", "commitCapture", "configurations", "get", "list", "onChanged", "realtime", "saveConfiguration", "speak", "stop", "transcribe"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.voice.realtime,
+    ).toSorted())).toEqual(["append", "commitTurn", "interrupt", "onChanged", "playbackAck", "snapshot", "start", "stop", "stopTask"]);
+    const realtimeValidation = await launched.page.evaluate(async () => {
+      const realtime = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.voice.realtime;
+      return [await realtime.snapshot({ sessionId: "not-a-uuid", id: "not-a-uuid" }), await realtime.append({ sessionId: "not-a-uuid", id: "not-a-uuid", captureId: "not-a-uuid", sequence: 0, dataBase64: "AAA=" })];
+    });
+    for (const result of realtimeValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    const voiceResult = await launched.page.evaluate(() =>
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.voice.get({ sessionId: "not-a-uuid", id: "not-a-uuid" }),
+    );
+    expect(voiceResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.connectors,
     ).toSorted())).toEqual(["authorize", "bind", "bindings", "cancelAuthorization", "configure", "list", "read", "revoke", "search", "unbind"]);

@@ -34,6 +34,20 @@ function provider(): ProviderInstanceInfo {
 }
 
 describe("CapabilityRegistry", () => {
+  it("reports media pixel transport independently of a running browser and leaves model vision unconfirmed", async () => {
+    const repository = new AppRepository(":memory:"); repositories.push(repository);
+    const actor = repository.createBot(), current = provider(); current.capabilities.toolImageInput = true;
+    const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities },
+      { name: "Aevoren Bot", version: "1", platform: "darwin", architecture: "arm64", packaged: false });
+    const snapshot = () => registry.getSnapshot({ botId: actor.bot.id, sessionId: actor.session.id });
+    const first = await snapshot();
+    expect(first.capabilities.find(item => item.id === "media.tool-images")).toMatchObject({ availability: "available", description: expect.stringContaining("不代表所选模型") });
+    expect(first.capabilities.find(item => item.id === "browser.tool-images")).toMatchObject({ availability: "unavailable" });
+    current.capabilities.toolImageInput = false;
+    expect((await snapshot()).capabilities.find(item => item.id === "media.tool-images")).toMatchObject({ availability: "unavailable" });
+    expect((await snapshot()).capabilities.find(item => item.id === "media.documents")).toMatchObject({ availability: "available" });
+  });
+
   it("reports scoped MCP permission only for the current executor and live connection credential", async () => {
     const repository = new AppRepository(":memory:"); repositories.push(repository);
     const actor = repository.createBot(), peer = repository.createBot(), current = provider(); let credential = "a".repeat(64);

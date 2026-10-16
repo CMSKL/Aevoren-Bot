@@ -1,7 +1,7 @@
 import type { ApiResult, ToolPrepareResult } from "./contracts";
 import type { EnvironmentScope } from "./environment-contracts";
 import type { ConnectorDraftContent, ConnectorIdentity, NativeConnection } from "./native-connector-contracts";
-export type NativeWriteOperation = "gmail-send" | "drive-create-text" | "drive-update-text" | "notion-create-page";
+export type NativeWriteOperation = "gmail-send" | "drive-create-text" | "drive-update-text" | "notion-create-page" | "notion-update-page-title" | "notion-append-page";
 export type NativeWriteGrant = EnvironmentScope & { id: string; connectionId: string; accountId: string; authVersion: number;
   operation: NativeWriteOperation; targetIds: string[]; version: number; createdAt: string; updatedAt: string; revokedAt: string | null };
 export type NativeWriteGrantInput = EnvironmentScope & { connectionId: string; expectedAuthVersion: number; operation: NativeWriteOperation;
@@ -9,10 +9,11 @@ export type NativeWriteGrantInput = EnvironmentScope & { connectionId: string; e
 export type NativeWriteRevokeInput = EnvironmentScope & { id: string; expectedVersion: number };
 export type NativeOutboundPrepareInput = EnvironmentScope & { draftId: string; revisionId: string; expectedDraftVersion: number; grantId: string; expectedGrantVersion: number };
 export type NativeOutboundIdInput = EnvironmentScope & { id: string; expectedVersion: number };
+export type ObservedNotionTarget = { pageId: string; titlePropertyId: string; title: string; lastEditedTime: string; parentType: "page_id" | "data_source_id" | "workspace" };
 export type ExternalDraftReviewSnapshot = { kind: "external-draft"; connectionName: string; provider: NativeConnection["provider"];
   account: ConnectorIdentity; connectionId: string; authVersion: number; grantId: string; grantVersion: number;
   draftId: string; revisionId: string; revisionNumber: number; revisionDigest: string; operation: NativeWriteOperation;
-  targetIds: string[]; content: ConnectorDraftContent; intentId: string; expectedIntentVersion: number; observedTargetVersion?: string; targetDigest: string };
+  targetIds: string[]; content: ConnectorDraftContent; intentId: string; expectedIntentVersion: number; observedTargetVersion?: string; observedNotionTarget?: ObservedNotionTarget; targetDigest: string };
 export type NativeOutboundIntent = EnvironmentScope & { id: string; connectionId: string; provider: NativeConnection["provider"]; account: ConnectorIdentity;
   authVersion: number; grantId: string; grantVersion: number; draftId: string; revisionId: string; revisionDigest: string; operation: NativeWriteOperation;
   state: "prepared" | "dispatching" | "confirmed" | "rejected" | "unknown"; version: number; review: ExternalDraftReviewSnapshot;

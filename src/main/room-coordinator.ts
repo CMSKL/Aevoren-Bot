@@ -42,6 +42,8 @@ function publicHandoffTask(task: string): string {
 
 export type CoordinatedRoomPolicy = {
   origin?: import("@shared/contracts").DelegationOrigin;
+  /** Host lease rechecked after asynchronous routing and before persistence. */
+  assertCurrent?(): void;
   maxTurns?: number;
   maxHops?: number;
   maxTargetsPerTurn?: number;
@@ -147,6 +149,7 @@ export class RoomCoordinator {
   /** Internal M2 entry point. It is deliberately not exposed through preload or IPC. */
   sendCoordinated(command: RoomSendCommand, policy: CoordinatedRoomPolicy = {}, orchestrationEnabled = true): RoomSendResult {
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
+    policy.assertCurrent?.();
     const routingMode = command.routingMode;
     if (routingMode === "automatic") throw new AevorenBotError("INVALID_REQUEST");
     this.assertRouteShape(command, routingMode);
@@ -164,6 +167,7 @@ export class RoomCoordinator {
           text: command.text,
           attachments: command.attachments,
           resourceRefs: command.resourceRefs,
+          mediaRefs: command.mediaRefs,
           membershipVersion: this.repository.getRoom(command.roomId).membershipVersion,
           maxTurns: policy.maxTurns ?? DEFAULT_MAX_TURNS,
           maxHops: policy.maxHops ?? DEFAULT_MAX_HOPS,
@@ -205,6 +209,7 @@ export class RoomCoordinator {
       routingMode,
       command.attachments ?? [],
       command.resourceRefs ?? [],
+      command.mediaRefs ?? [],
     );
     const pending = this.routingInFlight.get(command.clientNonce);
     if (pending) {
@@ -605,6 +610,7 @@ export class RoomCoordinator {
       routingMode,
       command.attachments ?? [],
       command.resourceRefs ?? [],
+      command.mediaRefs ?? [],
     )) {
       throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
     }
@@ -617,6 +623,7 @@ export class RoomCoordinator {
       text: command.text,
       attachments: command.attachments,
       resourceRefs: command.resourceRefs,
+      mediaRefs: command.mediaRefs,
       membershipVersion: existing.membershipVersion,
       maxTurns: existing.maxTurns,
       maxHops: existing.maxHops,
@@ -719,6 +726,7 @@ export class RoomCoordinator {
         ownerAgentId: values.ownerAgentId,
         reason,
       });
+      policy.assertCurrent?.();
       const prepared = this.repository.createRoomRunWithInitialTurns({
         origin: policy.origin,
         roomId: command.roomId,
@@ -727,6 +735,7 @@ export class RoomCoordinator {
         text: command.text,
         attachments: command.attachments,
         resourceRefs: command.resourceRefs,
+        mediaRefs: command.mediaRefs,
         membershipVersion: detail.room.membershipVersion,
         maxTurns: policy.maxTurns ?? DEFAULT_MAX_TURNS,
         maxHops: policy.maxHops ?? DEFAULT_MAX_HOPS,

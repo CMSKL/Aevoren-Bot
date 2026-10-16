@@ -297,6 +297,22 @@ export class LibraryRepository {
     });
   }
 
+  /** Host-only immutable revision plus the original authorization incarnation. */
+  captureReferenceBindings(sessionId: string, references: ResourceReference[], executorBotId?: string): Array<{ reference: ResourceReference; bindingVersion: number }> {
+    this.assertReferences(sessionId, references, executorBotId);
+    return references.map(reference => {
+      const row = this.database.prepare("SELECT version FROM session_resource_bindings WHERE session_id=? AND resource_id=? AND revoked_at IS NULL")
+        .get(sessionId, reference.resourceId) as { version: number } | undefined;
+      if (!row) throw new AevorenBotError("LIBRARY_NOT_BOUND");
+      return { reference: structuredClone(reference), bindingVersion: row.version };
+    });
+  }
+
+  assertReferenceBindings(sessionId: string, admissions: Array<{ reference: ResourceReference; bindingVersion: number }>, executorBotId?: string): void {
+    const current = this.captureReferenceBindings(sessionId, admissions.map(item => item.reference), executorBotId);
+    if (current.some((item, index) => item.bindingVersion !== admissions[index]?.bindingVersion)) throw new AevorenBotError("LIBRARY_NOT_BOUND");
+  }
+
   assertReferences(sessionId: string, references: ResourceReference[], executorBotId?: string): void {
     this.resolveReferences(sessionId, references, executorBotId);
   }

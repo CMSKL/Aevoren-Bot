@@ -35,6 +35,7 @@ export class BrowserEngine {
   private readonly changeBinding = `aevoren_document_${randomUUID().replaceAll("-", "")}`;
   private readonly focusWorld = `aevoren_focus_${randomUUID().replaceAll("-", "")}`;
   private readonly operations = new Map<string, { cancelled: boolean; running: boolean; page: Page | null; processes: Set<ChildProcess> }>();
+  private readonly focusWaiters = new Set<{ operationId: unknown; cancel(): void }>();
 
   constructor(readonly options: { browserSessionId: string; profileDirectory: string; downloadsDirectory: string }) {}
 
@@ -137,13 +138,17 @@ export class BrowserEngine {
     return null;
   }
 
-  private async focusedPage(): Promise<PageRecord | null> {
+  private async focusedPage(check: () => void = () => {}): Promise<PageRecord | null> {
     const candidates = await Promise.all([...this.pages.values()].map(async record => {
       try {
+        check();
         const tree = await record.session.send("Page.getFrameTree");
+        check();
         const world = await record.session.send("Page.createIsolatedWorld", { frameId: tree.frameTree.frame.id,
           worldName: this.focusWorld, grantUniveralAccess: false });
+        check();
         const result = await record.session.send("Runtime.evaluate", { expression: "document.hasFocus()", contextId: world.executionContextId, returnByValue: true, silent: true });
+        check();
         return { record, focused: result.result.value === true };
       } catch { return { record, focused: false }; }
     }));
@@ -151,8 +156,43 @@ export class BrowserEngine {
     return focused.length === 1 ? focused[0]!.record : null;
   }
 
-  private async assertFocused(record: PageRecord): Promise<void> {
-    if ((await this.focusedPage())?.id !== record.id) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+  private async assertFocused(record: PageRecord, check?: () => void): Promise<void> {
+    if ((await this.focusedPage(check))?.id !== record.id) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+  }
+
+  /** Only an explicit AI frame focus request may await the window manager's focus event. */
+  private async awaitFrameFocus(record: PageRecord, input: Input, documentVersion: number, deadline: number): Promise<void> {
+    const check = (): void => {
+      this.assertAccess(input.expectedEpoch, input.actor); this.assertOperation(input);
+      if (this.pages.get(record.id) !== record || record.page.isClosed() || record.version !== documentVersion) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+    };
+    check();
+    let reject!: (error: unknown) => void, contextId: number | undefined;
+    const interrupted = new Promise<never>((_resolve, fail) => { reject = fail; });
+    const waiter = { operationId: input.operationId, cancel: (): void => {
+      try { check(); reject(new BrowserWorkerError("BROWSER_OPERATION_CANCELLED", 409)); } catch (error) { reject(error); }
+    } };
+    const key = `aevoren_focus_wait_${randomUUID().replaceAll("-", "")}`;
+    const timer = setTimeout(() => reject(new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409)), Math.max(1, deadline - Date.now()));
+    this.focusWaiters.add(waiter);
+    const step = async <T>(work: Promise<T>): Promise<T> => { const result = await Promise.race([work, interrupted]); check(); return result; };
+    try {
+      if ((await step(this.focusedPage(check)))?.id === record.id) return;
+      const tree = await step(record.session.send("Page.getFrameTree"));
+      const world = await step(record.session.send("Page.createIsolatedWorld", { frameId: tree.frameTree.frame.id, worldName: this.focusWorld, grantUniveralAccess: false }));
+      contextId = world.executionContextId;
+      const remaining = deadline - Date.now(); if (remaining <= 0) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+      const result = await step(record.session.send("Runtime.evaluate", { contextId, awaitPromise: true, returnByValue: true, silent: true,
+        expression: `new Promise(resolve => { const key=${JSON.stringify(key)}; let timer; const finish=value=>{clearTimeout(timer);window.removeEventListener('focus',focused,true);delete globalThis[key];resolve(value);}; const focused=()=>{if(document.hasFocus())finish(true);}; globalThis[key]=()=>finish(false); window.addEventListener('focus',focused,true); timer=setTimeout(()=>finish(false),${remaining}); focused(); })` }));
+      if (result.exceptionDetails || result.result.value !== true) throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+      await step(this.assertFocused(record, check));
+    } catch (error) {
+      check(); if (error instanceof BrowserWorkerError) throw error;
+      throw new BrowserWorkerError("BROWSER_OBSERVATION_STALE", 409);
+    } finally {
+      clearTimeout(timer); this.focusWaiters.delete(waiter);
+      if (contextId !== undefined) void record.session.send("Runtime.evaluate", { contextId, expression: `globalThis[${JSON.stringify(key)}]?.()`, returnByValue: true, silent: true }).catch(() => undefined);
+    }
   }
 
   private async pageDTO(record: PageRecord): Promise<BrowserPage> {
@@ -262,7 +302,8 @@ export class BrowserEngine {
     try {
       if (input.actor === "ai") {
         await record!.page.bringToFront(); this.activePageId = record!.id;
-        await this.assertFocused(record!);
+        await this.awaitFrameFocus(record!, input, versionBefore!, Date.now() + 5_000);
+        this.assertAccess(input.expectedEpoch, input.actor); this.assertOperation(input);
       }
       phase = "document-version-before";
       observation = input.actor === "ai" ? await this.observe(record!, input.expectedEpoch, 0, 18_000, "ai") : { id: randomUUID(), documentVersion: record?.version ?? null };
@@ -296,6 +337,7 @@ export class BrowserEngine {
   async perform(action: EngineAction, payload: Record<string, unknown> | ControlRecord): Promise<unknown> {
     if (action === "control") {
       this.control = { ...(payload as ControlRecord) };
+      for (const waiter of this.focusWaiters) waiter.cancel();
       for (const pageId of this.pages.keys()) this.invalidate(pageId);
       await this.downloads?.controlChanged();
       const closing: Promise<void>[] = [];
@@ -310,6 +352,7 @@ export class BrowserEngine {
       return null;
     }
     if (action === "shutdown") {
+      for (const waiter of this.focusWaiters) waiter.cancel();
       await this.downloads?.close();
       if (this.browser?.isConnected()) {
         const session = await this.browser.newBrowserCDPSession().catch(() => null);
@@ -328,9 +371,13 @@ export class BrowserEngine {
       const id = String((payload as Record<string, unknown>).operationId), operation = this.operations.get(id);
       if (operation) {
         operation.cancelled = true;
+        for (const waiter of this.focusWaiters) if (String(waiter.operationId) === id) waiter.cancel();
         for (const child of operation.processes) child.kill("SIGKILL");
         await operation.page?.close().catch(() => undefined);
-      } else this.operations.set(id, { cancelled: true, running: false, page: null, processes: new Set() });
+      } else {
+        this.operations.set(id, { cancelled: true, running: false, page: null, processes: new Set() });
+        for (const waiter of this.focusWaiters) if (String(waiter.operationId) === id) waiter.cancel();
+      }
       return null;
     }
     const input = payload as Input;

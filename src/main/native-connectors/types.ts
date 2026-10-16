@@ -36,7 +36,7 @@ export type NativeReadResult = {
   bytes?: Uint8Array;
 };
 
-export type NativeOutboundOperation = "gmail-send" | "drive-create-text" | "drive-update-text" | "notion-create-page";
+export type NativeOutboundOperation = "gmail-send" | "drive-create-text" | "drive-update-text" | "notion-create-page" | "notion-update-page-title" | "notion-append-page";
 export type NativeDispatchIdentity = { intentId: string; dispatchAttemptId: string; messageId?: string; reservedResourceId?: string };
 export type NativeOutboundRequest = {
   operation: NativeOutboundOperation;
@@ -44,9 +44,12 @@ export type NativeOutboundRequest = {
   content:
     | { kind: "gmail-message"; to: string[]; cc: string[]; subject: string; body: string }
     | { kind: "drive-text"; targetFileId: string | null; title: string; text: string }
-    | { kind: "notion-page"; parentPageId: string; title: string; text: string };
+    | { kind: "notion-page"; parentPageId: string; title: string; text: string }
+    | { kind: "notion-page-title"; pageId: string; title: string }
+    | { kind: "notion-page-append"; pageId: string; text: string };
   identity: NativeDispatchIdentity;
   observedDriveVersion?: string;
+  observedNotionTarget?: import("@shared/native-outbound-contracts").ObservedNotionTarget;
 };
 export type NativeDispatchProof = { operation: NativeOutboundOperation; draftDigest: string; targetDigest: string; wireDigest: string };
 export type NativeWriteAuthorization = NativeAuthorization & {
@@ -59,7 +62,7 @@ export type NativeWriteAuthorization = NativeAuthorization & {
 };
 export type NativeReconcileHint = { resourceId?: string; messageId?: string; childIds?: string[]; retryGuidance?: string };
 export type NativeWriteOutcome =
-  | { state: "confirmed"; resourceId: string; proofDigest: string }
+  | { state: "confirmed"; resourceId: string; proofDigest: string; confirmationEvidence?: "target-state" }
   | { state: "rejected"; code: string; status?: number }
   | { state: "unknown"; reason: "transport" | "cancelled" | "timeout" | "response-invalid" | "provider-ambiguous" | "not-proven"; hint?: NativeReconcileHint };
 

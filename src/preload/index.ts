@@ -1,9 +1,15 @@
+import { REALTIME_CHANNELS, REALTIME_CHANGED_CHANNEL } from "@shared/realtime-channels";
+import type { RealtimeEvent } from "@shared/realtime-contracts";
+import { VOICE_CHANNELS, VOICE_CHANGED_CHANNEL } from "@shared/voice-channels";
+import type { VoiceEvent } from "@shared/voice-contracts";
 import { MCP_WRITE_CHANNELS } from "@shared/mcp-write-channels";
 import { NATIVE_OUTBOUND_CHANNELS, NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "@shared/native-outbound-channels";
 import { contextBridge, ipcRenderer } from "electron";
 import { DEMONSTRATION_CHANNELS } from "@shared/demonstration-channels";
 import { IPC } from "@shared/channels";
 import { LIBRARY_CHANNELS } from "@shared/library-channels";
+import { MEDIA_CHANNELS, MEDIA_CHANGED_CHANNEL } from "@shared/media-channels";
+import type { MediaChangedEvent } from "@shared/media-contracts";
 import { ENVIRONMENT_CHANNELS, EXECUTION_CHANNELS, PROCESS_CHANNELS, ENVIRONMENT_EVENTS } from "@shared/environment-channels";
 import { BROWSER_CHANNELS, COMPUTER_CHANNELS, PREVIEW_CHANNELS, BROWSER_EVENTS } from "@shared/browser-channels";
 import { SKILL_EXECUTION_CHANNELS, SKILL_EXECUTION_EVENTS } from "@shared/skill-execution-channels";
@@ -188,6 +194,58 @@ const api: AevorenBotApi = {
       return () => ipcRenderer.removeListener(IPC.libraryEvent, handler);
     },
   },
+  voice: {
+    realtime: {
+      start: input => ipcRenderer.invoke(REALTIME_CHANNELS.start, input),
+      append: input => ipcRenderer.invoke(REALTIME_CHANNELS.append, input),
+      commitTurn: input => ipcRenderer.invoke(REALTIME_CHANNELS.commitTurn, input),
+      playbackAck: input => ipcRenderer.invoke(REALTIME_CHANNELS.playbackAck, input),
+      interrupt: input => ipcRenderer.invoke(REALTIME_CHANNELS.interrupt, input),
+      stop: input => ipcRenderer.invoke(REALTIME_CHANNELS.stop, input),
+      snapshot: input => ipcRenderer.invoke(REALTIME_CHANNELS.snapshot, input),
+      stopTask: input => ipcRenderer.invoke(REALTIME_CHANNELS.stopTask, input),
+      onChanged: listener => {
+        const handler = (_event: Electron.IpcRendererEvent, event: RealtimeEvent): void => listener(event);
+        ipcRenderer.on(REALTIME_CHANGED_CHANNEL, handler);
+        return () => ipcRenderer.removeListener(REALTIME_CHANGED_CHANNEL, handler);
+      },
+    },
+    configurations: () => ipcRenderer.invoke(VOICE_CHANNELS.configurations),
+    saveConfiguration: input => ipcRenderer.invoke(VOICE_CHANNELS.saveConfiguration, input),
+    beginCapture: input => ipcRenderer.invoke(VOICE_CHANNELS.beginCapture, input),
+    commitCapture: input => ipcRenderer.invoke(VOICE_CHANNELS.commitCapture, input),
+    cancelCapture: input => ipcRenderer.invoke(VOICE_CHANNELS.cancelCapture, input),
+    transcribe: input => ipcRenderer.invoke(VOICE_CHANNELS.transcribe, input),
+    speak: input => ipcRenderer.invoke(VOICE_CHANNELS.speak, input),
+    get: input => ipcRenderer.invoke(VOICE_CHANNELS.get, input),
+    list: input => ipcRenderer.invoke(VOICE_CHANNELS.list, input),
+    stop: input => ipcRenderer.invoke(VOICE_CHANNELS.stop, input),
+    audio: input => ipcRenderer.invoke(VOICE_CHANNELS.audio, input),
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, event: VoiceEvent): void => listener(event);
+      ipcRenderer.on(VOICE_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(VOICE_CHANGED_CHANNEL, handler);
+    },
+  },
+  media: {
+    list: input => ipcRenderer.invoke(MEDIA_CHANNELS.list, input),
+    available: input => ipcRenderer.invoke(MEDIA_CHANNELS.available, input),
+    metadata: input => ipcRenderer.invoke(MEDIA_CHANNELS.metadata, input),
+    read: input => ipcRenderer.invoke(MEDIA_CHANNELS.read, input),
+    preview: input => ipcRenderer.invoke(MEDIA_CHANNELS.preview, input),
+    pickImport: input => ipcRenderer.invoke(MEDIA_CHANNELS.pickImport, input),
+    importPath: input => ipcRenderer.invoke(MEDIA_CHANNELS.importPath, input),
+    bind: input => ipcRenderer.invoke(MEDIA_CHANNELS.bind, input),
+    unbind: input => ipcRenderer.invoke(MEDIA_CHANNELS.unbind, input),
+    setEnabled: input => ipcRenderer.invoke(MEDIA_CHANNELS.setEnabled, input),
+    delete: input => ipcRenderer.invoke(MEDIA_CHANNELS.delete, input),
+    restore: input => ipcRenderer.invoke(MEDIA_CHANNELS.restore, input),
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, value: MediaChangedEvent): void => listener(value);
+      ipcRenderer.on(MEDIA_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(MEDIA_CHANGED_CHANNEL, handler);
+    },
+  },
   userProfile: {
     get: () => ipcRenderer.invoke(IPC.userProfileGet),
     update: (input) => ipcRenderer.invoke(IPC.userProfileUpdate, input),
@@ -292,6 +350,11 @@ const api: AevorenBotApi = {
     removeMember: (input) => ipcRenderer.invoke(IPC.roomsRemoveMember, input),
   },
   sessions: {
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, event: { session: import("@shared/contracts").Session }): void => listener(event);
+      ipcRenderer.on(IPC.sessionChangedEvent, handler);
+      return () => ipcRenderer.removeListener(IPC.sessionChangedEvent, handler);
+    },
     getMain: (botId) => ipcRenderer.invoke(IPC.sessionsGetMain, botId),
   },
   transcript: {

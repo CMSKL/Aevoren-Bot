@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { parserAssetComponents, selectedParserLicense } from "./media-parser-assets.mjs";
 
 const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const output = execFileSync(pnpm, ["licenses", "list", "--prod", "--long", "--json"], {
@@ -13,9 +14,13 @@ let packages = 0;
 for (const [license, entries] of Object.entries(catalog)) {
   if (!Array.isArray(entries)) throw new Error(`Unexpected pnpm license output for ${license}`);
   packages += entries.length;
-  if (!license.trim() || forbidden.test(license)) {
-    findings.push(`${license || "<missing>"}: ${entries.map((entry) => entry.name).join(", ")}`);
+  for (const entry of entries) for (const version of entry.versions ?? [entry.version]) {
+    const selected = selectedParserLicense(entry.name, version, license);
+    if (!selected.trim() || forbidden.test(selected)) findings.push(`${license || "<missing>"}: ${entry.name}`);
   }
+}
+for (const component of parserAssetComponents) {
+  if (!component.license.trim() || forbidden.test(component.license)) findings.push(`${component.license || "<missing>"}: ${component.name}`);
 }
 
 if (findings.length > 0) {

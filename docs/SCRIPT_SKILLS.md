@@ -1,6 +1,6 @@
 # Script Skills
 
-This guide describes the v0.3.0-beta.30 development candidate. Package and real Docker validation are recorded in the [implementation plan](IMPLEMENTATION_PLAN.md); this document does not imply a published installer.
+This guide describes script Skills introduced in beta.30 and retained in the beta.35 development candidate. Package and real Docker validation are recorded in the [implementation plan](IMPLEMENTATION_PLAN.md); this document does not imply a published installer.
 
 ## Select, authorize and run
 
@@ -37,4 +37,4 @@ The Worker keeps a private package cache and creates a root-owned, read-only sna
 
 Execution remains inside the configured local Docker environment. Browser profiles, host HOME, Docker socket and host GUI are outside its access. Script jobs retain the environment's outbound network access and workspace permissions. Secrets are not copied into Skill metadata or job environments.
 
-Demonstration recording, native Gmail/Drive/Notion, writable MCP and interactive Apps are separate remaining Stage 4 deliveries. Third-party writes require a concrete approved target and are not verified by controlled adapter tests.
+The beta.35 development candidate also includes [demonstration drafts](SKILL_DEMONSTRATIONS.md), [native Gmail/Drive/Notion connections](NATIVE_CONNECTORS.md), [approved external drafts](NATIVE_OUTBOUND.md) and [scoped MCP tools/Apps](MCP_APPS.md), each with separate validation records. Third-party writes require a concrete approved target and are not verified by controlled adapter tests.

@@ -1,3 +1,8 @@
+import { REALTIME_PRODUCT_OPERATIONS } from "@shared/realtime-product";
+import { realtimeInputSchema } from "@shared/realtime-schemas";
+import type { RealtimeService } from "./realtime-service";
+import { addVoiceProductHandlers, type VoiceProductDependencies } from "./voice-product-handlers";
+import { addMediaProductHandlers, type MediaProductDependencies } from "./media-product-handlers";
 import { addMcpWriteProductHandlers, type McpWriteProductDependencies } from "./mcp-write-product-handlers";
 import { addNativeOutboundProductHandlers } from "./native-outbound-product-handlers";
 import type { NativeOutboundService } from "./native-outbound-service";
@@ -85,13 +90,15 @@ import { addSkillExecutionProductHandlers, type SkillExecutionProductDependencie
 import { addNativeConnectorProductHandlers, type NativeConnectorProductDependencies } from "./native-connector-product-handlers";
 import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 
-export type ProductDependencies = McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & DemonstrationProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
+export type ProductDependencies = VoiceProductDependencies & MediaProductDependencies & McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & DemonstrationProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
   nativeOutboundService?: NativeOutboundService;
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
   pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
   exportLibraryResource?(input: { sessionId: string; id: string; revisionId?: string }, signal?: AbortSignal): Promise<LibraryExportResult | null>;
+  realtimeService?: RealtimeService;
   productChanged?(): void;
+  sessionChanged?(session: import("@shared/contracts").Session): void;
   requestUpdateAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
   requestExitAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
   requestView?(input: import("@shared/product-view").ProductViewInput): Promise<import("@shared/product-view").ProductViewResult>;
@@ -140,6 +147,14 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
 
   const handlers = new Map<string, (input?: unknown) => unknown>();
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
+  addMediaProductHandlers(handlers, dependencies, commit, libraryContext);
+  addVoiceProductHandlers(handlers, dependencies, commit);
+  for (const definition of REALTIME_PRODUCT_OPERATIONS) handlers.set(definition.channel, input => {
+    const service = dependencies.realtimeService;
+    if (!service) throw new AevorenBotError("VOICE_UNSUPPORTED");
+    const parsed = realtimeInputSchema.parse(input);
+    return definition.name.endsWith("snapshot") ? service.snapshot(parsed) : definition.name.endsWith("stopTask") ? service.stopTask(parsed) : service.stop(parsed);
+  });
   addEnvironmentProductHandlers(handlers, dependencies, commit, libraryContext);
   addBrowserProductHandlers(handlers, dependencies, commit, libraryContext);
   addDemonstrationProductHandlers(handlers, dependencies, commit, libraryContext);
@@ -233,7 +248,13 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const parsed = conversationHiddenSchema.parse(input);
     return commit(() => repository.setConversationHidden(parsed.sessionId, parsed.hidden));
   });
-  handle(IPC.conversationsClear, (sessionId: unknown) => commit(() => repository.clearConversation(sessionIdSchema.parse(sessionId))));
+  handle(IPC.conversationsClear, (input: unknown) => {
+    const sessionId = sessionIdSchema.parse(input);
+    let changed: import("@shared/contracts").Session | undefined;
+    const result = commit(() => { const value = repository.clearConversation(sessionId); changed = repository.getSession(sessionId); return value; });
+    if (changed) dependencies.sessionChanged?.(changed);
+    return result;
+  });
   handle(IPC.conversationsSetProject, (input: unknown) => {
     const parsed = conversationProjectSchema.parse(input);
     return commit(() => repository.setConversationProject(parsed.sessionId, parsed.projectId, parsed.expectedVersion));

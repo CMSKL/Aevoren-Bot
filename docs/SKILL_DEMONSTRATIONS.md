@@ -1,6 +1,6 @@
 # Skill demonstrations
 
-This development unit records explicit human input in an isolated browser/computer and creates a reviewable text Skill draft. It does not record or control the host desktop.
+This feature, introduced in beta.33 and retained in the beta.35 development candidate, records explicit human input in an isolated browser/computer and creates a reviewable text Skill draft. It does not record or control the host desktop.
 
 ## Use
 

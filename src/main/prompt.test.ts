@@ -78,6 +78,18 @@ describe("buildPrompt", () => {
     updatedAt: "2026-01-02T12:00:00.000Z",
   }];
 
+  it("keeps verified final human voice input at user authority without delegation ancestry", () => {
+    const spoken = { ...entry(1, "user", "创建一个选题 Bot"), origin: { kind: "voice-input" as const,
+      voiceSessionId: "voice-session", turnId: "voice-turn", callId: "call", transcriptDigest: "a".repeat(64) } };
+    const prompt = buildPrompt(bot, session, [spoken], 1);
+    const message = prompt.messages.find(item => item.content.includes("HUMAN_VOICE_INPUT"));
+    expect(message?.role).toBe("user"); expect(message?.content).toContain("创建一个选题 Bot");
+    expect(message?.content).not.toContain("AI_DELEGATED_TASK");
+    expect(message?.content).not.toContain("fromRuntimeRunId");
+    expect(JSON.stringify(prompt)).not.toContain("app:delegated-task:v1");
+    expect(JSON.stringify(prompt)).not.toContain("HOST_DELEGATED_TASK_CONTRACT");
+  });
+
   it("orders profile and valid transcript entries through the target user", () => {
     const prompt = buildPrompt(
       bot,
@@ -90,6 +102,21 @@ describe("buildPrompt", () => {
       { role: "user", content: "first" },
     ]);
     expect(prompt.manifest).toMatchObject({ profileVersion: 3, inputSeq: 1, generation: 1 });
+  });
+
+  it("keeps pure-media sends and pins only this turn's metadata in user authority", () => {
+    const ref = { mediaId: "20000000-0000-4000-8000-000000000001", sha256: "a".repeat(64), extraction: { id: "30000000-0000-4000-8000-000000000001", digest: "b".repeat(64) } };
+    const first = { ...entry(1, "user", ""), mediaRefs: [ref] };
+    const prompt = buildPrompt(bot, session, [first], 1);
+    expect(prompt.messages.some(message => message.role === "user" && message.content.includes(ref.mediaId))).toBe(true);
+    expect(prompt.messages.every(message => ["user", "assistant", "system"].includes(message.role))).toBe(true);
+    expect(prompt.manifest.schemaVersion).toBe(6);
+    expect(prompt.manifest.blocks).toContainEqual(expect.objectContaining({ authority: "media-resource", sourceEntryId: first.id }));
+    const changed = buildPrompt(bot, session, [{ ...first, mediaRefs: [{ ...ref, extraction: { ...ref.extraction, digest: "c".repeat(64) } }] }], 1);
+    expect(changed.manifest.digest).not.toBe(prompt.manifest.digest);
+    const later = buildPrompt(bot, session, [first, entry(2, "user", "next")], 2);
+    expect(later.manifest.blocks.some(block => block.authority === "media-resource")).toBe(false);
+    expect(JSON.stringify(later.messages)).not.toContain(ref.mediaId);
   });
 
   it("builds a deterministic metadata-only manifest", () => {
