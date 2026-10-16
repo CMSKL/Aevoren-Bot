@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.3.0-beta.40 (development candidate)
+
+- Search saved messages, immutable document/Skill versions, media/transcripts, Task threads, routines and authorized local drafts from one scoped interface.
+- Recheck exact source identity, generation, version and grants; preserve original Task Runtime selections and prevent same-text replacements after history is cleared.
+- Share search with connected AI through host-scoped product operations. Keep private titles/snippets outside durable tool receipts and reauthorize text before provider serialization.
+- Local SQLite, guarded transport and two controlled UI cases pass. The actual unsigned macOS package passed Search2 plus Task3 in one run; platform and signed-release gates remain pending.
+
+
+## v0.3.0-beta.39 (development candidate)
+
+- Add multiple independent TASK conversations beside each Bot/group's MAIN chat, migration 45, separate session identities and explicit executor admission.
+- Default all task context and permissions to empty. Capture selected per-member Memory/history/resource/media versions, Workspace ceilings, exact read-only MCP identities and product/network/clipboard permissions; Runtime retries retain their original snapshot.
+- Add task creation, separate sidebar rows, session-specific history/drafts, conflict-preserving titles, explicit authorization revision and task-only stop/delete controls. Preserve the owner Bot/group and ordinary MAIN entry points.
+- Scope capability metadata, model tools and live events to the actual task/executor, without inheriting global connection state or unselected authority.
+- The source build, focused checks and all three distinct hidden Task scenarios pass across separate recorded runs. The actual unsigned macOS package passes Task3 plus typed API (4/4). Cross-platform and signed publication remain pending; search and the remaining Phase 6B–6F deliveries are not included.
+
+## v0.3.0-beta.38 (development candidate)
+
+- Add user-initiated, manually committed Realtime voice turns with host-owned credentials, final human transcript provenance, ordinary Runtime delegation and independent speech/task stop controls.
+- Add persistent turn/call journals, fixed resource and member admissions, actual rendered-sample interrupt acknowledgements and fail-closed disconnect/recovery.
+- Local controlled source coverage totals 159 distinct passes and 32 conditional skips: preserve the sleep-affected full run's 156 passes/3 failures and the subsequent focused 3/3 passes separately. This is not one all-green full run. Existing unsigned macOS-package evidence remains separate; cross-platform and signed publication are pending. Physical devices and a live cloud account remain unverified.
+
+## v0.3.0-beta.37 (development candidate)
+
+- Add separate encrypted STT/TTS/Realtime settings, completed-file streaming transcription and actual PCM-to-WAV speech, durable non-replaying task intents and scoped cancellation/recovery. Realtime configuration is saved; connection support follows separately.
+- Add explicit audio-only microphone intents, draft-version guarded manual transcript insertion, current-session completion-order reading, AI voice identity and late-result/generation cancellation guards.
+- Add genuinely decoded bounded audio/video imports and local players, persisted durations and revocable binary reads; video is preview-only.
+- Node24 ordinary tests pass1,669 with45 skips; controlled hidden voice4, typed API1 and A/V plus legacy media5 pass. Cloud/hardware, package and final cross-platform gates remain distinct.
+
+## v0.3.0-beta.36 (development candidate)
+
+- Add owned PNG/JPEG/PDF/DOCX storage, fixed message/extraction references, conversation bindings and immutable Runtime admission snapshots; revocation blocks later reads and rebinding does not revive old tasks.
+- Add bounded PDF text/page previews and DOCX plain-text extraction in independent hidden sandbox parser jobs, explicit assets and licenses, cancellation and shutdown.
+- Share twelve media operations with the UI and AI. Actual text/pixels travel as revocable ephemeral tool attachments across API, Claude and Codex; receipts contain metadata only.
+- Preserve composer drafts across late imports, sends and navigation with monotonic versions. Node24 ordinary tests pass1,630/45 skipped; fresh hidden source150/32 skipped and actual unsigned macOS package34 scenarios pass after the CAS hardlink regression fix. Final cross-platform CI and signed publication remain pending; no OCR, audio/video or voice is claimed.
+
+## v0.3.0-beta.35 (development candidate)
+
+- Add distinct Notion saved-draft operations and exact page write grants for title-only updates and end-of-page paragraph appends. Preserve existing page body and ordinary/data-source title property identity.
+- Pin observed target metadata in the fixed approval review and recheck the current account and grant before a single PATCH. Changed drafts invalidate pending approval.
+- Verify appended blocks by returned or committed child IDs, parent and text; ambiguous attempts remain unknown and cannot resend. Label title reconciliation based only on current state without claiming the original request caused that state.
+- Real SQLite, controlled HTTP and Renderer unit checks pass. The combined source build, 1,586 ordinary tests (45 skipped) and 14 hidden Electron source cases passed before the final MCP setup cleanup. Post-cleanup focused checks and 22 actual unsigned macOS-package business cases passed at the earlier candidate; its old cleanup helper did not establish normal exit. These remain historical receipts. The current diagnostic candidate passed Linux CI with 1,593 ordinary tests (45 skipped) and 41 real Docker checks, and a fresh unsigned macOS rebuild passed 30 package scenarios with no forced-cleanup warnings. Full cross-platform CI, validated Beta promotion and signed publication remain pending. Real Notion credentials are unavailable and unverified.
+
 ## v0.3.0-beta.34 (development candidate)
 
 - Add conversation/executor-scoped MCP grants, fixed schema/configuration/credential approvals and durable send-once tool receipts. Unknown results do not replay; confirmation is explicitly server-reported.
@@ -7,11 +50,11 @@
 - Share one Apps approval owner across native and MCP actions, preserving six-member execution and exact Stop/revoke.
 - Retain read-only MCP compatibility, existing themes and icons. External App domains and device permissions are disabled; real accounts and final package acceptance remain separate verification gates.
 
-## v0.3.0-beta.33
+## v0.3.0-beta.33 (published Beta)
 
 - Added explicit isolated-computer demonstration recording and scoped editable text Skill drafts; publication reviews a fixed saved version and creates a disabled Skill.
 - Browser Worker 1.1.0 redacts printable keys and clipboard input, and seals captures on disconnect or control change.
-- Retain native connector and outbound features from beta.31/beta.32. Development and beta CI passed; signed and notarized macOS artifacts are publicly available. Real third-party accounts and Windows Docker remain unverified.
+- Native connector and outbound features from beta.31/beta.32 are retained. The signed/notarized macOS release is published; real Windows Docker and live third-party accounts remain separate, unverified boundaries.
 
 
 ## v0.3.0-beta.32 (development candidate)
@@ -21,7 +64,7 @@
 - Preserve full immutable approval content, detect draft/authorization changes, and retire removed group members' old intent content permanently. Keep internal receipts across history clearing and Runtime removal.
 - Use genuine host-outbound Runtime records for interface actions, retain six independent group members and route Stop to the exact owned task. Existing model Runtime controls stay separate.
 - Fix duplicate approval portals in hidden surfaces and group inspectors. Migration 39 preserves existing records, pending approvals/tools, environment provenance, foreign keys, indexes and triggers.
-- Local ordinary tests: 1,528 passed, 44 skipped; TypeScript, ESLint, build, license, documentation, open-source and security gates passed. Hidden source acceptance passed six cases; the frozen unsigned macOS package passed eight. Controlled HTTP is not real third-party account verification; cross-platform CI and signed publication remain pending.
+- Local ordinary tests: 1,528 passed, 44 skipped; TypeScript, ESLint, build, license, documentation, open-source and security gates passed. Hidden source acceptance passed six cases; the frozen unsigned macOS package passed seven native/outbound scenarios. The formerly included typed-API case is source evidence only; the actual-package fixture was corrected in beta.35. Controlled HTTP is not real third-party account verification; cross-platform CI and signed publication remain pending.
 
 ## v0.3.0-beta.31 (development candidate)
 

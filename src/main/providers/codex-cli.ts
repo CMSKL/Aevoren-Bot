@@ -67,11 +67,19 @@ class CodexRpcClient {
   private notificationListeners = new Set<(message: JsonObject) => void>();
   private serverRequestHandler: ((method: string, params: unknown) => Promise<unknown>) | null = null;
   private closed = false;
+  private disposal: Promise<void> | null = null;
 
   constructor(
     private readonly cliPath: string,
     private readonly cwd: string,
+    private readonly assertAuthority?: () => void,
+    private readonly authorityFailed?: (error: unknown) => void,
   ) {}
+
+  private assertCurrent(): void {
+    try { this.assertAuthority?.(); }
+    catch (error) { this.authorityFailed?.(error); throw error; }
+  }
 
   start(): void {
     if (this.child) return;
@@ -121,18 +129,22 @@ class CodexRpcClient {
       timer.unref?.();
       this.pending.set(id, { method, resolve, reject, timer });
       try {
-        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-      } catch {
+        const wire = `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`;
+        this.assertCurrent();
+        child.stdin.write(wire);
+      } catch (error) {
         clearTimeout(timer);
         this.pending.delete(id);
-        reject(new AevorenBotError("MODEL_TRANSPORT_ERROR"));
+        reject(error instanceof AevorenBotError ? error : new AevorenBotError("MODEL_TRANSPORT_ERROR"));
       }
     });
   }
 
   notify(method: string, params: unknown): void {
     if (!this.child || this.closed) return;
-    this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+    const wire = `${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`;
+    this.assertCurrent();
+    this.child.stdin.write(wire);
   }
 
   onNotification(listener: (message: JsonObject) => void): () => void {
@@ -144,7 +156,11 @@ class CodexRpcClient {
     this.serverRequestHandler = handler;
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    return this.disposal ??= this.closeOwnedProcess();
+  }
+
+  private async closeOwnedProcess(): Promise<void> {
     const child = this.child;
     this.closed = true;
     this.failAll(new AevorenBotError("MODEL_TRANSPORT_ERROR"));
@@ -219,9 +235,12 @@ class CodexRpcClient {
     try {
       const result = await this.serverRequestHandler(method, params);
       if (this.closed) return;
-      this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+      const wire = `${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`;
+      this.assertCurrent();
+      this.child.stdin.write(wire);
     } catch {
       if (this.closed) return;
+      try { this.assertCurrent(); } catch { return; }
       this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message: "tool request failed" } })}\n`);
     }
   }
@@ -404,7 +423,8 @@ class CodexExecProvider implements ModelProvider {
     private readonly cwd: string,
   ) {}
 
-  async *run(messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ModelEvent> {
+  async *run(messages: ChatMessage[], signal: AbortSignal, context?: ModelRunContext): AsyncIterable<ModelEvent> {
+    context?.assertAuthority?.();
     const path = resolveCliPath(this.cliCommand, cliEnvironment());
     if (!path || !this.modelId) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
     mkdirSync(this.cwd, { recursive: true, mode: 0o700 });
@@ -436,10 +456,12 @@ class CodexExecProvider implements ModelProvider {
     child.stderr.resume();
     const abort = (): void => { child.kill("SIGTERM"); };
     signal.addEventListener("abort", abort, { once: true });
-    child.stdin.end(`${prompt.developerInstructions}\n\n${prompt.input}`);
+    try { context?.assertAuthority?.(); child.stdin.end(`${prompt.developerInstructions}\n\n${prompt.input}`); }
+    catch (error) { signal.removeEventListener("abort", abort); child.kill("SIGTERM"); throw error; }
     const lines = createInterface({ input: child.stdout });
     try {
       for await (const line of lines) {
+        context?.assertAuthority?.();
         if (!line.trim()) continue;
         let event: JsonObject;
         try {
@@ -504,16 +526,17 @@ export class CodexCliProvider implements ModelProvider {
         yield event;
       }
     } catch (error) {
+      context?.assertAuthority?.();
       if (accepted || signal.aborted || hasStructuredTools) throw error;
-      yield* new CodexExecProvider(this.cliCommand, this.modelId, this.cwd).run(messages, signal);
+      yield* new CodexExecProvider(this.cliCommand, this.modelId, this.cwd).run(messages, signal, context);
     }
   }
 
   private async *runAppServer(messages: ChatMessage[], signal: AbortSignal, context?: ModelRunContext): AsyncIterable<ModelEvent> {
     const path = resolveCliPath(this.cliCommand, cliEnvironment());
     if (!path || !this.modelId) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
-    const client = new CodexRpcClient(path, this.cwd);
     const queue = new AsyncModelEventQueue();
+    const client = new CodexRpcClient(path, this.cwd, context?.assertAuthority, error => { queue.fail(error); settleCompletion?.(); });
     const dynamicTools = structuredModelToolDefinitions(context);
     let threadId: string | null = null;
     let turnId: string | null = null;
@@ -526,10 +549,11 @@ export class CodexCliProvider implements ModelProvider {
       resolve(value: unknown): void;
       reject(error: unknown): void;
     }> = [];
-    let settleCompletion: (() => void) | null = null;
+    let settleCompletion!: () => void;
     const completion = new Promise<void>((resolve) => { settleCompletion = resolve; });
 
     const consume = (message: JsonObject): void => {
+      try { context?.assertAuthority?.(); } catch (error) { queue.fail(error); settleCompletion?.(); return; }
       const method = message.method;
       const params = object(message.params) ?? {};
       if (!threadId || params.threadId !== threadId) return;
@@ -578,6 +602,7 @@ export class CodexCliProvider implements ModelProvider {
     signal.addEventListener("abort", abort, { once: true });
 
     const handleToolCall = async (method: string, rawParams: unknown): Promise<unknown> => {
+      context?.assertAuthority?.();
       if (method !== "item/tool/call") throw new AevorenBotError("MODEL_CLI_PROTOCOL_ERROR");
       const params = object(rawParams);
       if (
@@ -593,9 +618,10 @@ export class CodexCliProvider implements ModelProvider {
         let answered = false;
         queue.push({
           ...parsed,
-          respond: async (content, images) => {
+          respond: async (content, images, modelText) => {
             if (answered) throw new AevorenBotError("RUNTIME_STATE_INVALID");
-            const visual = toolImageResponse(content, images);
+            const visual = toolImageResponse(content, images, modelText);
+            try { context?.assertAuthority?.(); } catch (error) { queue.fail(error); settleCompletion?.(); throw error; }
             answered = true;
             let success = true;
             try {
@@ -621,8 +647,9 @@ export class CodexCliProvider implements ModelProvider {
       return handleToolCall(method, rawParams);
     });
 
-    void (async () => {
+    const lifecycle = (async () => {
       try {
+        context?.assertAuthority?.();
         client.start();
         await client.initialize();
         const selection = codexSelection(this.modelId);
@@ -677,7 +704,16 @@ export class CodexCliProvider implements ModelProvider {
       }
     })();
 
-    yield* queue.iterate();
+    try {
+      yield* queue.iterate();
+    } finally {
+      settleCompletion?.();
+      // Error delivery must not race teardown of an owned CLI cwd or pipes.
+      // Disposal also rejects pending startup RPCs, so early iterator return
+      // cannot wait indefinitely for a provider response.
+      await client.dispose();
+      await lifecycle;
+    }
   }
 
   async testConnection(signal: AbortSignal): Promise<void> {

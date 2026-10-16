@@ -3,7 +3,7 @@ import { projectRoomSummary, type PromptMessage } from "./prompt";
 import type { ComputationToolRequest, DeviceToolRequest, ExecutionEvidenceReceipt, McpToolInfo, McpToolRequest, NetworkToolRequest, ProjectToolRequest, RoomRunSummary, WorkspaceToolRequest } from "@shared/contracts";
 import { computationToolRequestSchema, deviceToolRequestSchema, mcpToolRequestSchema, networkToolRequestSchema, projectToolRequestSchema, productToolRequestSchema, workspaceToolRequestSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
-import { imageAwareChatMessages, type ModelImageAttachment } from "./model-image";
+import { imageAwareChatMessages, type ModelImageAttachment, type ModelTextAttachment } from "./model-image";
 
 export type ChatMessage = PromptMessage | {
   role: "assistant";
@@ -18,6 +18,7 @@ export type ChatMessage = PromptMessage | {
   tool_call_id: string;
   content: string;
   images?: ModelImageAttachment[];
+  modelText?: ModelTextAttachment;
 };
 
 export type RoomPeer = {
@@ -61,7 +62,7 @@ export type RoomContinuationDecision =
     };
 
 export type ModelToolResponder = {
-  respond?(content: string, images?: readonly ModelImageAttachment[]): Promise<void>;
+  respond?(content: string, images?: readonly ModelImageAttachment[], modelText?: ModelTextAttachment): Promise<void>;
   providerToolName?: string;
   /** Native MCP request cancellation, in addition to the owning Runtime's signal. */
   toolSignal?: AbortSignal;
@@ -89,6 +90,9 @@ export type ModelEvent =
   | { type: "completed"; finishReason: string };
 
 export type ModelRunContext = {
+  /** Host-only task lease; never serialized into provider requests. */
+  assertAuthority?(): void;
+  taskScoped?: boolean;
   supportedToolNames?: readonly string[];
   requestedWritePaths?: readonly string[];
   executorBotId: string;
@@ -878,7 +882,7 @@ export type StructuredModelToolDefinition = {
 
 function projectToolDefinitions(context?: ModelRunContext): StructuredModelToolDefinition[] {
   if (!context?.projectTools) return [];
-  return [{
+  const definitions: StructuredModelToolDefinition[] = [{
     name: "product_catalog",
     description: "Discover every existing product operation: settings, Bots, conversations, Rooms, tasks, Memory, MCP, providers, files and updates. Always available for discovery; execution still respects host approvals and scope.",
     inputSchema: { type: "object", additionalProperties: false, properties: { query: { type: "string", maxLength: 200 } } },
@@ -909,6 +913,7 @@ function projectToolDefinitions(context?: ModelRunContext): StructuredModelToolD
       memberBotIds: { type: "array", minItems: 2, maxItems: 6, uniqueItems: true, items: { type: "string", format: "uuid" } },
     }, required: ["name", "memberBotIds"] },
   }];
+  return context.taskScoped ? definitions.filter(tool => tool.name.startsWith("product_")) : definitions;
 }
 
 export function structuredModelToolDefinitions(context?: ModelRunContext): StructuredModelToolDefinition[] {
@@ -1422,6 +1427,19 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       : remainingRequiredTools.length > 1 || context?.requireToolCall && completedToolNames.size === 0
         ? "required"
         : "auto";
+    let requestBody: string;
+    try {
+      requestBody = JSON.stringify({
+        model: this.modelId,
+        messages: imageAwareChatMessages(requestMessages),
+        stream: true,
+        ...(tools.length > 0 ? { tools, tool_choice: toolChoice } : {}),
+        ...(tools.length > 0 && isOfficialDeepSeekApi(this.baseUrl) ? { thinking: { type: "disabled" } } : {}),
+      });
+      context?.assertAuthority?.();
+    } catch (error) {
+      clearTimeout(connectTimer); signal.removeEventListener("abort", relayAbort); throw error;
+    }
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
@@ -1429,16 +1447,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
           "content-type": "application/json",
           authorization: `Bearer ${this.apiKey}`,
         },
-        body: JSON.stringify({
-          model: this.modelId,
-          messages: imageAwareChatMessages(requestMessages),
-          stream: true,
-          ...(tools.length > 0 ? {
-            tools,
-            tool_choice: toolChoice,
-          } : {}),
-          ...(tools.length > 0 && isOfficialDeepSeekApi(this.baseUrl) ? { thinking: { type: "disabled" } } : {}),
-        }),
+        body: requestBody,
         signal: controller.signal,
       });
     } catch {
@@ -1450,8 +1459,9 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       signal.removeEventListener("abort", relayAbort);
     }
     if (!response.ok || !response.body) throw modelHttpError(response.status);
+    try { context?.assertAuthority?.(); } catch (error) { await response.body.cancel(); throw error; }
     yield { type: "started", requestId: response.headers.get("x-request-id") ?? randomUUID() };
-    yield* parseOpenAiStream(
+    for await (const event of parseOpenAiStream(
       response.body,
       signal,
       this.timeouts,
@@ -1463,7 +1473,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       undefined,
       projectTools.length > 0,
       Boolean(context?.roomLeadBotId && context.roomTurnPurpose === "work"),
-    );
+    )) { context?.assertAuthority?.(); yield event; }
   }
 
   async testConnection(signal: AbortSignal): Promise<void> {

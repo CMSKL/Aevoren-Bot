@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConnectorDraftResult } from "@shared/native-connector-contracts";
-import { ConnectorRequestGate, connectorDraftDirty, connectorEditorContent, emptyConnectorDraft } from "./connector-ui-state";
+import { ConnectorRequestGate, connectorDraftDirty, connectorDraftTitle, connectorEditorContent, emptyConnectorDraft, emptyNotionDraft } from "./connector-ui-state";
 
 describe("native connector UI request and draft state", () => {
   it("rejects a late read after a scope change or connection revocation", async () => {
@@ -41,5 +41,17 @@ describe("native connector UI request and draft state", () => {
     for (const provider of ["gmail", "drive", "notion"] as const) {
       expect(connectorDraftDirty({ connectionId: "connection", saved: null, content: emptyConnectorDraft(provider) })).toBe(false);
     }
+    for (const kind of ["notion-page", "notion-page-title", "notion-page-append"] as const) {
+      expect(connectorDraftDirty({ connectionId: "connection", saved: null, content: emptyNotionDraft(kind) })).toBe(false);
+    }
+  });
+  it("preserves the saved Notion operation and detects title or append edits", () => {
+    const content = { kind: "notion-page-title" as const, pageId: "page-1", title: "Saved title" };
+    const saved: ConnectorDraftResult = { draft: { id: "draft-1", sessionId: "private", executorBotId: "bot-1", connectionId: "connection-1", accountId: "account-1", authVersion: 1, version: 2, latestRevisionId: "revision-2", createdAt: "", updatedAt: "", deletedAt: null, state: "local-draft" }, revision: { id: "revision-2", draftId: "draft-1", number: 2, digest: "digest", content, createdAt: "" }, authorized: true };
+    expect(connectorDraftDirty({ connectionId: "connection-1", saved, content: { ...content, title: "Changed title" } })).toBe(true);
+    expect(saved.revision.content).toEqual(content);
+    const append = { kind: "notion-page-append" as const, pageId: "page-2", text: "Append only" };
+    expect(connectorDraftDirty({ connectionId: "connection-1", saved: null, content: append })).toBe(true);
+    expect(connectorDraftTitle(append)).toContain("page-2");
   });
 });

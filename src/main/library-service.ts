@@ -291,9 +291,9 @@ export class LibraryService {
     return this.commitImport(await this.prepareImportPath(input, signal, executorBotId), signal, executorBotId);
   }
 
-  async readResourceBytes(input: { sessionId: string; id: string; revisionId: string; path: string }, signal?: AbortSignal, executorBotId?: string): Promise<{ file: ResourceFileRef; bytes: Buffer }> {
+  async readResourceBytes(input: { sessionId: string; id: string; revisionId: string; path: string }, signal?: AbortSignal, executorBotId?: string, runtimeRunId?: string): Promise<{ file: ResourceFileRef; bytes: Buffer }> {
     this.assertScope(input.sessionId, executorBotId, signal);
-    const content = this.repository.library.read({ sessionId: input.sessionId, id: input.id, revisionId: input.revisionId }, executorBotId);
+    const content = this.repository.library.read({ sessionId: input.sessionId, id: input.id, revisionId: input.revisionId }, executorBotId, runtimeRunId);
     let file: ResourceFileRef;
     let bytes: Buffer;
     if (content.resource.kind === "skill" && input.path === "SKILL.md") {
@@ -306,19 +306,20 @@ export class LibraryService {
       bytes = await this.blobs.read(file.sha256, file.size, signal);
     }
     this.assertScope(input.sessionId, executorBotId, signal);
-    this.repository.library.read({ sessionId: input.sessionId, id: input.id, revisionId: input.revisionId }, executorBotId);
+    this.repository.library.read({ sessionId: input.sessionId, id: input.id, revisionId: input.revisionId }, executorBotId, runtimeRunId);
     return { file, bytes };
   }
 
-  async readResourceFile(input: { sessionId: string; id: string; revisionId: string; path: string }, signal?: AbortSignal, executorBotId?: string): Promise<LibraryResourceFileResult> {
-    const { file, bytes } = await this.readResourceBytes(input, signal, executorBotId);
+  async readResourceFile(input: { sessionId: string; id: string; revisionId: string; path: string }, signal?: AbortSignal, executorBotId?: string, runtimeRunId?: string): Promise<LibraryResourceFileResult> {
+    const { file, bytes } = await this.readResourceBytes(input, signal, executorBotId, runtimeRunId);
+    this.repository.library.read({ sessionId: input.sessionId, id: input.id, revisionId: input.revisionId }, executorBotId, runtimeRunId);
     const text = TEXT_TYPES[extname(file.relativePath).toLowerCase()] ? decodeText(bytes) : null;
     return { ...file, encoding: text === null ? "base64" : "utf8", data: text ?? bytes.toString("base64") };
   }
 
-  async prepareExport(input: LibraryReadInput, signal?: AbortSignal, executorBotId?: string): Promise<PreparedLibraryExport> {
+  async prepareExport(input: LibraryReadInput, signal?: AbortSignal, executorBotId?: string, runtimeRunId?: string): Promise<PreparedLibraryExport> {
     this.assertScope(input.sessionId, executorBotId, signal);
-    const content = this.repository.library.read(input, executorBotId);
+    const content = this.repository.library.read(input, executorBotId, runtimeRunId);
     let body = content.revision.body;
     if (content.resource.kind === "skill") {
       const metadata = skillMetadata(body, false);
@@ -340,10 +341,11 @@ export class LibraryService {
     for (const file of content.revision.files) {
       const bytes = await this.blobs.read(file.sha256, file.size, signal);
       this.assertScope(input.sessionId, executorBotId, signal);
-      this.repository.library.read(input, executorBotId);
+      this.repository.library.read(input, executorBotId, runtimeRunId);
       files.push({ relativePath: file.relativePath, bytes });
     }
     this.assertScope(input.sessionId, executorBotId, signal);
+    this.repository.library.read({ ...input, revisionId: content.revision.id }, executorBotId, runtimeRunId);
     if (files.reduce((size, file) => size + file.bytes.length, 0) > MAX_LIBRARY_IMPORT_BYTES) throw new AevorenBotError("LIBRARY_IMPORT_TOO_LARGE");
     return { name: content.revision.name, kind: content.resource.kind, resourceId: content.resource.id, revisionId: content.revision.id, files };
   }

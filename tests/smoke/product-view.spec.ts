@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _electron as electron, expect, test } from "@playwright/test";
 import type { AevorenBotApi } from "../../src/shared/contracts";
-import type { ProductViewInput } from "../../src/shared/product-view";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewInput, type ProductViewResult } from "../../src/shared/product-view";
 import { AppRepository } from "../../src/main/database";
 import { removeTestDirectory } from "./test-cleanup";
 
@@ -70,7 +70,13 @@ test("runs semantic view operations through host approval and preserves changed 
     await expect(page.getByRole("tab", { name: /^执行记录/u })).toHaveAttribute("aria-selected", "true");
     await page.getByRole("complementary", { name: "会话成果", exact: true }).getByRole("button", { name: "关闭会话成果", exact: true }).click();
     await page.getByLabel("消息", { exact: true }).fill("用户尚未发送的草稿");
-    await run({ action: "draft_update", sessionId: actor.session.id, expectedDigest: "0".repeat(64), text: "不应覆盖用户草稿" });
+    const currentDraft = await page.evaluate(name => new Promise<ProductViewResult>(resolve => {
+      window.dispatchEvent(new CustomEvent(name, { detail: { request: { id: crypto.randomUUID(), input: { action: "draft_get" } }, respond: resolve } }));
+    }), PRODUCT_VIEW_DOM_EVENT);
+    expect(currentDraft.status).toBe("completed");
+    const draftVersion = (currentDraft.result as { draftVersion: number }).draftVersion;
+    expect(typeof draftVersion).toBe("number");
+    await run({ action: "draft_update", sessionId: actor.session.id, expectedDigest: "0".repeat(64), expectedDraftVersion: draftVersion, text: "不应覆盖用户草稿" });
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue("用户尚未发送的草稿");
     expect(errors).toEqual([]);
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((window) => window.isVisible()))).toBe(false);

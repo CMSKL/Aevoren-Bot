@@ -17,14 +17,22 @@ export function emptyConnectorDraft(provider: ConnectorProvider): ConnectorDraft
   return { kind: "notion-page", parentPageId: "", title: "", text: "" };
 }
 
+export type NotionDraftKind = Extract<ConnectorDraftContent, { kind: "notion-page" | "notion-page-title" | "notion-page-append" }>["kind"];
+export function emptyNotionDraft(kind: NotionDraftKind): ConnectorDraftContent {
+  if (kind === "notion-page-title") return { kind, pageId: "", title: "" };
+  if (kind === "notion-page-append") return { kind, pageId: "", text: "" };
+  return emptyConnectorDraft("notion");
+}
+
 export function connectorDraftDirty(editor: ConnectorEditor | null): boolean {
   if (!editor) return false;
-  const baseline = editor.saved?.revision.content ?? emptyConnectorDraft(editor.content.kind === "gmail-message" ? "gmail" : editor.content.kind === "drive-text" ? "drive" : "notion");
+  const kind = editor.content.kind;
+  const baseline = editor.saved?.revision.content ?? (kind === "gmail-message" ? emptyConnectorDraft("gmail") : kind === "drive-text" ? emptyConnectorDraft("drive") : emptyNotionDraft(kind));
   return JSON.stringify(baseline) !== JSON.stringify(connectorEditorContent(editor));
 }
 
 export function connectorDraftTitle(content: ConnectorDraftContent): string {
-  return content.kind === "gmail-message" ? content.subject || "无主题邮件草稿" : content.title || "未命名草稿";
+  return content.kind === "gmail-message" ? content.subject || "无主题邮件草稿" : content.kind === "notion-page-append" ? `追加至 Notion 页面${content.pageId ? ` · ${content.pageId}` : ""}` : content.title || "未命名草稿";
 }
 
 /** Invalidate old scope, connection and read replies without cancelling unrelated host tasks. */

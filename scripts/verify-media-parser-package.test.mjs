@@ -1,0 +1,76 @@
+import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
+import { createRequire } from "node:module";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve, win32 } from "node:path";
+import { runInNewContext } from "node:vm";
+import { test } from "node:test";
+import { verifyMediaParserPackage } from "./verify-media-parser-package.mjs";
+
+const require = createRequire(import.meta.url), asar = createRequire(require.resolve("app-builder-lib"))("@electron/asar");
+async function fixture(callback) {
+  const root = mkdtempSync(join(tmpdir(), "aevoren-parser-package-check-")), resources = join(root, "resources"), source = join(root, "source");
+  mkdirSync(resources); mkdirSync(source);
+  const manifest = JSON.parse(readFileSync(resolve("out/media-parser/manifest.json")));
+  cpSync(resolve("out/media-parser"), join(resources, "media-parser"), { recursive: true });
+  writeFileSync(join(source, "package.json"), JSON.stringify({ version: manifest.applicationVersion }));
+  const dependency = join(source, "node_modules/@hono/node-server/index.js");
+  mkdirSync(dirname(dependency), { recursive: true });
+  writeFileSync(dependency, "export const fixture = true;\n");
+  await asar.createPackage(source, join(resources, "app.asar"));
+  try { await callback({ resources, source }); } finally { rmSync(root, { recursive: true, force: true }); }
+}
+test("accepts a complete frozen parser resource fixture and exact font/license digests", () => fixture(async f => {
+  assert.ok(verifyMediaParserPackage(f.resources).assets > 190);
+}));
+test("rejects an introduced QuickJS asset anywhere in extraResources", () => fixture(async f => {
+  writeFileSync(join(f.resources, "quickjs-eval.wasm"), "fixture");
+  assert.throws(() => verifyMediaParserPackage(f.resources), /Forbidden/);
+}));
+test("rejects a native canvas dependency inside the whole ASAR", () => fixture(async f => {
+  const target = join(f.source, "node_modules/@napi-rs/canvas/index.js"); mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, "fixture");
+  await asar.createPackage(f.source, join(f.resources, "app.asar"));
+  assert.throws(() => verifyMediaParserPackage(f.resources), /Forbidden/);
+}));
+test("rejects a substituted original GPL font even with its original filename", () => fixture(async f => {
+  const original = join(dirname(require.resolve("pdfjs-dist/package.json")), "standard_fonts/LiberationSans-Regular.ttf");
+  cpSync(original, join(f.resources, "media-parser/public/pdfjs/standard_fonts/LiberationSans-Regular.ttf"));
+  assert.throws(() => verifyMediaParserPackage(f.resources), /Forbidden GPL/);
+}));
+test("rejects original GPL font bytes with an uppercase extension outside parser inventory", () => fixture(async f => {
+  const original = join(dirname(require.resolve("pdfjs-dist/package.json")), "standard_fonts/LiberationSans-Regular.ttf");
+  cpSync(original, join(f.resources, "unexpected-font.TTF"));
+  assert.throws(() => verifyMediaParserPackage(f.resources), /Forbidden GPL/);
+}));
+test("rejects original GPL font bytes with an uppercase extension inside ASAR", () => fixture(async f => {
+  const original = join(dirname(require.resolve("pdfjs-dist/package.json")), "standard_fonts/LiberationSans-Regular.ttf");
+  cpSync(original, join(f.source, "unexpected-font.TTF"));
+  await asar.createPackage(f.source, join(f.resources, "app.asar"));
+  assert.throws(() => verifyMediaParserPackage(f.resources), /Forbidden GPL/);
+}));
+test("rejects a changed embedded license", () => fixture(async f => {
+  const target = join(f.resources, "media-parser/licenses/pdfjs-dist-LICENSE"); writeFileSync(target, "changed fixture license");
+  assert.throws(() => verifyMediaParserPackage(f.resources), /digest mismatch/);
+}));
+
+test("accepts nested ASAR paths under the dependency's real Windows path semantics", () => fixture(async f => {
+  const libraryRequire = createRequire(require.resolve("app-builder-lib"));
+  const filesystemPath = join(dirname(libraryRequire.resolve("@electron/asar")), "filesystem.js");
+  const filesystemRequire = createRequire(filesystemPath), sandbox = { exports: {} };
+  runInNewContext(readFileSync(filesystemPath, "utf8"), {
+    exports: sandbox.exports,
+    require: name => name === "path" ? win32 : filesystemRequire(name),
+    Buffer, process,
+  }, { filename: filesystemPath });
+  const actual = filesystemRequire(filesystemPath).Filesystem.prototype;
+  const windows = sandbox.exports.Filesystem.prototype;
+  const names = ["listFiles", "searchNodeFromDirectory", "getNode"];
+  const original = names.map(name => actual[name]);
+  try {
+    for (const name of names) actual[name] = windows[name];
+    assert.ok(verifyMediaParserPackage(f.resources).asarFiles >= 2);
+  } finally {
+    names.forEach((name, index) => { actual[name] = original[index]; });
+  }
+}));
