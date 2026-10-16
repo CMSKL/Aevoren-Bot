@@ -164,6 +164,7 @@ export class RoomCoordinator {
           text: command.text,
           attachments: command.attachments,
           resourceRefs: command.resourceRefs,
+          mediaRefs: command.mediaRefs,
           membershipVersion: this.repository.getRoom(command.roomId).membershipVersion,
           maxTurns: policy.maxTurns ?? DEFAULT_MAX_TURNS,
           maxHops: policy.maxHops ?? DEFAULT_MAX_HOPS,
@@ -205,6 +206,7 @@ export class RoomCoordinator {
       routingMode,
       command.attachments ?? [],
       command.resourceRefs ?? [],
+      command.mediaRefs ?? [],
     );
     const pending = this.routingInFlight.get(command.clientNonce);
     if (pending) {
@@ -605,6 +607,7 @@ export class RoomCoordinator {
       routingMode,
       command.attachments ?? [],
       command.resourceRefs ?? [],
+      command.mediaRefs ?? [],
     )) {
       throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
     }
@@ -617,6 +620,7 @@ export class RoomCoordinator {
       text: command.text,
       attachments: command.attachments,
       resourceRefs: command.resourceRefs,
+      mediaRefs: command.mediaRefs,
       membershipVersion: existing.membershipVersion,
       maxTurns: existing.maxTurns,
       maxHops: existing.maxHops,
@@ -727,6 +731,7 @@ export class RoomCoordinator {
         text: command.text,
         attachments: command.attachments,
         resourceRefs: command.resourceRefs,
+        mediaRefs: command.mediaRefs,
         membershipVersion: detail.room.membershipVersion,
         maxTurns: policy.maxTurns ?? DEFAULT_MAX_TURNS,
         maxHops: policy.maxHops ?? DEFAULT_MAX_HOPS,

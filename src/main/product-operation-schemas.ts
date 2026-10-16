@@ -9,9 +9,13 @@ import { SKILL_EXECUTION_OPERATION_SCHEMAS } from "@shared/skill-execution-produ
 import { NATIVE_CONNECTOR_OPERATION_SCHEMAS } from "@shared/native-connector-product";
 import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 import { resourceReferencesSchema } from "@shared/library-schemas";
-import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema, mcpServerMutationSchema, mcpServerEnabledSchema, mcpServerIdSchema, mcpServerMutationIdSchema, routineIdSchema, routineCreateSchema, routineUpdateSchema, routineEnabledSchema, routineMutationSchema, conversationPinnedSchema, conversationUnreadSchema, conversationHiddenSchema, sessionIdSchema, conversationProjectSchema, conversationBatchDeleteSchema, projectContextSchema, projectCreateSchema, briefApprovalReadSchema, briefApprovalCommandSchema, botUpdateSchema, botPinnedSchema, botUnreadSchema, botHiddenSchema, botIdSchema, memoryListSchema, memoryCreateSchema, memoryUpdateSchema, memoryMutationSchema, memoryProposalListSchema, memoryProposalAcceptSchema, workspacePermissionsSchema, workspaceRevealSchema, workspaceMutationSchema, toolSessionScopeSchema, approvalResolutionSchema, roomListSchema, roomCreateSchema, roomIdSchema, roomUpdateSchema, roomArchiveSchema, roomPinnedSchema, roomUnreadSchema, roomHiddenSchema, roomMembershipSchema, sendCommandSchema, nonceSchema, runIdSchema, roomSendCommandSchema, batchIdSchema, turnIdSchema, generalSettingsSchema, saveOpenAiCompatibleProviderSchema, saveCliProviderSchema, providerInstanceIdInputSchema } from "@shared/schemas";
+import { messageMediaReferencesSchema } from "@shared/media-schemas";
+import { MEDIA_OPERATION_SCHEMAS } from "@shared/media-product";
+import { messageBodySchema } from "@shared/schemas";
+import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema, mcpServerMutationSchema, mcpServerEnabledSchema, mcpServerIdSchema, mcpServerMutationIdSchema, routineIdSchema, routineCreateSchema, routineUpdateSchema, routineEnabledSchema, routineMutationSchema, conversationPinnedSchema, conversationUnreadSchema, conversationHiddenSchema, sessionIdSchema, conversationProjectSchema, conversationBatchDeleteSchema, projectContextSchema, projectCreateSchema, briefApprovalReadSchema, briefApprovalCommandSchema, botUpdateSchema, botPinnedSchema, botUnreadSchema, botHiddenSchema, botIdSchema, memoryListSchema, memoryCreateSchema, memoryUpdateSchema, memoryMutationSchema, memoryProposalListSchema, memoryProposalAcceptSchema, workspacePermissionsSchema, workspaceRevealSchema, workspaceMutationSchema, toolSessionScopeSchema, approvalResolutionSchema, roomListSchema, roomCreateSchema, roomIdSchema, roomUpdateSchema, roomArchiveSchema, roomPinnedSchema, roomUnreadSchema, roomHiddenSchema, roomMembershipSchema, nonceSchema, runIdSchema, roomSendCommandSchema, batchIdSchema, turnIdSchema, generalSettingsSchema, saveOpenAiCompatibleProviderSchema, saveCliProviderSchema, providerInstanceIdInputSchema } from "@shared/schemas";
 
 export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
+  ...MEDIA_OPERATION_SCHEMAS,
   ...LIBRARY_OPERATION_SCHEMAS,
   ...ENVIRONMENT_OPERATION_SCHEMAS,
   ...BROWSER_OPERATION_SCHEMAS,
@@ -93,7 +97,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "rooms.removeMember": roomMembershipSchema,
   "sessions.getMain": botIdSchema,
   "transcript.list": sessionIdSchema,
-  "messages.send": sendCommandSchema.omit({ clientNonce: true }),
+  "messages.send": messageBodySchema.safeExtend({ sessionId: sessionIdSchema }),
   "messages.retry": nonceSchema,
   "messages.cancel": nonceSchema,
   "messages.getStatus": nonceSchema,
@@ -135,5 +139,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
     text: z.string().max(100_000).optional(), expectedDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
     routingMode: z.enum(["automatic", "explicit", "everyone"]).optional(), targetBotIds: z.array(botIdSchema).max(6).optional(),
     resourceRefs: resourceReferencesSchema.optional(),
+    mediaRefs: messageMediaReferencesSchema.optional(),
+    expectedDraftVersion: z.number().int().nonnegative().optional(),
   }).strict(),
 };

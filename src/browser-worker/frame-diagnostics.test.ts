@@ -21,10 +21,13 @@ async function fixture(phase: Phase) {
     evaluate: vi.fn(async () => { if (phase === "document-version-before") record.version++; return { text: "PRIVATE_DOM_BODY", truncated: false }; }),
     $$: vi.fn(async () => []), url: () => "https://private.invalid/?token=PRIVATE_CAPABILITY", title: async () => "PRIVATE_TITLE",
   } as unknown as Page;
-  record.session = { send: vi.fn(async (method: string) => {
+  record.session = { send: vi.fn(async (method: string, input?: Record<string, unknown>) => {
     if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "PRIVATE_FRAME_ID" } } };
     if (method === "Page.createIsolatedWorld") return { executionContextId: 17 };
-    if (method === "Runtime.evaluate") { focusChecks++; return { result: { value: focused } }; }
+    if (method === "Runtime.evaluate") {
+      if (input?.expression === "document.hasFocus()") { focusChecks++; return { result: { value: focused } }; }
+      return { result: { value: input?.awaitPromise ? false : null } };
+    }
     throw new Error("Unexpected controlled CDP request");
   }) } as unknown as CDPSession;
   const internals = engine as unknown as { pages: Map<string, typeof record>; runProgram(): Promise<Buffer> };

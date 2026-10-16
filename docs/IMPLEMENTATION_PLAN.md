@@ -2,7 +2,9 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.35**。包含脱敏截图诊断的 `b811747` 已重新构建并通过真实未签名 macOS 包 30 项；其 Linux PR 合并检查通过普通测试 1,593 项／45 跳过及真实 Docker 41 项，含六 Scope 实际画面。此前 409 拒绝及失败记录保留，本轮成功不确定其根因。完整跨平台、Beta 晋级和签名门禁仍待完成，不能据此宣布阶段整体完成。阶段 5–6 尚未实施；最新状态以本表及末尾更正为准。
+当前 **v0.3.0-beta.36 是仅限本地的整合草稿**：从实际 dev `ffd5dab99d153097ff8971a8895647d0b5d7dae6` 出发，正常合入待验收 PR #65 `f1629278fdbf4fdb3e1b0bda1dcf75f959ddea7c`，再整合原 Media36 `a8e0980fe7b4b5bfab90801b5a56e41687c0c065`。PR #65 尚未获准进入受保护 dev，此草稿也尚未推送或建立 PR；新组合本机专测、解析器与实际 Mac 包验证通过，正常 CI 与分支晋级仍待完成。beta 保持 `0cfd2b9` 的 beta.34 候选，最新公开版本为 **v0.3.0-beta.33**，master 暂不晋级。此单元仅包含图片／PDF／DOCX；音视频、语音与阶段 6 属于后续交付。
+
+下文验收段落保留各自原始提交和安装包的历史证据；旧候选的 CI 或本机通过不代表当前本地组合已验收，也不代替实际 Beta／签名发行门禁。
 
 ## 已确定的方案
 
@@ -30,9 +32,9 @@
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 已纳入 v0.3.0-beta.29 签名发行 | 开发与跨平台安装包验证通过，之前签名 fixture 失败保留为历史记录 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
-| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 诊断版本机真实包与 Linux 验收通过；完整跨平台／晋级／签名待完成 | `b811747` 真实 macOS 包 30；Linux 合并检查普通 1,593／45 跳过、实际 Docker 41／41；旧拒绝记录保留 |
-| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 未开始 | 待补充 |
-| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 未开始 | 待补充 |
+| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本／读取／外发／示范已纳入 beta.33；MCP34 与 Notion35 按序待发布 | 历史组合 `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
+| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1 本地整合中；5.2–5.3 不在本单元 | 固定引用、CAS、会话／任务准入与隔离解析保留原单元证据；当前组合本机专测 106／可选跳过 1、源码解析器 6、实际 Mac 包 10 通过；正常 CI 待执行，不宣称阶段验收完成 |
+| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 后续交付，未纳入本单元 | 待按对应单元补充 |
 
 ## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
 
@@ -261,14 +263,11 @@ Hidden source acceptance passed **22/22**. The rebuilt actual unsigned macOS arm
 
 ASAR SHA-256 is `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf3`. Compiled Main and package-extracted Main both hash to `627d2e5c89eccd164d5e60240bb41d70ea42894146be9c59852c467a772ca78b`. Subsequent documentation-only commits do not change these application bytes. Cross-platform CI, validated Beta promotion and signed publication remain pending; these local results do not establish real external-account or Windows Docker behavior.
 
-## Windows TCP 录制夹具验收更正
+## Linux 六环境截图诊断（历史快照）
 
 另有 Linux run 38677885045：普通测试 1,587／45 跳过通过，真实 Docker 40／41；六独立 Scope 的截图返回 `409 BROWSER_OBSERVATION_STALE`。容器仍运行，约 427.5／768 MiB，OOM 计数为零；未据此认定内存问题。代码没有观察 TTL，截图内部聚焦并重新观察，不能靠增加夹具观察或放宽新鲜度解决。
 
 `65437c8` 仅在显式开启时写入固定诊断文件，记录焦点／文档版本前后、epoch、布尔状态和有界耗时，不记录 DOM、URL、图片、Cookie、路径或能力令牌。所有 409 校验和捕获顺序保持不变。六个负向用例及相关 26 项、Node／浏览器 Worker 类型、lint、Worker 构建通过。Worker 字节／镜像 context 摘要会变化；前述包 30 项先于此补丁，补丁后的真实 Docker／安装包仍待验证。下一轮真实 Linux CI 用于确定拒绝阶段。
-
-
-历史冻结 beta.34 验收曾统计 20 项；复核确认当时 typed API fixture 忽略安装包路径，实际为包内 19 项与源码 typed API 1 项。MCP 包测试实查 isPackaged、精确版本以及 Resources 中的 MCP 指南；验证真实 opaque iframe、父级／Preload 隔离、工具输入／结果、真实 UI 调用审批、撤权、未知结果与延迟原生→MCP 模态交接。全部使用临时数据库、真实 IPC 与受控 HTTP，未触及真实外部账号；此处保留历史并纠正证据类别，最新包结果单列于下。
 
 示范基础的真实 Linux [CI 38666108922](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38666108922/job/116198324472) 在 12288fd 完整通过：普通 1,547／45 跳过，实际 Docker／Host 41／41；新增真实 RFB 示范用例 3.239 秒通过。此证据属于 Demo33 基础提交，MCP34 自身跨平台完整 CI 与签名发行仍须通过，真实 Windows Docker 仍未验证。
 
@@ -284,8 +283,6 @@ ASAR SHA-256 is `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf
 - 首轮包 18 通过、示范收尾 1 失败：应用已正常关闭后，测试清理错误访问已销毁进程通道。幂等修正前负向回归失败、修正后五项进程检查通过；相同包的示范复验与后续关闭／typed API 均通过，应用包未重建。保留初次失败，不把收尾错误算作业务失败或抹去记录。
 
 跨平台检查、Beta 晋级与签名发行仍为门禁，master 不晋级；真实第三方账号与 Windows Linux Docker 未验证。阶段 5–6 未实施。
-
-后续原生 Linux [CI 38666108922](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38666108922/job/116198324472) 在 12288fd 通过完整 Validate：普通 1,547 通过、45 跳过；真实 Docker／Host 7 文件 41／41 通过。新增实际桌面 RFB 示范用例 3.239 秒通过，包含输入脱敏、断线／重启封存和归还后观察边界。该证据来自 Linux 容器，不改变本机 daemon 未启动和真实 Windows Docker 未验证的记录。
 
 
 ## Windows TCP 录制夹具验收更正
@@ -370,6 +367,38 @@ The updated fixture passed all three source MCP cases in 10.63 seconds and all t
 
 当前 beta.35 合入已验证 dev `36a48730002a5a8bd7115891a99a18a7cffa792c`，保留上述两版独立验收记录。相较合并前 `15ac2b8`，源码、测试、工作流、构建配置、package 和锁文件字节均未改变；只合并实施历史，不重记既有失败为成功。版本仍为 beta.35，新的合并提交仍须完成正常跨平台 CI。
 
+
+## 阶段 5.1：图片与文档引用（v0.3.0-beta.36，实施中）
+
+- 新增 PNG/JPEG/PDF/DOCX 内容寻址存储、不可变解析版本、会话绑定及任务准入；发送／群路由摘要与 PromptManifest 固定引用。撤销、停用、删除及成员移除立即阻止后续读取，重绑不恢复旧任务授权。
+- 解析器使用独立无 Node 的沙箱 Renderer／真实 PDF Worker、临时 session、精确资源清单与哈希；网络、宿主文件、权限、下载和导航均拒绝。PDF 提取和有界逐页预览、DOCX 严格 ZIP／XML 校验后的纯文本提取；扫描 PDF 无 OCR，DOCX 分节不代表物理页。
+- 界面和 AI 共用十二项 `media.*` 业务动作。正文与实际像素仅以可撤销的瞬时宿主附件传输；工具数据库回执只保存元信息，三个来源的协议适配在后续轮次及缓存重放时重新检查权限。
+- 独立解析资源、精确依赖许可、四个 OFL 字体和真实未签名 macOS 包已通过下述本地验收；当前候选的跨平台 CI、Windows 实包及签名发行仍待验证，不能据此宣称已发布。音视频、语音及阶段 6 不在本单元完成范围。
+
+### 5.1 本地验收：冻结 beta.36 产物
+
+冻结产品构建对应 `c2850bd4413f04fb37c5979501f4e2e105acfe0d`，实际包版本为 `0.3.0-beta.36`。后续校验器与 typed API fixture 修正不改变产品字节，未重新构建安装包。Node 24 目标工具链、pnpm 11.19 冻结依赖验证、完整类型与 lint 均已通过；普通单元测试为 1,627 通过、45 跳过。
+
+| 验证范围 | 实际结果与边界 |
+| --- | --- |
+| 完整隐藏 Electron smoke | 首轮发现 182 项：149 通过、32 跳过、1 项旧 typed API 白名单失败；实际只新增预期的 `media` 分组。固定列出该分组及其 13 个 API、增加非法媒体 ID 断言后，源码定向 1/1 通过。保留首轮失败，不将它改写为单轮全绿；同一冻结产品下累计 150 个不同场景已验证 |
+| 隔离解析器 | 上述完整运行中的六项全部通过：真实 PDF 全物理页与空页、OFL 字体深色像素、CMap 日文、CMYK／JPEG2000 红色像素、JPEG、DOCX store/Deflate/UTF-16、CRC/DTD/伪造内容类型/越界与预算拒绝、加密文件拒绝、六任务并行及单任务取消、私有资源／本地文件／网络／主 API 隔离、伪造摘要拒绝、实际 30 秒超时销毁 |
+| 真实未签名 macOS arm64 包 | 共用包身份／版本断言的媒体 4、资料库 8、原生读取 2、原生外发 7、示范 1、MCP Apps 3、正常关闭 8，合计 33/33 通过（1.8 分钟）；随后修正后的 typed API 实包定向 1/1 通过。正常退出是门禁，未出现强制清理警告 |
+| 完整资源与 ASAR | 207 个解析器清单资产逐字节一致，扫描 228 个资源文件及 9,555 个 ASAR 条目；四个替换字体及许可摘要匹配，无原始 GPL 字体、QuickJS、原生 canvas 或重复原始解析包树。包内 Main 与冻结 source out 完全相同 |
+| 校验器反例 | 独立复核发现 `.TTF` 大写扩展名会漏读已知旧字体字节；ASAR／extraResources 两个反例先复现失败，修正后校验器 7/7 通过，真实包再次通过扫描。未发现该禁止资产实际进入冻结包 |
+
+冻结摘要：Main 为 `9eab40d3a8be0bbe52e47ae947ceeda8f34c0b9eaa1f313cff562514b721d88e`；ASAR 为 `8b7843c9b64921b9ef51ad67be9bab6029ad93ddb8425e1882a140315bca8bd1`；parser manifest 为 `07888e2755c41232ff400118ad5b0e910bcc150ee68920ad50f1251e2dd12e50`。安装包资源验证命令为 `node scripts/verify-media-parser-package.mjs <Mac.app 或 Windows resources>`。
+
+本地日志与 JSON 分别保存于 `/tmp/aevoren-media36-actual-package33.log`、`/tmp/aevoren-media36-full-source-hidden.log`、`/tmp/aevoren-media36-typed-source-final.log`、`/tmp/aevoren-media36-typed-package-final.log`、`/tmp/aevoren-media36-actual-package-assets.json` 和 `/tmp/aevoren-media36-frozen-package-hashes.json`；首轮 typed fixture trace 保留于 `/tmp/aevoren-media36-initial-typed-surface-failure`。这些是临时本机证据，不是仓库附件。JBIG2 解码样本、Windows beta.36 实际运行、签名包与真实外部账号／硬件未在本轮验证；扫描件无 OCR，DOCX 不承诺物理分页，尚未交付阶段 5.2–5.3 或阶段 6。
+
+
+## 已公开发行：v0.3.0-beta.31
+
+[Beta PR #39](https://github.com/CMSKL/Aevoren-Bot/pull/39) 的八项检查在 dev `4f24f153` 全部通过后，正常合入 beta `7989bf6d2bd42efa0525dee84377bbcf3b1ab860`。实际合并树 `80479d1062a51b3f63ad85ebdff73b6c40d024a5` 与已测试 PR 合并树逐字节相同；同名不可变标签指向该 beta 提交。[macOS 签名工作流 38684641775](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38684641775) 成功并公开 [v0.3.0-beta.31](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.31)，标签／标题严格一致，包含签名、公证 DMG／ZIP、两个 blockmap、Beta 更新清单、SHA256 和 SBOM，共七项资产。小型清单下载及 GitHub 资产摘要复核通过；完整产物的下载校验由发行工作流完成。
+
+该发行提供脚本 Skill、Gmail／Drive／Notion 原生读取及本地草稿，包含主页面正常关闭与脚本快照发布修复；不包括后续原生外发、示范录制、可写 MCP／Apps、Notion 页面更新或阶段 5–6。发行校验中普通测试 1,488 通过／44 跳过，源码界面 128 通过／33 跳过，真实签名包资料／原生读取 10 项及关闭 8 项全部通过。Windows 签名工作流因当前配置跳过，没有公开签名 Windows 包。master 未晋级。旧 PR #18（beta → master）自动触发的 Windows 源码检查出现 Skill 工具往返的五秒捕获等待失败；该轮不是 PR #39 或直接 beta 分支检查。保留失败及此前同树八项成功证据，PR #18 按用户要求暂不推进，旧标签和发行不移动。
+
+
 ## MCP beta.34 integration of verified Native32 baseline
 
 Merged exact dev `36a48730002a5a8bd7115891a99a18a7cffa792c` into the MCP34 feature branch. That baseline contains verified Native32 PR #34 merge `a84e87f` and the published beta.31 README boundary; beta.34 remains the source version. Earlier `d016c974` had four successful CI checks, and its actual 28-case unsigned macOS package receipt remains historical. Those results were not relabeled as acceptance of this newly combined Worker.
@@ -403,6 +432,55 @@ PR #41 的一个完整跨平台检查已通过；另一个 Windows 检查的首�
 关闭 smoke 现在只在其自有进程内记录主文档加载、可信 Renderer-ready、flush 请求、可信确认、窗口关闭和进程退出阶段；失败时附上有界 JSON。记录不含 URL、页面内容、密钥或用户文件路径，不修改产品代码、关闭时限或启动参数。新增诊断的本机隐藏主文档重载／修改／关闭／重启用例已通过；下一次 Windows 检查用于定位停在哪个阶段，尚不能据此确认根因或发布。
 
 
+
+### 媒体 CAS 并发回补（beta.36，重新验收中）
+
+后续六成员朗读验收用受控边界稳定复现：一个读取者已打开同内容 CAS 文件时，写入者清理临时硬链接会改变 ctime，即使字节与 mtime 未变，也被原严格来源读取器拒绝。此前随机成功不作为修复证据。回补仅在读取前已知预期 SHA 的 CAS 路径允许这一元数据变化，并在读取器内验证完整真实字节摘要；用户选择／Workspace 来源继续严格比较 ctime、fd/path、模式、大小和 mtime。新增来源篡改与摘要不符负例、六个同摘要并发写入通过。当前候选正在重新执行完整普通测试、源码和实际安装包门禁；上方冻结包的成功是回补前的历史证据。
+
+### CAS 回补后的 beta.36 本地验收与 Windows fixture 前置失败
+
+回补后重新构建的真实未签名 macOS 包通过功能／正常关闭 33 项及 typed API 1 项，Main 与冻结 out 字节一致。Node24 普通测试 1,630 通过／45 跳过；完整隐藏源码独立一轮 150 通过／32 条件跳过，无失败或强制清理。资产扫描仍为 207 个清单资产、228 个资源文件、9,555 个 ASAR 文件。新 Main SHA-256 为 `66653babda594c7dc6cdb791caf89ed7603711ef36b7e6489e3b9ceb512853cd`，ASAR 为 `0518eaab74bb1e5574e06b7105059cae3c2d01278349d5c028c2f293557d5b9e`，parser 清单为 `07888e2755c41232ff400118ad5b0e910bcc150ee68920ad50f1251e2dd12e50`；上方旧冻结包证据保持独立。本机 JSON 位于 `/tmp/aevoren-media36-cas-acceptance.json`，它不是仓库附件。
+
+PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：新增硬链接回归停在 `realpath(dirname(path))` 前置校验，尚未进入被测 ctime 边界；Windows源码与安装包步骤未到达。fixture 现在使用和业务读取器相同的异步规范路径准备临时目录，并规范实际 CAS 父目录，不放宽产品路径、fd 或摘要检查。七项本地 CAS 测试通过；Windows结果须由新检查确认，不能用 macOS 成功替代。签名发行与真实账号／模型验证仍为独立门禁。
+
+### beta.36 Windows 字节一致性修复
+
+- 第二轮 Windows CI（38703832369）普通测试通过后在构建阶段拒绝 OFL LICENSE 摘要；原因是 Windows checkout 的自动 CRLF 转换改变了已固定摘要的上游文本。新增 Git 属性对字体及来源/许可资源保留原始字节，不更改任何已审阅摘要或放宽检查。
+- 保留两次原始失败记录；修复后重新运行完整 CI，Windows 安装包验收尚待通过。
+
+### beta.36 第三轮 Windows 来源读取 fixture 与 Linux 桌面焦点诊断
+
+[CI 38710354729](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38710354729) 的 Windows 普通测试为 1,613 通过／61 跳过／1 失败，停在 `media-blob-store.test.ts` 的同大小来源覆写断言；尚未进入构建、源码界面或安装包。该 fixture 原先假定快速覆写必然立即改变文件时间戳。本次仅在受控 fd 读取边界将 mtime 显式推进一秒，先确认大小未变且 bigint mtime 已变化，再保留原拒绝及取消断言；外层另确认该前置验证确实完成，避免错误包装掩盖失败的测试前提。没有延时、产品代码或来源／CAS 校验变化。本机七项 CAS 测试通过；此结果不表示已在 Windows 执行，也不扩张来源读取器在全部时间戳均被保留时的保证。
+
+同轮 Linux 普通测试 1,630 通过／45 跳过，真实 Docker 浏览器场景 40／41；六环境并行截图在捕获前触发 `BROWSER_OBSERVATION_STALE`。既有诊断为 `phase=focus-before`、耗时 11 ms，epoch 1／1、文档版本 5／5、页面存在且未关闭；没有 ffmpeg 失败，未出现正文、URL 或凭据。桌面焦点原因仍须独立定位，没有放宽焦点、epoch、版本或新鲜度保护，也未以本机成功覆盖此失败。新的正常 CI 将同时验证 Windows fixture 修正并继续提供跨平台证据，当前不宣称完整门禁通过。
+
+### beta.36 显式截图聚焦等待（实际 Docker 门禁待验证）
+
+受控回归先在原实现稳定失败：`bringToFront()` 已返回而隔离世界中的 `document.hasFocus()` 仍为 false 时，旧截图操作在 7 ms 内直接返回 409，尚未等待随后释放的实际焦点事件，也未读取正文或捕获。此测试复现聚焦确认与文档焦点就绪之间的边界，不宣称已在本机复现 Linux 窗口管理器本身。
+
+修复只在 AI 显式聚焦后获取画面的路径增加最多五秒的隔离世界焦点事件等待；事件就绪后仍核验唯一实际焦点、原 page 记录及文档版本、控制 epoch 和所属操作状态，然后才观察及捕获。永久失焦、错误焦点、导航、页面关闭、用户接管、epoch 改变、单操作取消和 Worker 退出均不允许迟到捕获，取消会清理所属等待监听与计时器。电脑输入的焦点检查保持即时；原截图阶段的五秒限制独立保留，没有延长该阶段时限，也不将两个阶段称为原有统一五秒总期限。
+
+定向八文件 43／43、Browser Worker TypeScript、目标 lint 和 Worker 构建通过；延迟焦点正例返回既有 JPEG fixture 的完整字节及摘要，不代替真实 X11 像素验收。协议及接口未变，Worker 仍为 1.1.0／协议 1，新 bundle 以独立字节摘要区分；本机证据为 `/tmp/aevoren-media36-focus-worker-evidence.json`。没有启动 Docker Desktop、重建用户环境、重新运行完整普通套件、Main 构建或安装包；此前冻结安装包属于修复前证据。新 CI 的真实六环境截图及跨平台门禁仍须全部通过。
+
+### beta.36 Linux 实际聚焦结果与 Windows ctime 单测前提
+
+准确提交 `da3263498c00aae73e72a35f342bad4416de20dd` 的 [CI 38714025139](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38714025139) 中，Linux 普通测试 1,639 通过／45 跳过，真实 Docker 浏览器七文件 41／41 全部通过；此前失败的六环境独立 cookie、profile 和真实画面场景在 7,397 ms 内通过。该结果验证聚焦修复的实际 Linux 路径，不代替其他平台或后续提交的门禁。
+
+同轮 Windows 普通测试为 1,621 通过／61 跳过／2 失败，尚未进入构建或安装包。显式 mtime 的来源覆写测试已通过；剩余两项都假定硬链接 unlink 后系统立即报告不同 ctime，其中正例的 changed 断言为 false，原始来源负例返回了未改变的文件字节。保留该失败，不声称操作系统报告了它没有报告的元数据变化。
+
+本次仅修改这两个单测及其窄 fixture：实际 fd 打开／读取、link／unlink 和返回字节不模拟，仅将目标 lstat／FileHandle.stat 的 ctimeNs 控制为原值及原值加一；外部断言确认 unlink 已发生、link 数 2→1，以及真实 dev／inode／mode／size／mtime 均未变化。已知 SHA 正例返回完整原字节，无 SHA 负例拒绝该受控 ctime 变化，实际摘要篡改负例保留；mock 在 finally 恢复。没有修改产品、来源校验、时限或跳过条件，也不据此扩张原始来源读取器对全部时间戳均保留的覆写检测保证。
+
+本机独占资源的最终七项 CAS 测试 7／7 通过（3.06 秒），Node TypeScript 与目标 lint 通过；此前与长场景同时运行时两个原有大文件 IO 测试触发五秒限制的日志独立保留，没有增加时限。本次没有完整套件、构建、Docker 或界面重跑；新的 Windows CI 仍须实际通过。日志分别为 `/tmp/aevoren-media36-ctime-fixture-tests.log` 与 `/tmp/aevoren-media36-ctime-fixture-final-tests.log`。
+
+### beta.36 旧库构造 fixture 事务与阶段诊断
+
+提交 `1a84b81ad942c4b3f73353d44c903f013f42f2e8` 的 [CI 38716663804](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38716663804) 中，Windows CAS 文件六项适用测试通过、一项既有平台条件跳过，受控 ctime 两项没有失败。普通测试共 1,622 通过／61 跳过／1 失败；唯一失败是原生连接器旧库升级及 OAuth 重启场景触发原 60 秒限制，实际同步执行约 98,361 ms。构建、源码界面及安装包未到达。日志没有细分构造／首次打开／重启阶段，不能仅凭超时断言 Windows 停在哪一步。同期 Linux 普通测试 1,639 通过／45 跳过，真实 Docker 浏览器 41／41 通过，六环境并行画面场景为 6,646 ms；不以 Linux 成功替代 Windows 门禁。
+
+该测试的旧版 37 数据库原先逐条自动提交迁移 SQL；本机先增加真实 SQLite `isTransaction` 前置断言，旧 fixture 在 6 ms 内以 false 失败。现在仅让旧库构造采用与已有数据库测试相同的逐迁移显式事务、回滚、外键检查及模式恢复，旧句柄始终关闭；产品迁移、原聊天／密文／OAuth 重启断言及 60 秒时限均未改。七个固定名称及累计毫秒数的阶段记录在 finally 输出，不含路径、正文、凭据或账号，用于下次 Windows 失败定位。
+
+本机定向连接器仓库 12／12 通过（总计 902 ms），Node TypeScript、目标 lint、文档链接与 diff 检查通过；没有完整套件、构建或界面重跑。修正明确证明了 fixture 的事务边界，不宣称已证明 Windows 超时根因或新 Windows 门禁通过。旧失败与本机前置失败日志分别保留为 `/tmp/aevoren-media36-1a84b81-windows-failure.log`、`/tmp/aevoren-media36-legacy-transaction-before.log`。
+
+
 ### beta.33 外发重启关闭诊断（未发布）
 
 PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38707578493) 在源码 35 项中通过 34 项；外发未知结果场景已确认一次提交和 unknown 状态，但首次重启的关闭夹具失败，第二次启动及只读核验尚未到达。原 trace 只有关闭调用和夹具错误，没有该进程的退出／管道状态或 Main 关闭阶段，不能确定是产品关闭、进程退出还是继承管道未释放。
@@ -410,6 +488,18 @@ PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/act
 本次仅在外发测试夹具增加有界诊断，缓存其确切 ChildProcess，记录 PID、exit／close 事件、退出码、信号和 stdio destroyed 状态，并复用已有的 Main flush／可信确认／窗口关闭阶段；每个进程最多 120 条，重启和清理调用无论成功或失败均附 JSON，随后移除监听。没有修改产品、关闭辅助函数、时限或业务断言，也没有重跑原失败任务。
 
 新构建的本机隐藏 beta.33 源码场景 1／1 通过，第一次关闭约 191 ms、最终清理约 52 ms，均有可信 flush 确认、exit 0、全部管道关闭且未强制终止。四套 TypeScript、正常构建和定向 lint 通过；没有重跑完整套件或打包。该本机成功不证明 Windows 根因已解决，新的正常 CI 将提供该平台的诊断证据。
+
+### beta.36 Windows ASAR verification path correction
+
+[CI 38718418892](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38718418892) at `01efdaece09e9db2fe7cee369d6e3c5f4c05393e` passed Linux, macOS and Secret scan. Windows passed **1,623 ordinary tests / 61 skipped**, **50/50 source-interface cases** (20.5 minutes), **8/8 source close cases**, and actual Windows packaging. Step 13 failed during parser asset verification with `node_modules/@hono/node-server was not found in this archive`; installation and installed scenarios were not reached. This was not a 30-minute job timeout. The failed result remains recorded.
+
+The verifier converted ASAR inventory paths to `/` before passing them to `@electron/asar.statFile`, whose directory traversal uses native `path.sep`. Windows therefore could not look up nested entries. The correction preserves native relative paths for ASAR stat/extract while retaining normalized `/` paths for whole-package forbidden-asset checks. Manifest bytes, size, SHA-256, font licenses, uppercase variants and undeclared-file checks remain unchanged. Product code, build output and deadlines were not modified.
+
+An eighth fixture runs the dependency's real Filesystem methods with the Windows path implementation against a nested ASAR. The original verifier deterministically failed with the same `@hono/node-server` error (seven passed / one failed); the corrected verifier passed **8/8**, targeted lint and diff checks. This portable local test does not establish Windows installer acceptance; fresh Windows CI must validate the complete chain. Original workflow and before/after logs are stored in the local persistent directory `$CODEX_HOME/aevoren-evidence/2026-10-15/phase5/`, not as repository attachments.
+
+### beta.36 platform gate and portable evidence references
+
+At `d401708`, CI `38739051128` passed macOS smoke/package, Windows smoke/package and Secret scan. Windows reached the actual NSIS installation, installed feature scenarios and both source/installed close handshakes; the corrected native ASAR traversal passed against the real Windows package. Linux stopped before verification/Docker at `open-source:check` because this plan contained an absolute personal evidence-directory path. The gate correctly rejected that tracked path; it was not a product or Docker failure. Evidence references now use portable `$CODEX_HOME/aevoren-evidence/` notation, with no gate exception. This documentation-only correction does not change application, Worker, parser, dependency, package or workflow bytes. The original failed run remains recorded; fresh CI must confirm all gates on the corrected commit before promotion.
 
 
 ### MCP34 Windows 初始文档顺序校验
@@ -493,3 +583,33 @@ Raw local evidence is under `$CODEX_HOME/aevoren-evidence/2026-10-15/releases/cl
 The fresh unsigned macOS beta.35 package passed all four TypeScript/build configurations and one actual hidden packaged GUI bootstrap/Docker-probe case (1/1, 4.96s), with normal exit 0 and no forced cleanup. The owned database canary stayed unchanged; the real installed Docker CLI was discovered while its engine remained stopped. No daemon, user window, real Claude CLI or cloud operation was started. Main SHA-256 is `6d521b7b3e6b11c5e8b3851fb37ffa7ddf6643f1a11b6b4e985212ca6f3131f1`; ASAR is `c383625ba644fdf8406ba1cdbe55747b6a2f2c310d68b39ae4fcfa6cf1391936`. All 16 generated app files, eight Worker files and the changed browser guide match the package; the compiled response-local scope and final image guard are present. These byte/bootstrap checks and the source actual-SDK regressions remain distinct evidence, not an actual packaged Claude batch or real-human takeover test. Old GUI35 output was archived before rebuilding.
 
 Independent read-only review found no remaining blocker in the narrow fix: request-local ALS ownership, cached redaction, normal text cancellation and installed SDK/Hono body-write paths were checked without duplicate execution. Future media integration must also register any actually included private text lease, and the later TASK authority guard must remain active for text-only results. New full development/Beta/signing gates are still pending.
+
+## 0.3.0-beta.36 refresh from normal MCP34 dev integration
+
+This candidate integrated normal dev `a743f7d835948a051d316a74fdc3752c190eacc2` after PR #37 exact source head `2ccd1c9` passed all four checks (CI 38758776745), including actual Linux Docker and macOS/Windows source plus installed acceptance. Current candidate features, expanded feature/package/close workflow selections and exact package version are retained. Only conflict resolution in documentation/workflow lists was needed; production feature behavior was not replaced. Prior failed and earlier local receipts above remain tied to their original builds. Fresh normal CI is required for this merge; no Beta tag or master promotion has occurred.
+
+
+### Media36 Windows initial document evidence
+
+Normal CI 38832566027 at `27a89fd` passed Linux verification/actual Docker, macOS source/package and Secret scan. Windows ordinary tests passed, and source smoke was 49/50. The one failure was Library fixture launch: `.app-shell` was absent at its unchanged five-second check, before resource opening, draft mutation or any Library business assertion. The Room single-member failure case passed in this run; its earlier failure remains unexplained and did not trigger the new controlled diagnostic. Windows packaging/installed gates were not reached.
+
+The Library launch helper now waits for the production Renderer file URL derived from `app.getAppPath()` and its actual DOMContentLoaded event before the same shell/Preload checks. It retains every business assertion and whole-case deadline, with no sleep, retry or product change. Failure-only boot evidence is limited to readiness/loading booleans, expected file category, DOM readyState, Preload presence and page-error count. The original trace contained no DOM/navigation evidence, so this sequencing correction does not claim a proven Windows product root cause; fresh normal CI remains required.
+
+Limited local acceptance of the corrected initial-document sequencing passed the actual hidden macOS source case 1/1 (8.4 seconds) with its original assertions and normal closure. Node TypeScript, targeted ESLint and whitespace checks passed. No application rebuild, package rebuild or Windows rerun was substituted for the pending new normal CI.
+
+
+### Local Media36 integration and retained private-text leases — 2026-10-16
+
+This local-only work started from actual protected dev `ffd5dab99d153097ff8971a8895647d0b5d7dae6`, normally integrated pending PR65 `f1629278fdbf4fdb3e1b0bda1dcf75f959ddea7c` and original Media36 `a8e0980fe7b4b5bfab90801b5a56e41687c0c065`, and resolved their documented conflicts. Neither pending source is relabelled as newly accepted protected dev. The browser engine combines every per-await access/cancellation check with passive diagnostics; its entire source blob matches the earlier combined reference `66349a4b5b9bcea5af806092bb36d432b0a0955f`. GUI discovery, finite fixture cleanup, strict normal-close checks, parser/license gates and success-only exact-file Windows validation downloads remain intact.
+
+A failure-first natural SDK batch test on the naive image-guard/text-carrier combination passed both browser-image cases and failed both private-text cases at the actual stale-body assertion (109ms/106ms). The narrow composition now records the one text-authority decision actually used by the existing rendering helper, then registers the original text carrier only after that helper succeeds and includes it. Current authority is checked at each actual HTTP body write alongside included image leases. The four false/throwing image/text cases passed, preserving independent response delivery, correct response IDs, method receivers, redacted cached retry and no redispatch. The source image/text helper and public schemas were not rewritten. Later TASK authority must still run unconditionally for all responses, outside any empty-lease predicate.
+
+Local acceptance used Node 24.19.0 and pnpm 11.19.0. Thirteen targeted files passed 106 tests, with one existing optional locally generated Codex-protocol artifact check skipped; this includes real SQLite media/admission/native repositories and browser focus guards. All five TypeScript projects, targeted lint, documentation links, dependency-license checks (240 packages / 11 groups) and the security gate passed. The security gate retains its explicit verified packaging-advisory backport and five moderate advisories; no new dependency exception was introduced. Independent read-only code review found no blocker. Root removed incoming duplicated history that would have reintroduced an obsolete typed-API package classification, retaining the corrected source-only receipt.
+
+A fresh unsigned macOS beta.36 package was built after preserving the old output. One single-worker hidden run passed 16/16 in 60.47s, with zero skips, failures, retries or forced-cleanup warnings. Evidence is separated: six **source parser** cases cover real PDF text/blank pages/preview pixels, DOCX/UTF-16/ZIP rejection, CMap/CMYK/JPX/JPEG, six independent jobs with selected cancellation, sandbox denial and the actual 30-second parser deadline; ten **actual packaged application** cases cover media 4, Library initial-document selection 1, Notion35 updates/restart/send-once 2, typed API 1, real GUI Docker discovery 1 and strict application-quit/restart close 1. Eleven package identity attachments verify exact version and `isPackaged`; explicit strict close checks require exit 0/no signal. These do not establish an actual packaged Claude/cloud batch, real-human takeover, third-party account or real Windows Docker. No user foreground window, daemon or container was started.
+
+Fresh Main SHA-256: `2e752322c563b110dff1e37d9ad09343b63217448c49f6672e43074b79ee8c3f`; ASAR: `e47b4b017032798b1ff8dc6005b01e7278691cbc7f34f1ada2c6989382de52cf`. All 16 generated app files and 226 configured extra-resource files match the actual package byte-for-byte. Parser verification scanned 207 manifest assets, 228 resource files and 9,555 ASAR entries; parser manifest SHA-256 remains `07888e2755c41232ff400118ad5b0e910bcc150ee68920ad50f1251e2dd12e50`. The compiled response-local image/text guard is present. Previous Media36 Main `66653bab...` / ASAR `0518eaab...` output was preserved intact before rebuilding and remains historical. Local receipts are under `$CODEX_HOME/aevoren-evidence/2026-10-15/releases/media36-response-lease-*`, with failure-first `media36-private-text-lease-{before,after}.log`.
+
+No Media36 push, new PR, protected merge or release occurred during this local acceptance. After PR65's own required gates, normal protected-dev merge/tree equality and fixed beta.35 snapshot, this work must normally integrate that actual dev identity and verify unchanged production/resource inputs or validate any real delta before its ordinary feature PR and full CI. Actual Beta installation gates and exact-version signing/publication remain required in 34 → 35 → 36 order, with master deferred.
+
+The production notice generator reproduced the staged inventory unchanged. Whole-feature whitespace checking reports whitespace in the inherited verbatim OFL license; its exact bytes match original Media36 (SHA-256 `93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b`) and remain unmodified. The rest of the staged feature passes whitespace checking with only that single upstream license excluded; no repository validation policy or Git attribute was weakened.

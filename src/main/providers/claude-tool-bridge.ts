@@ -7,7 +7,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { AevorenBotError } from "../errors";
-import { toolImageResponse, type ModelImageAttachment } from "../model-image";
+import { toolImageResponse, type ModelImageAttachment, type ModelTextAttachment } from "../model-image";
 import { parseStructuredModelToolCall, structuredModelToolDefinitions, type ModelEvent, type ModelRunContext } from "../model";
 
 export const CLAUDE_HOST_TOOL_NAMES = ["workspace_list", "workspace_read", "workspace_search", "workspace_write", "web_search", "web_fetch", "weather_current", "time_now", "text_measure", "clipboard_read", "project_list_bots", "bot_create", "room_create", "product_catalog", "product_describe", "product_execute"] as const;
@@ -15,17 +15,20 @@ const MAX_BODY_BYTES = 1_048_576;
 // API tools are budgeted in rounds, which can contain several calls. Native MCP
 // must allow a bounded multi-source task, not treat every parallel call as a round.
 const MAX_TOOL_CALLS = 64;
+type ToolResultLease = ModelImageAttachment | ModelTextAttachment;
 
 function errorResult(code: "INVALID_REQUEST" | "TOOL_EXECUTION_CANCELLED" | "TOOL_ROUND_LIMIT_EXCEEDED" | "TOOL_IDEMPOTENCY_CONFLICT"): CallToolResult {
   const error = new AevorenBotError(code).toAppError();
   return { isError: true, content: [{ type: "text", text: JSON.stringify({ ok: false, code, safeMessage: error.safeMessage }) }] };
 }
 
-function toolResult(content: string, images: readonly ModelImageAttachment[] | undefined, registerImages: (images: readonly ModelImageAttachment[]) => void): CallToolResult {
+function toolResult(content: string, images: readonly ModelImageAttachment[] | undefined, modelText: ModelTextAttachment | undefined, registerLeases: (leases: readonly ToolResultLease[]) => void): CallToolResult {
   let isError = false;
   try { isError = (JSON.parse(content) as { ok?: unknown }).ok === false; } catch { /* Plain file text is valid. */ }
-  const visual = toolImageResponse(content, images);
-  registerImages(visual.images);
+  let textIncluded = false;
+  const checkedText = modelText && { text: modelText.text, isAuthorized: (): boolean => { textIncluded = modelText.isAuthorized(); return textIncluded; } };
+  const visual = toolImageResponse(content, images, checkedText);
+  registerLeases([...visual.images, ...(textIncluded && modelText ? [modelText] : [])]);
   return { isError, content: [{ type: "text", text: visual.text }, ...visual.images.map(image => ({ type: "image" as const, data: image.dataBase64, mimeType: image.reference.mimeType }))] };
 }
 
@@ -34,7 +37,7 @@ export class ClaudeToolBridge {
   private readonly lifetime = new AbortController();
   private readonly token = randomBytes(32).toString("hex");
   private readonly calls = new Map<string, { signature: string; result: Promise<() => CallToolResult> }>();
-  private readonly responseImages = new AsyncLocalStorage<ModelImageAttachment[]>();
+  private readonly responseLeases = new AsyncLocalStorage<ToolResultLease[]>();
   private readonly pending = new Set<() => void>();
   private readonly server = new Server({ name: "aevoren-host-tools", version: "1.0.0" }, { capabilities: { tools: {} } });
   private readonly transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID, enableJsonResponse: true });
@@ -90,7 +93,7 @@ export class ClaudeToolBridge {
         this.pending.add(cancel);
         toolSignal.addEventListener("abort", cancel, { once: true });
         if (toolSignal.aborted) { cancel(); return; }
-        this.emit({ ...event, toolSignal, respond: async (content, images) => finish(() => toolResult(content, images, allowed => this.responseImages.getStore()?.push(...allowed))) });
+        this.emit({ ...event, toolSignal, respond: async (content, images, modelText) => finish(() => toolResult(content, images, modelText, allowed => this.responseLeases.getStore()?.push(...allowed))) });
       });
       this.calls.set(key, { signature, result });
       return result.then(render => render());
@@ -135,19 +138,19 @@ export class ClaudeToolBridge {
       }
       try { parsedBody = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { response.writeHead(400).end(); return; }
     }
-    // JSON batches can retain an already rendered image while another tool runs.
+    // JSON batches can retain rendered images or private text while another tool runs.
     // Keep leases on this HTTP response, including fresh and cached renders.
-    const images: ModelImageAttachment[] = [];
+    const leases: ToolResultLease[] = [];
     const write = response.write.bind(response), end = response.end.bind(response);
     const authorized = (): boolean => {
       try {
-        if (images.every(image => !this.closed && !this.parentSignal.aborted && image.isAuthorized())) return true;
-      } catch { /* A revoked or closed source cannot disclose a retained frame. */ }
+        if (leases.every(lease => !this.closed && !this.parentSignal.aborted && lease.isAuthorized())) return true;
+      } catch { /* A revoked or closed source cannot disclose retained content. */ }
       response.destroy(); return false;
     };
     response.write = ((...args: Parameters<typeof response.write>) => authorized() ? write(...args) : false) as typeof response.write;
     response.end = ((...args: Parameters<typeof response.end>) => authorized() ? end(...args) : response) as typeof response.end;
-    await this.responseImages.run(images, () => this.transport.handleRequest(request, response, parsedBody));
+    await this.responseLeases.run(leases, () => this.transport.handleRequest(request, response, parsedBody));
   }
 
   async close(): Promise<void> {

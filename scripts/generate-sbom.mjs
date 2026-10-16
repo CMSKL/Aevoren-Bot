@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { parserAssetComponents, selectedParserLicense, sha256 } from "./media-parser-assets.mjs";
 
 const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
 const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -16,7 +17,7 @@ const components = Object.entries(catalog)
     return versions.map((version) => ({
       name: String(entry.name),
       version: String(version),
-      license,
+      license: selectedParserLicense(entry.name, version, license),
       homepage: typeof entry.homepage === "string" ? entry.homepage : "",
     }));
   }))
@@ -31,6 +32,12 @@ const componentRows = components.map((component) => ({
   licenses: [{ license: { name: component.license } }],
   ...(component.homepage ? { externalReferences: [{ type: "website", url: component.homepage }] } : {}),
 }));
+for (const component of parserAssetComponents) componentRows.push({
+  type: "library", "bom-ref": `urn:aevoren:media-parser:${encodeURIComponent(component.name)}@${component.version}`,
+  name: component.name, version: component.version, licenses: [{ license: { name: component.license } }],
+  externalReferences: [{ type: "website", url: component.source }],
+  properties: [{ name: "aevoren:licenseTextSha256", value: component.licensePaths.map(path => sha256(readFileSync(path))).join(",") }],
+});
 
 const applicationRef = `pkg:npm/${packageJson.name}@${packageJson.version}`;
 const digest = createHash("sha256")

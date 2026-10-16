@@ -34,7 +34,8 @@ import type {
   UserProfile,
   Workspace,
 } from "@shared/contracts";
-import { Conversation, type ConversationComposerDraft, type ConversationResourceInsertion } from "./components/Conversation";
+import { Conversation, type ConversationComposerDraft, type ConversationResourceInsertion, type ConversationMediaInsertion } from "./components/Conversation";
+import type { MessageMediaReference } from "@shared/media-contracts";
 import type { ResourceReference } from "@shared/library-contracts";
 import { ContactDetail, type ContactDetailHandle } from "./components/ContactDetail";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -85,7 +86,9 @@ export function App(): React.JSX.Element {
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [contactLibraryScope, setContactLibraryScope] = useState<{ botId: string; sessionId: string } | null>(null);
   const [resourceInsertion, setResourceInsertion] = useState<ConversationResourceInsertion | null>(null);
+  const [mediaInsertion, setMediaInsertion] = useState<ConversationMediaInsertion | null>(null);
   const composerDraftsRef = useRef(new Map<string, ConversationComposerDraft>());
+  const [, refreshComposerCache] = useState(0);
   const resourceUseRequestRef = useRef(0);
   const selectedContactIdRef = useRef(selectedContactId);
   useEffect(() => { selectedContactIdRef.current = selectedContactId; }, [selectedContactId]);
@@ -98,8 +101,14 @@ export function App(): React.JSX.Element {
     }).catch(() => { if (!cancelled) setCloseNotice("暂时无法读取当前 Bot 的私聊资源范围，请重新选择联系人。"); });
     return () => { cancelled = true; };
   }, [selectedContactId]);
-  const rememberComposerDraft = useCallback((sessionId: string, draft: ConversationComposerDraft): void => { composerDraftsRef.current.set(sessionId, draft); }, []);
+  const rememberComposerDraft = useCallback((sessionId: string, draft: ConversationComposerDraft): ConversationComposerDraft => {
+    const previous = composerDraftsRef.current.get(sessionId);
+    const next = { ...draft, draftVersion: Math.max(draft.draftVersion, (previous?.draftVersion ?? -1) + 1) };
+    composerDraftsRef.current.set(sessionId, next);
+    return next;
+  }, []);
   const resourceInsertionHandled = useCallback((id: string): void => { setResourceInsertion(current => current?.id === id ? null : current); }, []);
+  const mediaInsertionHandled = useCallback((id: string): void => { setMediaInsertion(current => current?.id === id ? null : current); }, []);
   const [contactEditingRequested, setContactEditingRequested] = useState(0);
   const [clearTarget, setClearTarget] = useState<ConversationSummary | null>(null);
   const [clearingConversation, setClearingConversation] = useState(false);
@@ -445,6 +454,7 @@ export function App(): React.JSX.Element {
 
   const openBot = useCallback(async (bot: Bot, flushCurrent = true, localError = false): Promise<boolean> => {
     const requestId = ++openRequestRef.current;
+    setResourceInsertion(null); setMediaInsertion(null);
     if (flushCurrent && !(await flushActive())) return false;
     setLoading(true);
     const reportError = (failure: AppError): void => {
@@ -539,6 +549,7 @@ export function App(): React.JSX.Element {
 
   const openRoom = useCallback(async (room: Room, flushCurrent = true, localError = false): Promise<RoomOpenResult> => {
     const requestId = ++openRequestRef.current;
+    setResourceInsertion(null); setMediaInsertion(null);
     const openingTab = sidebarTabRef.current;
     const isCurrent = () => requestId === openRequestRef.current && (!localError || openingTab === sidebarTabRef.current);
     const superseded = (): RoomOpenResult => {
@@ -913,6 +924,7 @@ export function App(): React.JSX.Element {
   }
 
   function clearSelection(): void {
+    setResourceInsertion(null); setMediaInsertion(null);
     sessionIdRef.current = null;
     selectedRoomIdRef.current = null;
     sessionStorage.removeItem("aevoren-bot:selected");
@@ -1214,7 +1226,7 @@ export function App(): React.JSX.Element {
     return true;
   }
 
-  async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone", attachments: AttachmentDraft[] = [], resourceRefs: ResourceReference[] = []): Promise<boolean> {
+  async function sendMessage(text: string, targetBotIds?: string[], routingMode?: "automatic" | "explicit" | "everyone", attachments: AttachmentDraft[] = [], resourceRefs: ResourceReference[] = [], mediaRefs: MessageMediaReference[] = []): Promise<boolean> {
     if (!session || submitting) return false;
     setSubmitting(true);
     setError(null);
@@ -1229,26 +1241,32 @@ export function App(): React.JSX.Element {
           text,
           attachments,
           resourceRefs,
+          mediaRefs,
           targetBotIds: targetBotIds ?? [],
           routingMode: routingMode ?? "automatic",
         })
-      : await window.aevorenBot.messages.send({ sessionId: session.id, clientNonce, text, attachments, resourceRefs });
+      : await window.aevorenBot.messages.send({ sessionId: session.id, clientNonce, text, attachments, resourceRefs, mediaRefs });
     setSubmitting(false);
     if (!result.ok) {
       if (selectedRoom) setError(result.error);
       else reportDirectError(result.error, session.id, clientNonce);
       return false;
     }
-    if (composerDraftsRef.current.get(session.id) === submittedDraft) composerDraftsRef.current.delete(session.id);
+    if (submittedDraft && composerDraftsRef.current.get(session.id) === submittedDraft && submittedDraft.text.trim() === text && submittedDraft.attachments === attachments && submittedDraft.resourceRefs === resourceRefs && submittedDraft.mediaRefs === mediaRefs) {
+      composerDraftsRef.current.set(session.id, { text: "", attachments: [], roomMentions: [], routingMode: "automatic", resourceRefs: [], mediaRefs: [], draftVersion: submittedDraft.draftVersion + 1 });
+      refreshComposerCache(current => current + 1);
+    }
     return true;
   }
 
   async function prepareLibraryResource(reference: ResourceReference, text: string | undefined, expectedSessionId: string, target: { bot: Bot } | { room: Room }): Promise<void> {
     const request = ++resourceUseRequestRef.current;
     const originalOpenRequest = openRequestRef.current;
+    const expectedDraftVersion = composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0;
     try {
     if (!(await flushActive())) return;
     const stillCurrent = (): boolean => request === resourceUseRequestRef.current && originalOpenRequest === openRequestRef.current
+      && (composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) === expectedDraftVersion
       && ("bot" in target ? selectedContactIdRef.current === target.bot.id : selectedRoomIdRef.current === target.room.id);
     if (!stillCurrent()) return;
     const result = await window.aevorenBot.library.read({ sessionId: expectedSessionId, id: reference.resourceId, revisionId: reference.revisionId });
@@ -1260,9 +1278,32 @@ export function App(): React.JSX.Element {
     }
     if ("bot" in target ? selectedContactIdRef.current !== target.bot.id : selectedRoomIdRef.current !== target.room.id) return;
     if (sessionIdRef.current !== expectedSessionId) return;
-    setResourceInsertion({ id: crypto.randomUUID(), sessionId: expectedSessionId, reference, ...(text ? { text } : {}) });
+    if ((composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) !== expectedDraftVersion) return;
+    setResourceInsertion({ id: crypto.randomUUID(), sessionId: expectedSessionId, reference, expectedDraftVersion, ...(text ? { text } : {}) });
     setSettingsOpen(false); setSidebarTab("chats"); setMobilePanel(null); setCloseNotice(null);
     } catch { if (request === resourceUseRequestRef.current) setCloseNotice("无法准备资源引用，草稿仍然保留，请重试。"); }
+  }
+
+  async function prepareMediaResource(reference: MessageMediaReference, expectedSessionId: string, target: { bot: Bot } | { room: Room }): Promise<void> {
+    const request = ++resourceUseRequestRef.current, originalOpenRequest = openRequestRef.current;
+    const expectedDraftVersion = composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0;
+    const stillCurrent = (): boolean => request === resourceUseRequestRef.current && originalOpenRequest === openRequestRef.current
+      && (composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) === expectedDraftVersion
+      && ("bot" in target ? selectedContactIdRef.current === target.bot.id : selectedRoomIdRef.current === target.room.id);
+    try {
+      if (!(await flushActive()) || !stillCurrent()) return;
+      const result = await window.aevorenBot.media.metadata({ sessionId: expectedSessionId, id: reference.mediaId });
+      if (!stillCurrent()) return;
+      if (!result.ok || !result.data.asset.enabled || result.data.asset.deletedAt || result.data.asset.reference.sha256 !== reference.sha256) { setCloseNotice(result.ok ? "媒体不可读取或摘要不匹配，请重新选择。" : result.error.safeMessage); return; }
+      if (sessionIdRef.current !== expectedSessionId) {
+        const opened = "bot" in target ? await openBot(target.bot, false, true) : (await openRoom(target.room, false, true)).status === "opened";
+        if (!opened || request !== resourceUseRequestRef.current) return;
+      }
+      if (sessionIdRef.current !== expectedSessionId || (composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) !== expectedDraftVersion) return;
+      if ("bot" in target ? selectedContactIdRef.current !== target.bot.id : selectedRoomIdRef.current !== target.room.id) return;
+      setMediaInsertion({ id: crypto.randomUUID(), sessionId: expectedSessionId, reference, expectedDraftVersion });
+      setSettingsOpen(false); setSidebarTab("chats"); setMobilePanel(null); setCloseNotice(null);
+    } catch { if (request === resourceUseRequestRef.current) setCloseNotice("无法准备媒体引用，草稿仍然保留，请重试。"); }
   }
 
   async function hideConversations(input: ConversationBatchDeleteInput): Promise<boolean> {
@@ -1583,6 +1624,7 @@ export function App(): React.JSX.Element {
         editingRequested={contactEditingRequested}
         librarySessionId={selectedContact && contactLibraryScope?.botId === selectedContact.id ? contactLibraryScope.sessionId : undefined}
         onUseResource={(reference, text) => { if (selectedContact && contactLibraryScope?.botId === selectedContact.id) void prepareLibraryResource(reference, text, contactLibraryScope.sessionId, { bot: selectedContact }); }}
+        onUseMedia={reference => { if (selectedContact && contactLibraryScope?.botId === selectedContact.id) void prepareMediaResource(reference, contactLibraryScope.sessionId, { bot: selectedContact }); }}
         onBotUpdated={updateBot}
         onOpenBots={() => setMobilePanel("bots")}
         onSend={async (bot) => {
@@ -1604,6 +1646,8 @@ export function App(): React.JSX.Element {
         onDraftChange={rememberComposerDraft}
         resourceInsertion={resourceInsertion}
         onResourceInsertionHandled={resourceInsertionHandled}
+        mediaInsertion={mediaInsertion}
+        onMediaInsertionHandled={mediaInsertionHandled}
         bot={selectedBot}
         room={selectedRoom}
         roomBatches={roomBatches}
@@ -1748,6 +1792,7 @@ export function App(): React.JSX.Element {
           onOpenBot={(bot) => void editBot(bot)}
           onMobileClose={() => void closeInspector()}
           onUseResource={(reference, text) => { void prepareLibraryResource(reference, text, selectedRoom.session.id, { room: selectedRoom.room }); }}
+          onUseMedia={reference => { void prepareMediaResource(reference, selectedRoom.session.id, { room: selectedRoom.room }); }}
         />
         </div>
       ) : null}
