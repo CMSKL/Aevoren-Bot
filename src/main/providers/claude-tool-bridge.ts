@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer, type IncomingMessage, type ServerResponse, type Server as HttpServer } from "node:http";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,10 +21,11 @@ function errorResult(code: "INVALID_REQUEST" | "TOOL_EXECUTION_CANCELLED" | "TOO
   return { isError: true, content: [{ type: "text", text: JSON.stringify({ ok: false, code, safeMessage: error.safeMessage }) }] };
 }
 
-function toolResult(content: string, images?: readonly ModelImageAttachment[]): CallToolResult {
+function toolResult(content: string, images: readonly ModelImageAttachment[] | undefined, registerImages: (images: readonly ModelImageAttachment[]) => void): CallToolResult {
   let isError = false;
   try { isError = (JSON.parse(content) as { ok?: unknown }).ok === false; } catch { /* Plain file text is valid. */ }
   const visual = toolImageResponse(content, images);
+  registerImages(visual.images);
   return { isError, content: [{ type: "text", text: visual.text }, ...visual.images.map(image => ({ type: "image" as const, data: image.dataBase64, mimeType: image.reference.mimeType }))] };
 }
 
@@ -32,6 +34,7 @@ export class ClaudeToolBridge {
   private readonly lifetime = new AbortController();
   private readonly token = randomBytes(32).toString("hex");
   private readonly calls = new Map<string, { signature: string; result: Promise<() => CallToolResult> }>();
+  private readonly responseImages = new AsyncLocalStorage<ModelImageAttachment[]>();
   private readonly pending = new Set<() => void>();
   private readonly server = new Server({ name: "aevoren-host-tools", version: "1.0.0" }, { capabilities: { tools: {} } });
   private readonly transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID, enableJsonResponse: true });
@@ -87,7 +90,7 @@ export class ClaudeToolBridge {
         this.pending.add(cancel);
         toolSignal.addEventListener("abort", cancel, { once: true });
         if (toolSignal.aborted) { cancel(); return; }
-        this.emit({ ...event, toolSignal, respond: async (content, images) => finish(() => toolResult(content, images)) });
+        this.emit({ ...event, toolSignal, respond: async (content, images) => finish(() => toolResult(content, images, allowed => this.responseImages.getStore()?.push(...allowed))) });
       });
       this.calls.set(key, { signature, result });
       return result.then(render => render());
@@ -132,7 +135,19 @@ export class ClaudeToolBridge {
       }
       try { parsedBody = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { response.writeHead(400).end(); return; }
     }
-    await this.transport.handleRequest(request, response, parsedBody);
+    // JSON batches can retain an already rendered image while another tool runs.
+    // Keep leases on this HTTP response, including fresh and cached renders.
+    const images: ModelImageAttachment[] = [];
+    const write = response.write.bind(response), end = response.end.bind(response);
+    const authorized = (): boolean => {
+      try {
+        if (images.every(image => !this.closed && !this.parentSignal.aborted && image.isAuthorized())) return true;
+      } catch { /* A revoked or closed source cannot disclose a retained frame. */ }
+      response.destroy(); return false;
+    };
+    response.write = ((...args: Parameters<typeof response.write>) => authorized() ? write(...args) : false) as typeof response.write;
+    response.end = ((...args: Parameters<typeof response.end>) => authorized() ? end(...args) : response) as typeof response.end;
+    await this.responseImages.run(images, () => this.transport.handleRequest(request, response, parsedBody));
   }
 
   async close(): Promise<void> {

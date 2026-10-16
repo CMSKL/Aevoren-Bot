@@ -66,6 +66,8 @@ Closing the application and clearing history retain background services while Do
 
 For a running background service, register its listening port. The Worker verifies that the listener belongs to that process and reports its actual check time. **Preview** opens that registered service in the isolated browser; the original process's exit invalidates it. Execution Worker 1.1.0 is required, and older environments need an explicit rebuild. Setup, isolation, image versions, licenses and platform validation are documented in [Execution environments](EXECUTION_ENVIRONMENT.md) and [Browser/computer](BROWSER_COMPUTER.md).
 
+**Take over** pauses AI browser input, reads and screen uploads until you explicitly **Return to AI**. The development correction also refuses a Claude MCP batch that retained an old screenshot before takeover; separate requests can continue. A failed image response does not mean other tools in that batch were undone, so inspect their execution records before retrying.
+
 ## Content-team workflow UI
 
 - A one-click content team avoids a persistent stage tracker. It shows a compact decision card only while a real Brief is waiting for user input.

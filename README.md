@@ -112,7 +112,7 @@ Run Node, Python or shell commands, inspect real output/exit codes, stop an indi
 
 Open the selected Bot's **Browser / Computer** panel after starting its execution environment. Chromium login data and desktop state are isolated by conversation and executing Bot. **Take over** pauses AI reads, screen uploads and inputs. Disconnecting retains user control; **Return to AI** explicitly returns it and requires a fresh observation.
 
-Downloads contain verified bytes and use a create-only save destination. Service previews use the registered process's actual listener; stopping it invalidates the preview even if another process reuses the port. API, Claude MCP and supported Codex adapters carry actual screenshot bytes with fresh authorization checks; transport support does not prove the selected model understands images. See [setup, lifecycle and support boundaries](docs/BROWSER_COMPUTER.md).
+Downloads contain verified bytes and use a create-only save destination. Service previews use the registered process's actual listener; stopping it invalidates the preview even if another process reuses the port. API, Claude MCP and supported Codex adapters carry actual screenshot bytes with fresh authorization checks; transport support does not prove the selected model understands images. The development correction also checks retained Claude MCP batch images at the actual HTTP write, refusing a revoked response while independent requests remain usable. See [setup, lifecycle and support boundaries](docs/BROWSER_COMPUTER.md).
 
 ## Security model
 
