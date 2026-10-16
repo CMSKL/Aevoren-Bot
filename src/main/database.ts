@@ -1,3 +1,4 @@
+import {TemplateExportRepository,TEMPLATE_EXPORT_MIGRATION,templateDigest} from "./template-export-repository";
 import { RoutineRepository, GROUP_ROUTINE_MIGRATION } from "./routine-repository";
 import { OrganizationRepository,ORGANIZATION_MIGRATION } from "./organization-repository";
 import { SearchRepository } from "./search-repository";
@@ -2093,6 +2094,7 @@ export const MIGRATIONS = [
   TASK_SESSION_MIGRATION,
   ORGANIZATION_MIGRATION,
   GROUP_ROUTINE_MIGRATION,
+  TEMPLATE_EXPORT_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -3213,6 +3215,7 @@ export class AppRepository {
   readonly routineTargets: RoutineRepository;
   readonly search: SearchRepository;
   readonly organization:OrganizationRepository;
+  readonly templates:TemplateExportRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
   readonly demonstrations: DemonstrationRepository;
@@ -3256,6 +3259,7 @@ export class AppRepository {
       this.skillExecutions = new SkillExecutionRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId),
         (scope, reference, runtimeRunId) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId, runtimeRunId)[0]!);
       this.tasks = new TaskSessionRepository(this.database, this);
+      this.templates=new TemplateExportRepository(this.database);
       this.search = new SearchRepository(this.database);
       this.organization=new OrganizationRepository(this.database,{assertSession:id=>{this.getSession(id);},assertBot:id=>{this.getBot(id);},assertContext:context=>{this.assertSessionExecutor(context.sessionId,context.executorBotId);if(context.runtimeRunId){const run=this.getRuntimeRun(context.runtimeRunId);if(run.sessionId!==context.sessionId||run.executorBotId!==context.executorBotId||!["running","streaming"].includes(run.state))throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");this.tasks.assertTaskRuntime(run.id);}}});
       this.library.setTaskReferenceReader((sessionId, executor, runtimeId) => this.tasks.libraryReferences(sessionId, executor, runtimeId));
@@ -4366,6 +4370,8 @@ export class AppRepository {
           review.target.entrySha256 !== grant.entrySha256 || review.target.interpreter !== grant.interpreter ||
           JSON.stringify(review.target.args) !== JSON.stringify(value.args) || review.target.cwd !== value.cwd || review.target.timeoutMs !== value.timeoutMs ||
           review.resourceName !== content.revision.name || review.revisionNumber !== content.revision.number) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if(parsed.tool.kind==="product-call"&&parsed.tool.action==="execute"&&["templates.commitCapture","templates.commitImport"].includes(parsed.tool.operation)){
+      const input=parsed.tool.input as {preparedId:string;expectedDigest:string};if(review?.kind!=="portable-template"||review.target.operation!==parsed.tool.operation||review.target.preparedId!==input.preparedId||review.target.expectedDigest!==input.expectedDigest||review.target.sessionId!==runtime.sessionId||review.target.executorBotId!==runtime.executorBotId||templateDigest(review.target.manifest)!==input.expectedDigest)throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
     } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "demonstrations.publish") {
       if (review?.kind !== "demonstration-skill") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
       const input = { ...(parsed.tool.input as object), sessionId: runtime.sessionId, executorBotId: runtime.executorBotId } as import("@shared/demonstration-contracts").DemonstrationPublishInput;

@@ -1,3 +1,4 @@
+import {TEMPLATE_CHANNELS} from "@shared/template-export-channels";
 import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
 import { REALTIME_CHANNELS } from "@shared/realtime-channels";
 import { realtimeStartSchema, realtimeAppendSchema, realtimeCommitSchema, realtimePlaybackSchema, realtimeInputSchema } from "@shared/realtime-schemas";
@@ -36,6 +37,7 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
   const { window } = dependencies;
   const view = new ProductViewService(window);
   const product = new ProductOperationService({ ...dependencies, requestView: (input) => view.request(input) });
+  ipcMain.handle(TEMPLATE_CHANNELS.reviewPrepared,(event,input:unknown)=>apiResult(()=>{assertTrusted(event,window);if(!dependencies.templateExportService)throw new AevorenBotError("INVALID_REQUEST");const value=z.object({preparedId:z.string().uuid(),expectedDigest:z.string().regex(/^[a-f0-9]{64}$/u)}).strict().parse(input);return dependencies.templateExportService.reviewPrepared(value.preparedId,value.expectedDigest);}));
   ipcMain.handle(BOT_IMAGE_CHANNELS.cancel,(event,input:unknown)=>apiResult(()=>{assertTrusted(event,window);if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");dependencies.botImageService.cancelUI(z.string().uuid().parse(input));}));
   ipcMain.handle(REALTIME_CHANNELS.start, (event, input: unknown) => apiResult(async () => {
     assertTrusted(event, window);

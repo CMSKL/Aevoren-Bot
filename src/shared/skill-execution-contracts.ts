@@ -85,7 +85,7 @@ export type SkillScriptReviewSnapshot = {
     timeoutMs: number;
   };
 };
-export type ApprovalReviewSnapshot = SkillScriptReviewSnapshot | import("./native-outbound-contracts").ExternalDraftReviewSnapshot | import("./mcp-write-contracts").McpWriteReview | import("./demonstration-contracts").DemonstrationApprovalReviewSnapshot;
+export type ApprovalReviewSnapshot = import("./template-export-contracts").TemplateApprovalReview | SkillScriptReviewSnapshot | import("./native-outbound-contracts").ExternalDraftReviewSnapshot | import("./mcp-write-contracts").McpWriteReview | import("./demonstration-contracts").DemonstrationApprovalReviewSnapshot;
 export type ApprovalReviewInput = EnvironmentScope & { id: string; expectedVersion: number };
 export type ApprovalReviewResult = { snapshot: ApprovalReviewSnapshot | null; executable: boolean; reason?: string };
 export type SkillExecutionApi = {

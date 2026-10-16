@@ -316,3 +316,5 @@ img { max-width: 100%; }
   .sidebar-list-title, .sidebar-selection-count { grid-column: 1 / -1; }
   .sidebar-selection-actions { grid-column: 1; justify-content: flex-end; }
 }
+
+.portable-dialog{width:min(900px,calc(100vw - 32px));max-height:calc(100dvh - 40px);display:flex;flex-direction:column;overflow:hidden}.portable-dialog>header{display:flex;align-items:center;justify-content:space-between;gap:16px}.portable-scroll{overflow:auto;min-height:0;padding:4px}.portable-dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:400px;overflow:auto;background:var(--surface-soft);padding:12px}.portable-dialog fieldset{border:1px solid var(--border);margin:16px 0;border-radius:8px}.portable-choice{display:flex;align-items:flex-start;gap:8px;margin:8px 0;overflow-wrap:anywhere}.portable-choice input{flex:none;width:auto}.portable-file{padding-left:24px}.portable-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.portable-dialog textarea,.portable-dialog input:not([type=checkbox]){display:block;width:100%;box-sizing:border-box}.portable-dialog .settings-card button{margin-right:8px}

@@ -76,6 +76,7 @@ export class TemplateExportService{
   async commitCapture(input:TemplateCommitInput,context?:TemplateContext,signal?:AbortSignal){this.check(context,undefined,signal);const parsed=templateCommitSchema.parse(input),value=this.fromPreview(parsed.preparedId,parsed.expectedDigest,context);if(!value.ownerSessionId)throw invalid();
     this.check(context,value.ownerSessionId,signal);const verified=new Set<string>();for(const file of uniqueFiles(value.manifest.resources)){if(verified.has(file.sha256))continue;verified.add(file.sha256);await this.blobs.read(file.sha256,file.size,signal??context?.signal);value.assertCurrent();this.check(context,value.ownerSessionId,signal);}
     return this.templates.publish(value.manifest,value.ownerSessionId,parsed.id,parsed.expectedVersion,value.origins);}
+  assertPrepared(id:string,digest:string,context?:TemplateContext):void{this.fromPreview(id,digest,context);}
   /** Trusted UI/native approval review only; this is not a model catalog operation. */
   reviewPrepared(id:string,digest:string):TemplateManifest{return structuredClone(this.fromPreview(id,digest).manifest);}
   async prepareTemplateExport(input:TemplateReadInput,context?:TemplateContext,signal?:AbortSignal):Promise<PreparedOfflineArtifact>{
@@ -94,7 +95,7 @@ export class TemplateExportService{
     return this.preview({actor:context?{executorBotId:context.executorBotId,runtimeRunId:context.runtimeRunId}:null,origins:[],manifest,digest:templateDigest(manifest),files,ownerSessionId:context?.sessionId??null,assertCurrent:()=>this.check(context,undefined,signal)});
   }
   async commitImport(input:TemplateImportInput,context?:TemplateContext,signal?:AbortSignal):Promise<TemplateImportResult>{
-    const parsed=templateImportSchema.parse(input);this.check(context,parsed.targetSessionId,signal);const intent=templateDigest({digest:parsed.expectedDigest,targetSessionId:parsed.targetSessionId??null});
+    const parsed=templateImportSchema.parse(input);this.check(context,parsed.targetSessionId,signal);if(context&&this.app.getSession(context.sessionId).kind==="TASK")throw new AevorenBotError("APPROVAL_SCOPE_INVALID");const intent=templateDigest({digest:parsed.expectedDigest,targetSessionId:parsed.targetSessionId??null});
     const previous=this.templates.importReceipt(parsed.clientNonce,intent,context?.sessionId,context?.executorBotId);if(previous)return previous;
     const value=this.fromPreview(parsed.preparedId,parsed.expectedDigest,context);this.validateFiles(value.manifest,value.files);
     if(!value.manifest.bots.length&&!parsed.targetSessionId)throw invalid();

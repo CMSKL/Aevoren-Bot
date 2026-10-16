@@ -17,3 +17,19 @@ export type TemplateReadInput = { id: string; revisionId?: string };
 export type TemplateImportInput = { preparedId: string; expectedDigest: string; clientNonce: string; targetSessionId?: string };
 export type TemplateImportResult = { clientNonce: string; digest: string; botIds: string[]; roomId: string | null; sessionIds: string[]; resourceRefs: ResourceReference[]; targetSessionId: string | null };
 export type OfflineExportInput = { format: "json" | "html"; name?: string; sessions: { sessionId: string; generation: number; entries: { id: string; digest: string }[] }[]; resources: { sessionId: string; reference: ResourceReference; filePaths: string[] }[]; media: { sessionId: string; reference: MessageMediaReference }[] };
+
+export type OfflineSaveResult={name:string;size:number;sha256:string};
+export type TemplateApi={
+ list():Promise<import("./contracts").ApiResult<TemplateMetadata[]>>;
+ read(input:TemplateReadInput):Promise<import("./contracts").ApiResult<TemplateRecord>>;
+ versions(id:string):Promise<import("./contracts").ApiResult<Omit<TemplateRevision,"manifest">[]>>;
+ prepareCapture(input:TemplateCaptureInput):Promise<import("./contracts").ApiResult<TemplatePreview>>;
+ commitCapture(input:TemplateCommitInput):Promise<import("./contracts").ApiResult<TemplateRecord>>;
+ prepareImport(input:{dataBase64:string}):Promise<import("./contracts").ApiResult<TemplatePreview>>;
+ pickImport():Promise<import("./contracts").ApiResult<TemplatePreview|null>>;
+ reviewPrepared(input:{preparedId:string;expectedDigest:string}):Promise<import("./contracts").ApiResult<TemplateManifest>>;
+ commitImport(input:TemplateImportInput):Promise<import("./contracts").ApiResult<TemplateImportResult>>;
+ export(input:TemplateReadInput):Promise<import("./contracts").ApiResult<OfflineSaveResult|null>>;
+};
+export type ExportsApi={save(input:OfflineExportInput):Promise<import("./contracts").ApiResult<OfflineSaveResult|null>>};
+export type TemplateApprovalReview={kind:"portable-template";resourceName:string;revisionNumber:number;target:{sessionId:string;executorBotId:string;preparedId:string;expectedDigest:string;operation:"templates.commitCapture"|"templates.commitImport";manifest:TemplateManifest}};

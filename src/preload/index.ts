@@ -1,3 +1,4 @@
+import {TEMPLATE_CHANNELS,EXPORT_CHANNELS} from "@shared/template-export-channels";
 import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
 import { ORGANIZATION_CHANNELS,ORGANIZATION_CHANGED_CHANNEL } from "@shared/organization-channels";
 import { SEARCH_CHANNELS } from "@shared/search-channels";
@@ -40,6 +41,8 @@ function onBrowserChanged(listener: (event: BrowserChangedEvent) => void): () =>
 const api: AevorenBotApi = {
   botImages:{cancel:requestId=>ipcRenderer.invoke(BOT_IMAGE_CHANNELS.cancel,requestId),set:input=>ipcRenderer.invoke(BOT_IMAGE_CHANNELS.set,input),clear:input=>ipcRenderer.invoke(BOT_IMAGE_CHANNELS.clear,input),read:input=>ipcRenderer.invoke(BOT_IMAGE_CHANNELS.read,input)},
   organization:{snapshot:()=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.snapshot),createSection:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.createSection,input),renameSection:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.renameSection,input),deleteSection:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.deleteSection,input),reorderSections:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.reorderSections,input),moveSession:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.moveSession,input),savePreferences:input=>ipcRenderer.invoke(ORGANIZATION_CHANNELS.savePreferences,input),onChanged:listener=>{const handler=(_event:Electron.IpcRendererEvent,payload:import("@shared/organization-contracts").OrganizationChanged):void=>listener(payload);ipcRenderer.on(ORGANIZATION_CHANGED_CHANNEL,handler);return()=>ipcRenderer.removeListener(ORGANIZATION_CHANGED_CHANNEL,handler);}},
+  templates:{list:()=>ipcRenderer.invoke(TEMPLATE_CHANNELS.list),read:input=>ipcRenderer.invoke(TEMPLATE_CHANNELS.read,input),versions:id=>ipcRenderer.invoke(TEMPLATE_CHANNELS.versions,id),prepareCapture:input=>ipcRenderer.invoke(TEMPLATE_CHANNELS.prepareCapture,input),commitCapture:input=>ipcRenderer.invoke(TEMPLATE_CHANNELS.commitCapture,input),prepareImport:input=>ipcRenderer.invoke(TEMPLATE_CHANNELS.prepareImport,input),pickImport:()=>ipcRenderer.invoke(TEMPLATE_CHANNELS.pickImport),reviewPrepared:input=>ipcRenderer.invoke(TEMPLATE_CHANNELS.reviewPrepared,input),commitImport:input=>ipcRenderer.invoke(TEMPLATE_CHANNELS.commitImport,input),export:input=>ipcRenderer.invoke(TEMPLATE_CHANNELS.export,input)},
+  exports:{save:input=>ipcRenderer.invoke(EXPORT_CHANNELS.save,input)},
   search: {query: input=>ipcRenderer.invoke(SEARCH_CHANNELS.query,input),open: input=>ipcRenderer.invoke(SEARCH_CHANNELS.open,input)},
   mcpWrites: {
     toolCatalog: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.toolCatalog, input),

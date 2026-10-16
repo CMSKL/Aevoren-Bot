@@ -1,3 +1,6 @@
+import {TEMPLATE_CHANNELS,EXPORT_CHANNELS} from "@shared/template-export-channels";
+import {TEMPLATE_OPERATION_SCHEMAS} from "@shared/template-export-product";
+import type {TemplateExportService,PreparedOfflineArtifact} from "./template-export-service";
 import { routineRunNowIpcSchema, routineRunCancelSchema } from "@shared/routine-schemas";
 import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
 import { botImageSetSchema,botImageClearSchema,botImageReadSchema } from "@shared/bot-image-schemas";
@@ -112,6 +115,9 @@ export type ProductDependencies = VoiceProductDependencies & MediaProductDepende
   realtimeService?: RealtimeService;
   taskSessionService?: TaskSessionService;
   searchService?: SearchService;
+  templateExportService?:TemplateExportService;
+  pickTemplateBytes?():Promise<Uint8Array|null>;
+  saveOfflineArtifact?(artifact:PreparedOfflineArtifact):Promise<import("@shared/template-export-contracts").OfflineSaveResult|null>;
   organizationService?:OrganizationService;
   botImageService?:BotImageService;
   organizationChanged?(event:OrganizationChanged):void;
@@ -164,6 +170,24 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   };
 
   const handlers = new Map<string, (input?: unknown) => unknown>();
+  for(const [operation,schema] of Object.entries(TEMPLATE_OPERATION_SCHEMAS)){
+    const channel=operation==="exports.save"?EXPORT_CHANNELS.save:TEMPLATE_CHANNELS[operation.slice("templates.".length) as keyof typeof TEMPLATE_CHANNELS];
+    handlers.set(channel,async input=>{
+      const service=dependencies.templateExportService;if(!service)throw new AevorenBotError("INVALID_REQUEST");const value=schema.parse(input);
+      switch(operation){
+        case "templates.list":return service.list(libraryContext);
+        case "templates.read":return service.read(value as import("@shared/template-export-contracts").TemplateReadInput,libraryContext);
+        case "templates.versions":return service.versions(value as string,libraryContext);
+        case "templates.prepareCapture":return service.prepareCapture(value as import("@shared/template-export-contracts").TemplateCaptureInput,libraryContext,libraryContext?.signal);
+        case "templates.commitCapture":return service.commitCapture(value as import("@shared/template-export-contracts").TemplateCommitInput,libraryContext,libraryContext?.signal);
+        case "templates.prepareImport":return service.preflightImport(Buffer.from((value as {dataBase64:string}).dataBase64,"base64"),libraryContext,libraryContext?.signal);
+        case "templates.pickImport":{const bytes=await dependencies.pickTemplateBytes?.();return bytes?service.preflightImport(bytes,libraryContext,libraryContext?.signal):null;}
+        case "templates.commitImport":{const result=await service.commitImport(value as import("@shared/template-export-contracts").TemplateImportInput,libraryContext,libraryContext?.signal);dependencies.productChanged?.();return result;}
+        case "templates.export":return dependencies.saveOfflineArtifact?.(await service.prepareTemplateExport(value as import("@shared/template-export-contracts").TemplateReadInput,libraryContext,libraryContext?.signal))??null;
+        case "exports.save":return dependencies.saveOfflineArtifact?.(await service.prepareExport(value as import("@shared/template-export-contracts").OfflineExportInput,libraryContext,libraryContext?.signal))??null;
+      }
+    });
+  }
   handlers.set(BOT_IMAGE_CHANNELS.set,input=>{if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.botImageService.set(botImageSetSchema.parse(input),libraryContext);});
   handlers.set(BOT_IMAGE_CHANNELS.clear,input=>{if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");return commit(()=>dependencies.botImageService!.clear(botImageClearSchema.parse(input),libraryContext));});
   handlers.set(BOT_IMAGE_CHANNELS.read,input=>{if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.botImageService.read(botImageReadSchema.parse(input));});
@@ -224,7 +248,10 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const result = repository.getApprovalReview(parsed);
     if (!result.snapshot || !result.executable) return result;
     try {
-      if (result.snapshot.kind === "demonstration-skill") {
+      if(result.snapshot.kind==="portable-template"){
+        if(!dependencies.templateExportService)throw new AevorenBotError("INVALID_REQUEST");const review=result.snapshot.target;
+        dependencies.templateExportService.assertPrepared(review.preparedId,review.expectedDigest,{sessionId:parsed.sessionId,executorBotId:parsed.executorBotId,runtimeRunId:repository.getApprovalRequest(parsed.id).runtimeRunId});
+      } else if (result.snapshot.kind === "demonstration-skill") {
         dependencies.repository.demonstrations.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
       } else if (result.snapshot.kind === "skill-script") {
         if (!dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");

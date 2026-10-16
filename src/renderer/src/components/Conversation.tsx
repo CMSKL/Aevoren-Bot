@@ -1,3 +1,4 @@
+import {PortableDialog} from "./PortableDialog";
 import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
 import { productOperation } from "@shared/product-operations";
 import { useEffectEvent, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
@@ -707,6 +708,7 @@ export function Conversation({
   const [retriedTurnIds, setRetriedTurnIds] = useState<Set<string>>(() => new Set());
   const [mentionQuery, setMentionQuery] = useState<ActiveMentionQuery | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const [portableOpen,setPortableOpen]=useState(false);
   const transcriptRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1271,6 +1273,7 @@ export function Conversation({
             }}>
               {bot || room ? <>
               <button className="conversation-menu-item" type="button" role="menuitem" aria-label={artifacts.length > 0 ? `打开会话成果，共 ${artifacts.length} 个` : "打开任务详情"} aria-expanded={artifactShelfOpen} onClick={() => openTaskDetails("artifacts")}><FolderIcon /><span>{room ? "群文件" : "会话文件"}</span><small>{artifacts.length}</small></button>
+              {sessionId?<button className="conversation-menu-item" type="button" role="menuitem" onClick={()=>{setMenuScopeId(null);setPortableOpen(true);}}>模板与选择范围导出</button>:null}
               <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => openTaskDetails("records")}><span>执行记录</span><small>{toolInvocations.length}</small></button>
               {room && !taskTitle ? <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => { setMenuScopeId(null); onOpenRoomSettings(); }}><PanelIcon /><span>群聊管理</span></button> : null}
               {latestFailedTurn ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); void retryRoomTurn(latestFailedTurn.id); }}>重试{latestFailedTurn.turnPurpose === "summary" ? "汇总" : "此成员"}</button> : null}
@@ -1717,6 +1720,7 @@ export function Conversation({
           {sessionId ? <VoiceControlsPopover id={voiceControlsId} open={voiceOpen && approvalVisible} trigger={voiceTriggerRef} onClose={closeVoice}><VoiceCapturePanel sessionId={sessionId} active={approvalVisible && voiceOpen && !realtimeActive} readDraft={readVoiceDraft} onTask={setLatestVoiceTask} /><VoiceTaskPanel sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible && voiceOpen} latestTask={latestVoiceTask} onInsert={insertVoiceTranscript} onPlay={playVoiceTask} /><VoicePlaybackBar ref={voicePlaybackRef} sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible && voiceOpen && !realtimeActive} entries={entries} speakerName={entry => entry.speakerBotId ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? bot?.name ?? "AI" : bot?.name ?? "AI"} /><RealtimeVoicePanel sessionId={sessionId} sessionGeneration={sessionGeneration} active={approvalVisible && voiceOpen} executors={bot ? [{ id: bot.id, name: bot.name }] : room?.members.map(member => ({ id: member.botId, name: roomMemberIdentities.get(member.botId)?.inline ?? member.bot.name })) ?? []} readSelection={readRealtimeSelection} onActiveChange={setRealtimeActive} /></VoiceControlsPopover> : null}
         </div>
       </footer>
+      {portableOpen&&sessionId?<PortableDialog key={sessionId} sessionId={sessionId} generation={sessionGeneration??entries[0]?.generation??1} bot={bot} room={room} onClose={()=>setPortableOpen(false)}/>:null}
       {mediaPickerOpen && sessionId ? <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMediaPickerOpen(false); }}><section className="media-selection-dialog" role="dialog" aria-modal="true" aria-label="选择媒体引用" onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setMediaPickerOpen(false); } }}><header><h2>引用当前会话媒体</h2><button ref={mediaPickerCloseRef} className="icon-button" type="button" aria-label="关闭媒体选择" onClick={() => setMediaPickerOpen(false)}><CloseIcon /></button></header><MediaLibraryPanel key={sessionId} sessionId={sessionId} onUse={selectMedia} /></section></div> : null}
     </main>
   );

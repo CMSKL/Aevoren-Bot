@@ -382,7 +382,7 @@ function mcpConnection(server: McpServerInfo): CapabilityConnection {
   };
 }
 
-const forbiddenTaskProducts = new Set(["messages.send", "roomRuntime.send", "bots.create", "bots.duplicate", "teams.createContentTeam", "rooms.create", "approvals.resolve"]);
+const forbiddenTaskProducts = new Set(["messages.send", "roomRuntime.send", "bots.create", "bots.duplicate", "teams.createContentTeam", "rooms.create", "approvals.resolve", "templates.commitImport"]);
 
 function taskCapability(capability: CapabilityDescriptor, policy: TaskSessionPolicy): CapabilityDescriptor {
   const selected = policy.selection;

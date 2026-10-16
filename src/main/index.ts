@@ -1,3 +1,6 @@
+import {TemplateExportService} from "./template-export-service";
+import {saveOfflineArtifact} from "./offline-artifact";
+import {TEMPLATE_MAX_JSON_BYTES} from "@shared/template-export-schemas";
 import { BotImageService } from "./bot-image-service";
 import { OrganizationService } from "./organization-service";
 import { ORGANIZATION_CHANGED_CHANNEL } from "@shared/organization-channels";
@@ -538,7 +541,19 @@ app.whenReady().then(async () => {
   });
   const updateRepository = repository;
   const productUpdateService = updateService;
+  const templateExportService=new TemplateExportService(repository,repository.templates,libraryService,mediaService!,{templateBlobRoot:join(app.getPath("userData"),"template-blobs"),libraryBlobRoot:join(app.getPath("userData"),"library-blobs")});
   const productOperations = registerIpc({
+    templateExportService,
+    async pickTemplateBytes(){
+      let path=hideTestWindow&&userDataOverride?process.env.AEVOREN_BOT_TEMPLATE_IMPORT_TEST_PATH:undefined;
+      if(!path){if(!mainWindow||mainWindow.isDestroyed())return null;const selected=await dialog.showOpenDialog(mainWindow,{title:"选择 Aevoren 便携模板",filters:[{name:"Aevoren template",extensions:["json"]}],properties:["openFile"]});if(selected.canceled||!selected.filePaths[0])return null;path=selected.filePaths[0];}
+      const {open}=await import("node:fs/promises");const handle=await open(path,"r");try{const stat=await handle.stat();if(!stat.isFile()||stat.size>TEMPLATE_MAX_JSON_BYTES)throw new AevorenBotError("LIBRARY_IMPORT_TOO_LARGE");const bytes=await handle.readFile();if(bytes.length>TEMPLATE_MAX_JSON_BYTES)throw new AevorenBotError("LIBRARY_IMPORT_TOO_LARGE");return bytes;}finally{await handle.close();}
+    },
+    async saveOfflineArtifact(artifact){
+      artifact.assertCurrent();let path=hideTestWindow&&userDataOverride?process.env.AEVOREN_BOT_OFFLINE_EXPORT_TEST_PATH:undefined;
+      if(!path){if(!mainWindow||mainWindow.isDestroyed())return null;const selected=await dialog.showSaveDialog(mainWindow,{title:"保存离线导出",defaultPath:artifact.name,filters:[{name:artifact.mimeType==="text/html"?"HTML":"JSON",extensions:[artifact.mimeType==="text/html"?"html":"json"]}]});if(selected.canceled||!selected.filePath)return null;path=selected.filePath;}
+      return saveOfflineArtifact(path,artifact);
+    },
     window: mainWindow,
     repository,
     libraryService,

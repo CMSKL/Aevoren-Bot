@@ -1,3 +1,4 @@
+import {TEMPLATE_OPERATION_SCHEMAS} from "@shared/template-export-product";
 import { routineRunNowSchema, routineRunCancelSchema } from "@shared/routine-schemas";
 import { BOT_IMAGE_OPERATION_SCHEMAS } from "@shared/bot-image-product";
 import { ORGANIZATION_OPERATION_SCHEMAS } from "@shared/organization-product";
@@ -22,6 +23,7 @@ import { messageBodySchema } from "@shared/schemas";
 import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema, mcpServerMutationSchema, mcpServerEnabledSchema, mcpServerIdSchema, mcpServerMutationIdSchema, routineIdSchema, routineCreateSchema, routineUpdateSchema, routineEnabledSchema, routineMutationSchema, conversationPinnedSchema, conversationUnreadSchema, conversationHiddenSchema, sessionIdSchema, conversationProjectSchema, conversationBatchDeleteSchema, projectContextSchema, projectCreateSchema, briefApprovalReadSchema, briefApprovalCommandSchema, botUpdateSchema, botPinnedSchema, botUnreadSchema, botHiddenSchema, botIdSchema, memoryListSchema, memoryCreateSchema, memoryUpdateSchema, memoryMutationSchema, memoryProposalListSchema, memoryProposalAcceptSchema, workspacePermissionsSchema, workspaceRevealSchema, workspaceMutationSchema, toolSessionScopeSchema, approvalResolutionSchema, roomListSchema, roomCreateSchema, roomIdSchema, roomUpdateSchema, roomArchiveSchema, roomPinnedSchema, roomUnreadSchema, roomHiddenSchema, roomMembershipSchema, nonceSchema, runIdSchema, roomSendCommandSchema, batchIdSchema, turnIdSchema, generalSettingsSchema, saveOpenAiCompatibleProviderSchema, saveCliProviderSchema, providerInstanceIdInputSchema } from "@shared/schemas";
 
 export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
+  ...TEMPLATE_OPERATION_SCHEMAS,
   ...MEDIA_OPERATION_SCHEMAS,
   ...TASK_SESSION_OPERATION_SCHEMAS,
   ...SEARCH_OPERATION_SCHEMAS,

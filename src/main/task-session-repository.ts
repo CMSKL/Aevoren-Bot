@@ -250,7 +250,7 @@ export class TaskSessionRepository {
     if(tool.kind==="bot-create"||tool.kind==="room-create")throw denied();
     if(tool.kind==="project-bots"&&!selected.productOperations.includes("bots.list"))throw denied();
     if(tool.kind==="product-call"&&tool.action==="execute"){
-      if(!selected.productOperations.includes(tool.operation)||["messages.send","roomRuntime.send","bots.create","bots.duplicate","teams.createContentTeam","rooms.create","approvals.resolve"].includes(tool.operation))throw denied();
+      if(!selected.productOperations.includes(tool.operation)||["messages.send","roomRuntime.send","bots.create","bots.duplicate","teams.createContentTeam","rooms.create","approvals.resolve","templates.commitImport"].includes(tool.operation))throw denied();
     }
   }
   listTaskMemories(runtimeId:string):MemoryItem[];

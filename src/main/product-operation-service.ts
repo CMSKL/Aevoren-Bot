@@ -1,3 +1,4 @@
+import {TEMPLATE_OPERATION_SCHEMAS} from "@shared/template-export-product";
 import { taskCreateSchema } from "@shared/task-session-schemas";
 import { TASK_SESSION_OPERATION_SCHEMAS } from "@shared/task-session-product";
 import { realtimeInputSchema } from "@shared/realtime-schemas";
@@ -18,6 +19,7 @@ import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import type { ModelImageAttachment, ModelTextAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
+  "templates.list","templates.read","templates.versions","templates.prepareCapture","templates.prepareImport",
   "routines.list", "routines.listRuns",
   "search.query","search.open","organization.snapshot","bots.readImageAvatar",
   "sessions.taskOptions", "sessions.listTasks", "sessions.getTask", "voice.realtime.snapshot", "voice.configurations", "voice.get", "voice.list", "voice.audio",
@@ -42,7 +44,8 @@ const mcpWriteOperation = (operation: string): boolean => MCP_WRITE_PRODUCT_OPER
 const mediaOperation = (operation: string): boolean => operation.startsWith("media.");
 const voiceOperation = (operation: string): boolean => operation.startsWith("voice.");
 const botImageOperation=(operation:string):boolean=>["bots.setImageAvatar","bots.clearImageAvatar","bots.readImageAvatar"].includes(operation);
-const scopedOperation = (operation: string): boolean => operation.startsWith("routines.") || botImageOperation(operation) || voiceOperation(operation) || mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
+const portableOperation=(operation:string):boolean=>operation.startsWith("templates.")||operation.startsWith("exports.");
+const scopedOperation = (operation: string): boolean => portableOperation(operation) || operation.startsWith("routines.") || botImageOperation(operation) || voiceOperation(operation) || mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
 type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[]; modelText?: ModelTextAttachment };
 
 /** Both transports use these handlers; only the host can supply execution identity. */
@@ -131,6 +134,12 @@ export class ProductOperationService {
       return this.dependencies.mcpWriteService.approvalReview(input);
     }
     if (tool.action !== "execute") return undefined;
+    if(["templates.commitCapture","templates.commitImport"].includes(tool.operation)){
+      const service=this.dependencies.templateExportService;if(!service)throw new AevorenBotError("INVALID_REQUEST");const runtime=this.dependencies.repository.getRuntimeRun(runtimeRunId),input=tool.input as {preparedId:string;expectedDigest:string};
+      service.assertPrepared(input.preparedId,input.expectedDigest,{sessionId:runtime.sessionId,executorBotId:runtime.executorBotId,runtimeRunId:runtime.id});
+      const manifest=service.reviewPrepared(input.preparedId,input.expectedDigest);
+      return {kind:"portable-template",resourceName:manifest.name,revisionNumber:1,target:{sessionId:runtime.sessionId,executorBotId:runtime.executorBotId,preparedId:input.preparedId,expectedDigest:input.expectedDigest,operation:tool.operation as "templates.commitCapture"|"templates.commitImport",manifest}};
+    }
     if (tool.operation === "demonstrations.publish") { const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId); return this.dependencies.repository.demonstrations.approvalReview(this.libraryInput(tool.operation, tool.input, runtime) as import("@shared/demonstration-contracts").DemonstrationPublishInput); }
     if (tool.operation === "outbound.send") {
       if (!this.dependencies.nativeOutboundService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
@@ -157,6 +166,11 @@ export class ProductOperationService {
     if (!definition) throw new AevorenBotError("INVALID_REQUEST", "产品操作不存在，请先查询功能目录。");
     const schema = PRODUCT_OPERATION_SCHEMAS[tool.operation]!;
     const input = schema.parse(this.libraryInput(tool.operation, tool.input, runtime));
+    if(portableOperation(tool.operation)){
+      const service=this.dependencies.templateExportService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
+      const context={sessionId:runtime.sessionId,executorBotId:runtime.executorBotId,runtimeRunId:runtime.id};
+      if(["templates.commitCapture","templates.commitImport"].includes(tool.operation)){const prepared=input as {preparedId:string;expectedDigest:string};service.assertPrepared(prepared.preparedId,prepared.expectedDigest,context);}
+    }
     if (tool.operation.startsWith("routines.")) this.dependencies.routineService.assertOperationScope(tool.operation, input, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, runtimeRunId: runtime.id });
     const taskPolicy=repository.tasks.runtimeTaskPolicy(runtimeRunId);
     if(taskPolicy){
@@ -249,6 +263,21 @@ export class ProductOperationService {
   private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<ProductExecutionResult> {
     this.validate(tool, invocation.runtimeRunId);
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
+    if(tool.action==="execute"&&portableOperation(tool.operation)){
+      const service=this.dependencies.templateExportService!;
+      const input=PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(this.libraryInput(tool.operation,tool.input,runtime));
+      const context={sessionId:runtime.sessionId,executorBotId:runtime.executorBotId,runtimeRunId:runtime.id,signal};
+      const scoped=createProductHandlers(this.dependencies,work=>work(),undefined,context);
+      const result=await scoped.get(productOperation(tool.operation)!.channel)!(input);
+      this.validate(tool,runtime.id);
+      let assertCurrent=()=>this.validate(tool,runtime.id);
+      if(tool.operation==="templates.read"){const record=result as import("@shared/template-export-contracts").TemplateRecord;assertCurrent=()=>{this.validate(tool,runtime.id);service.read({id:record.template.id,revisionId:record.revision.id},context);};}
+      if(["templates.prepareCapture","templates.prepareImport","templates.pickImport"].includes(tool.operation)&&result){const preview=result as import("@shared/template-export-contracts").TemplatePreview;assertCurrent=()=>{this.validate(tool,runtime.id);service.assertPrepared(preview.id,preview.digest,context);};}
+      if(tool.operation==="templates.list"||tool.operation==="templates.versions"){const snapshot=JSON.stringify(result);assertCurrent=()=>{this.validate(tool,runtime.id);const current=tool.operation==="templates.list"?service.list(context):service.versions(input as string,context);if(JSON.stringify(current)!==snapshot)throw new AevorenBotError("LIBRARY_NOT_BOUND");};}
+      const text=JSON.stringify(result??null),digest=createHash("sha256").update(text).digest("hex");
+      const metadata=Array.isArray(result)?{count:result.length,digest}:result&&typeof result==="object"?{digest,...("id" in result?{id:(result as {id:string}).id}:{}),...("preparedId" in result?{preparedId:(result as {preparedId:string}).preparedId}:{})}:{digest};
+      return {...this.result({status:result===null?"cancelled":"completed",operation:tool.operation,result:metadata}),modelText:{text,isAuthorized:()=>{try{assertCurrent();return true;}catch{return false;}}}};
+    }
     if(tool.action==="execute"&&tool.operation==="bots.readImageAvatar"){
       const service=this.dependencies.botImageService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
       const image=await service.image(tool.input as import("@shared/bot-image-contracts").BotImageReadInput,{signal,assertCurrent:()=>this.validate(tool,runtime.id)});
@@ -335,7 +364,7 @@ export class ProductOperationService {
     if (tool.action === "catalog") {
       const query = tool.query?.trim().toLocaleLowerCase() ?? "";
       const policy=this.dependencies.repository.tasks.runtimeTaskPolicy(runtime.id);
-      const operations = PRODUCT_OPERATIONS.filter((item) => (!policy||policy.selection.productOperations.includes(item.name)&&!["messages.send","roomRuntime.send","bots.create","bots.duplicate","teams.createContentTeam","rooms.create","approvals.resolve"].includes(item.name))&&(!query || `${item.name} ${item.description}`.toLocaleLowerCase().includes(query)));
+      const operations = PRODUCT_OPERATIONS.filter((item) => (!policy||policy.selection.productOperations.includes(item.name)&&!["messages.send","roomRuntime.send","bots.create","bots.duplicate","teams.createContentTeam","rooms.create","approvals.resolve","templates.commitImport"].includes(item.name))&&(!query || `${item.name} ${item.description}`.toLocaleLowerCase().includes(query)));
       return this.result({ status: "completed", operations: operations.map(({ channel: _channel, ...item }) => ({ ...item, approvalRequired: this.requiresApproval({ kind: "product-call", action: "execute", operation: item.name }) })) });
     }
     if (tool.action === "describe") {
@@ -610,6 +639,15 @@ export class ProductOperationService {
   private libraryInput(operation: string, value: unknown, runtime: Pick<RuntimeRun, "id" | "sessionId" | "clientNonce" | "executorBotId">): unknown {
     const input = value === null ? undefined : value;
     const taskPolicy=this.dependencies.repository.tasks.runtimeTaskPolicy(runtime.id);
+    if(portableOperation(operation)){
+      if(operation==="templates.prepareCapture"){
+        if(!input||typeof input!=="object"||Array.isArray(input))throw new AevorenBotError("INVALID_REQUEST");const supplied=input as Record<string,unknown>;if(supplied.sessionId!==undefined&&supplied.sessionId!==runtime.sessionId)throw new AevorenBotError("APPROVAL_SCOPE_INVALID");return {...supplied,sessionId:runtime.sessionId};
+      }
+      if(operation==="templates.commitImport"){
+        const supplied=(input??{}) as Record<string,unknown>;if(supplied.targetSessionId!==undefined&&supplied.targetSessionId!==runtime.sessionId)throw new AevorenBotError("APPROVAL_SCOPE_INVALID");return {...supplied,clientNonce:createHash("sha256").update(`${runtime.clientNonce}:${runtime.executorBotId}:${JSON.stringify(input)}`).digest("hex").slice(0,32).replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/u,"$1-$2-$3-$4-$5"),targetSessionId:runtime.sessionId};
+      }
+      return input;
+    }
     if(["bots.clearImageAvatar","bots.readImageAvatar"].includes(operation))return input;
     if(operation==="bots.setImageAvatar"){
       if(!input||typeof input!=="object"||Array.isArray(input))throw new AevorenBotError("INVALID_REQUEST");const supplied=input as Record<string,unknown>;

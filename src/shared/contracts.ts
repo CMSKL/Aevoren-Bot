@@ -1277,6 +1277,8 @@ export interface AevorenBotApi {
   botImages:import("./bot-image-contracts").BotImageApi;
   organization:import("./organization-contracts").OrganizationApi;
   search: import("./search-contracts").SearchApi;
+  templates:import("./template-export-contracts").TemplateApi;
+  exports:import("./template-export-contracts").ExportsApi;
   mcpWrites: import("./mcp-write-contracts").McpWriteApi;
   browser: import("./browser-contracts").BrowserApi;
   computer: import("./browser-contracts").ComputerApi;
