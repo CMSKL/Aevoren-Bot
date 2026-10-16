@@ -82,22 +82,35 @@ createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line)
     expect(results).toHaveLength(repeated ? 1 : 0); expect(events.some(event => event.type === "completed")).toBe(false);
   });
 
-  it("does not settle the revoked Codex iterator until its owned child finishes EOF teardown", async () => {
-    const root = directory(), guard = lease(); let settled = false;
+  it.each([false, true])("does not settle the revoked Codex iterator until its owned child finishes EOF teardown (release pre-exists=%s)", async preReleased => {
+    const root = directory(), guard = lease(), controller = new AbortController(); let settled = false;
+    let stage = "spawn";
+    if (preReleased) {
+      writeFileSync(join(root, "release"), "release");
+      const assertAuthority = guard.context.assertAuthority!;
+      guard.context.assertAuthority = () => { if (existsSync(join(root, "gate"))) guard.revoke(); assertAuthority(); };
+    }
     const script = install(root, `import {createInterface} from 'node:readline';import {existsSync,watch,writeFileSync} from 'node:fs';
-const input=createInterface({input:process.stdin});const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');
-input.on('line',line=>{const m=JSON.parse(line);if(m.method==='initialize'){writeFileSync('gate','ready');const watcher=watch('.',()=>{if(existsSync('release')){watcher.close();send({jsonrpc:'2.0',id:m.id,result:{}})}})}});
+writeFileSync('fixture-boot','ready');const input=createInterface({input:process.stdin});const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');
+input.on('line',line=>{writeFileSync('fixture-wire',line);const m=JSON.parse(line);if(m.method==='initialize'){writeFileSync('gate','ready');const watcher=watch('.',()=>{if(existsSync('release')){watcher.close();send({jsonrpc:'2.0',id:m.id,result:{}})}})}});
 input.on('close',()=>{writeFileSync('stdin-closed','ready');const finish=()=>{if(existsSync('exit-release')){writeFileSync('owned-exited','yes');process.exit(0)}};const watcher=watch('.',finish);finish()});`);
     vi.spyOn(cliUtils, "resolveCliPath").mockReturnValue(script);
     vi.spyOn(cliUtils, "isolatedCodexEnvironment").mockImplementation(runtimeHome => ({ PATH: process.env.PATH, CODEX_HOME: runtimeHome }));
-    const outcome = collect(new CodexCliProvider(script, "fixture-model", root).run([{ role: "user", content: "Guarded prompt" }], new AbortController().signal, guard.context)).then(value => { settled = true; return value; }, error => { settled = true; return error; });
+    const outcome = collect(new CodexCliProvider(script, "fixture-model", root).run([{ role: "user", content: "Guarded prompt" }], controller.signal, guard.context)).then(value => { settled = true; return value; }, error => { settled = true; return error; });
     try {
-      await vi.waitFor(() => expect(existsSync(join(root, "gate"))).toBe(true)); guard.revoke(); writeFileSync(join(root, "release"), "release");
+      stage = "await-initialize-gate";
+      await vi.waitFor(() => expect(existsSync(join(root, "gate"))).toBe(true));
+      if (!preReleased) { guard.revoke(); writeFileSync(join(root, "release"), "release"); }
+      stage = "await-stdin-eof";
       await vi.waitFor(() => expect(existsSync(join(root, "stdin-closed"))).toBe(true));
       expect(settled).toBe(false);
       writeFileSync(join(root, "exit-release"), "release");
+      stage = "await-owned-exit";
       expect(await outcome).toMatchObject({ code: "APPROVAL_SCOPE_INVALID" }); expect(existsSync(join(root, "owned-exited"))).toBe(true);
-    } finally { writeFileSync(join(root, "exit-release"), "release"); await outcome; }
+    } catch (error) {
+      console.error("[controlled-codex-eof]", { stage, settled, fixtureBoot: existsSync(join(root, "fixture-boot")), fixtureWire: existsSync(join(root, "fixture-wire")), gate: existsSync(join(root, "gate")), release: existsSync(join(root, "release")), stdinClosed: existsSync(join(root, "stdin-closed")), ownedExited: existsSync(join(root, "owned-exited")) });
+      throw error;
+    } finally { writeFileSync(join(root, "exit-release"), "release"); controller.abort(); await outcome; }
   });
 
   it("does not spawn or feed Claude after a revoked asynchronous bridge startup", async () => {
