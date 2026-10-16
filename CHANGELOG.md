@@ -5,7 +5,7 @@
 - Add MAIN group Routine targets with reviewed membership versions, immutable selected rosters, parallel Everyone/subset execution and a versioned editor shared with host business validation.
 - Expose exact run cancellation and versioned immediate execution to both UI and approved product tools. Constrain AI inspection/control to the current MAIN conversation; keep TASK automation outside this delivery.
 - Preserve accepted prompts/references and nonce receipts through edits, cancellation and restart. Mark partial group results failed while retaining completed member output; never replay an unknown dispatch.
-- Include migration 47 after organization/avatar migration 46, retain the private host event bridge and package the group Routine guide. Local/installed/platform gates remain separately recorded; no release is implied by this source entry.
+- Include migration 47 after organization/avatar migration 46, retain the private host event bridge and package the group Routine guide. Focused business/source UI and actual unsigned macOS-package checks pass. Full ordinary failures and focused migration repairs remain separate; platform/signed-release gates are pending.
 
 ## v0.3.0-beta.41 (development candidate)
 
