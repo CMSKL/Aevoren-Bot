@@ -1,8 +1,8 @@
 # User guide
 
-The v0.3.0-beta.31 native-connection candidate adds **Settings → Application connections** and scoped **Contact/Room → Applications**. See [Native application connections](NATIVE_CONNECTORS.md) for Google desktop-client and Notion token setup, explicit chat/Bot grants, bounded reads and versioned local drafts. The beta.32 candidate is implementing [approved external drafts](NATIVE_OUTBOUND.md) with separate writing permission and fixed revision reviews. Real account authorization, writes and binary preview remain separate verification boundaries.
+This guide covers the v0.3.0-beta.39 development candidate: independent Task threads, media and voice, documents and text/script Skills, isolated Docker execution and browser/computer use, reviewable demonstration Skills, native connections, approved external drafts and scoped MCP Apps. Native reads and writes require explicit conversation/Bot permissions; credentials remain in the host. See [Native connections](NATIVE_CONNECTORS.md), [External drafts](NATIVE_OUTBOUND.md) and [MCP Apps](MCP_APPS.md) for setup and exact boundaries.
 
-This guide covers documents, text Skills, local Docker execution, browser/computer integration and the script-Skill delivery in the v0.3.0-beta.30 development candidate. Validation and signing/release are tracked separately in the [implementation record](IMPLEMENTATION_PLAN.md). Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). The app applies to macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build; real Windows Docker execution remains unverified.
+The published signed macOS baseline is [v0.3.0-beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33). Source beta.39 adds Task threads; its full source build, focused checks and three distinct controlled hidden scenarios have passed, and the actual unsigned macOS package passed Task3 plus typed API (4/4); cross-platform and signed publication remain pending. Phase 5 has local source/unsigned-package evidence, including 159 distinct Realtime source passes and 32 conditional skips across separate runs; it is not a single all-green full run. Real cloud accounts, physical audio devices and Windows Docker remain unverified. See the [implementation record](IMPLEMENTATION_PLAN.md) for exact evidence, failures and release boundaries. Search, organization, group automation, events/Webhooks and templates/exports remain separate Phase 6 work.
 
 ## First run
 
@@ -50,7 +50,13 @@ The message pins `resourceId`, `revisionId` and `digest`. Editing the resource l
 
 Connected models discover the 38 new `library.*`, `documents.*` and `skills.*` operations through `product_catalog`, `product_describe` and `product_execute`. `skills.load` returns an authorized text Skill to the current Runtime; `skills.readFile` reads accepted auxiliary text, with paging and truncation information. Binary assets return metadata only. File imports from AI must use the current conversation's authorized Workspace; selecting arbitrary native import/export locations requires the user's file dialog interaction. Mutations and sharing continue through the existing permission and approval rules.
 
-Text Skill metadata, including declared tool names, does not grant tool permissions. The current development candidate adds [script Skills](SCRIPT_SKILLS.md): review a fixed entry, grant it access to the selected environment image, then confirm each run's arguments. Scripts use Bash, Python or Node inside that environment, with real execution output and cancellation. The separate approved Docker command workflow below and isolated [browser/computer tools](BROWSER_COMPUTER.md) remain available. Demonstration drafts, native Gmail/Drive/Notion, media interpretation and voice remain later deliveries in the [implementation record](IMPLEMENTATION_PLAN.md).
+Text Skill metadata, including declared tool names, does not grant tool permissions. The current development candidate adds [script Skills](SCRIPT_SKILLS.md): review a fixed entry, grant it access to the selected environment image, then confirm each run's arguments. Scripts use Bash, Python or Node inside that environment, with real execution output and cancellation. The separate approved Docker command workflow below and isolated [browser/computer tools](BROWSER_COMPUTER.md) remain available. [Demonstration drafts](SKILL_DEMONSTRATIONS.md), [native connections](NATIVE_CONNECTORS.md) and [approved external writes](NATIVE_OUTBOUND.md) are included in beta.35 with separate grants and fixed reviews. Local media, transcription/speech and Realtime voice are implemented source candidates with separate verification boundaries; see [Media](MEDIA.md), [Voice](VOICE.md) and [Realtime voice](REALTIME_VOICE.md).
+
+## Task threads (development candidate)
+
+Choose **New task (新建任务)** in the current chat header. Enter a title and explicitly select each executor. All Memory, quoted history, documents/Skills, media, Workspaces, MCP tools, product actions, network and clipboard permissions start empty. Creation opens a separate TASK chat and does not start a Runtime. Open it from the sidebar **Task threads (任务线程)** section; clicking a contact or ordinary group continues to open MAIN.
+
+Each thread uses its own session ID, history and in-memory composer draft. Selected context is copied as fixed per-member revisions, not dynamically inherited from a parent or sibling. **Task details → Modify task authorization** reviews a separate selection revision. Existing runs and retries retain their original snapshot. A title conflict preserves the typed draft; reopen to review the current saved version. **Stop this task** cancels only this thread's active Runtime/Room batch; **Delete this task thread** requires an idle thread and preserves its Bot/group owner. See [Task threads](TASK_THREADS.md) for exact boundaries. All three targeted source UI scenarios have passed across the recorded runs; the actual unsigned macOS package also passed Task3 plus typed API (4/4), with cross-platform and signed publication pending.
 
 ## Docker execution environments (development)
 
@@ -131,4 +137,20 @@ This development unit requires Browser Worker 1.1.0. Older environments continue
 
 ## Scoped MCP tools and Apps
 
-The v0.3.0-beta.34 candidate adds [scoped MCP tools and isolated Apps](MCP_APPS.md) to the existing Contact/Room Applications sections. Grant specific tools, approve fixed JSON arguments and targets, and query unknown results without resending. Server-reported results and real third-party verification remain distinct.
+The beta.35 candidate retains the beta.34 [scoped MCP tools and isolated Apps](MCP_APPS.md) to the existing Contact/Room Applications sections. Grant specific tools, approve fixed JSON arguments and targets, and query unknown results without resending. Server-reported results and real third-party verification remain distinct.
+
+
+## 图片与文档（beta.36 开发候选）
+
+在私聊或群的资料库中打开媒体区，或点击输入框文本附件旁的媒体入口，导入／选择图片、PDF 或 DOCX。只发送媒体也走原有任务流程；引用固定原始摘要及解析版本，群成员可并行读取同一已授权引用。预览、撤销、停用、删除和恢复均按当前会话权限检查；导入期间继续编辑不会被旧结果覆盖。PDF 支持逐页预览和文字提取，扫描件无 OCR；DOCX 显示纯文本分节。图片实际传输和模型是否支持视觉分别标识。当前仍在验收，完整限制见[媒体与文档](MEDIA.md)。
+
+
+## 转写与朗读（beta.37 开发候选）
+
+在设置 → 语音分别配置转写、朗读和 Realtime。点击输入区工具栏的“语音”展开控件，普通聊天默认保持收起。关闭面板会停止其录音与播放，并使正在等待的插入操作失效；已派发的转写任务保留在历史中，可重新打开后单独查询或停止。点击录音主动授权音频，停止后显示独立转录任务；手动插入会核对会话与草稿版本，冲突保留结果，发送仍走原有聊天流程。回复的朗读入口生成真实 WAV，当前会话可选择按新回复完成顺序排队，停止会清理队列并拒绝迟到音频。媒体库支持平台实际可解码的有界音视频。实时连接、物理设备与云账号的验收状态见[语音说明](VOICE.md)。
+
+
+## 实时语音（beta.38 开发候选）
+
+聊天面板选择业务 Bot 后主动连接，逐轮开始说话／结束并提交。停止语音与停止已委派业务任务分开；重新连接需要用户操作，不自动复播未知请求。详细流程、采样打断、授权和未验证边界见[实时语音](REALTIME_VOICE.md)。
+

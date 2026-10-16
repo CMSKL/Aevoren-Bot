@@ -6,7 +6,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { AevorenBotError } from "../errors";
-import { toolImageResponse, type ModelImageAttachment } from "../model-image";
+import { toolImageResponse, type ModelImageAttachment, type ModelTextAttachment } from "../model-image";
 import { parseStructuredModelToolCall, structuredModelToolDefinitions, type ModelEvent, type ModelRunContext } from "../model";
 
 export const CLAUDE_HOST_TOOL_NAMES = ["workspace_list", "workspace_read", "workspace_search", "workspace_write", "web_search", "web_fetch", "weather_current", "time_now", "text_measure", "clipboard_read", "project_list_bots", "bot_create", "room_create", "product_catalog", "product_describe", "product_execute"] as const;
@@ -20,10 +20,10 @@ function errorResult(code: "INVALID_REQUEST" | "TOOL_EXECUTION_CANCELLED" | "TOO
   return { isError: true, content: [{ type: "text", text: JSON.stringify({ ok: false, code, safeMessage: error.safeMessage }) }] };
 }
 
-function toolResult(content: string, images?: readonly ModelImageAttachment[]): CallToolResult {
+function toolResult(content: string, images?: readonly ModelImageAttachment[], modelText?: ModelTextAttachment): CallToolResult {
   let isError = false;
   try { isError = (JSON.parse(content) as { ok?: unknown }).ok === false; } catch { /* Plain file text is valid. */ }
-  const visual = toolImageResponse(content, images);
+  const visual = toolImageResponse(content, images, modelText);
   return { isError, content: [{ type: "text", text: visual.text }, ...visual.images.map(image => ({ type: "image" as const, data: image.dataBase64, mimeType: image.reference.mimeType }))] };
 }
 
@@ -55,13 +55,14 @@ export class ClaudeToolBridge {
     };
     const definitions = structuredModelToolDefinitions(this.scopedContext);
     this.toolNames = definitions.map(({ name }) => `mcp__aevoren_host__${name}`);
-    this.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: definitions.map((tool) => ({ ...tool, inputSchema: tool.inputSchema as { type: "object" }, annotations: { readOnlyHint: !["workspace_write", "bot_create", "room_create", "product_execute"].includes(tool.name), destructiveHint: tool.name === "product_execute", openWorldHint: tool.name.startsWith("web_") } })) }));
+    this.server.setRequestHandler(ListToolsRequestSchema, () => { this.scopedContext.assertAuthority?.(); return { tools: definitions.map((tool) => ({ ...tool, inputSchema: tool.inputSchema as { type: "object" }, annotations: { readOnlyHint: !["workspace_write", "bot_create", "room_create", "product_execute"].includes(tool.name), destructiveHint: tool.name === "product_execute", openWorldHint: tool.name.startsWith("web_") } })) }; });
     this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => {
+      this.scopedContext.assertAuthority?.();
       if (this.closed || parentSignal.aborted) return errorResult("TOOL_EXECUTION_CANCELLED");
       const key = String(extra.requestId);
       const signature = createHash("sha256").update(JSON.stringify({ name: request.params.name, arguments: request.params.arguments })).digest("hex");
       const previous = this.calls.get(key);
-      if (previous) return previous.signature === signature ? previous.result.then(render => render()) : errorResult("TOOL_IDEMPOTENCY_CONFLICT");
+      if (previous) return previous.signature === signature ? previous.result.then(render => { const value = render(); this.scopedContext.assertAuthority?.(); return value; }) : errorResult("TOOL_IDEMPOTENCY_CONFLICT");
       if (this.calls.size >= MAX_TOOL_CALLS) return errorResult("TOOL_ROUND_LIMIT_EXCEEDED");
       const toolCallId = `claude_${createHash("sha256").update(`${context.executionKey}:${this.token}:${key}`).digest("hex")}`;
       let event: ReturnType<typeof parseStructuredModelToolCall>;
@@ -87,14 +88,15 @@ export class ClaudeToolBridge {
         this.pending.add(cancel);
         toolSignal.addEventListener("abort", cancel, { once: true });
         if (toolSignal.aborted) { cancel(); return; }
-        this.emit({ ...event, toolSignal, respond: async (content, images) => finish(() => toolResult(content, images)) });
+        this.emit({ ...event, toolSignal, respond: async (content, images, modelText) => finish(() => toolResult(content, images, modelText)) });
       });
       this.calls.set(key, { signature, result });
-      return result.then(render => render());
+      return result.then(render => { const value = render(); this.scopedContext.assertAuthority?.(); return value; });
     });
   }
 
   async start(cwd: string): Promise<void> {
+    this.scopedContext.assertAuthority?.();
     if (this.parentSignal.aborted) throw new DOMException("Aborted", "AbortError");
     await this.server.connect(this.transport);
     this.listener = createServer({ maxHeaderSize: 8_192 }, (request, response) => {
@@ -132,6 +134,16 @@ export class ClaudeToolBridge {
       }
       try { parsedBody = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { response.writeHead(400).end(); return; }
     }
+    // The SDK may await after a fresh or cached handler result. Guard the actual
+    // HTTP body write as well, so a revoked task cannot disclose that result.
+    const write = response.write.bind(response), end = response.end.bind(response);
+    const authorized = (): boolean => {
+      try { this.scopedContext.assertAuthority?.(); return true; }
+      catch { response.destroy(); return false; }
+    };
+    response.write = ((...args: Parameters<typeof response.write>) => authorized() ? write(...args) : false) as typeof response.write;
+    response.end = ((...args: Parameters<typeof response.end>) => authorized() ? end(...args) : response) as typeof response.end;
+    this.scopedContext.assertAuthority?.();
     await this.transport.handleRequest(request, response, parsedBody);
   }
 

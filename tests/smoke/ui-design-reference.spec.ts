@@ -275,7 +275,9 @@ test("UI-only approved light/dark reference: real avatars and journal-backed fil
     await expect(page.locator(".conversation-header h1")).toHaveText("个人网站小组");
     await expect(page.locator(".conversation-header-counts")).toHaveText("3 位 Agent");
     await expect(page.locator(".sidebar-list .bot-row")).toHaveCount(8);
-    await expect(page.locator(".conversation-header button")).toHaveCount(1);
+    await expect(page.locator(".conversation-header").getByRole("button", { name: "新建任务", exact: true })).toBeVisible();
+    await expect(page.locator(".conversation-header").getByRole("button", { name: "聊天选项", exact: true })).toBeVisible();
+    await expect(page.locator(".conversation-header button")).toHaveCount(2);
     await expect(page.locator("article.message-user")).toHaveCount(2);
     await expect(page.locator("article.message-assistant")).toHaveCount(1);
     await expect(page.locator(".artifact-card")).toHaveCount(2);

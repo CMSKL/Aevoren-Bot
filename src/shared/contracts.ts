@@ -1,8 +1,12 @@
+import type { TaskSessionApi } from "./task-session-contracts";
+import type { VoiceApi } from "./voice-contracts";
 import type { BotAvatarColor, BotAvatarShape } from "./bot-avatar";
 
 export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
 
 import type { LibraryApi, LibraryContent, ResourceReference } from "./library-contracts";
+import type { MediaApi, MessageMediaReference } from "./media-contracts";
+export type { MessageMediaReference } from "./media-contracts";
 import type { ApprovalReviewInput, ApprovalReviewResult, SkillExecutionApi } from "./skill-execution-contracts";
 import type { NativeOutboundApi } from "./native-outbound-contracts";
 import type { NativeConnectorsApi, ConnectorDraftsApi } from "./native-connector-contracts";
@@ -49,6 +53,9 @@ export type ConversationBatchDeleteResult = {
 
 /** A chat is backed by its existing Session; removing it does not remove its contact. */
 export type ConversationSummary = {
+  kind?: "MAIN" | "TASK";
+  title?: string;
+  parentSessionId?: string | null;
   sessionId: string;
   botId: string | null;
   roomId: string | null;
@@ -148,7 +155,7 @@ export type Session = {
   id: string;
   botId: string | null;
   roomId: string | null;
-  kind: "MAIN";
+  kind: "MAIN" | "TASK";
   generation: number;
   createdAt: string;
   updatedAt: string;
@@ -180,6 +187,7 @@ export type TranscriptEntry = {
   body: string;
   attachments?: MessageAttachment[];
   resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
   /** Main-only authorized resource snapshot, never returned in Renderer transcripts. */
   resourceContents?: LibraryContent[];
   /** Main-only prompt enrichment; never populated in Renderer-facing snapshots. */
@@ -237,6 +245,7 @@ export type SendCommand = {
   text: string;
   attachments?: AttachmentDraft[];
   resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
 };
 
 export type SendResult = {
@@ -379,7 +388,7 @@ export type SaveCliProviderInput = {
 };
 
 export type RuntimeRoute = "fake" | "host-outbound" | "host-mcp" | ProviderDriverKind;
-export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "user" | "assistant";
+export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "media-resource" | "task-context" | "user" | "assistant";
 
 export type PromptManifestBlock = {
   authority: PromptAuthority;
@@ -392,7 +401,7 @@ export type PromptManifestBlock = {
 };
 
 export type PromptManifest = {
-  schemaVersion: 1 | 2 | 3 | 4 | 5;
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   botId: string;
   profileVersion: number;
   sessionId: string;
@@ -509,10 +518,18 @@ export type ProductToolRequest =
   | { kind: "product-call"; action: "describe"; operation: string }
   | { kind: "product-call"; action: "execute"; operation: string; input?: unknown };
 
-export type DelegationOrigin = {
+export type AgentDelegationOrigin = {
   ancestorRunIds?: string[];
   kind: "ai-delegation" | "routine"; routineId?: string; routineRunId?: string; fromBotNameSnapshot?: string; fromBotId: string; fromSessionId: string; fromRuntimeRunId: string; rootClientNonce: string; depth: number;
 };
+
+/** Final human speech provenance, verified against the host's durable turn journal. */
+export type VoiceMessageOrigin = {
+  kind: "voice-input"; voiceSessionId: string; turnId: string; callId: string; transcriptDigest: string;
+  fromRuntimeRunId?: never; fromSessionId?: never; fromBotId?: never; fromBotNameSnapshot?: never;
+  rootClientNonce?: never; depth?: never; ancestorRunIds?: never;
+};
+export type DelegationOrigin = AgentDelegationOrigin | VoiceMessageOrigin;
 
 export type ProjectToolRequest =
   | ProductToolRequest
@@ -927,6 +944,7 @@ export type CreateRoomRunInput = {
   text: string;
   attachments?: AttachmentDraft[];
   resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
   membershipVersion: number;
   maxTurns: number;
   maxHops: number;
@@ -1253,6 +1271,8 @@ export interface AevorenBotApi {
   execution: import("./environment-contracts").ExecutionApi;
   processes: import("./environment-contracts").ProcessesApi;
   library: LibraryApi;
+  media: MediaApi;
+  voice: VoiceApi;
   skillsExecution: SkillExecutionApi;
   outbound: NativeOutboundApi;
   connectors: NativeConnectorsApi;
@@ -1347,7 +1367,8 @@ export interface AevorenBotApi {
       resolution: ApprovalResolution;
     }): Promise<ApiResult<ToolApprovalResult>>;
   };
-  sessions: {
+  sessions: TaskSessionApi & {
+    onChanged(listener: (event: { session: Session }) => void): () => void;
     getMain(botId: string): Promise<ApiResult<Session>>;
   };
   rooms: {
@@ -1382,7 +1403,7 @@ export interface AevorenBotApi {
   };
   roomRuntime: {
     cancelMember(runId: string): Promise<ApiResult<RuntimeRun>>;
-    getSnapshot(roomId: string): Promise<ApiResult<RoomRuntimeSnapshot>>;
+    getSnapshot(input: string | { roomId: string; sessionId: string }): Promise<ApiResult<RoomRuntimeSnapshot>>;
     send(command: RoomSendCommand): Promise<ApiResult<RoomSendResult>>;
     cancel(batchId: string): Promise<ApiResult<RoomBatch>>;
     continue(batchId: string): Promise<ApiResult<RoomBatch>>;
