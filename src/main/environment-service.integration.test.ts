@@ -44,10 +44,14 @@ describe.skipIf(process.env.AEVOREN_DOCKER_INTEGRATION !== "1")("host service wi
     await expect.poll(async () => (await service.getExecution({ ...owner, id: execution.id })).state).toBe("completed");
     const result = await service.getExecution({ ...owner, id: execution.id });
     expect(result.exitCode).toBe(0);
-    expect((await service.getExecution({ ...owner, id: execution.id })).version).toBe(result.version);
     const logs = await service.logs({ ...owner, id: execution.id });
+    expect(logs.lastSeq).toBe(result.lastSeq);
     expect(logs.logs.map(log => log.text).join("")).toContain("PYTHON_ACTUAL_RESULT");
     expect(logs.logs.map(log => log.text).join("")).toContain("42");
+    // A terminal GET can precede its SSE log payloads; compare idempotent reads after explicitly ingesting those logs.
+    const withLogs = await service.getExecution({ ...owner, id: execution.id });
+    expect(withLogs).toMatchObject({ state: "completed", exitCode: 0, lastSeq: result.lastSeq });
+    expect((await service.getExecution({ ...owner, id: execution.id })).version).toBe(withLogs.version);
     const bytes = Buffer.from([0, 255, 137, 80]);
     await service.writeFile({ ...owner, path: "bytes.bin", content: bytes.toString("base64"), encoding: "base64" });
     const binary = await service.readFile({ ...owner, path: "bytes.bin" });
