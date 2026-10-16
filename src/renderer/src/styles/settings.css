@@ -82,6 +82,7 @@
 .settings-panel h3,
 .capability-section-title { margin: 24px 0 12px; font-size: 14px; font-weight: 600; }
 .settings-card { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-bg); }
+.settings-portable-entry .secondary-button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .settings-form-group { padding: 0; }
 .settings-list { display: flex; min-width: 0; flex-direction: column; border-top: 1px solid var(--border); }
 .settings-list-row { min-width: 0; padding: 16px 0; border-bottom: 1px solid var(--border); }
