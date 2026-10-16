@@ -681,3 +681,11 @@ This test-only update extends that fixture's existing bounded diagnostics with a
 标准 ASAR／afterPack 打包使用已核验版本44.3 arm64 Electron 分发目录，避免重新下载；不改变打包清单或权限。实际 packaged=true／version44 包同轮 **2/2（22.6 秒）** 通过 typed API 与完整模板／导出场景，所有自有进程正常退出。源构建与包内17项应用文件、216项Worker/parser逐字节一致；随包模板指南与打包时源文档一致。Main SHA-256 `b82d0e5e1e11b686ee7d4f0e744bc680c725aa73cc7b28f38dcff2cfbf18f80f`；ASAR `c5040c5492dabad1f3b10edfeceada3dbba5b8267ffef56641186f02f7c91171`。207 parser资产、238资源文件、9556 ASAR条目和四Helper麦克风用途声明检查通过；未签名／无真实物理麦克风证据。
 
 回执为 `templates44-hidden-package.log`、`templates44-package-bytes.json`、`templates44-package-parser.json`、`templates44-package-microphone.json`，真实48缺口表断言7项通过于 `templates44-real48-migration.log`。本次后续文档总结不重写已经冻结的包内指南；业务字节不变。Windows、真实外部账号／硬件、跨平台CI与签名发布仍待正常门禁，按dev→beta与版本顺序推进，master不晋级。未运行新的完整普通单元套件，不把77项后端加9项Renderer表述成一次全量全绿。
+
+### beta.44 正常 CI 首轮与夹具修复
+
+正常 CI `38833441318` Linux 完整普通单元执行记录为 **1,919通过／3失败／45跳过**，另有1项关闭SQLite后的未处理错误；不记为全绿。原始失败日志保留在 `templates44-ci-linux-first-failed.log`。两项失败是在多轮真实文件写入／读回或群下游hash校验尚处running时，夹具默认一秒轮询提前结束；workspace夹具随后直接关闭数据库，未等待所拥有Worker，产生背景任务读已关闭SQLite的未处理错误。第三项为受控Codex子进程release文件先于watch注册，夹具未消费已存在release。
+
+修复仅修改测试：Room与duplicate-write场景等待真实终态事件，保留原五秒it期限及全部终态／hash／证据断言；所有workspace夹具Worker先awaitshutdown再关闭库。Codex夹具在watch注册后消费已经存在的release，并保留单次响应保护。最初测试事件缓存误复用旧promise，随后中间版本会丢失pendingawaiter，原失败及终止的诊断日志保留；最终采用当前状态检查加每次新建终态waiter集合，不缓存已完成promise。
+
+最终三文件55/55（17.75秒，`templates44-ci-causes-final.log`）通过且没有未处理错误，定向lint和Node类型检查通过。不扩大任何timeout，不弱化审批／hash／authority断言，不修改生产／共享合同／打包字节，因此原真实未签名macOS包证据仍对应相同业务产物。后续正常CI按新提交验证，未取消或盲重试首轮运行，也不以定向55项代替新的完整CI。
