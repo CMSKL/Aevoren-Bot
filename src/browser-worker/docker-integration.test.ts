@@ -41,6 +41,8 @@ async function withContainer(callback: (fixture: Fixture) => Promise<void>): Pro
     await callback(fixture);
   } catch (error) {
     if (process.env.AEVOREN_BROWSER_DIAGNOSTICS === "1") {
+      const nativeFocus = await docker(["exec", "--user", "1000", "--env", "DISPLAY=:99", name, "node", "-e", `const {spawnSync}=require('node:child_process');const read=args=>{const result=spawnSync('xdotool',args,{encoding:'utf8',timeout:1000});const values=String(result.stdout||'').trim().split(/\\s+/).filter(value=>/^\\d+$/.test(value)).map(Number).filter(Number.isSafeInteger).slice(0,20);return {code:result.status,timedOut:result.error?.code==='ETIMEDOUT',values}};const active=read(['getactivewindow']),focus=read(['getwindowfocus']);console.log(JSON.stringify({active,focus,activePid:active.values[0]?read(['getwindowpid',String(active.values[0])]):null,visibleChrome:read(['search','--onlyvisible','--class','chromium'])}))`]).catch(() => "Native focus diagnostic unavailable");
+      console.error("Controlled browser native focus diagnostic:", nativeFocus);
       const diagnostic = await docker(["exec", "--user", "1000", name, "node", "-e", "try{console.log(require('fs').readFileSync('/tmp/aevoren-ffmpeg-diagnostics.json','utf8'))}catch{console.log('No ffmpeg failure diagnostic')}" ]).catch(() => "Diagnostic container unavailable");
       console.error("Controlled browser capture diagnostic:", diagnostic);
       const frameDiagnostic = await docker(["exec", "--user", "1000", name, "node", "-e", "try{console.log(require('fs').readFileSync('/tmp/aevoren-frame-diagnostics.json','utf8'))}catch{console.log('No stale frame diagnostic')}" ]).catch(() => "Diagnostic container unavailable");
@@ -58,13 +60,21 @@ async function withContainer(callback: (fixture: Fixture) => Promise<void>): Pro
   }
 }
 
-async function withSite(callback: (url: string, clicks: () => number, focused: () => Record<string, boolean>) => Promise<void>): Promise<void> {
+type FocusReport = { page: string; focused: boolean; visible: boolean; buttonActive: boolean };
+async function withSite(callback: (url: string, clicks: () => number, focused: () => Record<string, boolean>, focusReports: () => FocusReport[]) => Promise<void>): Promise<void> {
   let clicks = 0;
   const focused: Record<string, boolean> = {};
+  const focusReports: FocusReport[] = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://fixture.invalid");
     if (url.pathname === "/clicked") { clicks++; response.end("counted"); return; }
-    if (url.pathname === "/focused") { focused[url.searchParams.get("page")!] = url.searchParams.get("value") === "1"; response.end("counted"); return; }
+    if (url.pathname === "/focused") {
+      const page = url.searchParams.get("page")!;
+      focused[page] = url.searchParams.get("value") === "1";
+      focusReports.push({ page, focused: focused[page]!, visible: url.searchParams.get("visible") === "1", buttonActive: url.searchParams.get("button") === "1" });
+      if (focusReports.length > 40) focusReports.shift();
+      response.end("counted"); return;
+    }
     if (url.pathname === "/download" || url.pathname === "/large") {
       response.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": 'attachment; filename="controlled.bin"' });
       response.end(Buffer.alloc(url.pathname === "/large" ? 1_048_577 : 1_024, 0xab)); return;
@@ -74,7 +84,7 @@ async function withSite(callback: (url: string, clicks: () => number, focused: (
     if (url.searchParams.has("focusFixture")) {
       const label = url.searchParams.get("focusFixture")!, background = label === "A" ? "rgb(23,145,213)" : "white";
       const spoof = url.searchParams.has("spoofFocus") ? "document.hasFocus=()=>true;" : "";
-      response.end(`<!doctype html><html><head><title>focus fixture ${label}</title><style>html,body,button{width:100%;height:100%;margin:0;padding:0;border:0}button{background:${background};font:30px sans-serif}</style></head><body><button onclick="fetch('/clicked')">focus fixture ${label}</button><script>${spoof}const report=()=>fetch('/focused?page=${label}&value='+(document.hasFocus()?'1':'0'));setInterval(report,100);report();</script></body></html>`);
+      response.end(`<!doctype html><html><head><title>focus fixture ${label}</title><style>html,body,button{width:100%;height:100%;margin:0;padding:0;border:0}button{background:${background};font:30px sans-serif}</style></head><body><button onclick="fetch('/clicked')">focus fixture ${label}</button><script>${spoof}const report=()=>fetch('/focused?page=${label}&value='+(document.hasFocus()?'1':'0')+'&visible='+(document.visibilityState==='visible'?'1':'0')+'&button='+(document.activeElement?.tagName==='BUTTON'?'1':'0'));setInterval(report,100);report();</script></body></html>`);
       return;
     }
     response.end(`<!doctype html><html><head><title>controlled browser fixture</title><style>html,body{background:rgb(23,145,213);margin:0;min-height:100%;}input,button,a{font:20px sans-serif;margin:8px}h1{margin:8px}${url.searchParams.has("wait") ? "#late{pointer-events:none}" : ""}</style></head><body><h1>controlled browser fixture</h1><p>COOKIE ${String(request.headers.cookie ?? "ABSENT")}</p><input aria-label="Draft" oninput="document.getElementById('typed').textContent=this.value"><span id="typed"></span><button id="late" onclick="fetch('/clicked');this.textContent='Clicked'">Click fixture</button><a href="/download">Download fixture</a><a href="/large">Oversized fixture</a><script>if(location.search.includes('wait=1'))setTimeout(()=>document.getElementById('late').style.pointerEvents='auto',1500)</script></body></html>`);
@@ -82,7 +92,7 @@ async function withSite(callback: (url: string, clicks: () => number, focused: (
   await new Promise<void>(resolve => server.listen(0, "0.0.0.0", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("fixture bind failed");
-  try { await callback(`http://host.docker.internal:${address.port}`, () => clicks, () => ({ ...focused })); }
+  try { await callback(`http://host.docker.internal:${address.port}`, () => clicks, () => ({ ...focused }), () => [...focusReports]); }
   finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }
 
@@ -159,7 +169,7 @@ class RfbFixture {
 
 describe.skipIf(!enabled)("real isolated Chromium and desktop Worker", () => {
   it("binds actual native tab pixels and input to one focused page and clicks at the unchanged cursor position", async () => {
-    await withSite(async (site, clicks, focused) => withContainer(async f => {
+    await withSite(async (site, clicks, focused, focusReports) => withContainer(async f => {
       const first = await navigate(f, `${site}/?focusFixture=A`);
       const original = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", { ...access(1), pageId: first.id }));
       const second = await f.request<BrowserPage>("/v1/browser/pages", "POST", { ...mutation(1), url: `${site}/?focusFixture=B` });
@@ -188,7 +198,15 @@ describe.skipIf(!enabled)("real isolated Chromium and desktop Worker", () => {
         expect(native.pageId).toBe(first.id);
         const blue = await screenshotPixel(f, native, 700, 600);
         expect(blue[0]).toBeLessThan(40); expect(blue[1]).toBeGreaterThan(125); expect(blue[2]).toBeGreaterThan(190);
-        rfb.nextTab(); await expect.poll(focused).toEqual({ A: false, B: true });
+        rfb.nextTab();
+        try { await expect.poll(focused).toEqual({ A: false, B: true }); }
+        catch (error) {
+          // Read only the controlled fixture's focus state, never refocus or
+          // resend input to make the original native-input assertion pass.
+          const x11 = await docker(["exec", "--user", "1000", f.name, "node", "-e", `const {spawnSync}=require('node:child_process');const read=args=>{const r=spawnSync('xdotool',args,{env:{...process.env,DISPLAY:':99'},timeout:1500,encoding:'utf8'});const text=(r.stdout||'').trim();return {status:r.status,value:/^[0-9]+$/.test(text)?Number(text):null}};const active=read(['getactivewindow']);console.log(JSON.stringify({active,focus:read(['getwindowfocus']),activePid:active.value?read(['getwindowpid',String(active.value)]):null}))`]).catch(() => "X11 diagnostic unavailable");
+          console.error("Controlled native-tab focus diagnostic:", JSON.stringify({ phase: "second-native-tab-switch", socketState: rfb.socket.readyState, reports: focusReports() }), x11);
+          throw error;
+        }
         const ready = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", access(2, "user")));
         expect(ready.pageId).toBe(second.id);
         const mouse = await docker(["exec", "--user", "1000", f.name, "env", "DISPLAY=:99", "xdotool", "getmouselocation", "--shell"]);
