@@ -632,4 +632,11 @@ describe("portable template product transport",()=>{
   f.repository.library.unbind({sessionId:f.actor.session.id,id:doc.resource.id});expect(result.modelText?.isAuthorized()).toBe(false);expect(toolImageResponse(result.content,undefined,result.modelText).text).not.toContain("PRIVATE_PORTABLE_BODY");
  });
 
+ it("injects actual capture scope before execution and rejects UI preview tokens and foreign sessions",async()=>{
+  const f=await portableFixture(),input={name:"Scoped",bots:[{id:f.actor.bot.id,expectedVersion:f.actor.bot.version}],resources:[]};
+  const response=await f.execute(call("templates.prepareCapture",input));expect(response.modelText?.isAuthorized()).toBe(true);const preview=JSON.parse(response.modelText!.text);expect(preview.id).toBeTruthy();
+  const trusted=await f.portable.prepareCapture({...input,sessionId:f.actor.session.id});expect(()=>f.service.validate(call("templates.commitCapture",{preparedId:trusted.id,expectedDigest:trusted.digest}),f.runtime.id)).toThrowError(expect.objectContaining({code:"APPROVAL_SCOPE_INVALID"}));
+  expect(()=>f.service.validate(call("templates.prepareCapture",{...input,sessionId:f.repository.createBot().session.id}),f.runtime.id)).toThrowError(expect.objectContaining({code:"APPROVAL_SCOPE_INVALID"}));
+ });
+
 });
