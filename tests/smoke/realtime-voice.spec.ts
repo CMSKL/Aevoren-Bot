@@ -85,7 +85,7 @@ test("real realtime UI streams generated PCM, delegates frozen ASR and stops its
     expect(sockets).toBe(1);expect(received[0]?.type).toBe("session.update");
     await panel.getByRole("button",{name:"开始说话",exact:true}).click();await expect.poll(()=>pcmSamples).toBeGreaterThan(2400);
     await panel.getByRole("button",{name:"结束本轮并提交",exact:true}).click();
-    await expect.poll(()=>cloudOutput).not.toBeNull();expect(commits).toBe(1);expect(responses).toBe(2);
+    await expect.poll(()=>cloudOutput).not.toBeNull();expect(commits).toBe(1);await expect.poll(()=>responses).toBe(2);
     await expect(panel).toContainText("只回复一句简短问候");
     const snapshot=value(await page.evaluate(id=>(window as unknown as {aevorenBot:AevorenBotApi}).aevorenBot.runtime.getSessionSnapshot(id),actor.session.id));
     const human=snapshot.entries.find(entry=>entry.origin?.kind==="voice-input");expect(human?.body).toBe("只回复一句简短问候");expect(JSON.stringify(human)).not.toContain("发送邮件");
