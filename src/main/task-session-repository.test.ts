@@ -3,10 +3,11 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TaskExecutorSelection } from "@shared/task-session-contracts";
 import type { PromptManifest } from "@shared/contracts";
 import { AppRepository, MIGRATIONS } from "./database";
+import { RoutineRepository } from "./routine-repository";
 import { captureRealtimeAdmission } from "./realtime-admission";
 import { mediaExtractionDigest } from "./media-repository";
 const repositories:AppRepository[]=[],directories:string[]=[];
@@ -181,7 +182,11 @@ describe("explicit task context and immutable runtime admission",()=>{
 
 function legacy44(filename:string){
   const migrations=MIGRATIONS as unknown as Array<(typeof MIGRATIONS)[number]>,later=migrations.splice(migrations.findIndex(item=>item.version>44));
-  try{expect(later[0]!.version).toBe(45);return fixture(filename);}finally{migrations.push(...later);}
+  // Seed actual v44 tables with v44 migrations only. The v47 constructor's
+  // backfill is irrelevant to this old writer; the upgraded repository below
+  // opens with the real, unmocked backfill and every migration restored.
+  const backfill=vi.spyOn(RoutineRepository.prototype as unknown as {backfill():void},"backfill").mockImplementation(()=>{});
+  try{expect(later[0]!.version).toBe(45);return fixture(filename);}finally{backfill.mockRestore();migrations.push(...later);}
 }
 describe("real v44 task migration",()=>{
   it("preserves populated v44 incoming foreign keys, triggers, media, voice and runtime data",()=>{

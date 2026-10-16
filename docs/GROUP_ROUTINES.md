@@ -51,6 +51,6 @@ Routine 不会自动批准工具调用。文件写入、电脑、应用外发等
 
 beta.42 集成前，真实 SQLite 的 Routine、数据库、Room、TASK Runtime、TASK 产品范围和搜索回归曾有 83 项通过记录。该结果不替代当前集成源码的完整门禁。
 
-本次界面定向单元测试为 19 项，连同 SettingsDialog 回归共 24 项通过；Web TypeScript 和两份组件文件 ESLint 通过。覆盖 Everyone 固定名单、显式子集、成员／所选配置／MAIN 代次变化、撤销后必须重选及逐状态取消控制。日志保存在 `$CODEX_HOME/aevoren-evidence/2026-10-15/phase5/routine42-ui-*`。隐藏 Electron、实际安装包、跨平台及签名发行仍待集成交付记录，不能由组件渲染测试代替。
+本次界面定向单元测试为 19 项，连同 SettingsDialog 回归共 24 项通过；Web TypeScript 和两份组件文件 ESLint 通过。覆盖 Everyone 固定名单、显式子集、成员／所选配置／MAIN 代次变化、撤销后必须重选及逐状态取消控制。日志保存在 `$CODEX_HOME/aevoren-evidence/2026-10-15/phase5/routine42-ui-*`。后续真实隐藏源码2项、实际未签名macOS包Routine2与typed API共3项同轮通过。完整普通回归与后续迁移夹具定向修正分别记录；Codex EOF期限失败尚在排查。跨平台及签名发行仍待正常门禁。
 
 数据库迁移为 47，按组织设置迁移 46 之后的正常顺序升级。旧 Bot Routine 保留其 MAIN 目标和历史；迁移不会把旧私聊规则改为群规则或赋予事件来源。

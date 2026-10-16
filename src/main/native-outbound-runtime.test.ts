@@ -49,7 +49,7 @@ describe("owned host outbound Runtime",()=>{
  for(const name of tables){
    expect(tableRows(database,name),name).toEqual(rows.get(name));
    const previous=foreignKeys.get(name)!;
-   const expected=name==="sessions"?[{id:0,seq:0,table:"sessions",from:"task_parent_id",to:"id",on_update:"NO ACTION",on_delete:"SET NULL",match:"NONE"},...previous.map(row=>({...row,id:Number(row.id)+1}))]:previous;
+   const expected=name==="routines"?[{id:0,seq:0,table:"sessions",from:"session_id",to:"id",on_update:"NO ACTION",on_delete:"CASCADE",match:"NONE"},...previous.map(row=>({...row,id:Number(row.id)+1}))]:name==="routine_runs"?[{id:0,seq:0,table:"room_batches",from:"batch_id",to:"id",on_update:"NO ACTION",on_delete:"SET NULL",match:"NONE"},...previous.map(row=>({...row,id:Number(row.id)+1}))]:name==="sessions"?[{id:0,seq:0,table:"sessions",from:"task_parent_id",to:"id",on_update:"NO ACTION",on_delete:"SET NULL",match:"NONE"},...previous.map(row=>({...row,id:Number(row.id)+1}))]:previous;
    expect(database.prepare(`PRAGMA foreign_key_list("${name}")`).all(),`${name} FKs`).toEqual(expected);
  }
  for(const row of database.prepare("SELECT task_selection_version,task_selection_digest,task_executor_incarnation FROM runtime_session_scopes").all())expect(row).toEqual({task_selection_version:null,task_selection_digest:null,task_executor_incarnation:null});

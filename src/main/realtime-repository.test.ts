@@ -54,6 +54,10 @@ describe("durable realtime sessions, turns and business admissions",()=>{
       if(old.name==="sessions_one_main_per_bot"||old.name==="sessions_one_main_per_room"){
         const owner=old.name.endsWith("bot")?"bot_id":"room_id";
         expect(compact(actual!.sql!)).toBe(compact(`CREATE UNIQUE INDEX ${old.name} ON sessions(${owner}) WHERE ${owner} IS NOT NULL AND kind='MAIN'`));
+      }else if(old.name==="routine_runs_history"||old.name==="routines_due"){
+        expect(compact(actual!.sql!)).toBe(compact(old.sql!));
+      }else if(old.name==="routine_one_active_run"){
+        expect(compact(actual!.sql!)).toBe(compact("CREATE UNIQUE INDEX routine_one_active_run ON routine_runs(routine_id) WHERE state IN('queued','waiting','dispatching','running','cancel-requested')"));
       }else if(old.name==="initialize_conversation"){
         // Exact legacy body retained; only automatic initialization becomes MAIN-only.
         expect(compact(actual!.sql!)).toBe(compact(old.sql!).replace("AFTERINSERTONsessionsBEGIN","AFTERINSERTONsessionsWHENNEW.kind='MAIN'BEGIN"));
