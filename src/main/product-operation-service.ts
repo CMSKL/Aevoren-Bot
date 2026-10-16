@@ -20,7 +20,7 @@ import type { ModelImageAttachment, ModelTextAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
   "templates.list","templates.read","templates.versions","templates.prepareCapture","templates.prepareImport",
-  "routines.list", "routines.listRuns",
+  "routines.list", "routines.listRuns", "automationEvents.snapshot",
   "search.query","search.open","organization.snapshot","bots.readImageAvatar",
   "sessions.taskOptions", "sessions.listTasks", "sessions.getTask", "voice.realtime.snapshot", "voice.configurations", "voice.get", "voice.list", "voice.audio",
   "media.list", "media.metadata", "media.read", "media.preview",
@@ -45,7 +45,7 @@ const mediaOperation = (operation: string): boolean => operation.startsWith("med
 const voiceOperation = (operation: string): boolean => operation.startsWith("voice.");
 const botImageOperation=(operation:string):boolean=>["bots.setImageAvatar","bots.clearImageAvatar","bots.readImageAvatar"].includes(operation);
 const portableOperation=(operation:string):boolean=>operation.startsWith("templates.")||operation.startsWith("exports.");
-const scopedOperation = (operation: string): boolean => portableOperation(operation) || operation.startsWith("routines.") || botImageOperation(operation) || voiceOperation(operation) || mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
+const scopedOperation = (operation: string): boolean => portableOperation(operation) || operation.startsWith("routines.") || operation.startsWith("automationEvents.") || botImageOperation(operation) || voiceOperation(operation) || mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
 type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[]; modelText?: ModelTextAttachment };
 
 /** Both transports use these handlers; only the host can supply execution identity. */
@@ -172,6 +172,11 @@ export class ProductOperationService {
       if(["templates.commitCapture","templates.commitImport"].includes(tool.operation)){const prepared=input as {preparedId:string;expectedDigest:string};service.assertPrepared(prepared.preparedId,prepared.expectedDigest,context);}
     }
     if (tool.operation.startsWith("routines.")) this.dependencies.routineService.assertOperationScope(tool.operation, input, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, runtimeRunId: runtime.id });
+    if (tool.operation.startsWith("automationEvents.")) {
+      this.dependencies.routineService.assertOperationScope("routines.list", undefined, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, runtimeRunId: runtime.id });
+      if (!this.dependencies.automationEventService) throw new AevorenBotError("INTERNAL_ERROR");
+      this.dependencies.automationEventService.assertOperationScope(tool.operation, input, { sessionId: runtime.sessionId });
+    }
     const taskPolicy=repository.tasks.runtimeTaskPolicy(runtimeRunId);
     if(taskPolicy){
       const record=input&&typeof input==="object"&&!Array.isArray(input)?input as Record<string,unknown>:null;
@@ -688,7 +693,7 @@ export class ProductOperationService {
       if(supplied?.roomId!==undefined&&supplied.roomId!==session.roomId||supplied?.sessionId!==undefined&&supplied.sessionId!==runtime.sessionId)throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
       return {roomId:session.roomId,sessionId:runtime.sessionId};
     }
-    if (operation.startsWith("routines.")) return input;
+    if (operation.startsWith("routines.") || operation.startsWith("automationEvents.")) return input;
     if (voiceOperation(operation) || mediaOperation(operation)) {
       if (operation === "media.available" || ["voice.configurations", "voice.configure"].includes(operation)) return input;
       if (input !== undefined && (!input || typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");

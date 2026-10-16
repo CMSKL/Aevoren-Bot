@@ -1,6 +1,7 @@
 import {TEMPLATE_CHANNELS,EXPORT_CHANNELS} from "@shared/template-export-channels";
 import {TEMPLATE_OPERATION_SCHEMAS} from "@shared/template-export-product";
 import type {TemplateExportService,PreparedOfflineArtifact} from "./template-export-service";
+import { addAutomationEventHandlers, type AutomationEventDependencies } from "./event-product-handlers";
 import { routineRunNowIpcSchema, routineRunCancelSchema } from "@shared/routine-schemas";
 import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
 import { botImageSetSchema,botImageClearSchema,botImageReadSchema } from "@shared/bot-image-schemas";
@@ -106,7 +107,7 @@ import { addSkillExecutionProductHandlers, type SkillExecutionProductDependencie
 import { addNativeConnectorProductHandlers, type NativeConnectorProductDependencies } from "./native-connector-product-handlers";
 import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 
-export type ProductDependencies = VoiceProductDependencies & MediaProductDependencies & McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & DemonstrationProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
+export type ProductDependencies = AutomationEventDependencies & VoiceProductDependencies & MediaProductDependencies & McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & DemonstrationProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
   nativeOutboundService?: NativeOutboundService;
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
@@ -206,6 +207,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   });
   handlers.set(SEARCH_CHANNELS.query,input=>{if(!dependencies.searchService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.searchService.query(searchQuerySchema.parse(input),libraryContext);});
   handlers.set(SEARCH_CHANNELS.open,input=>{if(!dependencies.searchService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.searchService.open(searchOpenSchema.parse(input),libraryContext);});
+  addAutomationEventHandlers(handlers, dependencies, commit, libraryContext);
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
   addMediaProductHandlers(handlers, dependencies, commit, libraryContext);
   addVoiceProductHandlers(handlers, dependencies, commit);

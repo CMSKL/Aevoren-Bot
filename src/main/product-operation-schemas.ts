@@ -1,4 +1,5 @@
 import {TEMPLATE_OPERATION_SCHEMAS} from "@shared/template-export-product";
+import { AUTOMATION_EVENT_OPERATION_SCHEMAS } from "@shared/event-product";
 import { routineRunNowSchema, routineRunCancelSchema } from "@shared/routine-schemas";
 import { BOT_IMAGE_OPERATION_SCHEMAS } from "@shared/bot-image-product";
 import { ORGANIZATION_OPERATION_SCHEMAS } from "@shared/organization-product";
@@ -27,6 +28,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...MEDIA_OPERATION_SCHEMAS,
   ...TASK_SESSION_OPERATION_SCHEMAS,
   ...SEARCH_OPERATION_SCHEMAS,
+  ...AUTOMATION_EVENT_OPERATION_SCHEMAS,
   ...ORGANIZATION_OPERATION_SCHEMAS,
   ...BOT_IMAGE_OPERATION_SCHEMAS,
   ...VOICE_OPERATION_SCHEMAS,

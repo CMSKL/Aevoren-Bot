@@ -2,9 +2,9 @@
 
 This guide covers the v0.3.0-beta.42 local implementation candidate: Bot/group MAIN Routines, personal organization, all-resource search, independent Task threads, media and voice, documents and text/script Skills, isolated Docker execution and browser/computer use, reviewable demonstration Skills, native connections, approved external drafts and scoped MCP Apps. Native reads and writes require explicit conversation/Bot permissions; credentials remain in the host. See [Native connections](NATIVE_CONNECTORS.md), [External drafts](NATIVE_OUTBOUND.md) and [MCP Apps](MCP_APPS.md) for setup and exact boundaries.
 
-Release status and exact source/package evidence are recorded separately in the [implementation record](IMPLEMENTATION_PLAN.md); a feature described in this guide is not proof that its signed release has shipped. Task threads, search and earlier media/voice work retain their recorded local source and unsigned-package evidence. The beta.42 [MAIN Bot/group Routine](GROUP_ROUTINES.md) integration passed focused business, hidden source and actual unsigned macOS-package checks; cross-platform and signed-release gates remain pending. The full ordinary run and subsequent focused fixture results remain recorded separately. Real cloud accounts, physical audio devices and Windows Docker remain unverified. Event subscriptions/Webhooks and templates/exports are separate later deliveries.
+Release status and exact source/package evidence are recorded separately in the [implementation record](IMPLEMENTATION_PLAN.md); a feature described in this guide is not proof that its signed release has shipped. Task threads, search and earlier media/voice work retain their recorded local source and unsigned-package evidence. The beta.42 [MAIN Bot/group Routine](GROUP_ROUTINES.md) integration is under validation: its targeted component tests and Web typecheck pass, while hidden Electron, actual-package, cross-platform and signed-release gates remain pending. Real cloud accounts, physical audio devices and Windows Docker remain unverified. Event subscriptions/Webhooks and templates/exports are separate later deliveries.
 
-[Chat organization and Bot image avatars](ORGANIZATION.md) have local business, hidden UI and actual unsigned macOS-package evidence; platform/signed checks remain pending.
+[Organization and Bot images](ORGANIZATION.md) passed local business, hidden UI and actual unsigned macOS-package acceptance; cross-platform and signed-release gates remain pending.
 
 ## First run
 
@@ -120,13 +120,19 @@ For a running background service, register its listening port. The Worker verifi
 
 ## Bot and group Routines (beta.42 local candidate)
 
-Open **Settings → 主动服务**, enter a name and saved task prompt, and choose **Routine 执行目标**. Only Bot and Room MAIN conversations are offered. A new rule starts paused; enable it after review or choose **立即运行** for one execution. TASK targets, event subscriptions and Webhooks are not available in this delivery.
+Open **Settings → 主动服务**, enter a name and saved task prompt, and choose **Routine 执行目标**. Only Bot and Room MAIN conversations are offered. A new rule starts paused; enable it after review or choose **立即运行** for one execution. TASK Routine targets are not supported. Events and local Webhooks are configured separately as described below.
 
 A Room defaults to **Everyone · 保存当前全部成员**. This saves a fixed roster and uses the existing parallel group path; a member waiting for approval does not block its siblings. **只运行勾选成员** saves an explicit subset instead. The saved card shows the chosen members, session generation, reviewed membership version and rule version. Adding a member never silently adds it to an existing rule.
 
 After a membership, selected Bot profile or authorization change, edit the rule and choose **重新选择并审阅目标**, check the members, then save. Explicit subsets retain only their still-present selected members; new members start unchecked. The UI refreshes the actual MAIN target before saving and the host checks the reviewed membership version. Conflicts preserve the draft. Changing the target conversation explicitly clears that rule's fixed document/media references; this editor currently has no resource picker.
 
 **取消本次运行** cancels only the selected accepted Runtime or Room batch. **正在取消** remains visible until the host confirms an outcome; pausing the definition affects future scheduling. Recent runs show actual durable states and can be refreshed. An unknown acceptance result is kept as **结果未知**, without replaying the saved task after restart. Tool approvals and external-write verification still apply. Connected AI uses the same business handlers and current version checks, scoped to its actual MAIN conversation. See [Group Routines](GROUP_ROUTINES.md) for scope, recovery and pending acceptance gates.
+
+## Events and local Webhooks (beta.43 local candidate)
+
+Open **Settings → 事件与 Webhook**, explicitly select and review an enabled MAIN Bot/group Routine, then save a paused or enabled subscription. Internal completion/failure events require an explicitly selected source conversation and carry only opaque IDs/status, including for a private TASK source. Connected AI can manage subscriptions only within its current admitted MAIN session.
+
+For Webhooks, explicitly rotate the secret, copy the once-displayed token and start the listener. It is stopped by default and after restart; the page shows the actual loopback port and versioned URL. Send UTF-8 JSON with Bearer authentication and an Idempotency-Key. The payload remains an untrusted ordinary attachment; it cannot grant permissions or approve tools. Edits invalidate the old URL, rotation/revocation invalidate its token, and changes stop only that subscription's owned active runs. Unknown outcomes are reconciled without replay. See [Events and local Webhooks](AUTOMATION_EVENTS.md) for limits, recovery and acceptance evidence.
 
 ## Updating
 

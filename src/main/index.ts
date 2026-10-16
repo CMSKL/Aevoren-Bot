@@ -1,6 +1,10 @@
 import {TemplateExportService} from "./template-export-service";
 import {saveOfflineArtifact} from "./offline-artifact";
 import {TEMPLATE_MAX_JSON_BYTES} from "@shared/template-export-schemas";
+import { EventService } from "./event-service";
+import { EventHttpServer } from "./event-http-server";
+import { emitAutomationRuntime } from "./event-runtime";
+import { AUTOMATION_EVENTS_CHANGED } from "@shared/event-channels";
 import { BotImageService } from "./bot-image-service";
 import { OrganizationService } from "./organization-service";
 import { ORGANIZATION_CHANGED_CHANNEL } from "@shared/organization-channels";
@@ -110,6 +114,8 @@ let skillExecutionService: SkillExecutionService | null = null;
 let nativeConnectorService: NativeConnectorService | null = null;
 let nativeOutboundService: NativeOutboundService | null = null;
 let routineService: RoutineService | null = null;
+let automationEventService: EventService | null = null;
+let automationEventHttp: EventHttpServer | null = null;
 let allowClose = false;
 let closeRequested = false;
 let quitRequested = false;
@@ -144,6 +150,10 @@ function emitSendState(event: SendStateEvent): void {
 }
 
 function emitRuntime(event: RuntimeEvent): void {
+  if (repository && automationEventService && ["completed", "failed"].includes(event.run.state)) {
+    const hostRepository = repository, events = automationEventService;
+    void (routineService?.reconcileCompletedRuns() ?? Promise.resolve()).then(() => emitAutomationRuntime(hostRepository, events, event.run)).then(() => events.reconcile()).catch(() => undefined);
+  }
   realtimeBusiness?.changed();
   if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void browserService?.cancelRuntime(event.run.id).catch(() => undefined);
   if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void environmentService?.cancelRuntime(event.run.id).catch(() => undefined);
@@ -202,7 +212,7 @@ function armCloseConfirmationTimer(): void {
 
 async function finishClose(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (!quitRequested && routineService?.hasEnabled()) {
+  if (!quitRequested && (routineService?.hasEnabled() || automationEventHttp?.snapshot().listening)) {
     clearCloseConfirmationTimer();
     closeRequested = false;
     pendingClose = false;
@@ -212,6 +222,8 @@ async function finishClose(): Promise<void> {
     return;
   }
   shutdownPromise ??= (async () => {
+    await automationEventHttp?.stop();
+    await automationEventService?.shutdown();
     await routineService?.shutdown();
     roomCoordinator?.beginShutdown();
     await mcpAppsBridge?.dispose();
@@ -485,6 +497,10 @@ app.whenReady().then(async () => {
     const title = run.state === "completed" ? "定时任务已完成" : run.state === "missed" ? "定时任务已错过" : "定时任务需要关注";
     showNotification(title, `${run.routineName} · ${run.state}`,"routines");
   }, undefined, roomCoordinator);
+  const automationChanged = (): void => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(AUTOMATION_EVENTS_CHANGED); };
+  automationEventService = new EventService(repository.automationEvents, routineService, electronSecretCodec, automationChanged, { assertSourceSession: id => { repository!.getSession(id); } });
+  automationEventHttp = new EventHttpServer(automationEventService, automationChanged);
+  await automationEventService.reconcile();
   const realtimeTestOrigin = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_REALTIME_TEST_ORIGIN : undefined;
   let realtimeSocketFactory: RealtimeSocketFactory | undefined;
   if (realtimeTestOrigin) {
@@ -683,6 +699,7 @@ app.whenReady().then(async () => {
     capabilityRegistry,
     mcpService,
     routineService,
+    automationEventService, automationEventHttp,
     updateService,
     async pickWorkspaceRoot() {
       const testPath = process.env.AEVOREN_BOT_TEST_HIDDEN === "1"
@@ -849,4 +866,5 @@ app.on("quit", () => {
   mcpWriteService = null;
   mcpAppsBridge = null;
   routineService = null;
+  automationEventService = null; automationEventHttp = null;
 });

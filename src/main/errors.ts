@@ -1,3 +1,4 @@
+import { EventStateError } from "./event-repository";
 import { ZodError } from "zod";
 import type { ApiResult, AppError, ErrorDomain } from "@shared/contracts";
 import { NativeConnectorError } from "./native-connectors/types";
@@ -11,6 +12,13 @@ type ErrorDescriptor = {
 };
 
 export const ERROR_REGISTRY = {
+  EVENT_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这项事件订阅或回执。", allowedDetailKeys: [] },
+  EVENT_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "事件或 Routine 版本已变化，当前草稿仍保留，请核对后再保存。", allowedDetailKeys: ["currentVersion"] },
+  EVENT_UNAUTHORIZED: { domain: "security", retryable: false, safeMessage: "Webhook 版本或密钥已失效。", allowedDetailKeys: [] },
+  EVENT_STOPPED: { domain: "tool", retryable: false, safeMessage: "事件监听或订阅已停止。", allowedDetailKeys: [] },
+  EVENT_LIMIT: { domain: "validation", retryable: false, safeMessage: "事件内容、订阅或待处理数量超过限制。", allowedDetailKeys: [] },
+  EVENT_LOOP: { domain: "security", retryable: false, safeMessage: "事件循环或超过四跳的触发已阻止。", allowedDetailKeys: [] },
+  EVENT_INVALID: { domain: "validation", retryable: false, safeMessage: "事件数据或摘要校验失败，未派发。", allowedDetailKeys: [] },
   ORG_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "侧栏设置已变化，请刷新后保存；当前草稿仍保留。", allowedDetailKeys: ["currentVersion"] },
   VOICE_CONFIGURATION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "语音配置已改变，请刷新后保存。", allowedDetailKeys: [] },
   VOICE_CONFIGURATION_REQUIRED: { domain: "provider", retryable: false, safeMessage: "请在语音设置中启用并配置这项独立服务。", allowedDetailKeys: [] },
@@ -305,6 +313,7 @@ export class AevorenBotError extends Error {
 
 export function asAppError(error: unknown): AppError {
   if (error instanceof AevorenBotError) return error.toAppError();
+  if (error instanceof EventStateError) return new AevorenBotError(error.code, undefined, undefined, error.currentVersion === undefined ? undefined : { currentVersion: error.currentVersion }).toAppError();
   if (error instanceof ConnectorStateError) return new AevorenBotError(error.code, undefined, undefined,
     error.currentVersion === undefined ? undefined : { currentVersion: error.currentVersion }).toAppError();
   if (error instanceof NativeConnectorError) return new AevorenBotError(`CONNECTOR_${error.code}` as keyof typeof ERROR_REGISTRY).toAppError();

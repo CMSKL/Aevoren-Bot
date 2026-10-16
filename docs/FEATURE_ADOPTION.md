@@ -2,11 +2,11 @@
 
 Aevoren 要补齐的主要能力是资料库与 Skill、可执行的电脑与浏览器、语音、可写应用连接，以及跨资源搜索和分享。现有 Bot、群聊、Memory、审批、执行记录、Routine 和自动更新可以继续复用。新增功能应同时提供界面入口和 AI 产品操作，进入现有任务取消、恢复和结果验证链。
 
-本次对照以 Grok Bot 0.68.1 本机安装包和 Aevoren 0.3.0-beta.26 源码为最初基线，日期为 2026-10-13；静态逆向证据仍只支持该版本。当前开发源码为 `v0.3.0-beta.42` 本地实现候选，新增 MAIN Bot／群 Routine 的固定目标、群并行、审阅成员版本、运行取消及恢复链。最新源码、安装包、跨平台和签名发行状态分别以[实施计划](IMPLEMENTATION_PLAN.md)为准；本页新增实现不代表已发布安装包可用。真实账号、物理音频设备及 Windows Docker 仍未验证。登录、注册按要求不实施。
+本次对照以 Grok Bot 0.68.1 本机安装包和 Aevoren 0.3.0-beta.26 源码为最初基线，日期为 2026-10-13；静态逆向证据仍只支持该版本。当前开发源码为 `v0.3.0-beta.43` 本地实现候选，新增 MAIN Bot／群 Routine，以及认证本机 Webhook、仅元数据 Runtime 事件订阅、幂等接收和所属运行撤销。最新源码、安装包、跨平台和签名发行状态分别以[实施计划](IMPLEMENTATION_PLAN.md)为准；本页新增实现不代表已发布安装包可用。真实账号、物理音频设备及 Windows Docker 仍未验证。登录、注册按要求不实施。
 
-下方未标明后续版本的对照项保留最初盘点含义，当前增量见文末。阶段 6D 的本地业务、隐藏源码与实际未签名 macOS 包验收通过，跨平台及签名门禁待完成；事件／Webhook 与模板／选择性离线导出仍为后续交付。
+下方未标明后续版本的对照项保留最初盘点含义，当前增量见文末。阶段 6D 与 6E 的本地集成及业务／组件检查已有记录，完整门禁分别登记；模板／选择性离线导出仍为后续交付。
 
-阶段 6C 的分区、默认助理、通知及图片头像已通过本地业务、隐藏界面和真实未签名 macOS 包；历史基线及各阶段的确切证据仍见实施记录，跨平台／签名门禁不自动继承。
+个人整理与 Bot 图片头像已通过本地业务、隐藏界面及真实未签名 macOS 包检查；平台与签名发行仍待完成。
 
 ## 证据范围
 
@@ -94,7 +94,7 @@ REA 对安装包做了静态分析和只读提取。清单包含 595 个相关�
 | 朗读、语音 memo、播放与文字定位 | synthesizeSpeech、缓存、暂停、倍速、逐字高亮和 seek | 未实现 | 可配置 TTS 与真实音频引用，先朗读再实时语音 |
 | 每 Bot 声音、速度和语言 | setAgentVoice 的实际配置消费者 | 未实现 | 扩展 Bot 能力配置，不能替代实际语音来源校验 |
 | 定时任务与运行历史 | Routine CRUD、cron、暂停/启用、runNow、运行失败消费者 | beta.42 本地候选新增 MAIN Bot／Room 固定目标、审阅成员版本、Everyone／指定子集并行、CAS 编辑／取消及原 nonce 恢复 | 复用原 Runtime 和群调度器；真实门禁见[群 Routine](GROUP_ROUTINES.md)，TASK 与事件来源后置 |
-| 事件、组合触发和 Webhook | listener、触发显示、webhook credential、run/pause 消费者 | 仅时间触发，应用运行时本地调度 | 新触发器适配器、事件去重与可选常驻自托管服务 |
+| 事件、组合触发和 Webhook | listener、触发显示、webhook credential、run/pause 消费者 | beta.43 本机认证 Webhook 与 Runtime 完成／失败元数据事件；显式启动 loopback、版本 URL、持久去重、固定 Routine 目标、所属取消与恢复 | 共用 Runtime 和审批；公共入口与常驻远程服务后置 |
 | Bot 模板、版本、导入与分享 | 模板编辑、publish、版本缓存、share URL、createFromTemplate | 只有本地 Bot 复制 | 先本地模板导入/导出；公共分享和市场作为可选自托管服务 |
 | 分享内容和访问范围 | 链接/团队访问消费者；细粒度模板可见性写入口部分未知 | 无分享链接；可另存单条回复 | 先会话/资料静态导出和预览；远程发布需明确快照与撤销 |
 
@@ -157,7 +157,7 @@ SQLite 保存资源、不可变版本和会话绑定，导入文件保存为应�
 | [能力注册](../src/main/capability-registry.ts)、[模型接入](../src/main/model.ts) | 来源可用性、媒体事件和真实能力快照 |
 | [数据库](../src/main/database.ts)、[Memory](MEMORY.md) | 资料/Skill/会话/环境记录；保留原数据并提供迁移恢复 |
 | [MCP 服务](../src/main/mcp-service.ts)、[OAuth](../src/main/mcp-oauth.ts) | 连接目录、写动作、媒体结果和 Apps |
-| [Routine 服务](../src/main/routine-service.ts) | beta.42 本地 MAIN 群目标与运行取消；事件适配器、Webhook 和常驻服务后置 |
+| [Routine 服务](../src/main/routine-service.ts) | beta.42 本地 MAIN 群目标与运行取消；beta.43 事件适配器及本机 Webhook；常驻远程服务后置 |
 | [联系人详情](../src/renderer/src/components/ContactDetail.tsx)、[聊天](../src/renderer/src/components/Conversation.tsx) | 资料库、Skill、电脑、语音和任务入口 |
 | [附件](../src/main/attachments.ts)、[成果](../src/main/artifacts.ts) | 媒体引用、预览、下载及导出 |
 
@@ -229,8 +229,8 @@ SQLite 保存资源、不可变版本和会话绑定，导入文件保存为应�
 | 6A 任务线程（beta.39） | [任务线程](TASK_THREADS.md)已实现 MAIN／TASK、明确成员与默认空授权、固定版本上下文、原 Runtime 重试范围、独立侧栏及任务级停止／删除。三个不同隐藏场景分轮通过，真实未签名 macOS 包四项通过；不能合并表述成一次完整全绿。跨平台／发行状态以实施记录为准 |
 | 6B 全资源搜索（beta.40） | [搜索](SEARCH.md)已实现实际来源搜索与精确定位，本地 SQLite／传输专项及隐藏界面已有通过记录；实际未签名 macOS 包有验收记录。后续布局修复与平台／签名门禁单独记录 |
 | 6C 整理与偏好（beta.41） | 源码提供会话分区、默认助理、Bot 图片头像及通知类别／声音设置；最终集成和发行门禁独立记录，不由源码存在推断安装包可用 |
-| 6D MAIN Bot／群 Routine（beta.42） | 本地集成候选：固定目标、审阅成员版本、Everyone／指定子集并行、编辑版本冲突、单次运行取消与原 nonce 恢复；19 项 Routine 组件测试及 5 项设置回归通过。隐藏源码2项与实际未签名macOS包3项通过；跨平台及签名发行待验收，详见[群 Routine](GROUP_ROUTINES.md) |
-| 6E 事件／Webhook | 尚未接入 HTTP 监听或事件来源；仅宿主内部持久触发／去重基础不构成已交付订阅功能 |
+| 6D MAIN Bot／群 Routine（beta.42） | 本地集成候选：固定目标、审阅成员版本、Everyone／指定子集并行、编辑版本冲突、单次运行取消与原 nonce 恢复；19 项 Routine 组件测试及 5 项设置回归通过。隐藏 Electron、安装包、跨平台及签名发行待验收，详见[群 Routine](GROUP_ROUTINES.md) |
+| 6E 事件／Webhook（beta.43） | 设置界面与 `automationEvents.*` 共用业务层；真实 loopback HTTP、私有 TASK 元数据、固定 MAIN Routine 目标、密钥撤销及去重已实现；隐藏界面／实包与平台证据分别登记，详见[使用说明](AUTOMATION_EVENTS.md) |
 | 6F 模板／选择性离线导出 | 后续独立交付；不从模型文本或内部模块推断已有界面和安装包支持 |
 
 ### 6D 范围与恢复
@@ -239,4 +239,4 @@ SQLite 保存资源、不可变版本和会话绑定，导入文件保存为应�
 
 界面和 AI 共用 `routines.*` 业务处理。AI 只能访问当前 MAIN 会话的规则与历史，TASK 不受支持。修改、启停、删除、立即运行和取消绑定实际版本；工具审批仍独立执行，Routine 不是自动批准权限。取消只影响该次登记的 Runtime／Room batch，兄弟规则与后台进程保留独立生命周期。
 
-重启核对原 nonce 和真实接受回执，未知结果保持未知，不重放任务或未知外发。事件正文不能改写保存指令或充当批准。当前没有事件订阅、Webhook、云端常驻调度或 TASK 自动化。最新完整验证和发布进度继续写入[实施记录](IMPLEMENTATION_PLAN.md)。
+重启核对原 nonce 和真实接受回执，未知结果保持未知，不重放任务或未知外发。事件正文不能改写保存指令或充当批准。beta.43 另提供事件订阅及本机 Webhook；云端常驻调度及 TASK Routine 目标仍不支持。最新完整验证和发布进度继续写入[实施记录](IMPLEMENTATION_PLAN.md)。
