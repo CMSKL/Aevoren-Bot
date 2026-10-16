@@ -24,6 +24,7 @@ test("delayed contact autofocus preserves the user's chosen field and persisted 
     env: { ...environment, AEVOREN_BOT_USER_DATA_DIR: directory, AEVOREN_BOT_DB_PATH: databasePath, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1" },
   });
   try {
+    await application.context().tracing.start({ snapshots: true, screenshots: false });
     if (executablePath) expect(await application.evaluate(({ app }) => app.isPackaged)).toBe(true);
     const page = await application.firstWindow();
     const errors: string[] = [];
@@ -85,6 +86,7 @@ test("delayed contact autofocus preserves the user's chosen field and persisted 
     // The business body retains its 30s deadline. Teardown gets its own bounded
     // allowance after those focus, persistence and hidden-window checks finish.
     test.setTimeout(test.info().timeout + 5_000);
+    await application.context().tracing.stop({ path: test.info().outputPath("contact-renderer-trace.zip") }).catch(() => undefined);
     await closeTestApplication(application);
     removeTestDirectory(directory);
   }
