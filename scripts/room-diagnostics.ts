@@ -94,13 +94,15 @@ function assertSupportedSchema(database: DatabaseSync): number {
     if (rows.length !== requiredTables.length) throw new DiagnosticError("UNSUPPORTED_SCHEMA");
 
     const migration = database
-      .prepare("SELECT MIN(version) AS minimum, MAX(version) AS maximum, COUNT(*) AS count FROM schema_migrations")
-      .get() as { minimum: number | null; maximum: number | null; count: number };
+      .prepare("SELECT MIN(version) AS minimum, MAX(version) AS maximum, COUNT(CASE WHEN version BETWEEN 1 AND ? THEN 1 END) AS required_count FROM schema_migrations")
+      .get(MINIMUM_DATABASE_SCHEMA_VERSION) as { minimum: number | null; maximum: number | null; required_count: number };
     if (
       migration.minimum !== 1
       || migration.maximum === null
       || migration.maximum < MINIMUM_DATABASE_SCHEMA_VERSION
-      || migration.count !== migration.maximum
+      // Later independent features can apply higher migration numbers first.
+      // The diagnostic baseline and every queried table/column must still exist.
+      || migration.required_count !== MINIMUM_DATABASE_SCHEMA_VERSION
     ) {
       throw new DiagnosticError("UNSUPPORTED_SCHEMA");
     }

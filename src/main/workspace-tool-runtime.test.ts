@@ -11,6 +11,12 @@ import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { NetworkToolExecutor } from "./network-tool-executor";
 import { DecisionService, FakeDecisionProvider } from "./decision-service";
 
+const workers: SendWorker[] = [];
+function ownedWorker(...args: ConstructorParameters<typeof SendWorker>): SendWorker {
+  const worker = new SendWorker(...args);
+  workers.push(worker);
+  return worker;
+}
 const repositories: AppRepository[] = [];
 const directories: string[] = [];
 
@@ -20,7 +26,8 @@ function directory(): string {
   return value;
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all(workers.splice(0).map(worker => worker.shutdown()));
   vi.unstubAllGlobals();
   while (repositories.length > 0) repositories.pop()?.close();
   while (directories.length > 0) rmSync(directories.pop()!, { recursive: true, force: true });
@@ -70,7 +77,7 @@ async function harness(
     },
     decisions,
   );
-  const worker = new SendWorker(
+  const worker = ownedWorker(
     repository,
     null,
     { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() },
@@ -121,7 +128,7 @@ describe("Workspace tool Runtime wiring", () => {
       },
       decisions,
     );
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "CLI 查询时间" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
     expect(hostResult).toContain("2026-09-17T08:00:00.000Z");
@@ -188,7 +195,7 @@ describe("Workspace tool Runtime wiring", () => {
         }
       },
     );
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "读取来源页面" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
 
@@ -235,7 +242,7 @@ describe("Workspace tool Runtime wiring", () => {
         }
       },
     );
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "现在几点" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
 
@@ -318,7 +325,7 @@ describe("Workspace tool Runtime wiring", () => {
         queueMicrotask(() => void coordinator.resolve(event.sessionId, event.approval.id, event.approval.version, "allow-once"));
       }
     });
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "同时读取两份文件" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
 
@@ -404,7 +411,7 @@ describe("Workspace tool Runtime wiring", () => {
     };
     const events: Array<Parameters<ConstructorParameters<typeof WorkspaceToolCoordinator>[2]>[0]> = [];
     const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), (event) => events.push(event));
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "写入后继续读取" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
 
@@ -450,7 +457,7 @@ describe("Workspace tool Runtime wiring", () => {
       testConnection: async () => {},
     };
     const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "用 workspace_write 创建 Brief，然后停在等待人工选题批准" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
     expect(calls).toBe(1);
@@ -498,7 +505,7 @@ describe("Workspace tool Runtime wiring", () => {
       testConnection: async () => {},
     };
     const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "workspaceId=e8d67efd-a281-46c4-84f0-9fdf7b18b7df；短帖 140–220、展开版 280–420；用 text_measure 后 workspace_write 写审校稿" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
     expect(calls).toBe(5);
@@ -521,7 +528,7 @@ describe("Workspace tool Runtime wiring", () => {
       },
       testConnection: async () => {},
     };
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "读取 CSV" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
     expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_EVIDENCE_REQUIRED");
@@ -541,7 +548,7 @@ describe("Workspace tool Runtime wiring", () => {
       },
       testConnection: async () => {},
     };
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "写入审校稿文件" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
     expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_EVIDENCE_REQUIRED");
@@ -561,7 +568,7 @@ describe("Workspace tool Runtime wiring", () => {
         },
         testConnection: async () => {},
       };
-      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
       const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: request });
       const planning = request.includes("不联网");
       await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe(planning ? "completed" : "failed"));
@@ -597,7 +604,7 @@ describe("Workspace tool Runtime wiring", () => {
         },
         testConnection: async () => {},
       };
-      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
       const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: request });
       await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe(required ? "failed" : "completed"));
       if (required) expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TASK_REQUIREMENTS_UNMET");
@@ -618,7 +625,7 @@ describe("Workspace tool Runtime wiring", () => {
         },
         testConnection: async () => {},
       };
-      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
       const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "确认收到；不要调用工具。" });
       await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
       expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_EVIDENCE_REQUIRED");
@@ -659,9 +666,13 @@ describe("Workspace tool Runtime wiring", () => {
         testConnection: async () => {},
       };
       const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
-      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+      let resolveTerminal!: () => void;
+      const terminal = new Promise<void>(resolve => { resolveTerminal = resolve; });
+      const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: event=>{if(["completed","failed","cancelled","interrupted"].includes(event.run.state))resolveTerminal();} }, false, provider, undefined, coordinator);
       const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "保存为 01-inbox/报告.md，保存后读取真实文件确认完整。" });
-      await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe(mode === "complete" ? "completed" : "failed"));
+      // Wait for the actual terminal event, retaining this test's original deadline.
+      await terminal;
+      expect(repository.getRuntimeRun(sent.runId).state).toBe(mode === "complete" ? "completed" : "failed");
       expect(repository.listToolInvocations(created.session.id).filter(tool => tool.toolKind === "workspace-write" && tool.state === "succeeded")).toHaveLength(1);
       expect(readFileSync(join(root, "01-inbox", "报告.md"), "utf8")).toBe("# Public report\nVerified output.\n");
       if (mode !== "complete") expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TASK_REQUIREMENTS_UNMET");
@@ -684,7 +695,7 @@ describe("Workspace tool Runtime wiring", () => {
         },
         testConnection: async () => {},
       };
-      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
       const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: fixture.request });
       await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
       expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe(fixture.code);
@@ -712,7 +723,7 @@ describe("Workspace tool Runtime wiring", () => {
     };
     const service = new WorkspaceService(repository);
     const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "计算非空白字符数" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
     expect(repository.listToolInvocations(created.session.id)).toMatchObject([
@@ -746,7 +757,7 @@ describe("Workspace tool Runtime wiring", () => {
       testConnection: async () => {},
     };
     const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "分析 metrics.csv 的浏览和互动指标" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
     expect(repository.listToolInvocations(created.session.id)).toMatchObject([
@@ -783,7 +794,7 @@ describe("Workspace tool Runtime wiring", () => {
       testConnection: async () => {},
     };
     const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), pending);
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "取消" });
     await vi.waitFor(() => expect(repository.listPendingApprovalRequests(created.session.id)).toHaveLength(1));
     worker.cancelRun(sent.runId);
@@ -814,7 +825,7 @@ describe("Workspace tool Runtime wiring", () => {
         queueMicrotask(() => void coordinator.resolve(event.sessionId, event.approval.id, event.approval.version, "allow-once"));
       }
     });
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "循环保护" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
     expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_ROUND_LIMIT_EXCEEDED");
@@ -839,7 +850,7 @@ describe("Workspace tool Runtime wiring", () => {
       testConnection: async () => {},
     };
     const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "用 text_measure 精确计算字符数并持续修订长度" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
     expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_ROUND_LIMIT_EXCEEDED");
@@ -870,7 +881,7 @@ describe("Workspace tool Runtime wiring", () => {
       testConnection: async () => {},
     };
     const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
-    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const worker = ownedWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "用 text_measure 精确记录初稿长度" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
     expect(repository.listToolInvocations(created.session.id)).toHaveLength(6);

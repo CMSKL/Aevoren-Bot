@@ -1,0 +1,2 @@
+export const ORGANIZATION_CHANNELS={snapshot:"organization:snapshot",createSection:"organization:create-section",renameSection:"organization:rename-section",deleteSection:"organization:delete-section",reorderSections:"organization:reorder-sections",moveSession:"organization:move-session",savePreferences:"organization:save-preferences"} as const;
+export const ORGANIZATION_CHANGED_CHANNEL="organization:changed";

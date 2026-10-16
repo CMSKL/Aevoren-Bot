@@ -20,7 +20,7 @@ export function addSkillExecutionProductHandlers(handlers: Map<string, (input?: 
       const scoped = context ? { ...supplied, sessionId: context.sessionId, executorBotId: context.executorBotId } : supplied;
       const parsed = context ? SKILL_EXECUTION_OPERATION_SCHEMAS[definition.name]!.parse(scoped) as Record<string, unknown> : scoped;
       switch (definition.name) {
-        case "skills.scripts": return service().scripts(skillScriptsSchema.parse(parsed), context?.signal);
+        case "skills.scripts": return service().scripts(skillScriptsSchema.parse(parsed), context?.signal, context?.runtimeRunId);
         case "skills.executionGrants": return service().executionGrants(skillGrantsSchema.parse(parsed));
         case "skills.grantExecution": return service().grantExecution(skillGrantSchema.parse(parsed), context?.signal, commit);
         case "skills.revokeExecution": return service().revokeExecution(skillRevokeSchema.parse(parsed), context?.signal, commit);

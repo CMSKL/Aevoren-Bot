@@ -1,0 +1,7 @@
+import { z } from "zod";
+import type { ProductOperationDefinition } from "./product-operations";
+import { ORGANIZATION_CHANNELS } from "./organization-channels";
+import { organizationCreateSectionSchema,organizationRenameSectionSchema,organizationDeleteSectionSchema,organizationReorderSectionsSchema,organizationMoveSessionSchema,organizationSavePreferencesSchema } from "./organization-schemas";
+export const ORGANIZATION_OPERATION_SCHEMAS:Record<string,z.ZodType>={"organization.snapshot":z.undefined(),"organization.createSection":organizationCreateSectionSchema,"organization.renameSection":organizationRenameSectionSchema,"organization.deleteSection":organizationDeleteSectionSchema,"organization.reorderSections":organizationReorderSectionsSchema,"organization.moveSession":organizationMoveSessionSchema,"organization.savePreferences":organizationSavePreferencesSchema};
+const descriptions={snapshot:"查看侧栏分区、当前会话归属及个人偏好；不返回其他会话正文或扩大权限",createSection:"创建持久侧栏分区",renameSection:"按版本修改侧栏分区名称",deleteSection:"删除分区并把会话移回默认列表，不删除聊天",reorderSections:"按版本排列全部侧栏分区",moveSession:"按版本移动当前会话到指定分区，不改变资料或执行授权",savePreferences:"按版本设置默认助理、四类通知和声音；不会改变系统权限"};
+export const ORGANIZATION_PRODUCT_OPERATIONS:readonly ProductOperationDefinition[]=Object.entries(descriptions).map(([method,description])=>({name:`organization.${method}`,channel:ORGANIZATION_CHANNELS[method as keyof typeof ORGANIZATION_CHANNELS],description,effectClass:method==="snapshot"?"read-local":"write-reversible",interaction:"none"}));

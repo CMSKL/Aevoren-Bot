@@ -45,19 +45,19 @@ export class SkillExecutionService {
     await Promise.allSettled([...this.pending]);
   }
 
-  private content(scope: EnvironmentScope, reference: ResourceReference) {
+  private content(scope: EnvironmentScope, reference: ResourceReference, runtimeRunId?: string) {
     this.repository.assertSessionExecutor(scope.sessionId, scope.executorBotId);
-    const content = this.repository.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId)[0]!;
+    const content = this.repository.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId, runtimeRunId)[0]!;
     if (content.resource.kind !== "skill") throw new AevorenBotError("SKILL_SCRIPT_NOT_FOUND"); return content;
   }
-  async scripts(input: SkillScriptsInput, signal?: AbortSignal): Promise<SkillScriptDescriptor[]> {
-    const parsed = skillScriptsSchema.parse(input), content = this.content(parsed, parsed.reference), result: SkillScriptDescriptor[] = [];
+  async scripts(input: SkillScriptsInput, signal?: AbortSignal, runtimeRunId?: string): Promise<SkillScriptDescriptor[]> {
+    const parsed = skillScriptsSchema.parse(input), content = this.content(parsed, parsed.reference, runtimeRunId), result: SkillScriptDescriptor[] = [];
     for (const file of content.revision.files) {
       const kind = file.relativePath.startsWith("scripts/") ? interpreter(file.relativePath) : null;
       if (!kind) continue;
       signal?.throwIfAborted();
-      const value = await this.library.readResourceBytes({ sessionId: parsed.sessionId, id: parsed.reference.resourceId, revisionId: parsed.reference.revisionId, path: file.relativePath }, signal, parsed.executorBotId);
-      this.content(parsed, parsed.reference); signal?.throwIfAborted();
+      const value = await this.library.readResourceBytes({ sessionId: parsed.sessionId, id: parsed.reference.resourceId, revisionId: parsed.reference.revisionId, path: file.relativePath }, signal, parsed.executorBotId, runtimeRunId);
+      this.content(parsed, parsed.reference, runtimeRunId); signal?.throwIfAborted();
       if (value.file.sha256 !== file.sha256 || value.bytes.length !== file.size || createHash("sha256").update(value.bytes).digest("hex") !== file.sha256) throw new AevorenBotError("SKILL_PACKAGE_INVALID");
       result.push({ reference: parsed.reference, entryPath: file.relativePath, entrySha256: file.sha256, interpreter: kind, size: file.size, mimeType: file.mimeType });
     }
@@ -114,22 +114,22 @@ export class SkillExecutionService {
     await Promise.allSettled(affected.map(value => this.cancelGrant(value)));
   }
 
-  approvalReview(input: unknown, scope: EnvironmentScope): SkillScriptReviewSnapshot {
+  approvalReview(input: unknown, scope: EnvironmentScope, runtimeRunId?: string): SkillScriptReviewSnapshot {
     const identity = environmentScopeSchema.parse(scope);
     const supplied = (input ?? {}) as Partial<SkillScriptRunInput>;
     if (supplied.sessionId !== undefined && supplied.sessionId !== identity.sessionId || supplied.executorBotId !== undefined && supplied.executorBotId !== identity.executorBotId) throw new AevorenBotError("ENVIRONMENT_SCOPE_INVALID");
     const fields = { ...supplied, ...identity } as Partial<SkillScriptRunInput>; delete fields.clientNonce;
     const parsed = skillRunSchema.omit({ clientNonce: true }).parse(fields);
-    const { grant, content } = this.repository.skillExecutions.assertGranted(identity, parsed.grantId, parsed.expectedGrantVersion);
+    const { grant, content } = this.repository.skillExecutions.assertGranted(identity, parsed.grantId, parsed.expectedGrantVersion, runtimeRunId);
     return skillScriptReviewSnapshotSchema.parse({ kind: "skill-script", resourceName: content.revision.name, revisionNumber: content.revision.number,
       target: { grantId: grant.id, grantVersion: grant.version, environmentId: grant.environmentId, imageDigest: grant.imageDigest, workerVersion: grant.workerVersion,
         reference: grant.reference, entryPath: grant.entryPath, entrySha256: grant.entrySha256, interpreter: grant.interpreter,
         args: parsed.args, cwd: parsed.cwd, timeoutMs: parsed.timeoutMs } });
   }
-  assertApprovalReview(snapshot: SkillScriptReviewSnapshot, scope: EnvironmentScope): void {
+  assertApprovalReview(snapshot: SkillScriptReviewSnapshot, scope: EnvironmentScope, runtimeRunId?: string): void {
     const parsed = skillScriptReviewSnapshotSchema.parse(snapshot);
     const current = this.approvalReview({ grantId: parsed.target.grantId, expectedGrantVersion: parsed.target.grantVersion,
-      args: parsed.target.args, cwd: parsed.target.cwd, timeoutMs: parsed.target.timeoutMs }, scope);
+      args: parsed.target.args, cwd: parsed.target.cwd, timeoutMs: parsed.target.timeoutMs }, scope, runtimeRunId);
     if (approvalReviewDigest(current) !== approvalReviewDigest(parsed)) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
   }
 
@@ -138,24 +138,24 @@ export class SkillExecutionService {
   }
   private async run(input: SkillScriptRunInput, context: { runtimeRunId?: string; signal?: AbortSignal }): Promise<SkillScriptExecution> {
     const parsed = skillRunSchema.parse(input), scope = { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId };
-    const review = this.approvalReview(parsed, scope);
+    const review = this.approvalReview(parsed, scope, context.runtimeRunId);
     const previous = this.repository.environments.findExecutionByNonce(scope, parsed.clientNonce);
     if (previous) {
       const receipt = this.repository.skillExecutions.execution(scope, previous);
       if (approvalReviewDigest({ ...review, target: { ...review.target, args: receipt.args, cwd: receipt.cwd, timeoutMs: receipt.timeoutMs } }) !== approvalReviewDigest(review)
           || receipt.grantId !== review.target.grantId || receipt.grantVersion !== review.target.grantVersion) throw new AevorenBotError("SKILL_EXECUTION_CONFLICT");
-      const result = await this.scriptExecution({ ...scope, id: previous.id }); this.assertApprovalReview(review, scope); context.signal?.throwIfAborted(); return result;
+      const result = await this.scriptExecution({ ...scope, id: previous.id }); this.assertApprovalReview(review, scope, context.runtimeRunId); context.signal?.throwIfAborted(); return result;
     }
     const controller = new AbortController(), controllers = this.preparing.get(parsed.grantId) ?? new Set<AbortController>();
     controllers.add(controller); this.preparing.set(parsed.grantId, controllers);
     const signal = AbortSignal.any([controller.signal, ...(context.signal ? [context.signal] : [])]);
-    const check = (): void => { signal.throwIfAborted(); this.assertApprovalReview(review, scope); };
+    const check = (): void => { signal.throwIfAborted(); this.assertApprovalReview(review, scope, context.runtimeRunId); };
     try {
-      const content = this.content(scope, review.target.reference), files: WorkerSkillInstallRequest["files"] = [];
+      const content = this.content(scope, review.target.reference, context.runtimeRunId), files: WorkerSkillInstallRequest["files"] = [];
       for (const path of ["SKILL.md", ...content.revision.files.map(file => file.relativePath)]) {
         check();
         const value = await this.library.readResourceBytes({ sessionId: scope.sessionId, id: review.target.reference.resourceId,
-          revisionId: review.target.reference.revisionId, path }, signal, scope.executorBotId); check();
+          revisionId: review.target.reference.revisionId, path }, signal, scope.executorBotId, context.runtimeRunId); check();
         if (createHash("sha256").update(value.bytes).digest("hex") !== value.file.sha256 || value.bytes.length !== value.file.size) throw new AevorenBotError("SKILL_PACKAGE_INVALID");
         files.push({ ...value.file, dataBase64: value.bytes.toString("base64") });
       }

@@ -1,8 +1,12 @@
+import type { TaskSessionApi } from "./task-session-contracts";
+import type { VoiceApi } from "./voice-contracts";
 import type { BotAvatarColor, BotAvatarShape } from "./bot-avatar";
 
 export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
 
 import type { LibraryApi, LibraryContent, ResourceReference } from "./library-contracts";
+import type { MediaApi, MessageMediaReference } from "./media-contracts";
+export type { MessageMediaReference } from "./media-contracts";
 import type { ApprovalReviewInput, ApprovalReviewResult, SkillExecutionApi } from "./skill-execution-contracts";
 import type { NativeOutboundApi } from "./native-outbound-contracts";
 import type { NativeConnectorsApi, ConnectorDraftsApi } from "./native-connector-contracts";
@@ -19,6 +23,7 @@ export type Bot = {
   modelSelection: ModelSelection;
   avatarShape: BotAvatarShape;
   avatarColor: BotAvatarColor;
+  avatarImage?:import("./library-contracts").MediaRef;
   mcpServerIds?: string[] | null;
   memoryWorkspaceIds?: string[];
   pinnedAt: string | null;
@@ -49,6 +54,9 @@ export type ConversationBatchDeleteResult = {
 
 /** A chat is backed by its existing Session; removing it does not remove its contact. */
 export type ConversationSummary = {
+  kind?: "MAIN" | "TASK";
+  title?: string;
+  parentSessionId?: string | null;
   sessionId: string;
   botId: string | null;
   roomId: string | null;
@@ -148,7 +156,7 @@ export type Session = {
   id: string;
   botId: string | null;
   roomId: string | null;
-  kind: "MAIN";
+  kind: "MAIN" | "TASK";
   generation: number;
   createdAt: string;
   updatedAt: string;
@@ -180,6 +188,7 @@ export type TranscriptEntry = {
   body: string;
   attachments?: MessageAttachment[];
   resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
   /** Main-only authorized resource snapshot, never returned in Renderer transcripts. */
   resourceContents?: LibraryContent[];
   /** Main-only prompt enrichment; never populated in Renderer-facing snapshots. */
@@ -237,6 +246,7 @@ export type SendCommand = {
   text: string;
   attachments?: AttachmentDraft[];
   resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
 };
 
 export type SendResult = {
@@ -379,7 +389,7 @@ export type SaveCliProviderInput = {
 };
 
 export type RuntimeRoute = "fake" | "host-outbound" | "host-mcp" | ProviderDriverKind;
-export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "user" | "assistant";
+export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "media-resource" | "task-context" | "user" | "assistant";
 
 export type PromptManifestBlock = {
   authority: PromptAuthority;
@@ -392,7 +402,7 @@ export type PromptManifestBlock = {
 };
 
 export type PromptManifest = {
-  schemaVersion: 1 | 2 | 3 | 4 | 5;
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   botId: string;
   profileVersion: number;
   sessionId: string;
@@ -509,10 +519,24 @@ export type ProductToolRequest =
   | { kind: "product-call"; action: "describe"; operation: string }
   | { kind: "product-call"; action: "execute"; operation: string; input?: unknown };
 
-export type DelegationOrigin = {
+export type AgentDelegationOrigin = {
   ancestorRunIds?: string[];
-  kind: "ai-delegation" | "routine"; routineId?: string; routineRunId?: string; fromBotNameSnapshot?: string; fromBotId: string; fromSessionId: string; fromRuntimeRunId: string; rootClientNonce: string; depth: number;
+  kind: "ai-delegation"; routineId?: never; routineRunId?: never; fromBotNameSnapshot?: string; fromBotId: string; fromSessionId: string; fromRuntimeRunId: string; rootClientNonce: string; depth: number;
 };
+
+/** A saved human-authored automation instruction, including genuine Room targets. */
+export type RoutineMessageOrigin = {
+  kind: "routine"; routineId: string; routineRunId: string; fromBotNameSnapshot: string;
+  fromBotId?: string; fromSessionId: string; fromRuntimeRunId: ""; rootClientNonce: string; depth: 0; ancestorRunIds?: never;
+};
+
+/** Final human speech provenance, verified against the host's durable turn journal. */
+export type VoiceMessageOrigin = {
+  kind: "voice-input"; voiceSessionId: string; turnId: string; callId: string; transcriptDigest: string;
+  fromRuntimeRunId?: never; fromSessionId?: never; fromBotId?: never; fromBotNameSnapshot?: never;
+  rootClientNonce?: never; depth?: never; ancestorRunIds?: never;
+};
+export type DelegationOrigin = AgentDelegationOrigin | RoutineMessageOrigin | VoiceMessageOrigin;
 
 export type ProjectToolRequest =
   | ProductToolRequest
@@ -927,6 +951,7 @@ export type CreateRoomRunInput = {
   text: string;
   attachments?: AttachmentDraft[];
   resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
   membershipVersion: number;
   maxTurns: number;
   maxHops: number;
@@ -1210,7 +1235,9 @@ export type Routine = {
   id: string;
   name: string;
   prompt: string;
-  botId: string;
+  botId: string | null;
+  target: import("./routine-contracts").RoutineTarget;
+  targetSnapshot: import("./routine-contracts").RoutineTargetSnapshot;
   enabled: boolean;
   schedule: RoutineSchedule;
   nextRunAt: number | null;
@@ -1223,13 +1250,16 @@ export type RoutineRun = {
   id: string;
   routineId: string;
   routineName: string;
-  botId: string;
+  botId: string | null;
+  version: number;
+  batchId: string | null;
+  targetSnapshot: import("./routine-contracts").RoutineTargetSnapshot;
   promptSnapshot: string;
   scheduleSnapshot: RoutineSchedule;
-  trigger: "schedule" | "manual";
+  trigger: "schedule" | "manual" | "event";
   triggerKey: string;
   scheduledFor: number;
-  state: "queued" | "waiting" | "running" | "completed" | "failed" | "cancelled" | "missed";
+  state: "queued" | "waiting" | "dispatching" | "running" | "cancel-requested" | "completed" | "failed" | "cancelled" | "missed" | "unknown";
   clientNonce: string;
   runtimeRunId: string | null;
   lastErrorCode: string | null;
@@ -1244,6 +1274,10 @@ export type UserProfile = {
 };
 
 export interface AevorenBotApi {
+  automationEvents: import("./event-contracts").EventApi;
+  botImages:import("./bot-image-contracts").BotImageApi;
+  organization:import("./organization-contracts").OrganizationApi;
+  search: import("./search-contracts").SearchApi;
   mcpWrites: import("./mcp-write-contracts").McpWriteApi;
   browser: import("./browser-contracts").BrowserApi;
   computer: import("./browser-contracts").ComputerApi;
@@ -1253,6 +1287,8 @@ export interface AevorenBotApi {
   execution: import("./environment-contracts").ExecutionApi;
   processes: import("./environment-contracts").ProcessesApi;
   library: LibraryApi;
+  media: MediaApi;
+  voice: VoiceApi;
   skillsExecution: SkillExecutionApi;
   outbound: NativeOutboundApi;
   connectors: NativeConnectorsApi;
@@ -1284,10 +1320,11 @@ export interface AevorenBotApi {
   routines: {
     list(): Promise<ApiResult<Routine[]>>;
     listRuns(routineId?: string): Promise<ApiResult<RoutineRun[]>>;
-    create(input: { name: string; prompt: string; botId: string; schedule: RoutineSchedule; enabled?: boolean }): Promise<ApiResult<Routine>>;
-    update(input: { id: string; expectedVersion: number; patch: Partial<Pick<Routine, "name" | "prompt" | "schedule">> }): Promise<ApiResult<Routine>>;
+    create(input: import("./routine-contracts").RoutineCreateInput): Promise<ApiResult<Routine>>;
+    update(input: { id: string; expectedVersion: number; patch: import("./routine-contracts").RoutineUpdatePatch }): Promise<ApiResult<Routine>>;
     setEnabled(input: { id: string; expectedVersion: number; enabled: boolean }): Promise<ApiResult<Routine>>;
-    runNow(id: string): Promise<ApiResult<RoutineRun>>;
+    runNow(input: import("./routine-contracts").RoutineRunNowInput): Promise<ApiResult<RoutineRun>>;
+    cancelRun(input: import("./routine-contracts").RoutineRunCancelInput): Promise<ApiResult<RoutineRun>>;
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<void>>;
   };
   conversations: {
@@ -1347,7 +1384,8 @@ export interface AevorenBotApi {
       resolution: ApprovalResolution;
     }): Promise<ApiResult<ToolApprovalResult>>;
   };
-  sessions: {
+  sessions: TaskSessionApi & {
+    onChanged(listener: (event: { session: Session }) => void): () => void;
     getMain(botId: string): Promise<ApiResult<Session>>;
   };
   rooms: {
@@ -1382,7 +1420,7 @@ export interface AevorenBotApi {
   };
   roomRuntime: {
     cancelMember(runId: string): Promise<ApiResult<RuntimeRun>>;
-    getSnapshot(roomId: string): Promise<ApiResult<RoomRuntimeSnapshot>>;
+    getSnapshot(input: string | { roomId: string; sessionId: string }): Promise<ApiResult<RoomRuntimeSnapshot>>;
     send(command: RoomSendCommand): Promise<ApiResult<RoomSendResult>>;
     cancel(batchId: string): Promise<ApiResult<RoomBatch>>;
     continue(batchId: string): Promise<ApiResult<RoomBatch>>;

@@ -68,6 +68,8 @@ jobs:
           if ((git diff --name-only -- THIRD_PARTY_NOTICES.md).Length -ne 0) { throw "THIRD_PARTY_NOTICES.md is stale" }
       - name: Build signed Windows installer
         run: pnpm release:win
+      - name: Verify signed parser assets and licenses
+        run: node scripts/verify-media-parser-package.mjs dist/win-unpacked/resources
       - name: Validate library and Skills in the signed Windows app
         shell: pwsh
         env:
@@ -75,7 +77,7 @@ jobs:
         run: |
           $env:AEVOREN_PACKAGED_APP_PATH = Join-Path $PWD "dist/win-unpacked/Aevoren Bot.exe"
           if (!(Test-Path $env:AEVOREN_PACKAGED_APP_PATH)) { throw "Missing signed Windows app" }
-          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts
+          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts tests/smoke/media.spec.ts tests/smoke/media-av-ui.spec.ts tests/smoke/voice.spec.ts tests/smoke/realtime-voice.spec.ts tests/smoke/task-sessions.spec.ts tests/smoke/search.spec.ts tests/smoke/group-routines.spec.ts tests/smoke/automation-events.spec.ts tests/smoke/automation-listener-ai.spec.ts tests/smoke/organization.spec.ts tests/smoke/bot-image-avatar.spec.ts
           if ($LASTEXITCODE -ne 0) { throw "Signed Windows library acceptance failed" }
       - name: Validate close handshakes in the signed Windows app
         env:
