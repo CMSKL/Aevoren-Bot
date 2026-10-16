@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.3.0-beta.37 (development candidate)
+
+- Add separate encrypted STT/TTS/Realtime settings, completed-file streaming transcription and actual PCM-to-WAV speech, durable non-replaying task intents and scoped cancellation/recovery. Realtime configuration is saved; connection support follows separately.
+- Add explicit audio-only microphone intents, draft-version guarded manual transcript insertion, current-session completion-order reading, AI voice identity and late-result/generation cancellation guards.
+- Add genuinely decoded bounded audio/video imports and local players, persisted durations and revocable binary reads; video is preview-only.
+- Node24 ordinary tests pass1,669 with45 skips; controlled hidden voice4, typed API1 and A/V plus legacy media5 pass. Cloud/hardware, package and final cross-platform gates remain distinct.
+
+## v0.3.0-beta.36 (development candidate)
+
+- Add owned PNG/JPEG/PDF/DOCX storage, fixed message/extraction references, conversation bindings and immutable Runtime admission snapshots; revocation blocks later reads and rebinding does not revive old tasks.
+- Add bounded PDF text/page previews and DOCX plain-text extraction in independent hidden sandbox parser jobs, explicit assets and licenses, cancellation and shutdown.
+- Share twelve media operations with the UI and AI. Actual text/pixels travel as revocable ephemeral tool attachments across API, Claude and Codex; receipts contain metadata only.
+- Preserve composer drafts across late imports, sends and navigation with monotonic versions. Node24 ordinary tests pass1,630/45 skipped; fresh hidden source150/32 skipped and actual unsigned macOS package34 scenarios pass after the CAS hardlink regression fix. Final cross-platform CI and signed publication remain pending; no OCR, audio/video or voice is claimed.
+
+## v0.3.0-beta.35 (development candidate)
+
+- Add distinct Notion saved-draft operations and exact page write grants for title-only updates and end-of-page paragraph appends. Preserve existing page body and ordinary/data-source title property identity.
+- Pin observed target metadata in the fixed approval review and recheck the current account and grant before a single PATCH. Changed drafts invalidate pending approval.
+- Verify appended blocks by returned or committed child IDs, parent and text; ambiguous attempts remain unknown and cannot resend. Label title reconciliation based only on current state without claiming the original request caused that state.
+- Real SQLite, controlled HTTP and Renderer unit checks pass. The combined source build, 1,586 ordinary tests (45 skipped) and 14 hidden Electron source cases passed before the final MCP setup cleanup. Post-cleanup focused checks and 22 actual unsigned macOS-package business cases passed at the earlier candidate; its old cleanup helper did not establish normal exit. These remain historical receipts. The current diagnostic candidate passed Linux CI with 1,593 ordinary tests (45 skipped) and 41 real Docker checks, and a fresh unsigned macOS rebuild passed 30 package scenarios with no forced-cleanup warnings. Full cross-platform CI, validated Beta promotion and signed publication remain pending. Real Notion credentials are unavailable and unverified.
+
 ## v0.3.0-beta.34 (development candidate)
 
 - Add conversation/executor-scoped MCP grants, fixed schema/configuration/credential approvals and durable send-once tool receipts. Unknown results do not replay; confirmation is explicitly server-reported.
@@ -21,7 +42,7 @@
 - Preserve full immutable approval content, detect draft/authorization changes, and retire removed group members' old intent content permanently. Keep internal receipts across history clearing and Runtime removal.
 - Use genuine host-outbound Runtime records for interface actions, retain six independent group members and route Stop to the exact owned task. Existing model Runtime controls stay separate.
 - Fix duplicate approval portals in hidden surfaces and group inspectors. Migration 39 preserves existing records, pending approvals/tools, environment provenance, foreign keys, indexes and triggers.
-- Local ordinary tests: 1,528 passed, 44 skipped; TypeScript, ESLint, build, license, documentation, open-source and security gates passed. Hidden source acceptance passed six cases; the frozen unsigned macOS package passed eight. Controlled HTTP is not real third-party account verification; cross-platform CI and signed publication remain pending.
+- Local ordinary tests: 1,528 passed, 44 skipped; TypeScript, ESLint, build, license, documentation, open-source and security gates passed. Hidden source acceptance passed six cases; the frozen unsigned macOS package passed seven native/outbound scenarios. The formerly included typed-API case is source evidence only; the actual-package fixture was corrected in beta.35. Controlled HTTP is not real third-party account verification; cross-platform CI and signed publication remain pending.
 
 ## v0.3.0-beta.31 (development candidate)
 

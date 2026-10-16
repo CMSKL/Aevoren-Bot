@@ -1,8 +1,11 @@
+import type { VoiceApi } from "./voice-contracts";
 import type { BotAvatarColor, BotAvatarShape } from "./bot-avatar";
 
 export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
 
 import type { LibraryApi, LibraryContent, ResourceReference } from "./library-contracts";
+import type { MediaApi, MessageMediaReference } from "./media-contracts";
+export type { MessageMediaReference } from "./media-contracts";
 import type { ApprovalReviewInput, ApprovalReviewResult, SkillExecutionApi } from "./skill-execution-contracts";
 import type { NativeOutboundApi } from "./native-outbound-contracts";
 import type { NativeConnectorsApi, ConnectorDraftsApi } from "./native-connector-contracts";
@@ -180,6 +183,7 @@ export type TranscriptEntry = {
   body: string;
   attachments?: MessageAttachment[];
   resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
   /** Main-only authorized resource snapshot, never returned in Renderer transcripts. */
   resourceContents?: LibraryContent[];
   /** Main-only prompt enrichment; never populated in Renderer-facing snapshots. */
@@ -237,6 +241,7 @@ export type SendCommand = {
   text: string;
   attachments?: AttachmentDraft[];
   resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
 };
 
 export type SendResult = {
@@ -379,7 +384,7 @@ export type SaveCliProviderInput = {
 };
 
 export type RuntimeRoute = "fake" | "host-outbound" | "host-mcp" | ProviderDriverKind;
-export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "user" | "assistant";
+export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "media-resource" | "user" | "assistant";
 
 export type PromptManifestBlock = {
   authority: PromptAuthority;
@@ -392,7 +397,7 @@ export type PromptManifestBlock = {
 };
 
 export type PromptManifest = {
-  schemaVersion: 1 | 2 | 3 | 4 | 5;
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6;
   botId: string;
   profileVersion: number;
   sessionId: string;
@@ -927,6 +932,7 @@ export type CreateRoomRunInput = {
   text: string;
   attachments?: AttachmentDraft[];
   resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
   membershipVersion: number;
   maxTurns: number;
   maxHops: number;
@@ -1253,6 +1259,8 @@ export interface AevorenBotApi {
   execution: import("./environment-contracts").ExecutionApi;
   processes: import("./environment-contracts").ProcessesApi;
   library: LibraryApi;
+  media: MediaApi;
+  voice: VoiceApi;
   skillsExecution: SkillExecutionApi;
   outbound: NativeOutboundApi;
   connectors: NativeConnectorsApi;
@@ -1348,6 +1356,7 @@ export interface AevorenBotApi {
     }): Promise<ApiResult<ToolApprovalResult>>;
   };
   sessions: {
+    onChanged(listener: (event: { session: Session }) => void): () => void;
     getMain(botId: string): Promise<ApiResult<Session>>;
   };
   rooms: {

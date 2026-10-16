@@ -22,10 +22,13 @@ export const connectorAccessSchema = environmentScopeSchema.extend({ connectionI
 export const connectorSearchSchema = connectorAccessSchema.extend({ query: z.string().max(2000).refine(value => !value.includes("\0")), cursor: z.string().max(2048).optional(), limit: z.number().int().min(1).max(100).optional() }).strict();
 export const connectorReadSchema = connectorAccessSchema.extend({ resourceId }).strict();
 const address = z.string().max(320).email().refine(value => !/[\r\n]/u.test(value));
+const notionPageId = z.string().regex(/^[A-Fa-f0-9]{32}$|^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$/u);
 export const connectorDraftContentSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("gmail-message"), to: z.array(address).min(1).max(100), cc: z.array(address).max(100), subject: z.string().max(998).refine(value => !/[\r\n\0]/u.test(value)), body: z.string().max(100_000) }).strict(),
   z.object({ kind: z.literal("drive-text"), targetFileId: resourceId.nullable(), title: z.string().min(1).max(1024), text: z.string().max(100_000) }).strict(),
   z.object({ kind: z.literal("notion-page"), parentPageId: z.string().regex(/^[A-Fa-f0-9]{32}$|^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$/u), title: z.string().min(1).max(1024), text: z.string().max(100_000) }).strict(),
+  z.object({ kind: z.literal("notion-page-title"), pageId: notionPageId, title: z.string().min(1).max(1024) }).strict(),
+  z.object({ kind: z.literal("notion-page-append"), pageId: notionPageId, text: z.string().min(1).max(100_000) }).strict(),
 ]);
 export const connectorDraftCreateSchema = connectorAccessSchema.extend({ content: connectorDraftContentSchema, clientNonce: id.optional() }).strict();
 export const connectorDraftUpdateSchema = environmentScopeSchema.extend({ id, expectedVersion: version, content: connectorDraftContentSchema }).strict();

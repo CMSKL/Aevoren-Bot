@@ -12,9 +12,11 @@ import { AevorenBotError } from "./errors";
 import { containsLikelySecret } from "./memory-safety";
 import { createProductHandlers, type ProductDependencies } from "./product-handlers";
 import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
-import type { ModelImageAttachment } from "./model-image";
+import type { ModelImageAttachment, ModelTextAttachment } from "./model-image";
 
 const PUBLIC_READS = new Set([
+  "voice.configurations", "voice.get", "voice.list", "voice.audio",
+  "media.list", "media.metadata", "media.read", "media.preview",
   "mcp.toolCatalog", "mcp.toolGrants", "mcp.toolResult", "mcp.listToolIntents",
   "demonstrations.status", "demonstrations.drafts", "demonstrations.readDraft",
   "outbound.writeGrants", "outbound.get", "outbound.list", "outbound.reconcile",
@@ -32,8 +34,10 @@ const browserOperation = (operation: string): boolean => /^(browser|computer|pre
 const scriptOperation = (operation: string): boolean => ["skills.scripts", "skills.executionGrants", "skills.grantExecution", "skills.revokeExecution", "skills.runScript", "skills.scriptExecution", "approvals.review"].includes(operation);
 const nativeScopedOperation = (operation: string): boolean => operation.startsWith("outbound.") && operation !== "outbound.enableSend" || operation.startsWith("drafts.") || ["connectors.bindings", "connectors.bind", "connectors.unbind", "connectors.search", "connectors.read"].includes(operation);
 const mcpWriteOperation = (operation: string): boolean => MCP_WRITE_PRODUCT_OPERATIONS.some(item => item.name === operation);
-const scopedOperation = (operation: string): boolean => environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
-type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[] };
+const mediaOperation = (operation: string): boolean => operation.startsWith("media.");
+const voiceOperation = (operation: string): boolean => operation.startsWith("voice.");
+const scopedOperation = (operation: string): boolean => voiceOperation(operation) || mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
+type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[]; modelText?: ModelTextAttachment };
 
 /** Both transports use these handlers; only the host can supply execution identity. */
 export class ProductOperationService {
@@ -87,6 +91,11 @@ export class ProductOperationService {
   }
 
   requiresApproval(tool: ProductToolRequest, runtimeRunId?: string): boolean {
+    if (tool.action === "execute" && tool.operation === "voice.configure" && runtimeRunId) {
+      this.validate(tool, runtimeRunId);
+      const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
+      if (this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, runtime.executorBotId)) return false;
+    }
     if (tool.action === "execute" && tool.operation === "mcp.executeTool" && runtimeRunId) {
       this.validate(tool, runtimeRunId); const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
       const input = mcpWriteIdSchema.parse(this.libraryInput(tool.operation, tool.input, runtime));
@@ -135,6 +144,19 @@ export class ProductOperationService {
     if (!definition) throw new AevorenBotError("INVALID_REQUEST", "产品操作不存在，请先查询功能目录。");
     const schema = PRODUCT_OPERATION_SCHEMAS[tool.operation]!;
     const input = schema.parse(this.libraryInput(tool.operation, tool.input, runtime));
+    if (voiceOperation(tool.operation)) {
+      if (!this.dependencies.voiceService) throw new AevorenBotError("VOICE_UNSUPPORTED");
+      repository.voice.assertScope(runtime.sessionId, { executorBotId: runtime.executorBotId, runtimeRunId: runtime.id });
+    }
+    if (mediaOperation(tool.operation)) {
+      if (!this.dependencies.mediaService) throw new AevorenBotError("MEDIA_PARSER_UNAVAILABLE");
+      const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, runtimeRunId: runtime.id };
+      repository.media.assertRuntime(scope);
+      if (["media.metadata", "media.read", "media.preview"].includes(tool.operation)) {
+        const read = input as import("@shared/media-contracts").MediaReadInput;
+        repository.media.resolveRuntimeRead(scope, read.id, read.reference);
+      }
+    }
     if (mcpWriteOperation(tool.operation)) {
       if (!this.dependencies.mcpWriteService) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
       this.dependencies.mcpWriteService.ledger.assertRuntime({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, runtime.id);
@@ -196,6 +218,34 @@ export class ProductOperationService {
   private async executeOnce(tool: ProductToolRequest, invocation: ToolInvocation, signal: AbortSignal): Promise<ProductExecutionResult> {
     this.validate(tool, invocation.runtimeRunId);
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
+    if (tool.action === "execute" && voiceOperation(tool.operation) && tool.operation !== "voice.configure") {
+      const service = this.dependencies.voiceService!;
+      const input = PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(this.libraryInput(tool.operation, tool.input, runtime));
+      const context = { executorBotId: runtime.executorBotId, runtimeRunId: runtime.id, signal, assertCurrent: () => this.validate(tool, runtime.id) };
+      if (tool.operation === "voice.configurations") return this.result({ status: "completed", operation: tool.operation, result: service.configurations() });
+      if (tool.operation === "voice.list") {
+        const result = service.list(input as import("@shared/voice-contracts").VoiceTaskListInput, context).map(({ transcript: _text, ...task }) => task);
+        return this.result({ status: "completed", operation: tool.operation, result });
+      }
+      if (tool.operation === "voice.audio") {
+        const { reference, task } = await service.audio(input as import("@shared/voice-contracts").VoiceTaskInput, context);
+        return this.result({ status: "completed", operation: tool.operation, result: { reference, taskId: task.id, audioTransfer: "not_supported_by_model_transport" } });
+      }
+      let task: import("@shared/voice-contracts").VoiceTask;
+      if (tool.operation === "voice.transcribe" || tool.operation === "voice.speak") {
+        const hash = createHash("sha256").update(`${runtime.clientNonce}:${runtime.executorBotId}:${JSON.stringify({ operation: tool.operation, input })}`).digest("hex");
+        const clientNonce = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+        task = tool.operation === "voice.transcribe"
+          ? await service.transcribe({ ...(input as import("@shared/voice-contracts").VoiceTranscribeInput), clientNonce }, context)
+          : await service.speak({ ...(input as import("@shared/voice-contracts").VoiceSpeechInput), clientNonce }, context);
+        task = await service.wait({ sessionId: runtime.sessionId, id: task.id }, context);
+      } else task = tool.operation === "voice.stop" ? service.stop(input as import("@shared/voice-contracts").VoiceTaskInput, context) : service.get(input as import("@shared/voice-contracts").VoiceTaskInput, context);
+      const { transcript, ...metadata } = task;
+      const result = this.result({ status: task.state === "prepared" ? "running" : task.state, operation: tool.operation, result: metadata, transcriptAvailable: transcript !== null });
+      return { ...result, ...(transcript !== null ? { modelText: { text: transcript, isAuthorized: () => {
+        try { this.validate(tool, runtime.id); return service.get({ sessionId: runtime.sessionId, id: task.id }, context).transcript === transcript; } catch { return false; }
+      } } } : {}) };
+    }
     if (tool.action === "execute" && tool.operation === "mcp.executeTool") {
       if (!this.dependencies.mcpWriteService) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
       const input = mcpWriteIdSchema.parse(this.libraryInput(tool.operation, tool.input, runtime));
@@ -247,9 +297,21 @@ export class ProductOperationService {
       if (review.snapshot?.kind !== "demonstration-skill") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
       this.dependencies.repository.demonstrations.assertApprovalReview(review.snapshot, scope);
     }
-    if (!PUBLIC_READS.has(tool.operation) && !mcpWriteOperation(tool.operation)) {
+    if (!PUBLIC_READS.has(tool.operation) && !mcpWriteOperation(tool.operation) && tool.operation !== "media.available") {
       const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
       if (previous) {
+        if (tool.operation === "voice.configure") return this.result({ status: "previously_completed", operation: tool.operation, reused: true,
+          result: this.dependencies.voiceService!.configurations().find(item => item.kind === (tool.input as { kind: string }).kind),
+          receiptNotice: "原配置变更未再次执行；返回当前公开配置状态，不恢复旧密钥或启停状态。" });
+        if (mediaOperation(tool.operation)) {
+          const receipt = JSON.parse(previous) as { status?: string; result?: import("@shared/media-contracts").MediaImportResult };
+          if (["media.importPath", "media.pickImport"].includes(tool.operation) && receipt.result) {
+            for (const item of receipt.result.imported) this.dependencies.repository.media.resolveRuntimeRead({ sessionId: runtime.sessionId,
+              executorBotId: runtime.executorBotId, runtimeRunId: runtime.id }, item.reference.mediaId, item.reference);
+          }
+          return this.result({ status: receipt.status === "cancelled" ? "cancelled" : "previously_completed", operation: tool.operation, reused: true,
+            receiptNotice: "原操作未重复执行，也未刷新旧任务授权；请重新查询当前媒体状态。" });
+        }
         if (["drafts.create", "drafts.update"].includes(tool.operation)) {
           if (!this.dependencies.nativeConnectorService) throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
           const receipt = JSON.parse(previous) as { result?: import("@shared/native-connector-contracts").ConnectorDraftResult };
@@ -321,6 +383,20 @@ export class ProductOperationService {
       }
     }
     let input = PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(this.libraryInput(tool.operation, tool.input, runtime));
+    if (["media.read", "media.preview"].includes(tool.operation)) {
+      const service = this.dependencies.mediaService!;
+      const context = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, runtimeRunId: runtime.id, signal,
+        assertCurrent: () => this.validate(tool, runtime.id) };
+      const media = tool.operation === "media.read"
+        ? await service.read(input as import("@shared/media-contracts").MediaReadInput, context)
+        : await service.preview(input as import("@shared/media-contracts").MediaPreviewInput, context);
+      const supported = runtime.route !== "fake" && this.dependencies.providers.getCapabilities({ providerInstanceId: runtime.providerInstanceId, modelId: runtime.providerModelId }).toolImageInput === true;
+      const output = this.result({ status: "completed", operation: tool.operation, result: media.metadata,
+        ...(media.images.length ? { imageTransfer: supported ? "prepared_real_pixels" : "adapter_unsupported",
+          imageNotice: supported ? "实际像素随本次工具结果传输；所选模型的图像能力仍需按真实响应确认。" : "当前适配器不能传递工具图片；可以读取已解析文字，不能声称已看见图片。" } : {}) });
+      return { ...output, ...(supported && media.images.length ? { images: media.images } : {}),
+        ...("modelText" in media && media.modelText ? { modelText: media.modelText } : {}) };
+    }
     if (tool.operation === "userProfile.update") input = { ...(this.handlers.get(productOperation("userProfile.get")!.channel)!() as object), ...(input as object) };
     if (tool.operation === "capabilities.getSnapshot") input = { botId: runtime.executorBotId, sessionId: runtime.sessionId };
     if (["messages.send", "roomRuntime.send"].includes(tool.operation)) {
@@ -437,6 +513,13 @@ export class ProductOperationService {
 
   private libraryInput(operation: string, value: unknown, runtime: Pick<RuntimeRun, "sessionId" | "clientNonce" | "executorBotId">): unknown {
     const input = value === null ? undefined : value;
+    if (voiceOperation(operation) || mediaOperation(operation)) {
+      if (operation === "media.available" || ["voice.configurations", "voice.configure"].includes(operation)) return input;
+      if (input !== undefined && (!input || typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");
+      const supplied = (input ?? {}) as Record<string, unknown>;
+      if (supplied.sessionId !== undefined && supplied.sessionId !== runtime.sessionId) throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");
+      return { ...supplied, sessionId: runtime.sessionId };
+    }
     if (scopedOperation(operation) && !["environments.probe", "environments.initialize"].includes(operation)) {
       if (input !== undefined && (typeof input !== "object" || Array.isArray(input))) throw new AevorenBotError("INVALID_REQUEST");
       const supplied = (input ?? {}) as { sessionId?: string; executorBotId?: string };

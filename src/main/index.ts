@@ -1,3 +1,10 @@
+import { VoiceService } from "./voice-service";
+import { installVoiceCaptureHost } from "./voice-capture-host";
+import { VOICE_CHANGED_CHANNEL } from "@shared/voice-channels";
+import type { VoiceFetch } from "./voice-http-adapter";
+import { MediaService } from "./media-service";
+import { MediaParserHost, registerMediaParserScheme } from "./media-parser-host";
+import { MEDIA_CHANGED_CHANNEL } from "@shared/media-channels";
 import { McpWriteService } from "./mcp-write-service";
 import { McpAppsBridge } from "./mcp-apps-bridge";
 import { NativeOutboundAdapter } from "./native-connectors/outbound";
@@ -52,6 +59,8 @@ import { ENVIRONMENT_EVENTS } from "@shared/environment-channels";
 import { environmentDirectoryPathSchema, environmentFilePathSchema } from "@shared/environment-schemas";
 import { readEnvironmentUpload, writeEnvironmentDownload } from "./environment-file-transfer";
 
+registerMediaParserScheme();
+
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
 const hideTestWindow = process.env.AEVOREN_BOT_TEST_HIDDEN === "1";
@@ -74,6 +83,9 @@ let mcpWriteService: McpWriteService | null = null;
 let mcpAppsBridge: McpAppsBridge | null = null;
 let environmentService: EnvironmentService | null = null;
 let browserService: BrowserService | null = null;
+let mediaService: MediaService | null = null;
+let voiceService: VoiceService | null = null;
+let voiceCapture: ReturnType<typeof installVoiceCaptureHost> | null = null;
 let skillExecutionService: SkillExecutionService | null = null;
 let nativeConnectorService: NativeConnectorService | null = null;
 let nativeOutboundService: NativeOutboundService | null = null;
@@ -176,6 +188,9 @@ async function finishClose(): Promise<void> {
     await nativeOutboundService?.shutdown();
     await nativeConnectorService?.shutdown();
     await skillExecutionService?.shutdown();
+    await voiceCapture?.shutdown();
+    await voiceService?.shutdown();
+    await mediaService?.shutdown();
     await runtimeCoordinator?.shutdown();
     await roomCoordinator?.shutdown();
     await environmentService?.shutdown();
@@ -328,6 +343,26 @@ app.whenReady().then(async () => {
   })();
   const workspaceService = new WorkspaceService(repository);
   const libraryService = new LibraryService(repository, join(app.getPath("userData"), "library-blobs"), { workspaceService });
+  const productMediaService = new MediaService(repository, join(app.getPath("userData"), "media-blobs"),
+    new MediaParserHost({ directory: app.isPackaged ? join(process.resourcesPath, "media-parser") : join(app.getAppPath(), "out", "media-parser") }), {
+      workspaceService, onChanged: event => {
+        voiceService?.mediaChanged(event);
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(MEDIA_CHANGED_CHANNEL, event);
+      },
+    });
+  mediaService = productMediaService;
+  const voiceTestOrigin = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_VOICE_TEST_ORIGIN : undefined;
+  let voiceFetch: VoiceFetch | undefined;
+  if (voiceTestOrigin) {
+    const origin = new URL(voiceTestOrigin);
+    if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.pathname !== "/" || origin.username || origin.password || origin.search || origin.hash) throw new AevorenBotError("INVALID_REQUEST");
+    voiceFetch = (url, input) => fetch(new URL(url.pathname + url.search, origin), { ...input, redirect: "error" });
+  }
+  const productVoiceService = new VoiceService(repository, electronSecretCodec, productMediaService,
+    join(app.getPath("userData"), "voice-blobs"), { ...(voiceFetch ? { fetch: voiceFetch } : {}), onChanged: event => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(VOICE_CHANGED_CHANNEL, event);
+    } });
+  voiceService = productVoiceService;
   environmentService = new EnvironmentService(repository.environments, electronSecretCodec,
     app.isPackaged ? join(process.resourcesPath, "environment-worker") : join(app.getAppPath(), "out", "worker"), (event) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ENVIRONMENT_EVENTS.changed, event);
@@ -388,8 +423,14 @@ app.whenReady().then(async () => {
     platform,
     architecture: process.arch,
     packaged: app.isPackaged,
-  }, undefined, mcpService, () => routineService?.list() ?? []);
+  }, undefined, mcpService, () => routineService?.list() ?? [], () => productVoiceService.configurations());
   mainWindow = createWindow(!hideTestWindow && !openedAtLogin);
+  voiceCapture = installVoiceCaptureHost(repository, mainWindow, async (input, context) => {
+    const result = await productMediaService.importBytes({ ...input, requiredKind: "audio" }, context);
+    const item = result.imported[0];
+    if (!item || result.failed.length) throw new AevorenBotError("VOICE_RESPONSE_INVALID");
+    return item.reference;
+  });
   const sendWorker = new SendWorker(
     repository,
     providerService,
@@ -450,6 +491,22 @@ app.whenReady().then(async () => {
     window: mainWindow,
     repository,
     libraryService,
+    mediaService: productMediaService,
+    voiceService: productVoiceService,
+    voiceCapture,
+    sessionChanged(session) {
+      voiceCapture?.cancelSession(session.id);
+      productVoiceService.sessionChanged(session.id, session.generation);
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.sessionChangedEvent, { session });
+    },
+    async pickMediaPaths(_input, signal) {
+      signal?.throwIfAborted();
+      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      const result = await dialog.showOpenDialog(mainWindow, { title: "导入媒体与文档", properties: ["openFile", "multiSelections"],
+        filters: [{ name: "媒体与文档", extensions: ["png", "jpg", "jpeg", "pdf", "docx", "wav", "mp3", "ogg", "webm", "mp4", "m4a"] }] });
+      signal?.throwIfAborted();
+      return result.canceled ? null : result.filePaths;
+    },
     environmentService,
     browserService,
     demonstrationService: new DemonstrationService(repository, browserService, libraryService),
