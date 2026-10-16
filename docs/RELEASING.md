@@ -76,6 +76,12 @@ The Windows workflow uses the matching `beta.yml` or `latest.yml` manifest and r
 
 Windows publishing is additionally gated by the repository variable `AEVOREN_WINDOWS_RELEASE_ENABLED=1`. Leave it unset while Windows remains an MVP track: the macOS workflow then publishes a complete macOS Release without waiting for Windows. Enable it only after both Windows signing secrets are configured; from that point the macOS workflow requires the Windows asset set before publishing the shared Release.
 
+## Unsigned Windows validation downloads
+
+Normal CI preserves an **unsigned Windows validation installer** only after the Windows source, NSIS installation, installed business and installed close gates pass. Before installation it records the exact version, checkout head, unsigned signature status and SHA-256; after acceptance it requires the same file hash before upload. The artifact includes the NSIS file, checksum and build identity, is named with its precise version/head/attempt, and expires after **30 days**. Select a fully successful CI run before sharing its download link.
+
+These are manual validation downloads from this repository's Actions artifacts. Do not attach them to the signed immutable Release asset set or publish their update manifests. They do not relax signing requirements or prove Windows Docker execution. Include the actual artifact link, version/head, checksum and retention limit when delivering one; see [installation](INSTALLATION.md#unsigned-windows-validation-installer).
+
 ## Rollback and incident handling
 
 Do not overwrite or reuse a published version or tag. If a release is defective:

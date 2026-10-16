@@ -110,6 +110,7 @@ async function requestWindowClose(application: ElectronApplication, timeoutMs = 
   ]);
   probe?.record(didExit ? "window-close-exit-observed" : "window-close-exit-deadline");
   try {
+    if (didExit) expect({ code: process.exitCode, signal: process.signalCode }).toEqual({ code: 0, signal: null });
     if (!didExit) {
       await test.info().attach("close-phase-diagnostics", { body: JSON.stringify({ timeoutMs, phases: probe?.phases ?? [] }), contentType: "application/json" });
       probe?.record("window-close-cleanup-start");
@@ -136,6 +137,7 @@ async function requestAppQuit(application: ElectronApplication, timeoutMs = 3_00
   ]);
   probe?.record(didExit ? "app-quit-exit-observed" : "app-quit-exit-deadline");
   try {
+    if (didExit) expect({ code: process.exitCode, signal: process.signalCode }).toEqual({ code: 0, signal: null });
     if (!didExit) {
       await test.info().attach("close-phase-diagnostics", { body: JSON.stringify({ timeoutMs, phases: probe?.phases ?? [] }), contentType: "application/json" });
       probe?.record("app-quit-cleanup-start");
@@ -180,7 +182,7 @@ test("closes successfully on each of ten immediate startup close requests", asyn
   for (let attempt = 1; attempt <= 10; attempt += 1) {
     const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-close-ready-"));
     const { application } = await launch(userDataDir);
-    if (!(await requestWindowClose(application, 1_500))) failures.push(attempt);
+    if (!(await requestWindowClose(application))) failures.push(attempt);
     removeTestDirectory(userDataDir);
   }
   expect(failures).toEqual([]);

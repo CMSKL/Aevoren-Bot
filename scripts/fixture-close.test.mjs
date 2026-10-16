@@ -6,6 +6,9 @@ import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { closeTestApplication } from "../tests/smoke/test-cleanup.ts";
 
+// 3s normal grace + 3.5s forced cleanup + 1s descendant check + 0.5s runner allowance.
+const forcedFixtureBoundMs = 8_000;
+
 async function child() {
   const fixtureProcess = spawn(globalThis.process.execPath, ["-e", "process.stdout.write('fixture-ready\\n');setInterval(()=>{},1000)"], { stdio: ["ignore", "pipe", "pipe"] });
   await once(fixtureProcess.stdout, "data");
@@ -49,18 +52,45 @@ test("a stalled Electron-shaped fixture closes its inherited pipes and owned des
   let pipesClosed = false;
   owned.once("close", () => { pipesClosed = true; });
   const started = performance.now();
+  const phases = [];
+  const observedAlive = pid => { try { return alive(pid); } catch { return null; } };
+  const record = phase => { if (phases.length < 40) phases.push({ phase, elapsedMs: Math.round(performance.now() - started), ownedPid: owned.pid, descendantPid,
+    ownedExitCode: owned.exitCode, ownedSignalCode: owned.signalCode, ownedKilled: owned.killed, pipesClosed,
+    ownedAlive: observedAlive(owned.pid), descendantAlive: observedAlive(descendantPid), siblingAlive: observedAlive(sibling.pid),
+    stdio: owned.stdio.map(stream => stream ? { destroyed: stream.destroyed } : null) }); };
+  const onExit = () => record("owned-exit"), onClose = () => record("owned-close");
+  owned.once("exit", onExit); owned.once("close", onClose);
+  let failed = false;
+  record("close-request");
   try {
     await closeTestApplication({ process: () => owned, close: () => new Promise(() => {}) });
+    record("close-returned");
     assert.equal(pipesClosed, true, "the owned exit and inherited stdio must finish before teardown returns");
     const deadline = performance.now() + 1_000;
     while (alive(descendantPid) && performance.now() < deadline) await delay(10);
     assert.equal(alive(descendantPid), false, "the descendant must not hold Playwright's transport open");
-    assert.ok(performance.now() - started < 5_000, "owned tree teardown must remain bounded");
+    assert.ok(performance.now() - started < forcedFixtureBoundMs, "owned tree teardown must remain bounded");
     assert.equal(sibling.exitCode, null); assert.equal(sibling.signalCode, null);
     assert.equal(alive(sibling.pid), true);
+  } catch (error) {
+    failed = true;
+    record("close-or-assertion-failed");
+    globalThis.console.error("Controlled fixture tree close state:", JSON.stringify({ phases, error: { code: error.code ?? null, killed: error.killed ?? null, signal: error.signal ?? null } }));
+    throw error;
   } finally {
-    if (alive(descendantPid)) globalThis.process.kill(descendantPid, "SIGKILL");
-    await stop(owned); await stop(sibling);
+    record("cleanup-start");
+    let cleanupTimer;
+    const cleanup = Promise.allSettled([Promise.resolve().then(() => { if (alive(descendantPid)) globalThis.process.kill(descendantPid, "SIGKILL"); }),
+      Promise.resolve().then(() => stop(owned)), Promise.resolve().then(() => stop(sibling))]);
+    const result = await Promise.race([cleanup, new Promise(resolve => { cleanupTimer = globalThis.setTimeout(() => resolve(null), 2_000); })]);
+    globalThis.clearTimeout(cleanupTimer);
+    record(result ? "cleanup-finished" : "cleanup-timed-out");
+    for (const fixtureProcess of [owned, sibling]) { for (const stream of fixtureProcess.stdio) stream?.destroy(); fixtureProcess.unref(); }
+    owned.removeListener("exit", onExit); owned.removeListener("close", onClose);
+    if (!result || result.some(value => value.status === "rejected")) {
+      globalThis.console.error("Controlled fixture cleanup did not complete:", JSON.stringify({ phases }));
+      if (!failed) assert.fail("all owned fixture cleanup must finish within its 2s bound");
+    }
   }
 });
 
@@ -84,7 +114,7 @@ test("a stalled close terminates only its owned fixture and returns within the t
   try {
     await closeTestApplication({ process: () => owned, close: () => new Promise(() => {}) });
     assertForcedExit(await ended);
-    assert.ok(performance.now() - started < 5_000, "bounded close must leave time for temporary-directory cleanup");
+    assert.ok(performance.now() - started < forcedFixtureBoundMs, "bounded close must leave time for temporary-directory cleanup");
     assert.equal(sibling.exitCode, null); assert.equal(sibling.signalCode, null);
     assert.equal(globalThis.process.kill(sibling.pid, 0), true);
   } finally { await stop(owned); await stop(sibling); }

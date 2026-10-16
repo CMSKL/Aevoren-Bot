@@ -3,10 +3,11 @@ import { createServer } from "node:http";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { _electron as electron, expect, test, type ElectronApplication, type Page, type Response } from "@playwright/test";
 import { z } from "zod";
 import type { AevorenBotApi, ApiResult } from "../../src/shared/contracts";
 import type { EnvironmentScope } from "../../src/shared/environment-contracts";
@@ -44,7 +45,7 @@ async function mcpCall<T>(page: Page, method: keyof McpWriteApi, input: unknown)
 }
 
 async function withMcp(callback: (fixture: { page: Page; application: ElectronApplication; scope: EnvironmentScope; groupScope: EnvironmentScope;
-  serverId: string; writes: () => number; nativeWrites: () => number; releaseWrite: () => void; holdWrites: () => void }) => Promise<void>): Promise<void> {
+  serverId: string; receiptState: () => unknown; writes: () => number; nativeWrites: () => number; releaseWrite: () => void; holdWrites: () => void }) => Promise<void>): Promise<void> {
   const directory = mkdtempSync(join(tmpdir(), "aevoren-mcp-apps-"));
   const repository = new AppRepository(join(directory, "aevoren-bot.sqlite"));
   const created = repository.createBot();
@@ -127,7 +128,18 @@ async function withMcp(callback: (fixture: { page: Page; application: ElectronAp
       return enabled.data;
     }, `http://127.0.0.1:${address.port}/mcp`);
     await callback({ page, application, scope: { sessionId: created.session.id, executorBotId: bot.id }, groupScope: { sessionId: room.session.id, executorBotId: bot.id },
-      serverId: configured.id, writes: () => writes, nativeWrites: () => nativeWrites, releaseWrite: () => { release?.(); release = undefined; hold = false; }, holdWrites: () => { hold = true; } });
+      serverId: configured.id, receiptState: () => {
+        const database = new DatabaseSync(join(directory, "aevoren-bot.sqlite"), { readOnly: true });
+        try {
+          const args = [created.session.id, bot.id];
+          return {
+            intents: database.prepare("SELECT state,version,error_code,json_extract(review_json,'$.arguments.target')='app-target' AS app_target FROM mcp_write_intents WHERE session_id=? AND executor_bot_id=? ORDER BY created_at LIMIT 20").all(...args),
+            approvals: database.prepare("SELECT state,resolution,version FROM approval_requests WHERE session_id=? AND executor_bot_id=? ORDER BY created_at LIMIT 20").all(...args),
+            tools: database.prepare("SELECT state,last_error_code,version FROM tool_invocations WHERE session_id=? AND executor_bot_id=? ORDER BY created_at LIMIT 20").all(...args),
+            runtimes: database.prepare("SELECT state,last_error_code FROM runtime_runs WHERE session_id=? AND executor_bot_id=? AND route='host-mcp' ORDER BY created_at LIMIT 20").all(...args),
+          };
+        } finally { database.close(); }
+      }, writes: () => writes, nativeWrites: () => nativeWrites, releaseWrite: () => { release?.(); release = undefined; hold = false; }, holdWrites: () => { hold = true; } });
     expect(errors).toEqual([]);
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
   } finally {
@@ -218,12 +230,32 @@ test("MCP fixed operation uses a real approval and an opaque App sandbox with sc
       });
     }
     expect(f.writes()).toBe(1);
-    await inner.getByRole("button", { name: "Change fixture target", exact: true }).click();
-    await expect(approval).toHaveCount(1);
-    await expect(approval.getByLabel("本次 MCP 固定参数")).toContainText("app-target");
-    expect(f.writes()).toBe(1);
-    await approval.getByRole("button", { name: "仅允许一次", exact: true }).click();
-    await expect.poll(f.writes).toBe(2);
+    const rpcPhases: Array<{ status: number; errorCode: number | null; hasResult: boolean }> = [];
+    const responseObserved = (response: Response): void => {
+      if (response.request().method() !== "POST" || response.url() !== `${proxyUrl}/rpc`) return;
+      try { if (response.request().postDataJSON()?.method !== "tools/call") return; } catch { return; }
+      const phase = { status: response.status(), errorCode: null as number | null, hasResult: false };
+      rpcPhases.push(phase);
+      void response.json().then((value: { error?: { code?: unknown }; result?: unknown }) => {
+        phase.errorCode = typeof value.error?.code === "number" ? value.error.code : null; phase.hasResult = value.result !== undefined;
+      }, () => undefined);
+    };
+    f.page.on("response", responseObserved);
+    try {
+      await inner.getByRole("button", { name: "Change fixture target", exact: true }).click();
+      await expect(approval).toHaveCount(1);
+      await expect(approval.getByLabel("本次 MCP 固定参数")).toContainText("app-target");
+      expect(f.writes()).toBe(1);
+      await approval.getByRole("button", { name: "仅允许一次", exact: true }).click();
+      await expect.poll(f.writes).toBe(2);
+    } catch (error) {
+      const receiptState = (() => { try { return f.receiptState(); } catch { return { unavailable: true }; } })();
+      const dialogCount = await approval.count().catch(() => null);
+      await test.info().attach("mcp-app-second-write-state", { body: JSON.stringify({ writes: f.writes(), dialogCount, receiptState, rpcPhases }), contentType: "application/json" });
+      throw error;
+    } finally {
+      f.page.removeListener("response", responseObserved);
+    }
     await f.page.getByRole("button", { name: "撤销成员 MCP 工具授权", exact: true }).click();
     await f.page.getByRole("button", { name: "确认 MCP 工具授权", exact: true }).click();
     await expect(f.page.locator('iframe[title^="MCP App："]')).toHaveCount(0);
