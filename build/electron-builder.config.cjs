@@ -26,6 +26,7 @@ module.exports = {
     { from: "docs/SKILL_DEMONSTRATIONS.md", to: "docs/SKILL_DEMONSTRATIONS.md" },
     { from: "docs/NATIVE_CONNECTORS.md", to: "docs/NATIVE_CONNECTORS.md" },
     { from: "docs/NATIVE_OUTBOUND.md", to: "docs/NATIVE_OUTBOUND.md" },
+    { from: "docs/MCP_APPS.md", to: "docs/MCP_APPS.md" },
     { from: "NOTICE", to: "NOTICE" },
     { from: "out/worker", to: "environment-worker" },
     { from: "out/browser-worker", to: "browser-worker" },

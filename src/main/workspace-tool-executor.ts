@@ -180,7 +180,7 @@ export class WorkspaceToolExecutor {
       const result = await this.run(initial.arguments, signal, initial);
       checkCancellation(signal);
       this.assertInvocationAccess(initial);
-      const outboundResult=initial.arguments.kind==="product-call"&&initial.arguments.action==="execute"&&initial.arguments.operation==="outbound.send"
+      const outboundResult=initial.arguments.kind==="product-call"&&initial.arguments.action==="execute"&&["outbound.send", "mcp.executeTool"].includes(initial.arguments.operation)
         ? JSON.parse(result.content) as {result?:{state?:string}} : null;
       if(outboundResult?.result?.state==="unknown")return {invocation:this.repository.interruptProductToolInvocation(id,result.content),content:result.content};
       const invocation = this.repository.getToolInvocation(id).state === "succeeded" ? this.repository.getToolInvocation(id) : initial.arguments.kind === "product-call"

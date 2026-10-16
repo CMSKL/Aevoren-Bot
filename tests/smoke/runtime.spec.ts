@@ -401,7 +401,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "library", "mcp", "memories", "messages", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "library", "mcp", "mcpWrites", "memories", "messages", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
     ]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.connectors,
@@ -412,6 +412,9 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.outbound,
     ).toSorted())).toEqual(["cancel", "enableSend", "get", "grantWrite", "list", "prepare", "reconcile", "reject", "requestApproval", "revokeWrite", "writeGrants"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcpWrites,
+    ).toSorted())).toEqual(["cancelTool", "closeApp", "grantTool", "listToolIntents", "openApp", "prepareTool", "requestToolApproval", "revokeTool", "toolCatalog", "toolGrants", "toolResult"]);
     const connectorValidation = await launched.page.evaluate(async () => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       return Promise.all([api.connectors.bindings({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid" }),
@@ -420,6 +423,13 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
         api.outbound.requestApproval({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", id: "not-a-uuid", expectedVersion: 1 })]);
     });
     for (const result of connectorValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    const mcpValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      const scope = { sessionId: "not-a-uuid", executorBotId: "not-a-uuid" };
+      return Promise.all([api.mcpWrites.toolGrants(scope), api.mcpWrites.requestToolApproval({ ...scope, id: "not-a-uuid", expectedVersion: 1 }),
+        api.mcpWrites.openApp({ ...scope, id: "not-a-uuid", expectedVersion: 1 }), api.mcpWrites.closeApp({ ...scope, id: "not-a-uuid", expectedEpoch: -1 })]);
+    });
+    for (const result of mcpValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime,
     ).toSorted())).toEqual(["cancel", "cancelMember", "continue", "getSnapshot", "retryTurn", "send"]);

@@ -378,7 +378,7 @@ export type SaveCliProviderInput = {
   cliPath: string;
 };
 
-export type RuntimeRoute = "fake" | "host-outbound" | ProviderDriverKind;
+export type RuntimeRoute = "fake" | "host-outbound" | "host-mcp" | ProviderDriverKind;
 export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "user" | "assistant";
 
 export type PromptManifestBlock = {
@@ -1244,6 +1244,7 @@ export type UserProfile = {
 };
 
 export interface AevorenBotApi {
+  mcpWrites: import("./mcp-write-contracts").McpWriteApi;
   browser: import("./browser-contracts").BrowserApi;
   computer: import("./browser-contracts").ComputerApi;
   demonstrations: import("./demonstration-contracts").DemonstrationApi;
