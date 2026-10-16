@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import * as z from "zod/v4";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRepository } from "./database";
 import { McpService } from "./mcp-service";
+import { McpWriteService } from "./mcp-write-service";
+import * as networkSecurity from "./network-security";
 import type { SecretCodec } from "./settings";
 
 const repositories: AppRepository[] = [];
@@ -22,9 +24,39 @@ afterEach(async () => {
   while (services.length > 0) await services.pop()?.dispose();
   while (httpServers.length > 0) await new Promise<void>((resolve) => httpServers.pop()?.close(() => resolve()));
   while (repositories.length > 0) repositories.pop()?.close();
+  vi.restoreAllMocks();
 });
 
 describe("McpService", () => {
+  it("does not retain scoped clients when DNS resolution fails during repeated catalog refreshes", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const service = new McpService(repository, codec, "1.0.0");
+    services.push(service);
+    const saved = await service.save({
+      name: "unresolvable",
+      config: { transport: "streamable-http", url: "https://unavailable.invalid/mcp", headers: {} },
+    });
+    const enabled = repository.setMcpServerEnabled(saved.id, saved.version, true);
+    const owner = repository.createBot();
+    const writes = new McpWriteService(repository, repository.mcpWrites, service);
+    const resolver = vi.spyOn(networkSecurity, "resolveSafeNetworkUrl").mockRejectedValue(
+      Object.assign(new Error("Fixture DNS lookup failed"), { code: "ENOTFOUND" }),
+    );
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await expect(writes.toolCatalog({
+          sessionId: owner.session.id, executorBotId: owner.bot.id,
+          serverId: enabled.id, expectedServerVersion: enabled.version,
+        })).rejects.toMatchObject({ code: "ENOTFOUND" });
+      }
+      expect(resolver).toHaveBeenCalledTimes(3);
+      expect((service as unknown as { scopedClients: Map<string, Set<unknown>> }).scopedClients.size).toBe(0);
+    } finally {
+      await writes.shutdown();
+    }
+  });
+
   it("pins an approved loopback Streamable HTTP server and keeps its requests on the configured origin", async () => {
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID });
     const remote = new McpServer({ name: "remote-fixture", version: "1.0.0" });

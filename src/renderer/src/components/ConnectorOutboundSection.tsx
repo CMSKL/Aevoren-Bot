@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ApprovalRequest, ApprovalResolution, ToolPrepareResult } from "@shared/contracts";
 import type { EnvironmentScope } from "@shared/environment-contracts";
 import type { ConnectorDraftResult, NativeConnection } from "@shared/native-connector-contracts";
 import type { NativeOutboundIntent, NativeWriteGrant, NativeWriteOperation } from "@shared/native-outbound-contracts";
 import { outboundOperationLabels, outboundStateLabels } from "../outbound-approval-review";
 import { ExternalDraftReview } from "./ExternalDraftReview";
-import { ToolPermissionDialog } from "./ToolPermissionDialog";
 
 type Props = EnvironmentScope & { connection: NativeConnection | null; saved: ConnectorDraftResult | null; dirty: boolean; active: boolean; ownerName?: string };
 const operationFor = (draft: ConnectorDraftResult): NativeWriteOperation => draft.revision.content.kind === "gmail-message" ? "gmail-send" : draft.revision.content.kind === "notion-page" ? "notion-create-page" : draft.revision.content.targetFileId ? "drive-update-text" : "drive-create-text";
@@ -16,8 +14,6 @@ export function ConnectorOutboundSection({ sessionId, executorBotId, connection,
   const [grants, setGrants] = useState<NativeWriteGrant[]>([]);
   const [intents, setIntents] = useState<NativeOutboundIntent[]>([]);
   const [prepared, setPrepared] = useState<NativeOutboundIntent | null>(null);
-  const [approval, setApproval] = useState<ToolPrepareResult | null>(null);
-  const [approvalIntent, setApprovalIntent] = useState<NativeOutboundIntent | null>(null);
   const [confirmation, setConfirmation] = useState<{ kind: "grant"; operation: NativeWriteOperation; targetIds: string[] } | { kind: "revoke"; grant: NativeWriteGrant } | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +40,7 @@ export function ConnectorOutboundSection({ sessionId, executorBotId, connection,
     const request = generation.current;
     if (!active) return;
     let disposed = false;
-    queueMicrotask(() => { if (!disposed) { setPrepared(null); setApproval(null); setApprovalIntent(null); setConfirmation(null); setGrants([]); setIntents([]); setError(null); setNotice(null); setPending(false); void load(); } });
+    queueMicrotask(() => { if (!disposed) { setPrepared(null); setConfirmation(null); setGrants([]); setIntents([]); setError(null); setNotice(null); setPending(false); void load(); } });
     let inFlight = false;
     const timer = setInterval(() => { if (!inFlight) { inFlight = true; void load().finally(() => { inFlight = false; }); } }, 2000);
     return () => { disposed = true; if (request === generation.current) generation.current += 1; clearInterval(timer); };
@@ -83,16 +79,9 @@ export function ConnectorOutboundSection({ sessionId, executorBotId, connection,
     try {
       const result = await window.aevorenBot.outbound.requestApproval({ sessionId, executorBotId, id: prepared.id, expectedVersion: prepared.version });
       if (request !== generation.current) return;
-      if (result.ok) { setApprovalIntent(prepared); setApproval(result.data); } else setError(result.error.safeMessage);
+      if (result.ok) { window.dispatchEvent(new Event("aevoren:apps-approval-changed")); setNotice("固定版本已进入当前成员的审批队列，请核对原操作记录。"); } else setError(result.error.safeMessage);
     } catch { if (request === generation.current) setError("无法打开此固定版本的审批。"); }
     finally { if (request === generation.current) setPending(false); }
-  }
-  async function resolve(value: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean> {
-    const request = generation.current;
-    const result = await window.aevorenBot.approvals.resolve({ sessionId: value.sessionId, id: value.id, expectedVersion: value.version, resolution });
-    if (request !== generation.current) return false;
-    if (!result.ok) { setError(result.error.safeMessage); return false; }
-    setApproval(null); setApprovalIntent(null); setNotice(resolution === "deny" ? "已拒绝此次外发。" : "固定内容已批准；请以外发记录的实际状态为准。"); await load(); return true;
   }
   async function intentAction(intent: NativeOutboundIntent, action: "reconcile" | "reject" | "cancel"): Promise<boolean> {
     if (pending) return false;
@@ -117,6 +106,5 @@ export function ConnectorOutboundSection({ sessionId, executorBotId, connection,
     {dirty ? <p className="connector-note">当前编辑内容尚未保存，不能提交。保存后需要重新核对此版本。</p> : null}
     {prepared ? <article className="connector-card" aria-label="准备外发的固定版本"><ExternalDraftReview snapshot={prepared.review} /><p role="status">{outboundStateLabels[prepared.state]}</p>{prepared.state === "prepared" ? <div className="connector-actions"><button type="button" className="primary-button" disabled={pending || !ready || !grant} onClick={() => void requestApproval()}>审阅并批准此版本</button><button type="button" className="text-button" disabled={pending} onClick={() => void intentAction(prepared, "reject")}>拒绝此版本外发</button></div> : null}</article> : null}
     <div className="connector-outbound-list" aria-label="外发记录">{intents.filter(intent => !connection || intent.connectionId === connection.id).map(intent => <article className="connector-card" key={intent.id}><div className="connector-heading"><strong>{outboundOperationLabels[intent.operation]} · v{intent.review.revisionNumber}</strong><span>{outboundStateLabels[intent.state]}</span></div><p className="connector-note">{intent.account.email ?? intent.account.displayName} · {intent.updatedAt}</p>{intent.resultResourceId ? <p className="connector-note">第三方结果 ID：{intent.resultResourceId}</p> : null}{intent.state === "dispatching" ? <button type="button" className="secondary-button" disabled={pending} onClick={() => void intentAction(intent, "cancel")}>停止此次提交并核对</button> : null}{intent.state === "unknown" ? <><p className="connector-note">提交结果未知，可能已生效。只读核对不会再次提交；查无结果仍保持未知。</p><button type="button" className="secondary-button" disabled={pending} onClick={() => void intentAction(intent, "reconcile")}>只读核对此次结果</button></> : null}<details><summary>查看该记录固定内容</summary><ExternalDraftReview snapshot={intent.review} /></details></article>)}</div>
-    {approval ? <ToolPermissionDialog approval={approval.approval} invocation={approval.invocation} label="外发固定草稿" botName={ownerName ?? "当前成员"} onResolve={resolve} onStop={() => { if (approvalIntent) void intentAction(approvalIntent, "cancel").then(accepted => { if (accepted) { setApproval(null); setApprovalIntent(null); } }); }} /> : null}
   </section>;
 }

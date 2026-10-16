@@ -1,3 +1,5 @@
+import { McpWriteService } from "./mcp-write-service";
+import { McpAppsBridge } from "./mcp-apps-bridge";
 import { NativeOutboundAdapter } from "./native-connectors/outbound";
 import { NativeWriteHttpClient } from "./native-connectors/write-http";
 import type { NativeFetch } from "./native-connectors/http";
@@ -68,6 +70,8 @@ let roomCoordinator: RoomCoordinator | null = null;
 let updateService: UpdateService | null = null;
 let providerService: ProviderService | null = null;
 let mcpService: McpService | null = null;
+let mcpWriteService: McpWriteService | null = null;
+let mcpAppsBridge: McpAppsBridge | null = null;
 let environmentService: EnvironmentService | null = null;
 let browserService: BrowserService | null = null;
 let skillExecutionService: SkillExecutionService | null = null;
@@ -167,6 +171,8 @@ async function finishClose(): Promise<void> {
   }
   roomCoordinator?.beginShutdown();
   shutdownPromise ??= (async () => {
+    await mcpAppsBridge?.dispose();
+    await mcpWriteService?.shutdown();
     await nativeOutboundService?.shutdown();
     await nativeConnectorService?.shutdown();
     await skillExecutionService?.shutdown();
@@ -369,6 +375,10 @@ app.whenReady().then(async () => {
     emitTool,
     decisionService,
   );
+  const productMcpWriteService = new McpWriteService(repository, repository.mcpWrites, mcpService);
+  mcpWriteService = productMcpWriteService;
+  const productMcpAppsBridge = new McpAppsBridge(productMcpWriteService, mcpService, { requestAndWait: (intent, signal) => productMcpWriteService.requestAndWait({ sessionId: intent.sessionId, executorBotId: intent.executorBotId, id: intent.id, expectedVersion: intent.version }, workspaceToolCoordinator, signal) });
+  mcpAppsBridge = productMcpAppsBridge;
   const platform = process.platform === "darwin" || process.platform === "win32" || process.platform === "linux"
     ? process.platform
     : "other";
@@ -446,6 +456,8 @@ app.whenReady().then(async () => {
     skillExecutionService: productSkillExecutionService,
     nativeConnectorService: productNativeConnectorService,
     nativeOutboundService: productNativeOutboundService,
+    mcpWriteService: productMcpWriteService,
+    mcpAppsBridge: productMcpAppsBridge,
     async saveBrowserDownload(input, context) {
       const file = await browserService!.downloadData(input, context);
       let path = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_BROWSER_DOWNLOAD_TEST_PATH : undefined;
@@ -704,5 +716,7 @@ app.on("quit", () => {
   updateService = null;
   providerService = null;
   mcpService = null;
+  mcpWriteService = null;
+  mcpAppsBridge = null;
   routineService = null;
 });

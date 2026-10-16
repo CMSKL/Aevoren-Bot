@@ -34,6 +34,25 @@ function provider(): ProviderInstanceInfo {
 }
 
 describe("CapabilityRegistry", () => {
+  it("reports scoped MCP permission only for the current executor and live connection credential", async () => {
+    const repository = new AppRepository(":memory:"); repositories.push(repository);
+    const actor = repository.createBot(), peer = repository.createBot(), current = provider(); let credential = "a".repeat(64);
+    const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities },
+      { name: "Aevoren Bot", version: "1", platform: "darwin", architecture: "arm64", packaged: false }, undefined,
+      { list: () => [], availableTools: () => [], scopedCredentialDigest: () => credential });
+    const scope = { sessionId: actor.session.id, executorBotId: actor.bot.id };
+    const saved = repository.createMcpServerConfig("scoped", "streamable-http", { url: "http://127.0.0.1:1/mcp" });
+    const server = repository.setMcpServerEnabled(saved.id, saved.version, true);
+    const state = async (sessionId = scope.sessionId) => (await registry.getSnapshot({ botId: actor.bot.id, sessionId })).capabilities.find(item => item.id === "mcp.scoped-tools");
+    expect(await state()).toMatchObject({ permissionState: "not-granted" });
+    const grant = repository.mcpWrites.grant({ ...scope, serverId: server.id, expectedServerVersion: server.version, toolName: "change", schemaDigest: "b".repeat(64) }, credential);
+    expect(await state()).toMatchObject({ permissionState: "granted", availability: "available" });
+    const room = repository.createRoom({ memberBotIds: [actor.bot.id, peer.bot.id] });
+    expect(await state(room.session.id)).toMatchObject({ permissionState: "not-granted" });
+    credential = "c".repeat(64); expect(await state()).toMatchObject({ permissionState: "not-granted" });
+    credential = "a".repeat(64); repository.mcpWrites.revoke({ ...scope, id: grant.id, expectedVersion: grant.version });
+    expect(await state()).toMatchObject({ permissionState: "not-granted" });
+  });
   it("advertises native writing only for the selected executor's current explicit grant", async () => {
     const repository = new AppRepository(":memory:"); repositories.push(repository);
     const actor = repository.createBot(), peer = repository.createBot(), current = provider();

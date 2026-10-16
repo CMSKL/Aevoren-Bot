@@ -1,3 +1,5 @@
+import { MCP_WRITE_CHANNELS } from "@shared/mcp-write-channels";
+import { mcpWriteIdSchema } from "@shared/mcp-write-schemas";
 import { NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "@shared/native-outbound-channels";
 import { nativeOutboundIdSchema } from "@shared/native-outbound-schemas";
 import { z } from "zod";
@@ -26,6 +28,10 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
   const { window } = dependencies;
   const view = new ProductViewService(window);
   const product = new ProductOperationService({ ...dependencies, requestView: (input) => view.request(input) });
+  ipcMain.handle(MCP_WRITE_CHANNELS.requestToolApproval, (event, input: unknown) => apiResult(() => {
+    assertTrusted(event, window); if (!dependencies.mcpWriteService) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
+    return dependencies.mcpWriteService.requestApproval(mcpWriteIdSchema.parse(input), dependencies.workspaceToolCoordinator);
+  }));
   ipcMain.handle(NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL,(event,input:unknown)=>apiResult(()=>{
     assertTrusted(event,window);if(!dependencies.nativeOutboundService)throw new AevorenBotError("CONNECTOR_UNAVAILABLE");
     return dependencies.nativeOutboundService.requestApproval(nativeOutboundIdSchema.parse(input),dependencies.workspaceToolCoordinator);
