@@ -36,4 +36,8 @@ Controlled SDK servers, real local HTTP, real SQLite, real approval/Runtime hand
 
 The current diagnostic beta.35 candidate passed Linux CI with 1,593 ordinary tests (45 skipped) and 41 real Docker checks; its rebuilt actual macOS package passed 30 scenarios with no forced-cleanup warnings. The earlier 22 source-interface scenarios remain separately recorded. Earlier package business receipts did not establish graceful exit; those remain historical. Cross-platform CI and signed publication are pending. See the implementation record for exact build hashes and the separate beta.31 backport receipts.
 
+> 合并 dev 保留的 beta.34 历史验证，不覆盖本文最新状态。
+
+Latest local acceptance passed 12 source scenarios and 28 unique actual packaged scenarios, with the precise beta.34 version and bundled resources checked. Embedded Apps now retain the main renderer's close handshake, and the source/package runs contained no forced-close warnings. The full local unit run recorded 1,560 passes, 45 skips and six existing timing failures; the 106 affected tests passed serial isolation with unchanged assertions and limits. The implementation record preserves these distinct results and the earlier disposed-channel test-cleanup failure. Cross-platform CI and signing remain required.
+
 The transport follows the official [MCP Apps overview](https://modelcontextprotocol.io/extensions/apps/overview) and [2026-01-26 protocol specification](https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx). No additional UI SDK dependency is bundled.

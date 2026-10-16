@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
@@ -103,7 +104,20 @@ async function withMcp(callback: (fixture: { page: Page; application: ElectronAp
     }
     const page = await application.firstWindow(), errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
-    await expect(page.locator(".app-shell")).toBeVisible();
+    const appPath = await application.evaluate(({ app }) => app.getAppPath());
+    const rendererUrl = pathToFileURL(join(appPath, "out", "renderer", "index.html")).href;
+    try {
+      // firstWindow may precede the production document's initial navigation.
+      await page.waitForURL(rendererUrl, { waitUntil: "domcontentloaded" });
+      await expect(page.locator(".app-shell")).toBeVisible();
+    } catch (error) {
+      const main = await application.evaluate(({ app, BrowserWindow }) => ({ ready: app.isReady(), windows: BrowserWindow.getAllWindows().map(window => ({
+        destroyed: window.isDestroyed(), loading: window.webContents.isLoadingMainFrame(), rendererFile: /^file:.*[/\\]out[/\\]renderer[/\\]index\.html$/u.test(window.webContents.getURL()),
+      })) })).catch(() => null);
+      const renderer = await page.evaluate(() => ({ readyState: document.readyState, preloadPresent: typeof (window as unknown as { aevorenBot?: unknown }).aevorenBot === "object" })).catch(() => null);
+      await test.info().attach("mcp-renderer-boot-phases", { body: JSON.stringify({ main, renderer, pageErrorCount: errors.length }), contentType: "application/json" });
+      throw error;
+    }
     const configured = await page.evaluate(async url => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
       const saved = await api.mcp.save({ name: "isolated-mcp-fixture", config: { transport: "streamable-http", url, headers: { Authorization: "Bearer CONTROLLED_FIXTURE_SECRET" } } });
