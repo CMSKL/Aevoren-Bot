@@ -67,6 +67,8 @@ test("routes authenticated Webhook data to all six saved members once and revoke
     await page.getByRole("button", { name: "启动本机监听", exact: true }).click(); await expect.poll(async () => (await snapshot(page)).listener.listening).toBe(true);
     const ready = await snapshot(page), hook = ready.subscriptions.find(hook => hook.name === "本机六人事件")!, url = `http://127.0.0.1:${ready.listener.port}${hook.webhookPath}`;
     expect(JSON.stringify(ready)).not.toContain(token); expect((await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "fixture:bad", Authorization: "Bearer wrong" }, body: "invalid" })).status).toBe(401);
+    const oversized = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "fixture:oversized", Authorization: `Bearer ${token}` }, body: JSON.stringify({ value: "x".repeat(65_536) }) });
+    expect(oversized.status).toBe(413); await oversized.arrayBuffer(); expect(captures).toHaveLength(0); expect((await snapshot(page)).deliveries).toHaveLength(0);
     const options = { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "fixture:one", Authorization: `Bearer ${token}` }, body: JSON.stringify({ instruction: "UNTRUSTED_EVENT_PAYLOAD", approval: true }) };
     const first = await fetch(url, options); expect(first.status).toBe(202); const receipt = await first.json() as { id: string };
     const again = await fetch(url, options); expect(again.status).toBe(202); expect((await again.json() as { id: string }).id).toBe(receipt.id);
