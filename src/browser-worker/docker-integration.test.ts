@@ -357,6 +357,10 @@ describe.skipIf(!enabled)("real isolated Chromium and desktop Worker", () => {
         const observation = await observe(f, page.id);
         expect(observation.text).toContain(`fixture_login=${id}`);
         for (const other of ids.filter(value => value !== id)) expect(observation.text).not.toContain(other);
+        // Establish content focus before requiring a page-bound desktop proof.
+        // Native Chrome focus alone does not establish document.hasFocus().
+        await f.request(`/v1/browser/pages/${page.id}/click`, "POST", { ...mutation(1), observationId: observation.id,
+          documentVersion: observation.documentVersion, ref: observation.elements.find(value => value.name === "Draft")!.ref });
         const frame = browserWorkerFrameSchema.parse(await f.request("/v1/computer/screenshot", "POST", { ...access(1), pageId: page.id }));
         expect(frame).toMatchObject({ browserSessionId: f.browserSessionId, width: 1_280, height: 800 });
       }).catch(error => { release.resolve(); throw error; })));
