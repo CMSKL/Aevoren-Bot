@@ -5,6 +5,8 @@
 - Add versioned portable templates with exact profile/roster/resource/file selection, owned immutable bytes, full review and independent import copies with Skills initially disabled.
 - Add explicit-scope JSON and self-contained offline HTML exports through native no-overwrite save dialogs; cancel and revoke only the selected operation.
 - Share scoped template/export operations with connected AI, fixed original Runtime revisions, private revocable model text, concrete approvals and atomic mutation receipts. TASK cannot import new contacts.
+- Flush early Webhook rejection responses before closing incomplete uploads, retaining bounded cleanup and all authentication/body limits. Preserve exact request-phase diagnostics and owned fixture cleanup in CI.
+- Keep the portable export settings entry within narrow/200% zoom layouts while preserving complete category keyboard navigation.
 - No new dependency. Local verification and actual packaged evidence are recorded separately; Windows and signed publication remain pending.
 
 ## v0.3.0-beta.43 (development candidate)

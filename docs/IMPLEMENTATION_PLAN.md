@@ -734,3 +734,17 @@ This branch integrated dev `a743f7d835948a051d316a74fdc3752c190eacc2`, the norma
 ### beta.43 dev beta.35 integration
 
 Merged verified dev `80ab17ecdc037b3d3f6537f0d02e82f758e37034`, retaining beta.43 functionality, version and current MCP authority checks. Relative to the freshly verified `6d2a5af` package source, only historical documentation differs; production source, shared contracts, package/build configuration and dependencies are byte-identical. Documentation and open-source checks pass. Existing package and business checks are retained without rebuilding or repeating them. Normal CI still must validate the refreshed merge.
+
+### beta.44 后续 Mac 界面与关闭证据
+
+第三轮正常Mac源码203项中，200%设置界面检查发现新增“模板与选择范围导出”按钮越过窄列边界，保留实际几何失败。现有输出下原测试再次复现（`templates44-settings-wrap-before.log`，trace持久保留）；最小修复仅该入口class及一条换行/max-width/min-width规则。修复后几何检查通过，随后的旧键盘分类数组因遗漏43新增“事件与Webhook”而失败；补齐第九分类，保留全部焦点循环和viewport断言。原30秒it期限下最终同一源码场景1/1（5.5秒，`templates44-settings-wrap-final.log`）通过，Web类型和lint通过。按钮溢出属于产品修复，遗漏分类属于夹具断言，原因分别记录。
+
+HTTP修复后的第一实际包同轮3通过／1失败（55.6秒）：超限413与六成员事件、typed API、完整模板/离线导出通过；私有TASK事件业务断言均通过，最后正常关闭未在既有3秒预算内完成，自有清理终止为SIGKILL。原trace/errorcontext保存在 `templates44-httpfix-package-close-failure/`，原夹具异常路径未复制SQLite，因此不宣称该次数据库已保留。未据此修改生产退出逻辑。加入现有Main/owned-process阶段诊断和失败库copy顺序保护后，同包该单项1/1（9.3秒case）正常退出，原因仍未确认；成功附件未被listreporter持久保存，不虚称已有阶段数值。最终新包将用显式本地JSONLines记录安全关闭元数据，保持原3秒预算、不借43成功代替44验证。
+
+### beta.44 HTTP与窄布局修复后的最终实际包
+
+在冻结源码 `2857fc0` 上重建标准未签名macOS arm64包，最终实际包同轮 **5/5（44.6秒）** 通过：超限413/EOF/零准入与六成员事件、私有TASK事件、200%联系人/模型/设置完整键盘及范围检查、typed API、模板自有文件/重启导入/离线HTML。日志 `templates44-final-package-five.log`；没有强制清理，全部拥有进程正常exitCode=0。
+
+显式本地关闭诊断 `templates44-final-event-close-phases.jsonl` 真实保存三个关闭序列：首次事件窗口从close-request到owned-exit约259毫秒，重启后约135毫秒，私有TASK事件约180毫秒；均保留flush ACK、window closed及owned exit/close事件，在原3秒预算内完成。此测量不能证明前次SIGKILL的原因；原失败trace及说明仍保留，不改写为已确定修复。
+
+最终Main SHA-256 `299a50d9119f5b7a09213b1308fa236ff343657c9bcc0d0c63c792bd2db734e0`，ASAR `43237597263a8984b30e27e1e4c5aa61148dc3844821d756f70775794e3dc3a0`；17项应用、216项Worker/parser逐字节一致，模板随包指南一致，207 parser资产、238资源文件、9556 ASAR条目与四Helper麦克风用途声明通过。回执为 `templates44-final-package-{bytes,parser,microphone}.json`。后续仅文档总结不改变冻结业务字节或包内指南；Windows正常CI、跨平台签名发行与真实外部账号/硬件仍需分别验收，master不晋级。
