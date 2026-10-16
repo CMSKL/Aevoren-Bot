@@ -6,6 +6,7 @@ import { z } from "zod";
 import { mediaSpanSchema, mediaTextSchema, supportedMediaMimeSchema } from "@shared/media-schemas";
 import { MEDIA_PARSER_CHANNEL, MEDIA_PARSER_INPUT, MEDIA_PARSER_NAME, MEDIA_PARSER_SCHEME, MEDIA_PARSER_VERSION, PARSER_ERROR_CODES, PARSER_LIMITS, type ParserAsset, type ParserManifest } from "@shared/media-parser-protocol";
 import { imageDimensions } from "../media-parser/image-headers";
+import { inspectAvHeader, isAvMime, sameAvFamily } from "@shared/media-av-format";
 import type { MediaParserAdapter, MediaParserInput, MediaParseResult, MediaPreviewPixels } from "./media-parser-types";
 import { AevorenBotError } from "./errors";
 
@@ -18,9 +19,9 @@ export function registerMediaParserScheme(): void {
 const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 const dimension = z.number().int().min(1).max(PARSER_LIMITS.pixels);
 const extractionSchema = z.object({ text: mediaTextSchema, spans: z.array(mediaSpanSchema).min(1).max(PARSER_LIMITS.pages), warningCodes: z.array(z.enum(["PDF_NO_TEXT", "PDF_NO_OCR"])).max(2) }).strict();
-const resultSchema = z.object({ kind: z.enum(["image", "pdf", "docx"]), width: dimension.nullable(), height: dimension.nullable(), extraction: extractionSchema.nullable(), parserName: z.string().max(100), parserVersion: z.string().max(200) }).strict();
+const resultSchema = z.object({ kind: z.enum(["image", "pdf", "docx", "audio", "video"]), width: dimension.nullable(), height: dimension.nullable(), durationMs: z.number().int().min(1).max(PARSER_LIMITS.durationMs).nullable(), extraction: extractionSchema.nullable(), parserName: z.string().max(100), parserVersion: z.string().max(200) }).strict();
 const manifestSchema = z.object({ protocolVersion: z.literal(1), parserName: z.literal(MEDIA_PARSER_NAME), parserVersion: z.literal(MEDIA_PARSER_VERSION), applicationVersion: z.string().min(1).max(100), entry: z.literal("index.html"), preload: z.literal("private/preload.cjs"), files: z.array(z.object({ path: z.string().min(1).max(250), route: z.string().min(1).max(250).nullable(), mimeType: z.string().min(1).max(100), size: z.number().int().min(1).max(16_777_216), sha256: z.string().regex(/^[a-f0-9]{64}$/u) }).strict()).min(1).max(400) }).strict();
-const csp = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src blob:; font-src 'self' blob:; style-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const csp = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src blob:; font-src 'self' blob:; media-src blob:; style-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /** One fresh, unprivileged Renderer/session per job. No business permission or CAS paths enter it. */
 export class MediaParserHost implements MediaParserAdapter {
@@ -44,6 +45,7 @@ export class MediaParserHost implements MediaParserAdapter {
   private start(input: MediaParserInput, external: AbortSignal, operation: "parse" | "pdf-preview", pageIndex?: number): Promise<MediaParseResult | MediaPreviewPixels> {
     if (this.closed) return Promise.reject(new AevorenBotError("MEDIA_PARSER_UNAVAILABLE"));
     if (!(input.bytes instanceof Uint8Array)) return Promise.reject(new AevorenBotError("MEDIA_CONTENT_INVALID"));
+    if (input.bytes.length > PARSER_LIMITS.avBytes) return Promise.reject(new AevorenBotError("MEDIA_IMPORT_TOO_LARGE"));
     const owned = { mimeType: input.mimeType, sha256: input.sha256, bytes: new Uint8Array(input.bytes) };
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new AevorenBotError("MEDIA_PARSE_TIMEOUT")), PARSER_LIMITS.timeoutMs);
@@ -68,8 +70,12 @@ export class MediaParserHost implements MediaParserAdapter {
   private validate(input: MediaParserInput): void {
     supportedMediaMimeSchema.parse(input.mimeType);
     if (!(input.bytes instanceof Uint8Array) || !input.bytes.length || sha256(input.bytes) !== input.sha256) throw new AevorenBotError("MEDIA_CONTENT_INVALID");
-    const max = input.mimeType === "application/pdf" ? PARSER_LIMITS.pdfBytes : input.mimeType.startsWith("image/") ? PARSER_LIMITS.imageBytes : PARSER_LIMITS.docxBytes;
+    const max = isAvMime(input.mimeType) ? PARSER_LIMITS.avBytes : input.mimeType === "application/pdf" ? PARSER_LIMITS.pdfBytes : input.mimeType.startsWith("image/") ? PARSER_LIMITS.imageBytes : PARSER_LIMITS.docxBytes;
     if (input.bytes.length > max) throw new AevorenBotError("MEDIA_IMPORT_TOO_LARGE");
+    if (isAvMime(input.mimeType)) {
+      try { const header = inspectAvHeader(input.bytes); if (!header || !sameAvFamily(input.mimeType, header)) throw new Error("header"); }
+      catch { throw new AevorenBotError("MEDIA_CONTENT_INVALID"); }
+    }
   }
   private async run(input: MediaParserInput, signal: AbortSignal, operation: "parse" | "pdf-preview", pageIndex?: number): Promise<MediaParseResult | MediaPreviewPixels> {
     signal.throwIfAborted(); this.validate(input);
@@ -89,7 +95,7 @@ export class MediaParserHost implements MediaParserAdapter {
     const preload = manifest.files.find(file => file.path === manifest.preload && file.route === null);
     if (!preload || !publicAssets.has(url)) throw new AevorenBotError("MEDIA_PARSER_UNAVAILABLE");
     const ownedSession = session.fromPartition(`media-parser-${nonce}`, { cache: false });
-    const allowed = (value: string): boolean => publicAssets.has(value);
+    const allowed = (value: string): boolean => publicAssets.has(value) || value.startsWith(`blob:${origin}/`);
     ownedSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     ownedSession.setPermissionCheckHandler(() => false);
     ownedSession.setDevicePermissionHandler(() => false);
@@ -143,7 +149,16 @@ export class MediaParserHost implements MediaParserAdapter {
     }
   }
   private checkedResult(input: MediaParserInput, value: unknown): MediaParseResult {
-    const result = resultSchema.parse(value), kind = input.mimeType === "application/pdf" ? "pdf" : input.mimeType.startsWith("image/") ? "image" : "docx";
+    const result = resultSchema.parse(value);
+    if (isAvMime(input.mimeType)) {
+      const header = inspectAvHeader(input.bytes);
+      if (!header || !result.durationMs || result.extraction !== null || (result.kind !== "audio" && result.kind !== "video")) throw new Error("av result");
+      if (result.kind === "audio") { if (!header.audio || header.video || result.width !== null || result.height !== null) throw new Error("audio tracks"); }
+      else if (!header.video || !result.width || !result.height || result.width * result.height > PARSER_LIMITS.pixels) throw new Error("video tracks");
+      return { ...result, parserName: MEDIA_PARSER_NAME, parserVersion: MEDIA_PARSER_VERSION };
+    }
+    const kind = input.mimeType === "application/pdf" ? "pdf" : input.mimeType.startsWith("image/") ? "image" : "docx";
+    if (result.durationMs !== null) throw new Error("unexpected duration");
     if (result.kind !== kind) throw new Error("kind");
     if (kind === "image") {
       const expected = imageDimensions(input.bytes, input.mimeType);

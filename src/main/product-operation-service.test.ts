@@ -19,6 +19,7 @@ import { RoomCoordinator } from "./room-coordinator";
 import { DemonstrationService } from "./demonstration-service";
 import { LibraryService } from "./library-service";
 import { MediaService } from "./media-service";
+import { VoiceService } from "./voice-service";
 import type { MediaParserAdapter } from "./media-parser-types";
 import { writeLibraryExport } from "./library-export";
 import type { ModelProvider } from "./model";
@@ -64,12 +65,55 @@ function libraryRuntime(repository: AppRepository, actor: ReturnType<AppReposito
   return repository.transitionRuntimeRun(runtime.id, "running", { providerRequestId: "library-tool-test" });
 }
 
+describe("canonical voice intent", () => {
+  it("exposes approved non-secret voice settings without exposing or replacing the host key", async () => {
+    const f = fixture();
+    const voice = new VoiceService(f.repository, { isAvailable: () => true, encrypt: value => `sealed:${value}`, decrypt: value => value.slice(7) },
+      { readBinary: async () => { throw new Error("not used"); } }, join(f.root, "voice-config"), { fetch: async () => { throw new Error("no network expected"); } });
+    f.dependencies.voiceService = voice;
+    try {
+      const current = voice.configurations().find(item => item.kind === "tts")!;
+      const saved = voice.saveConfiguration({ kind: "tts", expectedVersion: current.version, enabled: true, model: "gpt-4o-mini-tts", voice: "coral", apiKey: "private-fixture-key" });
+      const input = { kind: "tts", expectedVersion: saved.version, enabled: true, model: saved.model, voice: "cedar" };
+      expect(() => f.service.validate(call("voice.configure", { ...input, apiKey: "forged" }), f.runtime.id)).toThrow();
+      expect(() => f.service.validate(call("voice.configure", { ...input, clearApiKey: true }), f.runtime.id)).toThrow();
+      expect(f.service.requiresApproval(call("voice.configure", input))).toBe(true);
+      const result = await f.execute(call("voice.configure", input));
+      expect(JSON.parse(result.content).result).toMatchObject({ voice: "cedar", keyConfigured: true, version: saved.version + 1 });
+      expect(result.content).not.toContain("private-fixture-key"); expect(result.content).not.toContain("sealed:");
+      const latest = voice.configurations().find(item => item.kind === "tts")!;
+      voice.saveConfiguration({ kind: "tts", expectedVersion: latest.version, enabled: false, model: latest.model, voice: latest.voice, clearApiKey: true });
+      expect(f.service.requiresApproval(call("voice.configure", input), f.runtime.id)).toBe(false);
+      const replay = await f.execute(call("voice.configure", input));
+      expect(JSON.parse(replay.content)).toMatchObject({ status: "previously_completed", result: { enabled: false, keyConfigured: false, version: latest.version + 1 } });
+
+    } finally { await voice.shutdown(); }
+  });
+
+  it("does not repeat an unknown cloud request when the optional current session is made explicit", async () => {
+    const f = fixture(); let requests = 0;
+    const voice = new VoiceService(f.repository, { isAvailable: () => true, encrypt: value => `sealed:${value}`, decrypt: value => value.slice(7) },
+      { readBinary: async () => { throw new Error("not used for text speech"); } }, join(f.root, "voice"), { fetch: async () => { requests += 1; throw new Error("controlled unknown outcome"); } });
+    f.dependencies.voiceService = voice;
+    try {
+      const current = voice.configurations().find(item => item.kind === "tts")!;
+      const saved = voice.saveConfiguration({ kind: "tts", expectedVersion: current.version, enabled: true, model: "gpt-4o-mini-tts", voice: "coral", apiKey: "controlled-fixture-key" });
+      const input = { expectedConfigVersion: saved.version, source: { text: "canonical voice" } };
+      const first = await f.execute(call("voice.speak", input));
+      expect(JSON.parse(first.content).result.state).toBe("interrupted_unknown");
+      const second = await f.execute(call("voice.speak", { ...input, sessionId: f.actor.session.id }));
+      expect(JSON.parse(second.content).result.id).toBe(JSON.parse(first.content).result.id);
+      expect(requests).toBe(1);
+    } finally { await voice.shutdown(); }
+  });
+});
+
 describe("media product transport", () => {
   it("shares scoped UI handlers but keeps AI text outside durable tool receipts and rechecks revocation", async () => {
     const f = fixture();
     const text = "PRIVATE_EXTRACTED_TEXT";
     const parser: MediaParserAdapter = {
-      parse: async () => ({ kind: "pdf", width: null, height: null, parserName: "controlled-unit-parser", parserVersion: "1",
+      parse: async () => ({ kind: "pdf", width: null, height: null, durationMs: null, parserName: "controlled-unit-parser", parserVersion: "1",
         extraction: { text, spans: [{ kind: "page", index: 0, start: 0, end: text.length }], warningCodes: [] } }),
       renderPdfPage: async () => { throw new Error("not used"); }, shutdown: async () => {},
     };

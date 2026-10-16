@@ -4,12 +4,14 @@ import type { MediaParseResult, MediaPreviewPixels } from "../main/media-parser-
 import { MEDIA_PARSER_NAME, MEDIA_PARSER_VERSION, PARSER_ERROR_CODES, PARSER_LIMITS, type ParserBridge, type ParserRequest } from "../shared/media-parser-protocol";
 import { imageDimensions } from "./image-headers";
 import { extractDocx } from "./docx";
+import { parseAv } from "./av";
+import { isAvMime } from "../shared/media-av-format";
 
 declare global { interface Window { mediaParser: ParserBridge } }
 function fail(code = "MEDIA_CONTENT_INVALID"): never { throw new Error(code); }
 function textBudget(text: string): void { const encoded = new TextEncoder().encode(text); if (new TextDecoder("utf-8", { fatal: true }).decode(encoded) !== text || encoded.length > PARSER_LIMITS.textBytes) fail("MEDIA_IMPORT_TOO_LARGE"); }
 function pixelBudget(width: number, height: number): void { if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || width * height > PARSER_LIMITS.pixels) fail("MEDIA_IMPORT_TOO_LARGE"); }
-const result = (kind: MediaParseResult["kind"], extraction: MediaParseResult["extraction"], width: number | null = null, height: number | null = null): MediaParseResult => ({ kind, width, height, extraction, parserName: MEDIA_PARSER_NAME, parserVersion: MEDIA_PARSER_VERSION });
+const result = (kind: MediaParseResult["kind"], extraction: MediaParseResult["extraction"], width: number | null = null, height: number | null = null): MediaParseResult => ({ kind, width, height, durationMs: null, extraction, parserName: MEDIA_PARSER_NAME, parserVersion: MEDIA_PARSER_VERSION });
 
 async function pdf(request: ParserRequest): Promise<MediaParseResult | MediaPreviewPixels> {
   if (new TextDecoder().decode(request.bytes.subarray(0, 5)) !== "%PDF-") fail();
@@ -62,6 +64,7 @@ async function parse(request: ParserRequest): Promise<MediaParseResult | MediaPr
   if ([...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("") !== request.sha256) fail();
   if (request.mimeType === "application/pdf") return pdf(request);
   if (request.operation !== "parse") fail();
+  if (isAvMime(request.mimeType)) return parseAv(request);
   if (request.mimeType === "image/png" || request.mimeType === "image/jpeg") {
     if (request.bytes.length > PARSER_LIMITS.imageBytes) fail("MEDIA_IMPORT_TOO_LARGE");
     const declared = imageDimensions(request.bytes, request.mimeType); pixelBudget(declared.width, declared.height);

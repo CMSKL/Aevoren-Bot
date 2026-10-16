@@ -1,6 +1,6 @@
 # Scoped MCP tools and Apps
 
-This guide describes MCP tools and Apps introduced in beta.34 and retained in the beta.36 local integration draft. Published installers and candidate validation are tracked separately in the [implementation record](IMPLEMENTATION_PLAN.md). Configure a server using the existing **Settings → MCP** form; native Gmail/Drive/Notion setup remains in [Native connections](NATIVE_CONNECTORS.md).
+This guide describes MCP tools and Apps introduced in beta.34 and retained in the beta.37 local integration draft. Published installers and candidate validation are tracked separately in the [implementation record](IMPLEMENTATION_PLAN.md). Configure a server using the existing **Settings → MCP** form; native Gmail/Drive/Notion setup remains in [Native connections](NATIVE_CONNECTORS.md).
 
 ## Grant one conversation and executing Bot
 

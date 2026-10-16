@@ -2,9 +2,19 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.36**。PR #65 的准确源提交 `f1629278fdbf4fdb3e1b0bda1dcf75f959ddea7c` 通过自身四项正常 CI 后，正常合入实际 dev `d0c2ec4d28507b8707420b5a424b516e240cc3d7`，合并树与已验收源完全相同；beta.35 固定快照已建立。本候选已正常整合这个实际 dev 身份，整合前后整棵内容树相同，本机专测、解析器与真实 Mac 包证据保持原范围。它自身的新组合 CI 和合入 dev 仍待完成；实际 dev 的推送 CI 38874946550 也仍在运行，不能当作已通过。beta 仍为 beta.34，最新公开版本仍是 **v0.3.0-beta.33**，master 暂不晋级。本单元仅包含图片／PDF／DOCX；音视频、语音与阶段 6 属于后续交付。
+当前 **v0.3.0-beta.37 仅是本地整合草稿**：从实际 dev `d0c2ec4d28507b8707420b5a424b516e240cc3d7`（package 为 beta.35）出发，正常整合 PR #67 的 beta.36 与原 Voice37 `dcbe41ef6c9ceb95c7d27dc6fe870e3b43f479aa`，再正常合并后继测试修正 `ceb4aa5213f1a1fe2d85a1f04dbce9e14947aeba`。PR #67 尚未合入受保护 dev，本地37也未推送或建立 PR；下面的本地专项已通过，自身完整 CI、跨平台及签名包验收仍待完成。实际 dev 推送 CI 38874946550 与固定 beta.35 预览 38875180574 已分别完成四项完整检查，包含 Windows 实际安装包与关闭验证；它们不替代 PR #67 或本地37的独立门禁。beta 保持 beta.34，最新公开版本仍为 **v0.3.0-beta.33**，master 暂不晋级。本单元包含独立 STT／TTS 与有界音视频；Realtime 只保存配置，实际连接属于 beta.38，阶段 6 按后续单元单独交付。
 
-下文验收段落保留各自原始提交和安装包的历史证据；旧候选的 CI 或本机通过不代表当前本地组合已验收，也不代替实际 Beta／签名发行门禁。
+下文回执保留各自原始提交和安装包的历史证据。原 beta.36 的实际 dev 身份整合、106 项专测、6 项源码解析器与 10 项真实 Mac 包证据不因这次本地37合并而成为新组合验收；真实硬件／云账号也未由受控测试证明。
+
+后继 MCP 测试修正只改变未打包的测试与本实施记录；正常合并前后的应用、Worker、依赖、构建配置及全部打包资源逐项比较无变化，原本地37 Main／ASAR 与资源回执维持相同字节，不重复构建或冒充新 Windows 验收。PR #67 修正提交自身完整 CI 38879862158 仍待完成，原 Windows 指针原因保持未知。
+
+本地37整合回执（2026-10-16）：
+
+- 13 个文件专项 99 项通过、1 项现有可选 Codex 协议产物跳过；五个 TypeScript 项目、构建、ESLint、文档与开源文件检查通过。包校验器单测 11／11 通过。
+- 新未签名 macOS 包实查版本 beta.37；Main SHA256 `81230e3f8340b620e41354403495998466d946ff543dc75eb8a49ac590b4fa86`，ASAR `31ab89d053f0af5fbc1a4c7b6127024aae8e3cb9a131bb7028364e12f1fe857b`。16 个应用文件与 228 个配置资源逐字节一致；解析器 1.1.0 的 207 项清单资源通过，麦克风用途声明及 4 个 Helper 存在，未据此声称签名权限或真实硬件可用。
+- 单工作进程静默运行：源码解析器 WAV 2／2；真实新包语音 4／4 与严格退出／重启 1／1。无跳过、重试或强制清理；语音用显式 mock-keychain 并断言实际开关，录音与播放均由 fixture 代替，HTTP 为 loopback 受控服务。六成员请求在首个结果前全部启动。
+- WebM 编码及实际媒体元素播放的两项场景本机不运行，完整 CI 保留；没有真实云密钥、麦克风、扬声器或 Windows Docker 验收。真实 SDK 的四项图像／文本授权回归属于源码证据，不能当作真实包里的 Claude CLI 验收。
+- 官方音频文档已重新读取核对，保留 `gpt-transcribe` 与 `gpt-4o-mini-tts` 适配器及已记录的 TTS 停用日期，不把 Realtime 替代模型直接套到 Speech 接口。历史构建输出已完整归档后才重新构建，未复用旧包作新证据。
 
 PR #67 的首个完整组合 CI（`0444b749`／38875596148）保留为失败记录：Linux、macOS、Secret 检查通过；Windows 单元 1,632 项通过、66 项跳过，源码场景 49／50。唯一失败为 MCP App 的不支持能力请求：隐藏 iframe 中按钮处理器没有进入，`requestPosted=false`，尚无 RPC 请求，不能据此认定宿主拒绝响应或产品权限错误。Windows 指针投递的具体原因仍未确定。
 
@@ -39,7 +49,7 @@ PR #67 的首个完整组合 CI（`0444b749`／38875596148）保留为失败记�
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
 | 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本／读取／外发／示范已纳入 beta.33；MCP34 与 Notion35 按序待发布 | 历史组合 `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
-| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1 本地整合中；5.2–5.3 不在本单元 | 固定引用、CAS、会话／任务准入与隔离解析保留原单元证据；当前组合本机专测 106／可选跳过 1、源码解析器 6、实际 Mac 包 10 通过；正常 CI 待执行，不宣称阶段验收完成 |
+| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1 候选待合入 dev；5.2 本地37专项通过，完整 CI 待完成；5.3 不在本单元 | 当前37专测 99／可选跳过 1，源码 WAV 2、实际 Mac 包 5，字节与声明校验通过。原 beta.36／Voice37 历史证据单列，不据旧回执宣称新组合通过 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 后续交付，未纳入本单元 | 待按对应单元补充 |
 
 ## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
@@ -221,6 +231,8 @@ Frozen SHA-256: main `51d6738f71a2d1f164dd7b7ab46d16da6e5f9ca83a3d98055422406b54
 
 审查发现已发布示范的缓存回执可能在资料解绑／删除后仍带旧正文；修复为复核原资源、原版本及当前 Scope，拒绝已解绑／删除资源，原发布 Skill 不重复创建或自动启用。产品网关 37 项通过，含后续修改资料后仍返回原版本、解绑／删除后拒绝两项回归。修复源码重新通过四配置 TypeScript 与构建并冻结未签名 macOS beta.33 包；该包原生连接 2、外发 5 通过，typed API 1 项更正为源码 fixture 证据；示范 1 在纠正测试读取随包指南的方式后通过，实查 isPackaged、版本与指南正文。最初指南测试在 Electron evaluate 内动态 import 不被支持，改为查询实际 Resources 路径后读取；应用和包均未为此重建或修改。
 
+
+
 最终完整普通测试记录为 1,540 通过、45 跳过、6 失败：五项原有 5 秒超时（CDP 1 MiB、群聊 20 轮、FIFO 20 轮、工具混合指令循环、诊断参数循环），一项 lead-room 在轮询期限内仍为 running。对应未修改的六个文件单 Worker 复核 128／128 通过，未提高超时或减少断言；保留完整失败证据，远端完整 CI 仍须独立通过，不能把分次复核改记为一次完整全绿。
 
 真实 Linux Docker 集成测试已加入现有浏览器套件，走实际 x11vnc 的 RFB 握手、页面点击、文字／剪贴板脱敏、断线封存、容器重启、旧 epoch 拒绝和归还后重新观察。该测试将在 Linux CI 的真实容器门禁执行；本机 Docker daemon 未启动，本机结果为跳过，不算真实 Docker 已验收。示范单元不代表阶段 4 全部完成，可写 MCP／交互 Apps 以及阶段 5–6 仍待交付。
@@ -274,6 +286,8 @@ ASAR SHA-256 is `74f70835a892b86d227bd0a6dbcdca1c1491ebdf0434c133aa0bb552e51a1cf
 另有 Linux run 38677885045：普通测试 1,587／45 跳过通过，真实 Docker 40／41；六独立 Scope 的截图返回 `409 BROWSER_OBSERVATION_STALE`。容器仍运行，约 427.5／768 MiB，OOM 计数为零；未据此认定内存问题。代码没有观察 TTL，截图内部聚焦并重新观察，不能靠增加夹具观察或放宽新鲜度解决。
 
 `65437c8` 仅在显式开启时写入固定诊断文件，记录焦点／文档版本前后、epoch、布尔状态和有界耗时，不记录 DOM、URL、图片、Cookie、路径或能力令牌。所有 409 校验和捕获顺序保持不变。六个负向用例及相关 26 项、Node／浏览器 Worker 类型、lint、Worker 构建通过。Worker 字节／镜像 context 摘要会变化；前述包 30 项先于此补丁，补丁后的真实 Docker／安装包仍待验证。下一轮真实 Linux CI 用于确定拒绝阶段。
+
+历史冻结 beta.34 验收曾统计 20 项；复核确认当时 typed API fixture 忽略安装包路径，实际为包内 19 项与源码 typed API 1 项。MCP 包测试实查 isPackaged、精确版本以及 Resources 中的 MCP 指南；验证真实 opaque iframe、父级／Preload 隔离、工具输入／结果、真实 UI 调用审批、撤权、未知结果与延迟原生→MCP 模态交接。全部使用临时数据库、真实 IPC 与受控 HTTP，未触及真实外部账号；此处保留历史并纠正证据类别，最新包结果单列于下。
 
 示范基础的真实 Linux [CI 38666108922](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38666108922/job/116198324472) 在 12288fd 完整通过：普通 1,547／45 跳过，实际 Docker／Host 41／41；新增真实 RFB 示范用例 3.239 秒通过。此证据属于 Demo33 基础提交，MCP34 自身跨平台完整 CI 与签名发行仍须通过，真实 Windows Docker 仍未验证。
 
@@ -487,6 +501,34 @@ PR #42 的首次 Windows 普通测试为 1,613 通过／61 跳过／1 失败：�
 本机定向连接器仓库 12／12 通过（总计 902 ms），Node TypeScript、目标 lint、文档链接与 diff 检查通过；没有完整套件、构建或界面重跑。修正明确证明了 fixture 的事务边界，不宣称已证明 Windows 超时根因或新 Windows 门禁通过。旧失败与本机前置失败日志分别保留为 `/tmp/aevoren-media36-1a84b81-windows-failure.log`、`/tmp/aevoren-media36-legacy-transaction-before.log`。
 
 
+## 阶段 5.2 原 beta.37 候选历史（本地源码与未签名 Mac 包回执）
+
+- 独立加密 STT/TTS/Realtime 配置、版本、真实流式转写、PCM→WAV、持久 nonce／未知恢复／当前范围授权；微音频权限只允许用户主动的可信主文档。
+- 有界真实音视频解码、时长保存、私有二进制读取、媒体失效后停止与清除播放器；转录手动 CAS 插入、群完成顺序朗读、取消及清空 generation 释放。
+- Node24 完整普通测试 1,669 通过／45 跳过；隐藏语音 4、typed API 1、A/V 与原媒体 5 通过；独立解码 3 和有界权限／存储／SSE／WAV 等专项证据分别保留。UI 与音频设备是受控测试，不证明真实硬件或云账号。
+- 宿主语音 nonce 对规范化后的实际 scope／参数生成。旧代码可由省略／显式当前 session 重复未知云请求的确定性负例已复现，修复后共用一个实际请求与任务 ID。密钥与原始音频不进入模型工具回执。
+- 补齐 macOS 麦克风声明、App／Helper 音频权限及有区分的未签名／实际签名校验；三个校验器正反例通过。真实 beta.37 安装包、跨平台、签名和账号／设备仍待完成。
+
+
+### 5.2 布局修复后的冻结 Mac 包与完整源码回归
+
+代码基线 `020cee458e2bba0c90767ca5c1fbe3b01f1861bf`，工具链为 Node `24.19.0` / pnpm `11.19.0`。串行普通测试 **1,670 通过 / 45 跳过**（111.71 秒）；后续 Renderer 修正通过完整 lint、五个 TypeScript 目标及一次完整构建，再直接打包同一冻结输出，未重复构建。源码专项 **6/6** 通过，包括原有明暗参考图、200% 缩放键盘操作、关闭控件释放录音/播放、草稿冲突及显式 `@所有人` 的六请求并行与朗读顺序。两项包校验器的 10 个正反例、39 份文档链接、依赖许可检查（240 包 / 11 组）、未变化的 243 项 npm notices 与 250 项 SBOM 组件检查分别保留。
+
+真实未签名 macOS arm64 `0.3.0-beta.37` 应用包完成 **38 项功能/正常关闭 + 1 项 typed API = 39 项不同场景**，全部通过。八项正常关闭均保留，强制进程清理和目录清理警告均为 **0**。这些场景实际断言打包身份和版本；不将源码启动计为包验收。Main、Preload、14 个 Renderer 文件、两套 Worker 的八个文件、九份随包指南及 notices 与冻结构建/源码逐字节一致；VOICE 指南 SHA-256 为 `10ed6461ce8cf8a9a9bd64b910b186dca982fe35413cd734558f5db4c72f0332`。
+
+包内解析器扫描通过：清单资产 **207**、Resources 文件 **230**、ASAR 文件 **9,555**。实际麦克风包校验确认用途声明及四个 Helper；`signedEntitlementsVerified=false`、`physicalMicrophoneVerified=false`，未将声明当成签名权限或硬件证明。`.gitattributes` 仅对 `resources/media-parser-fonts/**` 设定 `-text`；以 `core.autocrlf=true` 的独立 checkout 复核六个文件均与原始字节相同，LICENSE SHA-256 为 `93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b`。未改变字体、许可或固定摘要的验证规则。
+
+冻结 Main SHA-256：`63b26b2c31d4a613113d5ceab5cc3183c2936cb8d0abe7c77ee70b16bd8eca84`；ASAR：`acdff8bfbae6d6c675996c8577a069ef90fc557c2c07584956d1ce8ca1716c8d`；parser manifest：`657468e6f843090b3d5bd7a9b55a92f286bce6397e283a921d52e679cb1042cd`。完整资产、指南摘要与待验状态记录于本机 `/tmp/aevoren-voice37-final-acceptance-artifact.json`；包场景日志为 `/tmp/aevoren-voice37-final2-actual-package39.log`，源码专项日志为 `/tmp/aevoren-voice37-final-quiet-target-source6.log`。它们是临时本机证据，不是仓库附件。
+
+历史失败继续保留：旧包首轮 37/38 的视频首帧红色通道为 0；两次诊断未重现，测试现等待真实 presented frame 后仍检查原 RGB 阈值与暂停状态，未宣称确定了唯一原因。旧完整源码轮次 **156 通过 / 32 跳过 / 2 失败**，分别为遗漏“语音”分类的旧键盘顺序和真实布局回归：默认语音面板将 composer 增高至 337px、transcript 缩至 407px。产品现以紧凑入口和有界浮层承载控件；原参考图可见性断言未修改。中间浮层修正还发现外部点击焦点与提及选择交互问题，已修正并用明确的提及 chip、everyone 路由、六请求及朗读顺序验证；未提高断言时限。原 trace、布局截图/矩形及旧包摘要独立留在 `/tmp/aevoren-voice37-package-initial-av-pixel-failure`、`/tmp/aevoren-voice37-source-initial-settings-tab-failure`、`/tmp/aevoren-voice37-source-initial-ui-reference-failure`、`/tmp/aevoren-voice37-post-layout-target6-failures` 和 `/tmp/aevoren-voice37-pre-layout-package-hashes.json`。
+
+最终冻结输出随后独立完成完整 **190 项隐藏源码回归：158 通过 / 32 条件跳过 / 0 失败**，约 13.5 分钟；测试进程正常结束，没有将前述专项或旧失败轮次相加作为全量结果。该完成结果在环境重启前由执行代理及主代理直接读取。重启清除了 `/tmp` 原始日志、JSON 和历史 trace，故上列临时路径目前不能重新取证；仓库原有失败摘要继续保留，不声称原始附件仍可下载。
+
+重启后只做冻结字节与清单复核，没有重跑这 190 项或修改构建输出：应用版本 `0.3.0-beta.37`、Main／Preload／14 个 Renderer 文件、两套 Worker 的八个文件、九份指南、notices 和 parser 清单仍与现存冻结输出逐字节一致；Main、ASAR、parser SHA-256 与上列完全一致。`test-results/.last-run.json` 保留 `passed`、空失败列表，但该文件不包含场景数量，不能独立证明 158／32。新测量记录位于本机持久目录 `$CODEX_HOME/aevoren-evidence/2026-10-15/phase5/voice37-frozen-recheck.json`，它是字节／清单复核，不冒充丢失的测试日志。
+
+该冻结包仍使用 Browser Worker engine `9788e576cc351bcfea9e380484b33df8456582b143d0c7fac271662e1ded6e7d`，没有纳入 beta.36 后续显式 AI focus 等待修正；新的 Worker 验收不能归属于本包。Windows、实际签名权限、真实麦克风/输出设备和云账号仍待相应验收；此记录不代表阶段 5.3、阶段 6 或整个计划完成。
+
+
 ### beta.33 外发重启关闭诊断（未发布）
 
 PR #43 的 [Windows 检查 38707578493](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38707578493) 在源码 35 项中通过 34 项；外发未知结果场景已确认一次提交和 unknown 状态，但首次重启的关闭夹具失败，第二次启动及只读核验尚未到达。原 trace 只有关闭调用和夹具错误，没有该进程的退出／管道状态或 Main 关闭阶段，不能确定是产品关闭、进程退出还是继承管道未释放。
@@ -507,6 +549,20 @@ An eighth fixture runs the dependency's real Filesystem methods with the Windows
 
 At `d401708`, CI `38739051128` passed macOS smoke/package, Windows smoke/package and Secret scan. Windows reached the actual NSIS installation, installed feature scenarios and both source/installed close handshakes; the corrected native ASAR traversal passed against the real Windows package. Linux stopped before verification/Docker at `open-source:check` because this plan contained an absolute personal evidence-directory path. The gate correctly rejected that tracked path; it was not a product or Docker failure. Evidence references now use portable `$CODEX_HOME/aevoren-evidence/` notation, with no gate exception. This documentation-only correction does not change application, Worker, parser, dependency, package or workflow bytes. The original failed run remains recorded; fresh CI must confirm all gates on the corrected commit before promotion.
 
+
+### beta.37 propagation of verified focus and platform fixtures
+
+The beta.37 source now incorporates exactly the beta.36 `ec820c4` BrowserEngine focus fix: only an explicit AI frame-focus request waits up to five seconds for isolated-world focus, then still verifies the unique target, document version, ownership epoch and owned operation before capture. Input focus checks and the separate capture-stage timeout are unchanged. Before applying selected files, the existing engine and frame-diagnostics source were verified byte-identical to the patch's base. This is the only production-code change relative to `064b9e8`; beta.37 voice/UI contracts and version are retained.
+
+The same narrowly selected update includes the deterministic raw mtime/CAS ctime fixtures, transactional legacy-connector migration fixture and native-ASAR-path verifier correction from beta.36. These modify tests and verification only; no deadline, skip, permission or asset-digest rule changes. Local Node 24 checks passed **62/62** (43 focus/browser, seven CAS, 12 native-connector), **8/8** parser-verifier cases including actual Windows ASAR traversal semantics, Node and Browser Worker TypeScript, targeted lint and documentation links. Logs are retained under the persistent local `phase5` evidence directory.
+
+The exact BrowserEngine production source already passed beta.36 Linux CI, including all **41/41** real Docker cases and six independently scoped profiles/frames; that is beta.36 evidence, not a beta.37 Docker run. No Docker Desktop, hidden Electron, full build or packaging was run for this propagation. The prior beta.37 full-source 158/32 and actual-package 39 results retain their earlier boundaries: its cached package still has engine `9788e576...` and has not been relabeled as testing the new focus source. Fresh beta.37 CI must build and verify the combined candidate before Beta promotion or release. Master remains deferred.
+
+### beta.37 first Windows results and fixture corrections
+
+At `d38ec40`, CI `38739510867` passed the macOS smoke/package gate. Linux correctly stopped at the open-source path check because the evidence note contained an absolute personal directory; this plan now uses portable `$CODEX_HOME/aevoren-evidence/` references without changing the gate. Windows ordinary tests passed, then source UI completed **56/58**: an older settings fixture expected seven categories although Voice adds an eighth, and the WAV playback fixture tried to click a message behind the open voice popover. The retained trace explicitly reports the popover header intercepting pointer input. Source close, Windows packaging and installed acceptance did not run after the source failures.
+
+Both corrections are test-only. Windows core acceptance now checks all eight exact current category labels. Playback queues completed speech through the existing visible in-panel action and explicitly asserts queue length two before closing/clearing; fresh message requests close the panel first. WAV bytes, exact cloud-request counts, blocked-play recovery, late-audio rejection, local pause counts and generation-clear assertions remain. No force click, timeout increase, skip or product change was introduced. Targeted lint, Node types, documentation links and open-source readiness pass; the corrected interaction still requires actual UI/Windows validation. The original failed workflow and trace remain separate evidence, and the cached macOS package is unchanged.
 
 ### MCP34 Windows 初始文档顺序校验
 
@@ -626,24 +682,36 @@ The production notice generator reproduced the staged inventory unchanged. Whole
 After PR65 completed its own four normal checks, the release owner normally merged it to actual protected dev `d0c2ec4d28507b8707420b5a424b516e240cc3d7`, with tree equality to the tested source, and fixed the separate beta.35 snapshot before further development. This branch normally merged that actual identity as `600c1f2d78c3a9b7faabff73bd2a98c4ffc300f5`. Its entire tree `77dded19e0db0d8b686032dab084803d4091bc59` equals local acceptance `f091ebd37dc72ac638ab0d7b92aac6f8be6f5c3d`: zero tracked content changed, including every product, Worker, parser, dependency, build and packaged guide input. Only excluded source-status README/matrix/implementation records were then updated for the ordinary feature PR. No rebuild or unchanged test repeat was substituted for the required new normal CI.
 
 The actual dev push run 38874946550 remains pending at this handoff. This candidate still needs its own normal CI and protected promotion; actual Beta gates and signed publication remain separate. The beta.35 fixed snapshot prevents later dev/media changes from entering that earlier release, and the release owner preserves the 34 → 35 → 36 order with master deferred.
-### Release fixture prerequisites after Media36 development acceptance
 
-Actual dev `0562d546f8d8c35e8168649c8ebedbe73f358325` passed all four checks in CI 38886130874, including Windows installed-package business and normal-close acceptance. This maintenance candidate integrates that actual dev identity. Its only changes outside this progress record are two test fixtures; application code, resources, package version and dependency inputs remain identical to accepted dev36.
+## 0.3.0-beta.37 refresh from normal MCP34 dev integration
 
-Actual beta34 CI 38883639950 failed the finite legacy folder/memory case at the existing 60s deadline (94,994ms whole-case report). Its old fixture applied 29 historical SQL migrations with statement-level implicit commits before exercising the real backup and upgrade. The fixture now uses the existing per-migration transaction pattern, preserving every migration, seed row, assertion and foreign-key pragma outside the transaction. Nine bounded numeric phase markers distinguish fixture creation, actual backup/upgrade, scope checks, reopening and cleanup. Controlled macOS SQLite comparisons passed with both the original and transaction fixtures; the full file passed 12 tests. These controls do not establish a Windows OS cause or prove Windows performance. The deadline and production migration implementation are unchanged.
+This candidate integrated normal dev `a743f7d835948a051d316a74fdc3752c190eacc2` after PR #37 exact source head `2ccd1c9` passed all four checks (CI 38758776745), including actual Linux Docker and macOS/Windows source plus installed acceptance. Current candidate features, expanded feature/package/close workflow selections and exact package version are retained. Only conflict resolution in documentation/workflow lists was needed; production feature behavior was not replaced. Prior failed and earlier local receipts above remain tied to their original builds. Fresh normal CI is required for this merge; no Beta tag or master promotion has occurred.
 
-PR66 CI 38884196940 failed one of 41 real Linux Docker cases when a page-bound screenshot correctly rejected missing document focus. The six-environment fixture now performs one ordinary, authorized click on the already observed Draft field before its original screenshot. All six start barriers, cookie isolation, screenshot identity and negative focus/no-capture guards remain. The focused guard/transport suite passed 14 tests; actual Docker acceptance remains a required CI check, without local daemon startup, screenshot retries or product guard changes.
+### Local Voice37 integration draft — 2026-10-16
 
-Original failures and bounded local evidence remain under `$CODEX_HOME/aevoren-evidence/2026-10-15/releases/`: `beta34-e751134-win-failed-116916033812.log`, `pr66-f94d9c5-linux-failed-116917880392.log`, `legacy-scope-transaction-proof.json` and `beta-gate-fixtures-*.log`. Fresh normal maintenance CI must pass before narrow beta34/beta35 backports. Signed public beta33 remains the latest publication; master is deferred.
+This local-only draft starts from actual dev `d0c2ec4d28507b8707420b5a424b516e240cc3d7`, normally fast-forwards pending Media36 PR #67 at `0444b7492758db2835809f4fb04e8df0c096eb66`, and merges original Voice37 `dcbe41ef6c9ceb95c7d27dc6fe870e3b43f479aa`. The accepted dev identity and the Media36 local proof remain separate; neither pending Media36 nor this new Voice37 combination is described as accepted protected dev. No new Voice37 push, PR, package proof or verification result is claimed here.
+
+Original Voice37 source/package and controlled-device receipts above remain historical to their own builds. The current combination retains the corrected Library document sequencing, GUI Docker discovery, strict normal-close callers, finite cleanup, response-local image/private-text leases and verified same-file Windows delivery gates. Quiet local fixture choices and fresh source/package/CI evidence will be recorded only after actually performed; no real microphone, speaker, cloud account or OS-keychain-backed real-credential verification is inferred from old fixture results. Actual Realtime connections remain a later delivery. Beta remains beta.34, public beta.33 and master remain unchanged.
 
 
-### Approval review readiness race — development correction
+### Local37 release-fixture maintenance preparation — 2026-10-16
 
-Beta34 PR69 head28893b5 CI38904721121 passed Linux actual Docker, macOS source/package/close and secret checks, then failed Windows source37/38 at the second App write (expected2/received1 under the original5s). The captured real SQLite state retained the second approval pending, second intent prepared and tool awaiting-approval; no second RPC response existed. The unsupported-capability request had fully passed its trusted-handler, matching-id HTTP200/-32601 assertions. Original Windows pointer/handler/request-counter timing was not recorded, so an exclusive OS or input cause is not claimed. Original log/verified1.42MB diagnostics are preserved externally as pr69-28893b5-*; no blind rerun or resend occurred.
+This local-only merge incorporates pending maintenance PR68 head `1c3122540523f102a885e5409573a17644a36851`, which contains actual dev36 identity and only two fixture prerequisites plus progress notes. The candidate remains unpushed: PR68 still requires its own Windows/full gate, normal development acceptance and actual accepted-dev identity merge before the first new37 PR. No protected acceptance or public release is implied. All application, dependency and packaged resource inputs remain those of frozen37; only the legacy-migration and six-browser-focus fixtures change. Their original deadlines and business assertions remain. Fresh local fixture checks and exact byte/diff evidence are recorded externally, and the actual protected-dev merge must still be integrated after acceptance.
 
-A separate deterministic hidden Electron regression held one real Main approval-review response after its authoritative handler returned. On unchanged dev5bd, the approval button stayed enabled while the current request counter made its click handler silently refuse stale review; the test failed at expected-disabled/received-enabled (11.2s). The narrow shared-dialog correction exposes the actual in-flight review as UI state: only the allow action pauses, the saved snapshot remains visible without layout changes, and deny/stop stay available. Existing request counters, stale-response guards, immutable review matching and host authorization remain. All dialog callers already key by approval id, preserving per-approval state.
+### Actual development maintenance identity integrated into Voice37
 
-After correction the deterministic source case passed, then all four real MCP source scenarios passed together (20.3s), including second actual App write, unknown/no-resend and delayed native→MCP single-portal handoff. Four approval/foundation unit files passed27 tests; five TypeScript/build configurations and targeted ESLint passed. The fresh unsigned macOS package passed MCP4 plus strict normal application quit in one run (5/5,40.2s), with actual packaged identity, mock-Keychain switch, hidden windows and normal cleanup. The held-review scenario releases its real reply and submits one native pointer approval, producing one actual controlled MCP server write and allowed/succeeded durable records; no direct approval shortcut exists. No real account, foreground window, physical audio or local Docker engine was used.
+Maintenance PR68 own CI38896964585 passed all four jobs, including actual Windows source50/close8/installed42/close8 and verified artifact upload. Its normal dev merge is `5bdff605bccfa3a32e64b1db1a5206b0a777cc29`, entire tree identical to reviewed1c31225. This branch now normally merges that actual protected identity. Compared with local37c1aa, only this progress note changes; all application, dependency, packaged resources and actual unsigned Main/ASAR bytes remain unchanged. The accepted actual-dev push38904530777 and the new Voice37 own normal CI remain separate required gates before protected37 acceptance. Beta34/35 release sequencing and master deferral remain.
+
+
+### Local Voice37 corrected-review Renderer preparation (pending DEV71)
+
+This local-only branch merges pending approval fix364705b into Voice37/PR70head197e. It retains version37, Voice/media scope and all response authorization; only the shared review UI correction, its real-MCP regression and progress notes differ. Development PR71 still requires its own full gates and normal protected acceptance; this branch must normally integrate that actual identity before any Voice70 head update. Older Voice37 package ASAR31ab remains historical with the known review UI race. Fresh corrected-Renderer package and quiet Voice/MCP checks are required; no Realtime38 or later feature is imported.
+
+### Voice37 corrected-Renderer local package verification
+
+The locally integrated pending review fix passed five TypeScript/build configurations, targeted ESLint and27 focused approval/foundation cases. A fresh unsigned macOS37 package passed exactly9 hidden scenarios in one run (1.4min): MCP4, Voice4 and strict normal application quit. The regression holds a real Main review reply, verifies allow pauses while deny/stop remain enabled, then one real pointer approval yields one controlled MCP write. Original second-App-write, unknown/no-resend and native→MCP handoff also pass; Voice4 preserves independent settings, ABA draft insertion, scoped output cancellation and completion-order speech while six model calls remain parallel. Input/playback substitutes prevent physical audio, and no real cloud account or foreground window was used. No skip, retry or forced cleanup occurred.
+
+Main remains81230e3f8340b620e41354403495998466d946ff543dc75eb8a49ac590b4fa86; corrected Renderer produces ASAR078c069452bca9dca3594d9c4a0a57686b95587f127f8546385d590cdbef07e7. All16 app outputs,228 configured resources and207 parser assets match the new package. Microphone declaration/four Helpers are verified, without signed entitlement/physical microphone proof. Old37out/dist were preserved as voice37-before-approval-fix-20261016T135210Z. Evidence is approval37-* externally. Only the shared dialog, MCP regression and progress record differ from PR70head197e; no Realtime38 or later feature enters. This candidate remains unpushed until DEV71 full acceptance, then normal actual-dev identity integration and its own fresh normal CI; Beta ordering/master deferral remain.
 
 External evidence is approval-refresh-* and approval36-integration-package-receipt.json. This fix begins on a feature branch from actual dev5bdff60 and requires its own normal four-platform gates, normal dev acceptance and actual protected identity before narrow Beta backport. Older Voice37–Template44 packages retain their historical evidence and must inherit the corrected shared Renderer with fresh appropriate package/CI validation before publication. Public beta33/no34tag/master deferral remain.
 
@@ -659,3 +727,15 @@ The stronger corrected source case passed (9.2s);27 focused approval/foundation 
 A fresh local unsigned package used the verified installed Electron44.3.0/arm64 distribution after an incomplete network download stalled; the local override is supported by the installed builder and does not change repository release policy. All five strict package cases failed only native exit checks after their business assertions. The standalone no-approval quit trace recorded flush ACK, closed window and app-quit code0 promptly, then no process exit before the original3s deadline and owned SIGKILL cleanup. A control using the previously validated e7cf package failed the same strict no-approval quit check under this host. Native/OS cause remains undetermined; no shutdown code or budget was changed. Logs and phase traces are preserved as epoch36-integration-actual-package.log, approval-epoch-strict-package-diagnostics and approval-epoch-old-package-close-control.log. This local exit limitation must not be recorded as installation acceptance.
 
 The earlier UI-state package receipts and old364 CI remain historical and do not validate this corrected generation implementation. A new exact-head normal CI must independently verify macOS/Windows source and actual installed packages, including strict MCP exit assertions, before any normal dev acceptance, Beta backport or publication. Public beta33/no34tag/master deferral remain.
+
+
+### Voice37 generation correction preparation
+
+The old8b3eb6e disabled-state Renderer proof above is historical and superseded. This local-only normal merge includes candidate76e5ada generation correction and strict MCP fixture, matching those two complete source files exactly. Version37, Voice settings/runtime and all media/private-text/TASK authority remain; no Realtime38 source enters. Linux and macOS source/package CI for76e5ada passed; Windows installed checks are still pending at preparation. Actual accepted-dev identity, its complete push gate and a fresh exact-head Voice37 normal CI remain required. Given the recorded local native-exit failure and old-package control, no unchanged local exit suite is blindly rerun or relabelled successful; actual package acceptance will be established by the required new normal CI.
+
+
+### Actual generation-correction development identity in Voice37
+
+PR71 source76e5ada passed all four normal jobs in38918904604, including Windows source51/close8, installed43/close8 and verified artifact upload. Its normal protected dev merge86a9dc836135f2c7bf286d051c24a0f297037a59 has the exact tested tree93f7404e7c8b80d91a1378df709ffc7397096aee. This branch normally incorporates that actual identity with zero content delta before this status note. The shared dialog and whole MCP fixture match accepted dev exactly.
+
+Actual dev push38926440451 and this refreshed Voice37 exact-head CI remain separate required checks. Older f99 Voice37 actual-package receipts are historical; no unchanged failed local native-exit suite is repeated. Current source/package and strict exits will be verified by new normal CI, retaining all real AudioContext/AV cases there. Beta34→35→36→37 signed-public order and master deferral remain.

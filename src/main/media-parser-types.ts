@@ -5,6 +5,7 @@ export type MediaParseResult = {
   kind: MediaKind;
   width: number | null;
   height: number | null;
+  durationMs: number | null;
   extraction: { text: string; spans: MediaSpan[]; warningCodes: string[] } | null;
   /** Supplied by the trusted host manifest, never trusted from a parser reply. */
   parserName: string;

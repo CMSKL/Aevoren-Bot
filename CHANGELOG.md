@@ -5,6 +5,13 @@
 - Correct the Windows fixture cleanup budget: preserve the 3-second graceful close, share the previous 1.5-second command plus 2-second pipe allowance as one finite 3.5-second forced-cleanup window, and require the actual owned exit and closed pipes. Keep descendant/sibling checks and distinguish forced cleanup from a normal exit.
 - Preserve the exact installed-and-accepted unsigned Windows x64 NSIS file with its SHA-256 and version/head identity after successful CI gates, for a 30-day manual validation download. Official Release signing and automatic-update requirements remain unchanged.
 
+## v0.3.0-beta.37 (local integration draft)
+
+- Add separate encrypted STT/TTS/Realtime settings, completed-file streaming transcription and actual PCM-to-WAV speech, durable non-replaying task intents and scoped cancellation/recovery. Realtime configuration is saved; connection support follows separately.
+- Add explicit audio-only microphone intents, draft-version guarded manual transcript insertion, current-session completion-order reading, AI voice identity and late-result/generation cancellation guards.
+- Add genuinely decoded bounded audio/video imports and local players, persisted durations and revocable binary reads; video is preview-only.
+- Earlier original beta.37 snapshots recorded 1,669 ordinary passes / 45 skips and controlled hidden voice, typed-API and A/V/media checks; the implementation record retains their separate package and later source receipts. These are historical to their original builds. This new local combination awaits its own verification; real cloud/hardware, cross-platform and signing acceptance remain separate.
+
 ## v0.3.0-beta.36 (development candidate)
 
 - Add owned PNG/JPEG/PDF/DOCX storage, fixed message/extraction references, conversation bindings and immutable Runtime admission snapshots; revocation blocks later reads and rebinding does not revive old tasks.

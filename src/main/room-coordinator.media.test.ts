@@ -9,7 +9,7 @@ function fixture() {
   const repository = new AppRepository(":memory:"); repositories.push(repository);
   const members = [repository.createBot(), repository.createBot()], detail = repository.createRoom({ memberBotIds: members.map(value => value.bot.id), leadBotId: null });
   const items = repository.media.publishImport(detail.session.id, ["a", "b"].map(value => ({
-    asset: { reference: { id: randomUUID(), name: `${value}.png`, size: 1, mimeType: "image/png", sha256: value.repeat(64) }, kind: "image", width: 1, height: 1 }, extraction: null,
+    asset: { reference: { id: randomUUID(), name: `${value}.png`, size: 1, mimeType: "image/png", sha256: value.repeat(64) }, kind: "image", width: 1, height: 1, durationMs: null }, extraction: null,
   })));
   return { repository, members, detail, items };
 }

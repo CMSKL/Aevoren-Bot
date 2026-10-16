@@ -1,3 +1,4 @@
+import { VOICE_OPERATION_SCHEMAS } from "@shared/voice-product";
 import { MCP_WRITE_OPERATION_SCHEMAS } from "@shared/mcp-write-product";
 import { DEMONSTRATION_OPERATION_SCHEMAS } from "@shared/demonstration-product";
 import { NATIVE_OUTBOUND_OPERATION_SCHEMAS } from "@shared/native-outbound-product";
@@ -16,6 +17,7 @@ import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema
 
 export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...MEDIA_OPERATION_SCHEMAS,
+  ...VOICE_OPERATION_SCHEMAS,
   ...LIBRARY_OPERATION_SCHEMAS,
   ...ENVIRONMENT_OPERATION_SCHEMAS,
   ...BROWSER_OPERATION_SCHEMAS,
@@ -132,7 +134,7 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
     action: z.enum(["open_chats", "open_contacts", "open_workspaces", "open_settings", "open_profile", "open_bot", "open_room", "open_bot_profile", "open_room_settings", "task_details", "sidebar_search", "sidebar_expand", "sidebar_select", "model_search", "draft_get", "draft_update", "choose_avatar", "window_show", "window_hide", "app_exit", "dismiss_update", "draft_remove_attachment", "draft_add_attachments", "room_members", "expand_record"]),
     botId: botIdSchema.optional(), roomId: roomIdSchema.optional(), sessionId: sessionIdSchema.optional(),
     query: z.string().max(500).optional(), unreadOnly: z.boolean().optional(),
-    section: z.enum(["general", "capabilities", "memory", "mcp", "apps", "routines", "updates"]).optional(),
+    section: z.enum(["general", "capabilities", "memory", "mcp", "apps", "routines", "updates", "voice"]).optional(),
     tab: z.enum(["artifacts", "records"]).optional(), group: z.enum(["hidden", "archived", "workspaces", "project", "bot_group", "room_group"]).optional(),
     projectId: z.string().uuid().optional(), expanded: z.boolean().optional(), botIds: z.array(botIdSchema).max(100).optional(), roomIds: z.array(roomIdSchema).max(100).optional(),
     attachmentId: z.string().uuid().optional(), recordId: z.string().uuid().optional(),
