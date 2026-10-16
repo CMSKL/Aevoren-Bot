@@ -34,6 +34,7 @@ module.exports = {
     { from: "docs/SEARCH.md", to: "docs/SEARCH.md" },
     { from: "docs/GROUP_ROUTINES.md", to: "docs/GROUP_ROUTINES.md" },
     { from: "docs/AUTOMATION_EVENTS.md", to: "docs/AUTOMATION_EVENTS.md" },
+    { from: "docs/TEMPLATES_EXPORTS.md", to: "docs/TEMPLATES_EXPORTS.md" },
     { from: "docs/ORGANIZATION.md", to: "docs/ORGANIZATION.md" },
     { from: "NOTICE", to: "NOTICE" },
     { from: "out/worker", to: "environment-worker" },

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.0-beta.44 (development candidate)
+
+- Add versioned portable templates with exact profile/roster/resource/file selection, owned immutable bytes, full review and independent import copies with Skills initially disabled.
+- Add explicit-scope JSON and self-contained offline HTML exports through native no-overwrite save dialogs; cancel and revoke only the selected operation.
+- Share scoped template/export operations with connected AI, fixed original Runtime revisions, private revocable model text, concrete approvals and atomic mutation receipts. TASK cannot import new contacts.
+- No new dependency. Local verification and actual packaged evidence are recorded separately; Windows and signed publication remain pending.
+
 ## v0.3.0-beta.43 (development candidate)
 
 - Configure reviewed MAIN Bot/group Routine subscriptions for authenticated local Webhooks and metadata-only Runtime completion/failure events, with concrete source/target/version checks.

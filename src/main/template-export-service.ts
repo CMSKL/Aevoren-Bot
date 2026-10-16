@@ -73,9 +73,9 @@ export class TemplateExportService{
     for(const bytes of collected.files.values()){await this.blobs.put(bytes,signal??context?.signal);assertCurrent();}assertCurrent();
     return this.preview({actor:context?{executorBotId:context.executorBotId,runtimeRunId:context.runtimeRunId}:null,origins:parsed.resources.map(value=>value.reference),manifest,digest:templateDigest(manifest),files:collected.files,ownerSessionId:parsed.sessionId,assertCurrent});
   }
-  async commitCapture(input:TemplateCommitInput,context?:TemplateContext,signal?:AbortSignal){this.check(context,undefined,signal);const parsed=templateCommitSchema.parse(input),value=this.fromPreview(parsed.preparedId,parsed.expectedDigest,context);if(!value.ownerSessionId)throw invalid();
+  async commitCapture(input:TemplateCommitInput,context?:TemplateContext,signal?:AbortSignal,publish:<T>(work:()=>T)=>T=work=>work()){this.check(context,undefined,signal);const parsed=templateCommitSchema.parse(input),value=this.fromPreview(parsed.preparedId,parsed.expectedDigest,context);if(!value.ownerSessionId)throw invalid();
     this.check(context,value.ownerSessionId,signal);const verified=new Set<string>();for(const file of uniqueFiles(value.manifest.resources)){if(verified.has(file.sha256))continue;verified.add(file.sha256);await this.blobs.read(file.sha256,file.size,signal??context?.signal);value.assertCurrent();this.check(context,value.ownerSessionId,signal);}
-    return this.templates.publish(value.manifest,value.ownerSessionId,parsed.id,parsed.expectedVersion,value.origins);}
+    return publish(()=>{value.assertCurrent();return this.templates.publish(value.manifest,value.ownerSessionId!,parsed.id,parsed.expectedVersion,value.origins);});}
   assertPrepared(id:string,digest:string,context?:TemplateContext):void{this.fromPreview(id,digest,context);}
   /** Trusted UI/native approval review only; this is not a model catalog operation. */
   reviewPrepared(id:string,digest:string):TemplateManifest{return structuredClone(this.fromPreview(id,digest).manifest);}
@@ -94,13 +94,13 @@ export class TemplateExportService{
     this.validateFiles(manifest,files);for(const bytes of files.values())await this.blobs.put(bytes,signal??context?.signal);this.check(context,undefined,signal);
     return this.preview({actor:context?{executorBotId:context.executorBotId,runtimeRunId:context.runtimeRunId}:null,origins:[],manifest,digest:templateDigest(manifest),files,ownerSessionId:context?.sessionId??null,assertCurrent:()=>this.check(context,undefined,signal)});
   }
-  async commitImport(input:TemplateImportInput,context?:TemplateContext,signal?:AbortSignal):Promise<TemplateImportResult>{
+  async commitImport(input:TemplateImportInput,context?:TemplateContext,signal?:AbortSignal,publish:<T>(work:()=>T)=>T=work=>work()):Promise<TemplateImportResult>{
     const parsed=templateImportSchema.parse(input);this.check(context,parsed.targetSessionId,signal);if(context&&this.app.getSession(context.sessionId).kind==="TASK")throw new AevorenBotError("APPROVAL_SCOPE_INVALID");const intent=templateDigest({digest:parsed.expectedDigest,targetSessionId:parsed.targetSessionId??null});
     const previous=this.templates.importReceipt(parsed.clientNonce,intent,context?.sessionId,context?.executorBotId);if(previous)return previous;
     const value=this.fromPreview(parsed.preparedId,parsed.expectedDigest,context);this.validateFiles(value.manifest,value.files);
     if(!value.manifest.bots.length&&!parsed.targetSessionId)throw invalid();
     for(const bytes of value.files.values()){await this.libraryBlobs.put(bytes,signal??context?.signal);value.assertCurrent();this.check(context,undefined,signal);}this.check(context,parsed.targetSessionId,signal);
-    return this.app.demonstrationsTransaction(()=>this.templates.importAtomic(parsed.clientNonce,intent,value.digest,context?.sessionId??null,context?.executorBotId??null,()=>{
+    return publish(()=>this.app.demonstrationsTransaction(()=>this.templates.importAtomic(parsed.clientNonce,intent,value.digest,context?.sessionId??null,context?.executorBotId??null,()=>{
       value.assertCurrent();const bots=new Map<string,ReturnType<AppRepository["createBot"]>>();
       for(const profile of value.manifest.bots){const created=this.app.createBot();this.app.updateBot(created.bot.id,created.bot.version,{name:profile.name,label:profile.label,description:profile.description,instructions:profile.instructions,avatarShape:profile.avatarShape,avatarColor:profile.avatarColor,mcpServerIds:[],memoryWorkspaceIds:[]});this.app.setConversationProject(created.session.id,null,this.app.getConversation(created.session.id).version);bots.set(profile.key,created);}
       const room=value.manifest.room?this.app.createRoom({name:value.manifest.room.name,description:value.manifest.room.description,memberBotIds:value.manifest.room.memberKeys.map(key=>bots.get(key)!.bot.id),leadBotId:value.manifest.room.leadBotKey?bots.get(value.manifest.room.leadBotKey)!.bot.id:null}):null;
@@ -108,7 +108,7 @@ export class TemplateExportService{
       if(!target)throw invalid();
       const resourceRefs=value.manifest.resources.map(resource=>{const created=this.app.library.create({sessionId:target,kind:resource.kind,name:resource.name,description:resource.description,body:resource.body,files:resource.files});if(resource.kind==="skill")this.app.library.setEnabled({sessionId:target,id:created.resource.id,expectedVersion:created.resource.version,enabled:false});return created.reference;});
       this.check(context,undefined,signal);return {clientNonce:parsed.clientNonce,digest:value.digest,botIds:[...bots.values()].map(bot=>bot.bot.id),roomId:room?.room.id??null,sessionIds:[...bots.values()].map(bot=>bot.session.id).concat(room?[room.session.id]:[]),resourceRefs,targetSessionId:target};
-    }));
+    })));
   }
   async prepareExport(input:OfflineExportInput,context?:TemplateContext,signal?:AbortSignal):Promise<PreparedOfflineArtifact>{
     const parsed=offlineExportSchema.parse(input);this.check(context,undefined,signal);const checks:Array<()=>void>=[],sessions=[];let size=0;

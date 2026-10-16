@@ -18,6 +18,7 @@ export const TEMPLATE_EXPORT_MIGRATION={version:48,sql:`
       THEN COALESCE((SELECT a.templates_json FROM runtime_runs r LEFT JOIN portable_runtime_admissions a ON a.runtime_run_id=r.id WHERE r.client_nonce=NEW.client_nonce AND r.executor_bot_id=NEW.executor_bot_id AND r.id<>NEW.id ORDER BY r.rowid LIMIT 1),'[]')
       ELSE (SELECT json_group_array(json_object('id',t.id,'revisionId',v.id,'digest',v.digest)) FROM portable_templates t JOIN portable_template_revisions v ON v.id=t.current_revision_id WHERE t.owner_session_id=NEW.session_id) END);
   END;
+  CREATE TABLE portable_native_attempts(intent_key TEXT PRIMARY KEY,state TEXT NOT NULL CHECK(state IN ('pending','settled')),created_at TEXT NOT NULL);
   CREATE TABLE portable_template_imports(client_nonce TEXT PRIMARY KEY,intent_digest TEXT NOT NULL,bundle_digest TEXT NOT NULL,actor_session_id TEXT,actor_executor_bot_id TEXT,result_json TEXT NOT NULL CHECK(json_valid(result_json)),created_at TEXT NOT NULL);
 `} as const;
 export function stableTemplateJson(value:unknown):string{if(Array.isArray(value))return `[${value.map(stableTemplateJson).join(",")}]`;if(value&&typeof value==="object")return "{"+Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,item])=>`${JSON.stringify(key)}:${stableTemplateJson(item)}`).join(",")+"}";return JSON.stringify(value);}
@@ -37,6 +38,8 @@ export class TemplateExportRepository{
   }
   constructor(private readonly database:DatabaseSync){}
   transaction<T>(work:()=>T):T{const name=`portable_template_${++this.sequence}`;this.database.exec(`SAVEPOINT ${name}`);try{const result=work();this.database.exec(`RELEASE SAVEPOINT ${name}`);return result;}catch(error){this.database.exec(`ROLLBACK TO SAVEPOINT ${name}; RELEASE SAVEPOINT ${name}`);throw error;}}
+  beginNativeAttempt(key:string):void{if(this.database.prepare("SELECT 1 FROM portable_native_attempts WHERE intent_key=?").get(key))throw new AevorenBotError("TOOL_STATE_INVALID","此前保存结果尚未确认，不能自动重新打开保存对话框。请核对文件后发起新任务。");this.database.prepare("INSERT INTO portable_native_attempts VALUES(?,'pending',?)").run(key,new Date().toISOString());}
+  settleNativeAttempt(key:string):void{this.database.prepare("UPDATE portable_native_attempts SET state='settled' WHERE intent_key=?").run(key);}
   resourceEpoch(id:string):number{const row=this.database.prepare("SELECT epoch FROM portable_resource_epochs WHERE resource_id=?").get(id) as {epoch:number}|undefined;if(!row)throw new AevorenBotError("LIBRARY_NOT_FOUND");return row.epoch;}
   private pins(sessionId:string,runtimeId:string):{id:string;revisionId:string;digest:string}[]{
     const row=this.database.prepare("SELECT a.templates_json FROM portable_runtime_admissions a JOIN runtime_runs r ON r.id=a.runtime_run_id WHERE a.runtime_run_id=? AND r.session_id=?").get(runtimeId,sessionId) as {templates_json:string}|undefined;

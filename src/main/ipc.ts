@@ -1,4 +1,4 @@
-import {TEMPLATE_CHANNELS} from "@shared/template-export-channels";
+import {TEMPLATE_CHANNELS,TEMPLATE_CANCEL_CHANNEL} from "@shared/template-export-channels";
 import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
 import { REALTIME_CHANNELS } from "@shared/realtime-channels";
 import { AUTOMATION_EVENT_CHANNELS } from "@shared/event-channels";
@@ -19,6 +19,7 @@ import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent
 import { IPC } from '@shared/channels';
 import { apiResult, AevorenBotError } from './errors';
 import { ProductOperationService } from './product-operation-service';
+import {createProductHandlers} from "./product-handlers";
 import type { ProductDependencies } from './product-handlers';
 import { NATIVE_CONNECTOR_CHANNELS } from '@shared/native-connector-channels';
 import { connectorConfigureSchema } from '@shared/native-connector-schemas';
@@ -39,6 +40,8 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
   const { window } = dependencies;
   const view = new ProductViewService(window);
   const product = new ProductOperationService({ ...dependencies, requestView: (input) => view.request(input) });
+  const portablePending=new Map<string,AbortController>();
+  ipcMain.handle(TEMPLATE_CANCEL_CHANNEL,(event,id:unknown)=>apiResult(()=>{assertTrusted(event,window);portablePending.get(z.string().uuid().parse(id))?.abort();}));
   ipcMain.handle(TEMPLATE_CHANNELS.reviewPrepared,(event,input:unknown)=>apiResult(()=>{assertTrusted(event,window);if(!dependencies.templateExportService)throw new AevorenBotError("INVALID_REQUEST");const value=z.object({preparedId:z.string().uuid(),expectedDigest:z.string().regex(/^[a-f0-9]{64}$/u)}).strict().parse(input);return dependencies.templateExportService.reviewPrepared(value.preparedId,value.expectedDigest);}));
   ipcMain.handle(AUTOMATION_EVENT_CHANNELS.rotateToken, (event, input: unknown) => apiResult(() => {
     assertTrusted(event, window); if (!dependencies.automationEventService) throw new AevorenBotError("INTERNAL_ERROR");
@@ -114,6 +117,10 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
   for (const [channel, operation] of product.handlers) {
     ipcMain.handle(channel, (event, input: unknown) => apiResult(() => {
       assertTrusted(event, window);
+      if(channel.startsWith("templates:")||channel.startsWith("exports:")){
+        const wrapper=z.object({requestId:z.string().uuid(),input:z.unknown().optional()}).strict().safeParse(input);
+        if(wrapper.success){const controller=new AbortController();if(portablePending.has(wrapper.data.requestId))throw new AevorenBotError("INVALID_REQUEST");portablePending.set(wrapper.data.requestId,controller);const handlers=createProductHandlers(dependencies,work=>work(),undefined,undefined,controller.signal);return Promise.resolve(handlers.get(channel)!(wrapper.data.input)).finally(()=>portablePending.delete(wrapper.data.requestId));}
+      }
       return operation(input);
     }));
   }

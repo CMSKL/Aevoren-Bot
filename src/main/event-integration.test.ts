@@ -123,11 +123,11 @@ describe("automation host integration", () => {
   it("backs up and fills a later lower-numbered migration without losing existing higher versions or chat data", () => {
     const root = mkdtempSync(join(tmpdir(), "aevoren-event-gap-")), path = join(root, "app.sqlite");
     cleanup.push(() => rmSync(root, { recursive: true, force: true }));
-    let repository = new AppRepository(path); const owner = repository.createBot(); repository.close();
+    const migrations=MIGRATIONS as unknown as Array<{version:number;sql:string}>,index=migrations.findIndex(item=>item.version===48),missing=migrations.splice(index,1)[0]!;
+    let repository:AppRepository,owner:ReturnType<AppRepository["createBot"]>;
+    try{repository=new AppRepository(path);owner=repository.createBot();repository.close();}finally{migrations.splice(index,0,missing);}
     const before = new DatabaseSync(path), oldRows = before.prepare("SELECT * FROM sessions ORDER BY id").all();
     expect(before.prepare("SELECT version FROM schema_migrations WHERE version>=46 ORDER BY version").all()).toEqual([{ version: 46 }, { version: 47 }, { version: 49 }]); before.close();
-    const migrations = MIGRATIONS as unknown as Array<{ version: number; sql: string }>, index = migrations.findIndex(item => item.version === 49);
-    migrations.splice(index, 0, { version: 48, sql: "CREATE TABLE event_gap_probe(id TEXT PRIMARY KEY)" });
     try {
       repository = new AppRepository(path); expect(repository.getSession(owner.session.id)).toEqual(owner.session); repository.close();
       const after = new DatabaseSync(path);
@@ -135,6 +135,6 @@ describe("automation host integration", () => {
       expect(after.prepare("SELECT version FROM schema_migrations WHERE version>=46 ORDER BY version").all()).toEqual([{ version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }]);
       expect(after.prepare("PRAGMA foreign_key_check").all()).toEqual([]); after.close();
       expect(readdirSync(join(root, "Backups")).filter(name => name.endsWith(".sqlite"))).toHaveLength(1);
-    } finally { migrations.splice(index, 1); }
+    } finally { /* The real migration remains registered after recovery. */ }
   });
 });

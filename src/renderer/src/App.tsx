@@ -1,3 +1,4 @@
+import {PortableDialog} from "./components/PortableDialog";
 import { SearchDialog } from "./components/SearchDialog";
 import type { SearchSourceReference } from "@shared/search-contracts";
 import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent, type ProductViewRequest } from "@shared/product-view";
@@ -93,6 +94,7 @@ export function App(): React.JSX.Element {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [organization, setOrganization] = useState<OrganizationSnapshot | null>(null);
   const [organizationOpen, setOrganizationOpen] = useState(false);
+  const [portableOpen,setPortableOpen]=useState(false);
   const organizationRequestRef = useRef(0);
   const acceptOrganization = useCallback((next: OrganizationSnapshot): void => { setOrganization(current => current && current.version > next.version ? current : next); }, []);
   const refreshOrganization = useCallback(async (): Promise<OrganizationSnapshot | null> => {
@@ -1744,6 +1746,7 @@ export function App(): React.JSX.Element {
         onDismissRestore={dismissRestore}
       />
       {searchOpen?<SearchDialog sessionId={session?.id} projectId={activeProjectId} projects={projects} onClose={()=>setSearchOpen(false)} onNavigate={openSearchSource}/>:null}
+      {portableOpen&&session?<PortableDialog key={session.id} sessionId={session.id} generation={session.generation} bot={selectedBot} room={selectedRoom} onClose={()=>setPortableOpen(false)}/>:null}
       {organizationOpen && organization ? <OrganizationDialog snapshot={organization} bots={bots} rooms={rooms} conversations={conversations} onAccepted={acceptOrganization} onClose={() => setOrganizationOpen(false)} /> : null}
       {taskForm ? <TaskSessionDialog key={`${taskForm.parentSessionId}:${taskForm.task?.version ?? "new"}`} {...taskForm} onClose={() => setTaskForm(null)} onSaved={detail => { setTaskForm(null); mergeConversation(detail.conversation); void refreshConversations(); void openTask(detail.session.id); }} /> : null}
       {taskDetailOpen && selectedTask ? <TaskDetailDialog key={selectedTask.session.id} task={selectedTask} onClose={() => setTaskDetailOpen(false)} onRevise={() => { setTaskDetailOpen(false); setTaskForm({ parentSessionId: selectedTask.parentSessionId ?? selectedTask.session.id, task: selectedTask }); }} onChanged={detail => { setSelectedTask(current => current?.session.id === detail.session.id && current.version <= detail.version ? detail : current); mergeConversation(detail.conversation); }} onDeleted={sessionId => { composerDraftsRef.current.delete(sessionId); setConversations(current => current.filter(item => item.sessionId !== sessionId)); if (sessionIdRef.current === sessionId) { setTaskDetailOpen(false); clearSelection(); } }} /> : null}
@@ -1780,7 +1783,7 @@ export function App(): React.JSX.Element {
         searchFocus={searchFocus&&searchFocus.sessionId===session?.id?searchFocus:undefined}
         onCreateTask={session ? () => { void flushActive().then(saved => { if (saved && sessionIdRef.current === session.id) setTaskForm({ parentSessionId: session.id }); }); } : undefined}
         onOpenTaskDetails={selectedTask ? () => { void window.aevorenBot.sessions.getTask({ sessionId: selectedTask.session.id }).then(result => { if (sessionIdRef.current !== selectedTask.session.id) return; if (result.ok) { setSelectedTask(current => current?.session.id === result.data.session.id && current.version > result.data.version ? current : result.data); setTaskDetailOpen(true); } else setError(result.error); }); } : undefined}
-        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile" && clearTarget === null && taskForm === null && !taskDetailOpen && !searchOpen && !organizationOpen}
+        approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile" && clearTarget === null && taskForm === null && !taskDetailOpen && !searchOpen && !organizationOpen && !portableOpen}
         userProfile={userProfile}
         key={session ? `${session.id}:${session.generation}` : selectedBot?.id ?? selectedRoom?.room.id ?? "empty"}
         initialDraft={session ? composerDraftsRef.current.get(session.id) : undefined}
@@ -1949,6 +1952,7 @@ export function App(): React.JSX.Element {
         }}
       /> : null}
       <SettingsDialog
+        onOpenPortable={session?()=>{setSettingsOpen(false);setPortableOpen(true);}:undefined}
         onOpenOrganization={() => { void openOrganization(); }}
         open={settingsOpen}
         theme={appearanceTheme}

@@ -1,4 +1,3 @@
-import {TEMPLATE_OPERATION_SCHEMAS} from "@shared/template-export-product";
 import { taskCreateSchema } from "@shared/task-session-schemas";
 import { TASK_SESSION_OPERATION_SCHEMAS } from "@shared/task-session-product";
 import { realtimeInputSchema } from "@shared/realtime-schemas";
@@ -134,7 +133,7 @@ export class ProductOperationService {
       return this.dependencies.mcpWriteService.approvalReview(input);
     }
     if (tool.action !== "execute") return undefined;
-    if(["templates.commitCapture","templates.commitImport"].includes(tool.operation)){
+    if(["templates.commitCapture","templates.commitImport"].includes(tool.operation)&&!this.dependencies.repository.findProductOperationResult(this.dependencies.repository.getRuntimeRun(runtimeRunId).clientNonce,tool,this.dependencies.repository.getRuntimeRun(runtimeRunId).executorBotId)){
       const service=this.dependencies.templateExportService;if(!service)throw new AevorenBotError("INVALID_REQUEST");const runtime=this.dependencies.repository.getRuntimeRun(runtimeRunId),input=tool.input as {preparedId:string;expectedDigest:string};
       service.assertPrepared(input.preparedId,input.expectedDigest,{sessionId:runtime.sessionId,executorBotId:runtime.executorBotId,runtimeRunId:runtime.id});
       const manifest=service.reviewPrepared(input.preparedId,input.expectedDigest);
@@ -169,7 +168,7 @@ export class ProductOperationService {
     if(portableOperation(tool.operation)){
       const service=this.dependencies.templateExportService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
       const context={sessionId:runtime.sessionId,executorBotId:runtime.executorBotId,runtimeRunId:runtime.id};
-      if(["templates.commitCapture","templates.commitImport"].includes(tool.operation)){const prepared=input as {preparedId:string;expectedDigest:string};service.assertPrepared(prepared.preparedId,prepared.expectedDigest,context);}
+      if(["templates.commitCapture","templates.commitImport"].includes(tool.operation)&&!repository.findProductOperationResult(runtime.clientNonce,tool,runtime.executorBotId)){const prepared=input as {preparedId:string;expectedDigest:string};service.assertPrepared(prepared.preparedId,prepared.expectedDigest,context);}
     }
     if (tool.operation.startsWith("routines.")) this.dependencies.routineService.assertOperationScope(tool.operation, input, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, runtimeRunId: runtime.id });
     if (tool.operation.startsWith("automationEvents.")) {
@@ -269,19 +268,26 @@ export class ProductOperationService {
     this.validate(tool, invocation.runtimeRunId);
     const runtime = this.dependencies.repository.getRuntimeRun(invocation.runtimeRunId);
     if(tool.action==="execute"&&portableOperation(tool.operation)){
-      const service=this.dependencies.templateExportService!;
+      const service=this.dependencies.templateExportService!,repository=this.dependencies.repository;
       const input=PRODUCT_OPERATION_SCHEMAS[tool.operation]!.parse(this.libraryInput(tool.operation,tool.input,runtime));
       const context={sessionId:runtime.sessionId,executorBotId:runtime.executorBotId,runtimeRunId:runtime.id,signal};
-      const scoped=createProductHandlers(this.dependencies,work=>work(),undefined,context);
-      const result=await scoped.get(productOperation(tool.operation)!.channel)!(input);
+      const mutating=["templates.commitCapture","templates.commitImport","templates.export","exports.save"].includes(tool.operation);
+      if(mutating){const previous=repository.findProductOperationResult(runtime.clientNonce,tool,runtime.executorBotId);if(previous)return this.result({status:"previously_completed",operation:tool.operation,reused:true,result:JSON.parse(previous).result,receiptNotice:"首次回执已记录；不会重新创建、保存或重开文件选择器。"});repository.assertProductReplaySafe(runtime.clientNonce,tool,runtime.executorBotId);}
+      const receipt=(result:unknown)=>{const json=JSON.stringify(result??null),digest=createHash("sha256").update(json).digest("hex");return this.result({status:result===null?"cancelled":"completed",operation:tool.operation,result:result&&typeof result==="object"&&"template" in result?{id:(result as import("@shared/template-export-contracts").TemplateRecord).template.id,revisionId:(result as import("@shared/template-export-contracts").TemplateRecord).revision.id,digest}:tool.operation==="templates.commitImport"?{...result as import("@shared/template-export-contracts").TemplateImportResult}:Array.isArray(result)?{count:result.length,digest}:result&&typeof result==="object"&&"sha256" in result?{size:(result as unknown as {size:number}).size,sha256:(result as {sha256:string}).sha256}:result&&typeof result==="object"&&"id" in result?{id:(result as {id:string}).id,digest}:{digest}});};
+      const publish=<T,>(work:()=>T):T=>repository.commitProductMutation(invocation.id,()=>{signal.throwIfAborted();this.validate(tool,runtime.id);return work();},receipt);
+      const nativeSave=["templates.export","exports.save"].includes(tool.operation),nativeKey=createHash("sha256").update(`${runtime.clientNonce}:${runtime.executorBotId}:${JSON.stringify(tool)}`).digest("hex");
+      if(nativeSave)repository.templates.beginNativeAttempt(nativeKey);
+      let result:unknown;
+      if(tool.operation==="templates.commitCapture")result=await service.commitCapture(input as import("@shared/template-export-contracts").TemplateCommitInput,context,signal,publish);
+      else if(tool.operation==="templates.commitImport"){result=await service.commitImport(input as import("@shared/template-export-contracts").TemplateImportInput,context,signal,publish);this.dependencies.productChanged?.();}
+      else {const scoped=createProductHandlers(this.dependencies,work=>work(),undefined,context);result=await scoped.get(productOperation(tool.operation)!.channel)!(input);if(mutating)publish(()=>{if(nativeSave)repository.templates.settleNativeAttempt(nativeKey);return result;});}
       this.validate(tool,runtime.id);
       let assertCurrent=()=>this.validate(tool,runtime.id);
       if(tool.operation==="templates.read"){const record=result as import("@shared/template-export-contracts").TemplateRecord;assertCurrent=()=>{this.validate(tool,runtime.id);service.read({id:record.template.id,revisionId:record.revision.id},context);};}
+      if(tool.operation==="templates.commitCapture"){const prepared=input as {preparedId:string;expectedDigest:string};assertCurrent=()=>{this.validate(tool,runtime.id);service.assertPrepared(prepared.preparedId,prepared.expectedDigest,context);};}
       if(["templates.prepareCapture","templates.prepareImport","templates.pickImport"].includes(tool.operation)&&result){const preview=result as import("@shared/template-export-contracts").TemplatePreview;assertCurrent=()=>{this.validate(tool,runtime.id);service.assertPrepared(preview.id,preview.digest,context);};}
       if(tool.operation==="templates.list"||tool.operation==="templates.versions"){const snapshot=JSON.stringify(result);assertCurrent=()=>{this.validate(tool,runtime.id);const current=tool.operation==="templates.list"?service.list(context):service.versions(input as string,context);if(JSON.stringify(current)!==snapshot)throw new AevorenBotError("LIBRARY_NOT_BOUND");};}
-      const text=JSON.stringify(result??null),digest=createHash("sha256").update(text).digest("hex");
-      const metadata=Array.isArray(result)?{count:result.length,digest}:result&&typeof result==="object"?{digest,...("id" in result?{id:(result as {id:string}).id}:{}),...("preparedId" in result?{preparedId:(result as {preparedId:string}).preparedId}:{})}:{digest};
-      return {...this.result({status:result===null?"cancelled":"completed",operation:tool.operation,result:metadata}),modelText:{text,isAuthorized:()=>{try{assertCurrent();return true;}catch{return false;}}}};
+      return {...receipt(result),...(!mutating||tool.operation==="templates.commitCapture"?{modelText:{text:JSON.stringify(result??null),isAuthorized:()=>{try{assertCurrent();return true;}catch{return false;}}}}:{})};
     }
     if(tool.action==="execute"&&tool.operation==="bots.readImageAvatar"){
       const service=this.dependencies.botImageService;if(!service)throw new AevorenBotError("INVALID_REQUEST");

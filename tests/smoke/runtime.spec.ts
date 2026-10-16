@@ -420,11 +420,13 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "automationEvents", "botImages", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "library", "mcp", "mcpWrites", "media", "memories", "messages", "organization", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "search", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "voice", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "automationEvents", "botImages", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "exports", "library", "mcp", "mcpWrites", "media", "memories", "messages", "organization", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "search", "sessions", "settings", "skillsExecution", "teams", "templates", "tools", "transcript", "updates", "userProfile", "voice", "workspaces",
     ]);
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.sessions).toSorted())).toEqual([
       "cancelTask", "createTask", "deleteTask", "getMain", "getTask", "listTasks", "onChanged", "onTasksChanged", "reviseTaskSelection", "taskOptions", "updateTask",
     ]);
+    const portableApi=await launched.page.evaluate(()=>{const api=(window as unknown as {aevorenBot:import("../../src/shared/contracts").AevorenBotApi}).aevorenBot;return{templates:Object.keys(api.templates).toSorted(),exports:Object.keys(api.exports).toSorted()};});
+    expect(portableApi).toEqual({templates:["cancel","commitCapture","commitImport","export","list","pickImport","prepareCapture","prepareImport","read","reviewPrepared","versions"],exports:["save"]});
     const automationApi = await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: import("../../src/shared/contracts").AevorenBotApi }).aevorenBot.automationEvents).toSorted());
     expect(automationApi).toEqual(["cancel", "create", "onChanged", "revoke", "rotateToken", "snapshot", "startListener", "stopListener", "update"]);
     const organizationApi = await launched.page.evaluate(() => {

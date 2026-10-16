@@ -4375,7 +4375,7 @@ export class AppRepository {
           review.target.entrySha256 !== grant.entrySha256 || review.target.interpreter !== grant.interpreter ||
           JSON.stringify(review.target.args) !== JSON.stringify(value.args) || review.target.cwd !== value.cwd || review.target.timeoutMs !== value.timeoutMs ||
           review.resourceName !== content.revision.name || review.revisionNumber !== content.revision.number) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
-    } else if(parsed.tool.kind==="product-call"&&parsed.tool.action==="execute"&&["templates.commitCapture","templates.commitImport"].includes(parsed.tool.operation)){
+    } else if(parsed.tool.kind==="product-call"&&parsed.tool.action==="execute"&&["templates.commitCapture","templates.commitImport"].includes(parsed.tool.operation)&&!this.findProductOperationResult(runtime.clientNonce,parsed.tool,runtime.executorBotId)){
       const input=parsed.tool.input as {preparedId:string;expectedDigest:string};if(review?.kind!=="portable-template"||review.target.operation!==parsed.tool.operation||review.target.preparedId!==input.preparedId||review.target.expectedDigest!==input.expectedDigest||review.target.sessionId!==runtime.sessionId||review.target.executorBotId!==runtime.executorBotId||templateDigest(review.target.manifest)!==input.expectedDigest)throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
     } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "demonstrations.publish") {
       if (review?.kind !== "demonstration-skill") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");

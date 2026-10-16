@@ -148,7 +148,7 @@ export type ProductDependencies = AutomationEventDependencies & VoiceProductDepe
   cancelUpdateInstall(): void;
 };
 
-export function createProductHandlers(dependencies: ProductDependencies, commit: <T>(operation: () => T) => T = (operation) => operation(), memorySourceEntryId?: string, libraryContext?: LibraryExecutionContext): Map<string, (input?: unknown) => unknown> {
+export function createProductHandlers(dependencies: ProductDependencies, commit: <T>(operation: () => T) => T = (operation) => operation(), memorySourceEntryId?: string, libraryContext?: LibraryExecutionContext,uiSignal?:AbortSignal): Map<string, (input?: unknown) => unknown> {
   const { repository, providers, generalSettings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
   const userProfile = new UserProfileService(repository);
 
@@ -174,18 +174,19 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   for(const [operation,schema] of Object.entries(TEMPLATE_OPERATION_SCHEMAS)){
     const channel=operation==="exports.save"?EXPORT_CHANNELS.save:TEMPLATE_CHANNELS[operation.slice("templates.".length) as keyof typeof TEMPLATE_CHANNELS];
     handlers.set(channel,async input=>{
+      const signal=libraryContext?.signal??uiSignal;
       const service=dependencies.templateExportService;if(!service)throw new AevorenBotError("INVALID_REQUEST");const value=schema.parse(input);
       switch(operation){
         case "templates.list":return service.list(libraryContext);
         case "templates.read":return service.read(value as import("@shared/template-export-contracts").TemplateReadInput,libraryContext);
         case "templates.versions":return service.versions(value as string,libraryContext);
-        case "templates.prepareCapture":return service.prepareCapture(value as import("@shared/template-export-contracts").TemplateCaptureInput,libraryContext,libraryContext?.signal);
-        case "templates.commitCapture":return service.commitCapture(value as import("@shared/template-export-contracts").TemplateCommitInput,libraryContext,libraryContext?.signal);
-        case "templates.prepareImport":return service.preflightImport(Buffer.from((value as {dataBase64:string}).dataBase64,"base64"),libraryContext,libraryContext?.signal);
-        case "templates.pickImport":{const bytes=await dependencies.pickTemplateBytes?.();return bytes?service.preflightImport(bytes,libraryContext,libraryContext?.signal):null;}
-        case "templates.commitImport":{const result=await service.commitImport(value as import("@shared/template-export-contracts").TemplateImportInput,libraryContext,libraryContext?.signal);dependencies.productChanged?.();return result;}
-        case "templates.export":return dependencies.saveOfflineArtifact?.(await service.prepareTemplateExport(value as import("@shared/template-export-contracts").TemplateReadInput,libraryContext,libraryContext?.signal))??null;
-        case "exports.save":return dependencies.saveOfflineArtifact?.(await service.prepareExport(value as import("@shared/template-export-contracts").OfflineExportInput,libraryContext,libraryContext?.signal))??null;
+        case "templates.prepareCapture":return service.prepareCapture(value as import("@shared/template-export-contracts").TemplateCaptureInput,libraryContext,signal);
+        case "templates.commitCapture":return service.commitCapture(value as import("@shared/template-export-contracts").TemplateCommitInput,libraryContext,signal);
+        case "templates.prepareImport":return service.preflightImport(Buffer.from((value as {dataBase64:string}).dataBase64,"base64"),libraryContext,signal);
+        case "templates.pickImport":{const bytes=await dependencies.pickTemplateBytes?.();signal?.throwIfAborted();return bytes?service.preflightImport(bytes,libraryContext,signal):null;}
+        case "templates.commitImport":{const result=await service.commitImport(value as import("@shared/template-export-contracts").TemplateImportInput,libraryContext,signal);dependencies.productChanged?.();return result;}
+        case "templates.export":return dependencies.saveOfflineArtifact?.(await service.prepareTemplateExport(value as import("@shared/template-export-contracts").TemplateReadInput,libraryContext,signal))??null;
+        case "exports.save":return dependencies.saveOfflineArtifact?.(await service.prepareExport(value as import("@shared/template-export-contracts").OfflineExportInput,libraryContext,signal))??null;
       }
     });
   }

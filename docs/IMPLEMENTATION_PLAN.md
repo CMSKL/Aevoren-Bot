@@ -583,3 +583,15 @@ Search2 与继承的 Task3 同轮 **5/5 通过（40.3 秒）**，实际 app.isPa
 内部完成／失败事件由宿主核验实际 Runtime 后发出，只有不透明 ID 和状态，不携带私有 TASK 文本、Memory 或工具参数。真实 Routine → AI `messages.send` → 子 Runtime 的宿主 rootClientNonce 链已验证；持久 ancestry 阻止重复订阅与超过四跳的循环。
 
 已保存 70 项关联 SQLite／HTTP／Runtime 检查，以及 9 项补充 UI／委派检查通过记录。五配置类型与完整构建通过；补充 7 文件 54 项（含真实旧库迁移）通过。新增隐藏 Electron 两项同轮 2/2（16.1 秒）通过，真实 loopback HTTP、六成员在首个结果返回前全部启动、独立兄弟任务、所属取消、私有 TASK 元数据、一次性密钥、监听重启停止及冲突草稿均经实际 IPC／Renderer 检查；拥有进程正常 exitCode=0。实际未签名 macOS 包最终证据待下文验收，不从源码通过推断发行可用。无新依赖／许可；Windows、真实用户端点／账号、远程转发、公开入口及签名发行未验证。证据标签 `$CODEX_HOME/aevoren-evidence/2026-10-15/event43-*`，详见[使用说明](AUTOMATION_EVENTS.md)。
+
+## 阶段 6F：版本化便携模板与选择范围导出（beta.44）
+
+迁移 48 记录模板版本、原始 Runtime 准入、资源撤销世代、导入回执和本机保存意图。合并迁移49后仍按缺失版本执行，真实48缺口回归保留聊天和 higher version49，并在修改前备份。复制的文件在模板CAS；SQLite只保存正文/清单和摘要，不保存二进制。模板不携带模型连接、凭据、Memory、聊天、MCP、工作区和浏览器登录态；导入创建独立对象，Skill 初始停用。
+
+界面从聊天选项和设置通用页进入，所有内容初始不选；预览完整配置/资源/具体文件，保存版本冲突保留草稿。AI 使用同一业务校验，prepared token绑定会话/执行者/Runtime，TASK禁止导入联系人，原Runtime重试仍固定原模板版本。私有名称/正文在模型实际序列化时复查授权，不进入持久工具结果。
+
+真实SQLite的两项fail-first已复现并修复：重复capture新建第二模板；回执失败留下已发布模板。异步CAS暂存后通过同步publish钩子，把发布与回执一起提交。取消保存回执复用；结果未知的本机保存意图不重开对话框。文件发布复用已有持有inode的writeLibraryExport，异步link期间撤权清除自有输出，不删除用户替换inode。
+
+后续实际源码/未签名包证据补在本节；当前不把构建推断为安装包验证。证据前缀 `$CODEX_HOME/aevoren-evidence/2026-10-15/templates44-`。无新增依赖或许可，master不晋级。
+
+补充验证记录：模板后端20项和产品/事件/原子文件回归在分批日志中通过；原子回执两项保留修复前失败证据。`templates44-focused-first.log` 为72项通过加3项测试mock递归失败；修正mock后 `templates44-focused-after.log` 三文件55项通过（含3项持有link撤权/替换inode）。新增私密序列化回归首次错误为fixture仍有活跃Runtime，已先结束该Runtime后重跑，不作为生产缺陷。Renderer精确选择、完整预览、冲突保留、版本导出和取消7项通过，日志 `templates44-ui-unit.log`。

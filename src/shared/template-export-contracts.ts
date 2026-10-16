@@ -20,16 +20,17 @@ export type OfflineExportInput = { format: "json" | "html"; name?: string; sessi
 
 export type OfflineSaveResult={name:string;size:number;sha256:string};
 export type TemplateApi={
+ cancel(requestId:string):Promise<import("./contracts").ApiResult<void>>;
  list():Promise<import("./contracts").ApiResult<TemplateMetadata[]>>;
  read(input:TemplateReadInput):Promise<import("./contracts").ApiResult<TemplateRecord>>;
  versions(id:string):Promise<import("./contracts").ApiResult<Omit<TemplateRevision,"manifest">[]>>;
- prepareCapture(input:TemplateCaptureInput):Promise<import("./contracts").ApiResult<TemplatePreview>>;
- commitCapture(input:TemplateCommitInput):Promise<import("./contracts").ApiResult<TemplateRecord>>;
+ prepareCapture(input:TemplateCaptureInput,requestId?:string):Promise<import("./contracts").ApiResult<TemplatePreview>>;
+ commitCapture(input:TemplateCommitInput,requestId?:string):Promise<import("./contracts").ApiResult<TemplateRecord>>;
  prepareImport(input:{dataBase64:string}):Promise<import("./contracts").ApiResult<TemplatePreview>>;
- pickImport():Promise<import("./contracts").ApiResult<TemplatePreview|null>>;
+ pickImport(requestId?:string):Promise<import("./contracts").ApiResult<TemplatePreview|null>>;
  reviewPrepared(input:{preparedId:string;expectedDigest:string}):Promise<import("./contracts").ApiResult<TemplateManifest>>;
- commitImport(input:TemplateImportInput):Promise<import("./contracts").ApiResult<TemplateImportResult>>;
- export(input:TemplateReadInput):Promise<import("./contracts").ApiResult<OfflineSaveResult|null>>;
+ commitImport(input:TemplateImportInput,requestId?:string):Promise<import("./contracts").ApiResult<TemplateImportResult>>;
+ export(input:TemplateReadInput,requestId?:string):Promise<import("./contracts").ApiResult<OfflineSaveResult|null>>;
 };
-export type ExportsApi={save(input:OfflineExportInput):Promise<import("./contracts").ApiResult<OfflineSaveResult|null>>};
+export type ExportsApi={save(input:OfflineExportInput,requestId?:string):Promise<import("./contracts").ApiResult<OfflineSaveResult|null>>};
 export type TemplateApprovalReview={kind:"portable-template";resourceName:string;revisionNumber:number;target:{sessionId:string;executorBotId:string;preparedId:string;expectedDigest:string;operation:"templates.commitCapture"|"templates.commitImport";manifest:TemplateManifest}};

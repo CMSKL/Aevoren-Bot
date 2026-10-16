@@ -40,6 +40,7 @@ type SettingsDialogProps = {
   onInstallUpdate(): void;
   onOpenWorkspaceManager?(): void;
   onOpenOrganization?(): void;
+  onOpenPortable?():void;
 };
 
 const themeLabels: Record<Exclude<AppearanceTheme, "system">, string> = {
@@ -92,6 +93,7 @@ export function SettingsDialog({
   onInstallUpdate,
   onOpenWorkspaceManager,
   onOpenOrganization,
+  onOpenPortable,
 }: SettingsDialogProps): React.JSX.Element | null {
   const [section, setSection] = useState<SettingsSection>("general");
   const handleProductView = useEffectEvent((event: Event) => {
@@ -219,6 +221,7 @@ export function SettingsDialog({
             </div>
             {themeError ? <div className="dialog-error" role="alert">{themeError.safeMessage}</div> : null}
             {onOpenOrganization ? <section className="settings-card settings-organization-entry"><div><strong>聊天整理与通知</strong><p>管理分区、默认助理、通知类别与声音；聊天和权限保持独立。</p></div><button type="button" className="secondary-button" onClick={onOpenOrganization}>聊天整理与通知</button></section> : null}
+            {onOpenPortable?<section className="settings-card"><strong>模板与离线导出</strong><p>在当前会话明确选择配置、消息、资料和文件；导入前审阅完整模板。</p><button type="button" className="secondary-button" onClick={onOpenPortable}>模板与选择范围导出</button></section>:null}
             <h3>工具自动化</h3>
             <div className="settings-card settings-form-group">
               <label className="settings-row">

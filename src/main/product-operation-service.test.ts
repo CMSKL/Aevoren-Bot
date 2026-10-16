@@ -602,3 +602,34 @@ describe("demonstration product approvals", () => {
     expect(resources).toHaveLength(1); expect(resources[0]?.enabled).toBe(false);
   });
 });
+
+describe("portable template product transport",()=>{
+ async function portableFixture(){const f=fixture();const {TemplateExportService}=await import("./template-export-service");const service=new TemplateExportService(f.repository,f.repository.templates,f.libraryService,{readBinary:async()=>{throw Error("not used");}},{templateBlobRoot:join(f.root,"template-blobs"),libraryBlobRoot:join(f.root,"owned")});f.dependencies.templateExportService=service;return {...f,portable:service};}
+ it("reuses capture receipts and commits a template and its durable metadata atomically",async()=>{
+  const f=await portableFixture(),preview=await f.portable.prepareCapture({sessionId:f.actor.session.id,name:"PRIVATE_TEMPLATE_NAME",bots:[{id:f.actor.bot.id,expectedVersion:f.actor.bot.version}],resources:[]},{sessionId:f.actor.session.id,executorBotId:f.actor.bot.id,runtimeRunId:f.runtime.id});
+  const tool=call("templates.commitCapture",{preparedId:preview.id,expectedDigest:preview.digest});
+  const first=await f.execute(tool);expect(first.content).not.toContain("PRIVATE_TEMPLATE_NAME");expect(f.portable.list()).toHaveLength(1);
+  await f.execute(tool);expect(f.portable.list()).toHaveLength(1);
+ });
+ it("rolls back publication if the durable receipt cannot be written",async()=>{
+  const f=await portableFixture(),preview=await f.portable.prepareCapture({sessionId:f.actor.session.id,name:"Atomic",bots:[{id:f.actor.bot.id,expectedVersion:f.actor.bot.version}],resources:[]},{sessionId:f.actor.session.id,executorBotId:f.actor.bot.id,runtimeRunId:f.runtime.id});
+  const database=Reflect.get(f.repository,"database") as DatabaseSync;database.exec("CREATE TRIGGER reject_portable_receipt BEFORE UPDATE OF product_result_content ON tool_invocations WHEN NEW.product_result_content LIKE '%templates.commitCapture%' BEGIN SELECT RAISE(ABORT,'controlled receipt failure'); END");
+  await expect(f.execute(call("templates.commitCapture",{preparedId:preview.id,expectedDigest:preview.digest}))).rejects.toThrow();expect(f.portable.list()).toHaveLength(0);
+ });
+ it("reuses native cancellation receipts and refuses to repeat unknown save attempts",async()=>{
+  const f=await portableFixture(),entry=f.repository.getUserMessage(f.runtime.clientNonce),input={format:"html",sessions:[{sessionId:f.actor.session.id,generation:1,entries:[{id:entry.id,digest:await import("./library-blob-store").then(module=>module.libraryBytesDigest(Buffer.from(entry.body)))}]}],resources:[],media:[]};
+  const save=vi.fn(async()=>null);f.dependencies.saveOfflineArtifact=save;
+  const tool=call("exports.save",input);await f.execute(tool);await f.execute(tool);expect(save).toHaveBeenCalledTimes(1);
+  const other=call("exports.save",{...input,name:"unknown"});save.mockRejectedValueOnce(Error("controlled publication interruption"));await expect(f.execute(other)).rejects.toThrow();await expect(f.execute(other)).rejects.toThrow();expect(save).toHaveBeenCalledTimes(2);
+ });
+
+ it("keeps template names and bodies ephemeral and rechecks source revocation at serialization",async()=>{
+  const f=await portableFixture(),doc=f.repository.library.create({sessionId:f.actor.session.id,kind:"document",name:"PRIVATE_PORTABLE_TITLE",body:"PRIVATE_PORTABLE_BODY"});
+  f.repository.transitionRuntimeRun(f.runtime.id,"failed");const run=libraryRuntime(f.repository,f.actor,[doc.reference]),context={sessionId:f.actor.session.id,executorBotId:f.actor.bot.id,runtimeRunId:run.id};
+  const capture=await f.portable.prepareCapture({sessionId:f.actor.session.id,name:"PRIVATE_PORTABLE_TEMPLATE",bots:[],resources:[{reference:doc.reference,filePaths:[]}]},context);
+  const result=await f.execute(call("templates.commitCapture",{preparedId:capture.id,expectedDigest:capture.digest}),run.id);expect(result.content).not.toMatch(/PRIVATE_PORTABLE/u);expect(toolImageResponse(result.content,undefined,result.modelText).text).toContain("PRIVATE_PORTABLE_BODY");
+  const serialized=JSON.stringify(f.repository.listToolInvocations(f.actor.session.id));expect(serialized).not.toContain('"product_result_content":"PRIVATE_PORTABLE_BODY"');
+  f.repository.library.unbind({sessionId:f.actor.session.id,id:doc.resource.id});expect(result.modelText?.isAuthorized()).toBe(false);expect(toolImageResponse(result.content,undefined,result.modelText).text).not.toContain("PRIVATE_PORTABLE_BODY");
+ });
+
+});

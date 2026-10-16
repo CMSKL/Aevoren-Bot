@@ -182,3 +182,5 @@ The beta.35 candidate retains the beta.34 [scoped MCP tools and isolated Apps](M
 ## Search saved resources
 
 Use the search icon beside the chat/contact filter to open **全资源搜索**. Choose the current conversation, current project or all local resources, enter a literal keyword and search. Results open their original message, immutable document/Skill revision or saved media/transcript source. A revoked or cleared source cannot redirect to another similar item. Connected AI searches only its actual current conversation and explicitly selected Task context. See [Search](SEARCH.md) for supported sources and verification limits.
+
+便携模板和选择范围导出请见[使用说明](TEMPLATES_EXPORTS.md)。入口为聊天选项或设置通用页；先选择并审阅，再保存或导入，Skill 初始停用。

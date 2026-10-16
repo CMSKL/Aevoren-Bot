@@ -41,3 +41,5 @@ Forks may reuse the source under Apache-2.0. The Aevoren Bot name, Logo, and off
 ## Official channels
 
 The canonical public source repository is [CMSKL/Aevoren-Bot](https://github.com/CMSKL/Aevoren-Bot). Signed builds, when published, will be distributed only through this repository's immutable GitHub Releases and checksums.
+
+便携模板和选择范围导出请见[使用说明](TEMPLATES_EXPORTS.md)。入口为聊天选项或设置通用页；先选择并审阅，再保存或导入，Skill 初始停用。
