@@ -1,3 +1,10 @@
+import { routineRunNowSchema, routineRunCancelSchema } from "@shared/routine-schemas";
+import { BOT_IMAGE_OPERATION_SCHEMAS } from "@shared/bot-image-product";
+import { ORGANIZATION_OPERATION_SCHEMAS } from "@shared/organization-product";
+import { SEARCH_OPERATION_SCHEMAS } from "@shared/search-product";
+import { TASK_SESSION_OPERATION_SCHEMAS } from "@shared/task-session-product";
+import { REALTIME_OPERATION_SCHEMAS } from "@shared/realtime-product";
+import { VOICE_OPERATION_SCHEMAS } from "@shared/voice-product";
 import { MCP_WRITE_OPERATION_SCHEMAS } from "@shared/mcp-write-product";
 import { DEMONSTRATION_OPERATION_SCHEMAS } from "@shared/demonstration-product";
 import { NATIVE_OUTBOUND_OPERATION_SCHEMAS } from "@shared/native-outbound-product";
@@ -9,9 +16,19 @@ import { SKILL_EXECUTION_OPERATION_SCHEMAS } from "@shared/skill-execution-produ
 import { NATIVE_CONNECTOR_OPERATION_SCHEMAS } from "@shared/native-connector-product";
 import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 import { resourceReferencesSchema } from "@shared/library-schemas";
-import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema, mcpServerMutationSchema, mcpServerEnabledSchema, mcpServerIdSchema, mcpServerMutationIdSchema, routineIdSchema, routineCreateSchema, routineUpdateSchema, routineEnabledSchema, routineMutationSchema, conversationPinnedSchema, conversationUnreadSchema, conversationHiddenSchema, sessionIdSchema, conversationProjectSchema, conversationBatchDeleteSchema, projectContextSchema, projectCreateSchema, briefApprovalReadSchema, briefApprovalCommandSchema, botUpdateSchema, botPinnedSchema, botUnreadSchema, botHiddenSchema, botIdSchema, memoryListSchema, memoryCreateSchema, memoryUpdateSchema, memoryMutationSchema, memoryProposalListSchema, memoryProposalAcceptSchema, workspacePermissionsSchema, workspaceRevealSchema, workspaceMutationSchema, toolSessionScopeSchema, approvalResolutionSchema, roomListSchema, roomCreateSchema, roomIdSchema, roomUpdateSchema, roomArchiveSchema, roomPinnedSchema, roomUnreadSchema, roomHiddenSchema, roomMembershipSchema, sendCommandSchema, nonceSchema, runIdSchema, roomSendCommandSchema, batchIdSchema, turnIdSchema, generalSettingsSchema, saveOpenAiCompatibleProviderSchema, saveCliProviderSchema, providerInstanceIdInputSchema } from "@shared/schemas";
+import { messageMediaReferencesSchema } from "@shared/media-schemas";
+import { MEDIA_OPERATION_SCHEMAS } from "@shared/media-product";
+import { messageBodySchema } from "@shared/schemas";
+import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema, mcpServerMutationSchema, mcpServerEnabledSchema, mcpServerIdSchema, mcpServerMutationIdSchema, routineIdSchema, routineCreateSchema, routineUpdateSchema, routineEnabledSchema, routineMutationSchema, conversationPinnedSchema, conversationUnreadSchema, conversationHiddenSchema, sessionIdSchema, conversationProjectSchema, conversationBatchDeleteSchema, projectContextSchema, projectCreateSchema, briefApprovalReadSchema, briefApprovalCommandSchema, botUpdateSchema, botPinnedSchema, botUnreadSchema, botHiddenSchema, botIdSchema, memoryListSchema, memoryCreateSchema, memoryUpdateSchema, memoryMutationSchema, memoryProposalListSchema, memoryProposalAcceptSchema, workspacePermissionsSchema, workspaceRevealSchema, workspaceMutationSchema, toolSessionScopeSchema, approvalResolutionSchema, roomListSchema, roomCreateSchema, roomIdSchema, roomUpdateSchema, roomArchiveSchema, roomPinnedSchema, roomUnreadSchema, roomHiddenSchema, roomMembershipSchema, nonceSchema, runIdSchema, roomSendCommandSchema, batchIdSchema, turnIdSchema, generalSettingsSchema, saveOpenAiCompatibleProviderSchema, saveCliProviderSchema, providerInstanceIdInputSchema } from "@shared/schemas";
 
 export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
+  ...MEDIA_OPERATION_SCHEMAS,
+  ...TASK_SESSION_OPERATION_SCHEMAS,
+  ...SEARCH_OPERATION_SCHEMAS,
+  ...ORGANIZATION_OPERATION_SCHEMAS,
+  ...BOT_IMAGE_OPERATION_SCHEMAS,
+  ...VOICE_OPERATION_SCHEMAS,
+  ...REALTIME_OPERATION_SCHEMAS,
   ...LIBRARY_OPERATION_SCHEMAS,
   ...ENVIRONMENT_OPERATION_SCHEMAS,
   ...BROWSER_OPERATION_SCHEMAS,
@@ -35,11 +52,12 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "mcp.clearAuthorization": mcpServerMutationIdSchema,
   "mcp.delete": mcpServerMutationIdSchema,
   "routines.list": z.undefined(),
-  "routines.listRuns": routineIdSchema,
+  "routines.listRuns": routineIdSchema.optional(),
   "routines.create": routineCreateSchema,
   "routines.update": routineUpdateSchema,
   "routines.setEnabled": routineEnabledSchema,
-  "routines.runNow": routineIdSchema,
+  "routines.runNow": routineRunNowSchema,
+  "routines.cancelRun": routineRunCancelSchema,
   "routines.delete": routineMutationSchema,
   "conversations.list": z.undefined(),
   "conversations.setPinned": conversationPinnedSchema,
@@ -93,14 +111,14 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "rooms.removeMember": roomMembershipSchema,
   "sessions.getMain": botIdSchema,
   "transcript.list": sessionIdSchema,
-  "messages.send": sendCommandSchema.omit({ clientNonce: true }),
+  "messages.send": messageBodySchema.safeExtend({ sessionId: sessionIdSchema }),
   "messages.retry": nonceSchema,
   "messages.cancel": nonceSchema,
   "messages.getStatus": nonceSchema,
   "runtime.getSessionSnapshot": sessionIdSchema,
   "runtime.cancel": runIdSchema,
   "runtime.retry": runIdSchema,
-  "roomRuntime.getSnapshot": roomIdSchema,
+  "roomRuntime.getSnapshot": z.union([roomIdSchema,z.object({roomId:roomIdSchema,sessionId:sessionIdSchema}).strict()]),
   "roomRuntime.send": z.object(Object.fromEntries(Object.entries(roomSendCommandSchema.shape).filter(([name]) => name !== "clientNonce"))).strict(),
   "roomRuntime.cancel": batchIdSchema,
   "roomRuntime.cancelMember": runIdSchema,
@@ -128,12 +146,14 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
     action: z.enum(["open_chats", "open_contacts", "open_workspaces", "open_settings", "open_profile", "open_bot", "open_room", "open_bot_profile", "open_room_settings", "task_details", "sidebar_search", "sidebar_expand", "sidebar_select", "model_search", "draft_get", "draft_update", "choose_avatar", "window_show", "window_hide", "app_exit", "dismiss_update", "draft_remove_attachment", "draft_add_attachments", "room_members", "expand_record"]),
     botId: botIdSchema.optional(), roomId: roomIdSchema.optional(), sessionId: sessionIdSchema.optional(),
     query: z.string().max(500).optional(), unreadOnly: z.boolean().optional(),
-    section: z.enum(["general", "capabilities", "memory", "mcp", "apps", "routines", "updates"]).optional(),
+    section: z.enum(["general", "capabilities", "memory", "mcp", "apps", "routines", "updates", "voice"]).optional(),
     tab: z.enum(["artifacts", "records"]).optional(), group: z.enum(["hidden", "archived", "workspaces", "project", "bot_group", "room_group"]).optional(),
     projectId: z.string().uuid().optional(), expanded: z.boolean().optional(), botIds: z.array(botIdSchema).max(100).optional(), roomIds: z.array(roomIdSchema).max(100).optional(),
     attachmentId: z.string().uuid().optional(), recordId: z.string().uuid().optional(),
     text: z.string().max(100_000).optional(), expectedDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
     routingMode: z.enum(["automatic", "explicit", "everyone"]).optional(), targetBotIds: z.array(botIdSchema).max(6).optional(),
     resourceRefs: resourceReferencesSchema.optional(),
+    mediaRefs: messageMediaReferencesSchema.optional(),
+    expectedDraftVersion: z.number().int().nonnegative().optional(),
   }).strict(),
 };

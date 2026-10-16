@@ -172,7 +172,7 @@ export function NewBotChooser({
                   });
                 }}
               >
-                <span className="recipient-option-icon bot-avatar-container"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={28} /></span>
+                <span className="recipient-option-icon bot-avatar-container"><BotAvatarIcon botId={bot.id} image={bot.avatarImage} shape={bot.avatarShape} color={bot.avatarColor} size={28} /></span>
                 <span className="recipient-option-copy">
                   <strong>{groupMode ? `${selectedIds.has(bot.id) ? "✓ " : ""}${identity.primary}` : identity.primary}</strong>
                   {bot.label || identity.disambiguated ? <small>{identity.secondary}</small> : null}

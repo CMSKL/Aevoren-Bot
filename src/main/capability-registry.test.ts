@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { ProviderInstanceInfo } from "@shared/contracts";
+import type { McpServerInfo, McpToolInfo, PromptManifest, ProviderInstanceInfo } from "@shared/contracts";
+import type { TaskExecutorSelection } from "@shared/task-session-contracts";
+import { randomUUID } from "node:crypto";
 import { AppRepository } from "./database";
 import { CapabilityRegistry } from "./capability-registry";
 
@@ -34,6 +36,90 @@ function provider(): ProviderInstanceInfo {
 }
 
 describe("CapabilityRegistry", () => {
+  it("keeps an empty TASK capability scope out of global connections, private context and product families", async () => {
+    const repository = new AppRepository(":memory:"); repositories.push(repository);
+    repository.setDefaultModelSelection({ providerInstanceId: "openai-compatible.default", modelId: "fixture-model" });
+    const registered = repository.registerWorkspaceRoot("/private/task-capability-root", "Private workspace"), created = repository.createBot(registered.project.id);
+    repository.createMemory(created.bot.id, "PRIVATE_MEMORY");
+    const selection: TaskExecutorSelection = { executorBotId: created.bot.id, memories: [], history: [], workspaces: [], mcp: [], resourceRefs: [], mediaRefs: [], productOperations: [], network: false, clipboard: false };
+    const task = repository.tasks.create({ parentSessionId: created.session.id, expectedScopeVersion: repository.tasks.scopeVersion(created.session.id), clientNonce: randomUUID(), title: "Empty task", selections: [selection] });
+    const current = provider(), other = { ...provider(), id: "other-provider-private", displayName: "PRIVATE_PROVIDER" };
+    const registry = new CapabilityRegistry(repository, { list: async () => [current, other], getCached: () => current, getCapabilities: () => current.capabilities },
+      { name: "Aevoren Bot", version: "39", platform: "darwin", architecture: "arm64", packaged: false });
+    const snapshot = await registry.getSnapshot({ sessionId: task.session.id });
+    expect(snapshot.model.providerInstanceId).toBe(created.bot.modelSelection.providerInstanceId);
+    expect(snapshot.connections.map(item => item.id)).toEqual([current.id]); expect(snapshot.workspaceCount).toBe(0);
+    for (const id of ["project.provisioning", "network.search", "network.realtime-data", "device.clipboard", "mcp.client", "media.documents", "media.audio-video", "media.tool-images", "library.documents", "skills.text", "skills.scripts", "voice.transcription", "voice.speech", "voice.realtime", "environment.execution", "computer.control", "automation.scheduler", "memory.manual"]) {
+      expect(snapshot.capabilities.find(item => item.id === id)?.availability, id).not.toBe("available");
+    }
+    expect(snapshot.availableTools).toEqual(["product_catalog", "text_measure"]);
+    expect(snapshot.capabilities.find(item => item.id === "product.operations")?.description).toContain("未选择可执行");
+    expect(JSON.stringify(snapshot)).not.toContain("PRIVATE_PROVIDER"); expect(snapshot.backgroundMode).toBe("foreground-only");
+    const main = await registry.getSnapshot({ botId: created.bot.id, sessionId: created.session.id });
+    expect(main.connections).toHaveLength(2); expect(main.availableTools).toContain("bot_create"); expect(main.availableTools).toContain("web_search"); expect(main.workspaceCount).toBe(1);
+    const peer = repository.createBot(), room = repository.createRoom({ memberBotIds: [created.bot.id, peer.bot.id] });
+    const roomTask = repository.tasks.create({ parentSessionId: room.session.id, expectedScopeVersion: repository.tasks.scopeVersion(room.session.id), clientNonce: randomUUID(), title: "Explicit actor", selections: [selection] });
+    await expect(registry.getSnapshot({ sessionId: roomTask.session.id })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    await expect(registry.getSnapshot({ sessionId: roomTask.session.id, botId: peer.bot.id })).rejects.toMatchObject({ code: "APPROVAL_SCOPE_INVALID" });
+  });
+
+  it("advertises exactly selected MCP identities and independent clipboard, network and product ceilings", async () => {
+    const repository = new AppRepository(":memory:"); repositories.push(repository);
+    repository.setDefaultModelSelection({ providerInstanceId: "openai-compatible.default", modelId: "fixture-model" });
+    const created = repository.createBot(), current = provider();
+    const saved = repository.createMcpServerConfig("Selected MCP", "streamable-http", { url: "http://127.0.0.1:1/mcp" });
+    const server = repository.setMcpServerEnabled(saved.id, saved.version, true), privateId = randomUUID();
+    let identity = "a".repeat(64); repository.tasks.setMcpIdentityReader(() => ({ version: server.version, identityDigest: identity }));
+    const selected: TaskExecutorSelection = { executorBotId: created.bot.id, memories: [], history: [], workspaces: [], mcp: [{ serverId: server.id, expectedVersion: server.version, toolNames: ["selected_read"] }], resourceRefs: [], mediaRefs: [], productOperations: ["library.read", "bots.create"], network: false, clipboard: true };
+    const task = repository.tasks.create({ parentSessionId: created.session.id, expectedScopeVersion: repository.tasks.scopeVersion(created.session.id), clientNonce: randomUUID(), title: "Selected task", selections: [selected] });
+    const mcpTool = (serverId: string, name: string): McpToolInfo => ({ serverId, serverName: serverId === server.id ? "Selected MCP" : "PRIVATE_MCP", name, namespacedName: `mcp_${name}`, description: name, inputSchema: {}, claimedReadOnly: true, readOnly: true });
+    const tools = [mcpTool(server.id, "selected_read"), mcpTool(server.id, "not_selected"), mcpTool(privateId, "private_read")];
+    const mcpServer = (id: string, name: string): McpServerInfo => ({ id, name, transport: "streamable-http", command: null, args: [], url: "http://127.0.0.1:1/mcp", secretKeys: [], oauthConfigured: false, authenticating: false, trustedReadOnlyTools: [], enabled: true, status: "available", lastErrorCode: null, lastConnectedAt: null, version: server.version, tools: tools.filter(tool => tool.serverId === id), createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" });
+    const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities },
+      { name: "Aevoren Bot", version: "39", platform: "darwin", architecture: "arm64", packaged: false }, undefined,
+      { list: () => [mcpServer(server.id, "Selected MCP"), mcpServer(privateId, "PRIVATE_MCP")], availableTools: () => tools });
+    const snapshot = await registry.getSnapshot({ botId: created.bot.id, sessionId: task.session.id });
+    expect(snapshot.availableTools).toContain("mcp_selected_read"); expect(snapshot.availableTools).toContain("clipboard_read");
+    expect(snapshot.availableTools).not.toContain("web_search"); expect(snapshot.availableTools).not.toContain("mcp_not_selected"); expect(snapshot.availableTools).not.toContain("mcp_private_read");
+    expect(snapshot.connections.map(item => item.id)).toEqual([current.id, server.id]); expect(JSON.stringify(snapshot)).not.toContain("PRIVATE_MCP");
+    expect(snapshot.capabilities.find(item => item.id === "library.documents")?.availability).toBe("available");
+    expect(snapshot.capabilities.find(item => item.id === "media.documents")?.availability).toBe("unavailable");
+    expect(snapshot.capabilities.find(item => item.id === "product.operations")?.description).toContain("library.read");
+    expect(snapshot.capabilities.find(item => item.id === "product.operations")?.description).not.toContain("bots.create");
+    identity = "b".repeat(64); await expect(registry.getSnapshot({ botId: created.bot.id, sessionId: task.session.id })).rejects.toMatchObject({ code: "APPROVAL_SCOPE_INVALID" });
+  });
+
+  it("pins retry prompt capabilities to the original Runtime selection while interactive snapshots use the latest revision", async () => {
+    const repository = new AppRepository(":memory:"); repositories.push(repository);
+    repository.setDefaultModelSelection({ providerInstanceId: "openai-compatible.default", modelId: "fixture-model" });
+    const registered = repository.registerWorkspaceRoot("/private/task-retry-root", "Retry workspace"), created = repository.createBot(registered.project.id), current = provider();
+    const selected: TaskExecutorSelection = { executorBotId: created.bot.id, memories: [], history: [], workspaces: [], mcp: [], resourceRefs: [], mediaRefs: [], productOperations: [], network: false, clipboard: false };
+    const task = repository.tasks.create({ parentSessionId: created.session.id, expectedScopeVersion: repository.tasks.scopeVersion(created.session.id), clientNonce: randomUUID(), title: "Retry task", selections: [selected] });
+    const nonce = randomUUID(); repository.prepareMessage({ sessionId: task.session.id, clientNonce: nonce, text: "Original task" });
+    const user = repository.getUserMessage(nonce), manifest: PromptManifest = { schemaVersion: 1, botId: created.bot.id, profileVersion: 1, sessionId: task.session.id, generation: user.generation, inputSeq: user.seq, blocks: [], digest: "original" };
+    const run = repository.createRuntimeRun(nonce, "fake", manifest, { executorBotId: created.bot.id });
+    repository.tasks.reviseSelection({ sessionId: task.session.id, expectedVersion: task.version, selections: [{ ...selected, network: true, clipboard: true, productOperations: ["library.read"], workspaces: [{ id: registered.workspace.id, read: true, write: false, automation: false }] }] });
+    const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities },
+      { name: "Aevoren Bot", version: "39", platform: "darwin", architecture: "arm64", packaged: false });
+    const latest = await registry.getSnapshot({ botId: created.bot.id, sessionId: task.session.id }); expect(latest.availableTools).toContain("web_search"); expect(latest.workspaceCount).toBe(1);
+    const pinned = registry.forPrompt(created.bot.id, created.bot.modelSelection, false, task.session.id, run.id);
+    expect(pinned.availableTools).not.toContain("web_search"); expect(pinned.availableTools).not.toContain("clipboard_read"); expect(pinned.availableTools).not.toContain("workspace_read"); expect(pinned.availableTools).not.toContain("product_execute");
+    expect(pinned.capabilities.find(item => item.id === "library.documents")?.availability).toBe("unavailable");
+  });
+  it("reports media pixel transport independently of a running browser and leaves model vision unconfirmed", async () => {
+    const repository = new AppRepository(":memory:"); repositories.push(repository);
+    const actor = repository.createBot(), current = provider(); current.capabilities.toolImageInput = true;
+    const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities },
+      { name: "Aevoren Bot", version: "1", platform: "darwin", architecture: "arm64", packaged: false });
+    const snapshot = () => registry.getSnapshot({ botId: actor.bot.id, sessionId: actor.session.id });
+    const first = await snapshot();
+    expect(first.capabilities.find(item => item.id === "media.tool-images")).toMatchObject({ availability: "available", description: expect.stringContaining("不代表所选模型") });
+    expect(first.capabilities.find(item => item.id === "browser.tool-images")).toMatchObject({ availability: "unavailable" });
+    current.capabilities.toolImageInput = false;
+    expect((await snapshot()).capabilities.find(item => item.id === "media.tool-images")).toMatchObject({ availability: "unavailable" });
+    expect((await snapshot()).capabilities.find(item => item.id === "media.documents")).toMatchObject({ availability: "available" });
+  });
+
   it("reports scoped MCP permission only for the current executor and live connection credential", async () => {
     const repository = new AppRepository(":memory:"); repositories.push(repository);
     const actor = repository.createBot(), peer = repository.createBot(), current = provider(); let credential = "a".repeat(64);

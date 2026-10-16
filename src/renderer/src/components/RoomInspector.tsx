@@ -2,6 +2,7 @@ import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-v
 import { useEffectEvent, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { AppError, Bot, ProviderInstanceInfo, RoomDetail, RoomPatch } from "@shared/contracts";
 import type { ResourceReference } from "@shared/library-contracts";
+import type { MessageMediaReference } from "@shared/media-contracts";
 import type { EnvironmentScope } from "@shared/environment-contracts";
 import { eligibleRoomLeads } from "../room-leads";
 import { buildBotIdentityMap } from "../bot-identity";
@@ -9,6 +10,7 @@ import { BotAvatarIcon } from "./BotAvatarIcon";
 import { CheckIcon, CloseIcon } from "./Icons";
 import { ConversationWorkspace, type ConversationWorkspaceProps } from "./ConversationWorkspace";
 import { LibraryPanel, type LibraryPanelHandle } from "./LibraryPanel";
+import { MediaLibraryPanel } from "./MediaLibraryPanel";
 import { EnvironmentPanel } from "./EnvironmentPanel";
 import { ComputerPanel } from "./ComputerPanel";
 import { ConnectorPanel, type ConnectorPanelHandle } from "./ConnectorPanel";
@@ -34,6 +36,7 @@ type Props = {
   onOpenBot(bot: Bot): void;
   onMobileClose(): void;
   onUseResource?(reference: ResourceReference, text?: string): void;
+  onUseMedia?(reference: MessageMediaReference): void;
 };
 
 function toDraft(detail: RoomDetail): Draft {
@@ -45,7 +48,7 @@ function same(left: Draft, right: Draft): boolean {
 }
 
 export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function RoomInspector(
-  { id, detail, bots, conversationWorkspace, active, mobileOpen, error, onDetailUpdated, onError, onOpenBot, onMobileClose, onUseResource },
+  { id, detail, bots, conversationWorkspace, active, mobileOpen, error, onDetailUpdated, onError, onOpenBot, onMobileClose, onUseResource, onUseMedia },
   ref,
 ) {
   const [draft, setDraft] = useState<Draft | null>(detail ? toDraft(detail) : null);
@@ -279,7 +282,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
         onClick={() => setMembersExpanded((expanded) => !expanded)}
       >
         {detail.members.slice(0, 3).map((member) => (
-          <BotAvatarIcon key={member.botId} shape={member.bot.avatarShape} color={member.bot.avatarColor} size={60} title={member.bot.name} />
+          <BotAvatarIcon key={member.botId} botId={member.bot.id} image={member.bot.avatarImage} shape={member.bot.avatarShape} color={member.bot.avatarColor} size={60} title={member.bot.name} />
         ))}
         {detail.members.length > 3 ? <span className="room-avatar-count">+{detail.members.length - 3}</span> : null}
       </button>
@@ -299,7 +302,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
               const identity = botIdentities.get(member.botId)!;
               return <div className="room-member-row settings-list-row" key={member.botId}>
                 <button className="member-main-link" type="button" title={identity.inline} onClick={() => { void flush().then(saved => { if (saved) onOpenBot(member.bot); }); }}>
-                  <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={20} />
+                  <BotAvatarIcon botId={member.bot.id} image={member.bot.avatarImage} shape={member.bot.avatarShape} color={member.bot.avatarColor} size={20} />
                   <span>{identity.inline}</span>
                 </button>
                 <button
@@ -324,6 +327,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
       </div>
       <div id={`room-${detail.room.id}-library-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-library-tab`} hidden={tab !== "library"}>
         <LibraryPanel ref={documentsRef} sessionId={detail.session.id} kind="document" active={tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} />
+        <MediaLibraryPanel key={detail.session.id} sessionId={detail.session.id} active={mobileOpen && tab === "library"} busy={!onUseMedia} onUse={reference => onUseMedia?.(reference)} />
       </div>
       <div id={`room-${detail.room.id}-skill-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-skill-tab`} hidden={tab !== "skill"}>
         <label className="field environment-member-selector"><span>Skill 脚本执行成员</span><select aria-label="Skill 脚本执行成员" value={environmentMember?.botId ?? ""} onChange={event => setEnvironmentBotId(event.target.value)}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>

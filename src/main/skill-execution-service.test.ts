@@ -4,6 +4,8 @@ import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PromptManifest } from "@shared/contracts";
+import { taskExecutorSelectionSchema } from "@shared/task-session-schemas";
 import type { WorkerExecution } from "@shared/environment-contracts";
 import { skillPackageDescriptor, skillScriptCommand, type WorkerSkillInstallRequest, type WorkerSkillRunRequest } from "@shared/skill-execution-contracts";
 import { AppRepository } from "./database";
@@ -87,6 +89,22 @@ describe("script host authorization with real SQLite, CAS bytes and a controlled
     await expect(f.service.runScript({ ...input, args: ["different"] })).rejects.toMatchObject({ code: "SKILL_EXECUTION_CONFLICT" });
   });
 
+  it("does not let a previously empty Task Runtime use a later selected and separately granted script", async () => {
+    const f = await fixture(), actor = f.scope.executorBotId;
+    const child = f.repository.tasks.create({ parentSessionId: f.scope.sessionId, expectedScopeVersion: 1, clientNonce: randomUUID(), title: "Empty execution context", selections: [taskExecutorSelectionSchema.parse({ executorBotId: actor })] });
+    const scope = { sessionId: child.session.id, executorBotId: actor }, nonce = randomUUID();
+    f.repository.prepareMessage({ sessionId: scope.sessionId, clientNonce: nonce, text: "Keep original empty context" });
+    const entry = f.repository.getUserMessage(nonce), manifest: PromptManifest = { schemaVersion: 1, botId: actor, profileVersion: 1, sessionId: scope.sessionId, generation: entry.generation, inputSeq: entry.seq, blocks: [], digest: "empty-script-task" };
+    const runtime = f.repository.createRuntimeRun(nonce, "fake", manifest, { executorBotId: actor });
+    f.repository.tasks.reviseSelection({ sessionId: scope.sessionId, expectedVersion: child.version, selections: [taskExecutorSelectionSchema.parse({ executorBotId: actor, resourceRefs: [f.content.reference] })] });
+    const initial = f.repository.environments.ensure(scope, { workerVersion: f.grantInput.expectedWorkerVersion, imageRef: "controlled-worker", imageDigest: f.grantInput.expectedImageDigest, platform: "linux/arm64" });
+    f.repository.environments.update(scope, initial.version, { state: "running", workerPort: 1, encryptedToken: "a".repeat(64), bootId: randomUUID() });
+    const grant = f.repository.skillExecutions.grant({ ...f.grantInput, ...scope, environmentId: initial.id }, createHash("sha256").update(f.script).digest("hex"));
+    const dispatch = vi.spyOn(f.environments, "runSkill").mockRejectedValue(new Error("Unselected Runtime must not dispatch"));
+    await expect(f.service.runScript({ ...scope, grantId: grant.id, expectedGrantVersion: grant.version, clientNonce: randomUUID() }, { runtimeRunId: runtime.id })).rejects.toMatchObject({ code: "LIBRARY_NOT_BOUND" });
+    expect(dispatch).not.toHaveBeenCalled();
+    await expect(f.service.scripts({ ...scope, reference: f.content.reference }, undefined, runtime.id)).rejects.toMatchObject({ code: "LIBRARY_NOT_BOUND" });
+  });
   it("does not grant execution from metadata declarations and denies a missing Worker capability without publishing a grant", async () => {
     const f = await fixture(); f.unsupported();
     await expect(f.service.grantExecution(f.grantInput)).rejects.toMatchObject({ code: "SKILL_SCRIPT_UNSUPPORTED" });

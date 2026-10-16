@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { SettingsDialog } from "./SettingsDialog";
 
-function render(open = true): string {
+function render(open = true, organization = false): string {
   return renderToStaticMarkup(<SettingsDialog
     open={open}
     theme="dark"
@@ -22,10 +22,17 @@ function render(open = true): string {
     onCheckUpdate={() => undefined}
     onRetryUpdate={() => undefined}
     onInstallUpdate={() => undefined}
+    onOpenOrganization={organization ? () => undefined : undefined}
   />);
 }
 
 describe("SettingsDialog", () => {
+  it("offers personal organization and notification controls through General settings", () => {
+    const html = render(true, true);
+    expect(html).toContain("聊天整理与通知");
+    expect(html).toContain("管理分区、默认助理、通知类别与声音；聊天和权限保持独立。");
+    expect(html).toContain('aria-label="通用"');
+  });
   it("is a full in-app settings page rather than a modal", () => {
     const html = render();
     expect(html).toContain("settings-page");
