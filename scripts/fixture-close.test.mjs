@@ -57,9 +57,13 @@ test("a stalled Electron-shaped fixture closes its inherited pipes and owned des
     stdio: owned.stdio.map(stream => stream ? { destroyed: stream.destroyed } : null) }); };
   const onExit = () => record("owned-exit"), onClose = () => record("owned-close");
   owned.once("exit", onExit); owned.once("close", onClose);
+  const commandMeasurements = [];
+  const measureWindowsCommand = globalThis.process.platform === "win32" ? event => { if (commandMeasurements.length < 20) commandMeasurements.push({ ...event,
+    ownedAlive: observedAlive(owned.pid), descendantAlive: observedAlive(descendantPid), siblingAlive: observedAlive(sibling.pid), pipesClosed }); } : undefined;
+  let failed = false;
   record("close-request");
   try {
-    await closeTestApplication({ process: () => owned, close: () => new Promise(() => {}) });
+    await closeTestApplication({ process: () => owned, close: () => new Promise(() => {}) }, measureWindowsCommand);
     record("close-returned");
     assert.equal(pipesClosed, true, "the owned exit and inherited stdio must finish before teardown returns");
     const deadline = performance.now() + 1_000;
@@ -68,16 +72,30 @@ test("a stalled Electron-shaped fixture closes its inherited pipes and owned des
     assert.ok(performance.now() - started < 5_000, "owned tree teardown must remain bounded");
     assert.equal(sibling.exitCode, null); assert.equal(sibling.signalCode, null);
     assert.equal(alive(sibling.pid), true);
+    if (measureWindowsCommand) {
+      const created = commandMeasurements.find(event => event.phase === "created"), settled = commandMeasurements.find(event => event.phase === "resolved");
+      assert.ok(created && settled && settled.elapsedMs - created.elapsedMs < 1_500, "the unchanged taskkill command budget must remain 1500ms");
+      assert.equal(commandMeasurements.some(event => event.phase === "original-1500ms-budget-elapsed"), false);
+    }
   } catch (error) {
+    failed = true;
     record("close-or-assertion-failed");
     globalThis.console.error("Controlled fixture tree close state:", JSON.stringify({ phases, error: { code: error.code ?? null, killed: error.killed ?? null, signal: error.signal ?? null } }));
     throw error;
   } finally {
+    if (measureWindowsCommand) globalThis.console.error("Controlled Windows taskkill measurement:", JSON.stringify({ commandMeasurements }));
     record("cleanup-start");
-    if (alive(descendantPid)) globalThis.process.kill(descendantPid, "SIGKILL");
-    await stop(owned); await stop(sibling);
-    record("cleanup-finished");
+    let cleanupTimer;
+    const cleanup = Promise.allSettled([Promise.resolve().then(() => { if (alive(descendantPid)) globalThis.process.kill(descendantPid, "SIGKILL"); }), stop(owned), stop(sibling)]);
+    const result = await Promise.race([cleanup, new Promise(resolve => { cleanupTimer = globalThis.setTimeout(() => resolve(null), 2_000); })]);
+    globalThis.clearTimeout(cleanupTimer);
+    record(result ? "cleanup-finished" : "cleanup-timed-out");
+    for (const fixtureProcess of [owned, sibling]) { for (const stream of fixtureProcess.stdio) stream?.destroy(); fixtureProcess.unref(); }
     owned.removeListener("exit", onExit); owned.removeListener("close", onClose);
+    if (!result || result.some(value => value.status === "rejected")) {
+      globalThis.console.error("Controlled fixture cleanup did not complete:", JSON.stringify({ phases }));
+      if (!failed) assert.fail("all owned fixture cleanup must finish within its 2s bound");
+    }
   }
 });
 
