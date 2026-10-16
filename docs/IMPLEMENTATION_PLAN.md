@@ -537,3 +537,12 @@ This test-only update extends that fixture's existing bounded diagnostics with a
 ## 0.3.0-beta.36 refresh from normal MCP34 dev integration
 
 This candidate integrated normal dev `a743f7d835948a051d316a74fdc3752c190eacc2` after PR #37 exact source head `2ccd1c9` passed all four checks (CI 38758776745), including actual Linux Docker and macOS/Windows source plus installed acceptance. Current candidate features, expanded feature/package/close workflow selections and exact package version are retained. Only conflict resolution in documentation/workflow lists was needed; production feature behavior was not replaced. Prior failed and earlier local receipts above remain tied to their original builds. Fresh normal CI is required for this merge; no Beta tag or master promotion has occurred.
+
+
+### Media36 Windows initial document evidence
+
+Normal CI 38832566027 at `27a89fd` passed Linux verification/actual Docker, macOS source/package and Secret scan. Windows ordinary tests passed, and source smoke was 49/50. The one failure was Library fixture launch: `.app-shell` was absent at its unchanged five-second check, before resource opening, draft mutation or any Library business assertion. The Room single-member failure case passed in this run; its earlier failure remains unexplained and did not trigger the new controlled diagnostic. Windows packaging/installed gates were not reached.
+
+The Library launch helper now waits for the production Renderer file URL derived from `app.getAppPath()` and its actual DOMContentLoaded event before the same shell/Preload checks. It retains every business assertion and whole-case deadline, with no sleep, retry or product change. Failure-only boot evidence is limited to readiness/loading booleans, expected file category, DOM readyState, Preload presence and page-error count. The original trace contained no DOM/navigation evidence, so this sequencing correction does not claim a proven Windows product root cause; fresh normal CI remains required.
+
+Limited local acceptance of the corrected initial-document sequencing passed the actual hidden macOS source case 1/1 (8.4 seconds) with its original assertions and normal closure. Node TypeScript, targeted ESLint and whitespace checks passed. No application rebuild, package rebuild or Windows rerun was substituted for the pending new normal CI.

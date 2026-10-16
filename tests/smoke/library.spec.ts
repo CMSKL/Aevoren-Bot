@@ -2,6 +2,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import type { AevorenBotApi, ApiResult, RoomRuntimeSnapshot, SessionRuntimeSnapshot } from "../../src/shared/contracts";
 import type { LibraryApi, LibraryContent, LibraryExportResult, LibraryImportResult, LibraryResource, ResourceRevisionSummary } from "../../src/shared/library-contracts";
@@ -142,8 +143,20 @@ async function withLibrary(callback: (fixture: LibraryFixture) => Promise<void>)
     if (executablePath) expect(await application.evaluate(({ app }) => app.isPackaged)).toBe(true);
     const page = await application.firstWindow();
     page.on("pageerror", error => pageErrors.push(error.message));
-    await expect(page.locator(".app-shell")).toBeVisible();
-    await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { aevorenBot?: AevorenBotApi }).aevorenBot))).toBe(true);
+    const rendererUrl = pathToFileURL(join(await application.evaluate(({ app }) => app.getAppPath()), "out", "renderer", "index.html")).href;
+    try {
+      // The first window can be observed before its production document commits.
+      await page.waitForURL(rendererUrl, { waitUntil: "domcontentloaded" });
+      await expect(page.locator(".app-shell")).toBeVisible();
+      await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { aevorenBot?: AevorenBotApi }).aevorenBot))).toBe(true);
+    } catch (error) {
+      const main = await application.evaluate(({ app, BrowserWindow }) => ({ ready: app.isReady(), windows: BrowserWindow.getAllWindows().map(window => ({
+        destroyed: window.isDestroyed(), loading: window.webContents.isLoadingMainFrame(), rendererFile: /^file:.*[/\\]out[/\\]renderer[/\\]index\.html$/u.test(window.webContents.getURL()),
+      })) })).catch(() => ({ unavailable: true }));
+      const document = await page.evaluate(() => ({ readyState: window.document.readyState, hasApi: Boolean((window as unknown as { aevorenBot?: unknown }).aevorenBot) })).catch(() => ({ unavailable: true }));
+      await test.info().attach("library-initial-document", { body: JSON.stringify({ main, document, pageErrorCount: pageErrors.length }), contentType: "application/json" });
+      throw error;
+    }
     return page;
   };
   let fixture: LibraryFixture | undefined;
