@@ -666,3 +666,11 @@ This test-only update extends that fixture's existing bounded diagnostics with a
 修正只要求诊断实际依赖的1–6迁移完整，同时保留原最低版本、实际表及每个查询字段检查；不修改数据库或把缺少所需字段的库视为有效。修后两文件20项通过，含CLI五项与HTTP十五项；Node 类型、定向 lint、文档／开源检查通过。独立CLI脚本不进入已冻结应用ASAR，应用／Preload／Renderer／Worker业务字节未变，不重建或重记实际包证据。
 
 Windows 另有一项 Webhook 负向 HTTP 测试 fetch ECONNRESET，原日志没有请求阶段或状态，不能推断产品根因。同步模板候选的 test-only 修正，完整消费每个实际 HTTP 响应至EOF并记录允许的阶段／状态／错误码，保持全部状态、鉴权和长度断言及原时限，无重试或生产改动。后续正常CI仍需验证该平台。原两平台完整日志保存在 `$CODEX_HOME/aevoren-evidence/2026-10-15/releases/events43-{linux,win}-current-failed.log`；新定向日志为 `event43-ci-fix-focused.log`，没有把本机20项称为完整跨平台全绿。
+
+### beta.43 超限 HTTP 拒绝与最终包复验
+
+后续模板候选 Windows CI 的阶段诊断定位到 `oversized-body`：尚未收到413时发生 ECONNRESET，完整消费响应的夹具仍复现。共享 HTTP 服务的受控真实 TCP 负向回归确认，未完成上传时在 response.end 回调直接销毁 IncomingMessage 会提前中断请求。模板单元修复后同步本候选：拒绝时仅用恒定内存丢弃剩余字节，先发送完整错误响应，再优雅结束 socket；独立绝对5秒关闭界限不会被持续上传延长。鉴权仍在解析前，64KiB边界、超限413、无任务准入及所有来源检查保留。
+
+本候选四文件30项（真实HTTP、关闭边界、CLI及内部委派）通过，五配置类型、完整构建和定向 lint 通过。按新业务字节重新执行标准未签名 macOS arm64 打包，Events2＋typed API 同轮 **3/3（30.0秒）** 通过。首项明确验证超限413及完整EOF、零接收／零模型调用，然后再验证六成员并行与所属撤销；第二项验证私有TASK元数据、冲突草稿及正常退出。拥有进程全部 exitCode=0，无强制清理，没有扩大原时限。前一轮包回执保留为修复前历史，不混为新字节结果。
+
+新Main SHA-256 `6e52d0c1ccd6378dee5df299c8e9d923eacde473476a84a457db03a3895fe85b`，ASAR `6c8dab1ee7ed089d414ef015fffd228ae6f3da97a8763e6ec7ded9c50dd38cea`；与前包相比17项应用输出仅Main变化，实际17项与216项Worker／parser输出逐字节匹配，事件指南一致。207 parser资产／237资源文件／9556 ASAR条目与四Helper声明验证通过。新持久回执为 `event43-http-{build,focused,actual-package}.log` 和 `event43-http-package-{bytes,parser,microphone}.json`。Windows及签名发行仍等待新正常门禁，不用本机成功替代其因果验证。

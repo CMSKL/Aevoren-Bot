@@ -5,6 +5,7 @@
 - Configure reviewed MAIN Bot/group Routine subscriptions for authenticated local Webhooks and metadata-only Runtime completion/failure events, with concrete source/target/version checks.
 - Add an explicitly started loopback listener, once-displayed host-encrypted Bearer secrets, versioned URLs, bounded untrusted JSON attachments and durable idempotent receipts.
 - Preserve subscription drafts on conflicts, revoke only owned active runs, prevent event ancestry loops and reconcile uncertain acceptance without replay.
+- Flush early HTTP rejection responses before gracefully closing incomplete uploads, retaining authentication, the 64 KiB boundary and bounded cleanup; support independent later migration gaps in the read-only Room diagnostics CLI.
 - Share scoped subscription operations with connected AI through `automationEvents`; listener controls and secret rotation remain trusted settings operations. Existing Runtime `events` API is preserved.
 - Focused SQLite, actual HTTP and Runtime delegation checks pass, plus two hidden source cases and Events2/typed API in the actual unsigned macOS package (3/3). Cross-platform and signed publication remain pending; no new dependency is introduced.
 
