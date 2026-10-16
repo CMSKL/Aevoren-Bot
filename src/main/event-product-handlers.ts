@@ -18,9 +18,9 @@ export function addAutomationEventHandlers(handlers: Map<string, (input?: unknow
       case "automationEvents.startListener": {
         const parsed = eventListenerStartSchema.parse(input);
         if (context && parsed.port === 0) throw new AevorenBotError("INVALID_REQUEST");
-        return dependencies.automationEventHttp!.startControlled(parsed, { signal: context?.signal, assertCurrent: assertActor });
+        return dependencies.automationEventHttp!.startControlled(parsed, { signal: context?.signal, assertCurrent: assertActor }, value => commit(() => value));
       }
-      case "automationEvents.stopListener": return dependencies.automationEventHttp!.stopControlled(eventListenerStopSchema.parse(input), { signal: context?.signal, assertCurrent: assertActor });
+      case "automationEvents.stopListener": return dependencies.automationEventHttp!.stopControlled(eventListenerStopSchema.parse(input), { signal: context?.signal, assertCurrent: assertActor }, value => commit(() => value));
       case "automationEvents.snapshot": return { ...service.snapshot(context), listener: dependencies.automationEventHttp?.snapshot() ?? { listening: false, host: "127.0.0.1", port: null, revision: "", busy: false } };
       case "automationEvents.create": return commit(() => service.create(eventCreateSchema.parse(input), context));
       case "automationEvents.update": return service.update(eventUpdateSchema.parse(input), context, commit);

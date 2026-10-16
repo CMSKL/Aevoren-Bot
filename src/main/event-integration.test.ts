@@ -101,7 +101,8 @@ describe("automation host integration", () => {
   });
 
   it("requires gateway approval for application listener controls and replays receipts without restoring stopped ingress", async () => {
-    const f = fixture(), run = runtime(f), http = new EventHttpServer(f.events), workspace = new WorkspaceService(f.repository), executor = new WorkspaceToolExecutor(f.repository, workspace), tools = new WorkspaceToolCoordinator(f.repository, executor, () => {}), rooms = new RoomCoordinator(f.repository, f.worker.executor, { transcript: () => {}, roomRuntime: () => {} });
+    const publishedCancel = new AbortController(); let cancelOnPublish = false;
+    const f = fixture(), run = runtime(f), http = new EventHttpServer(f.events, () => { if (cancelOnPublish && http.snapshot().listening) publishedCancel.abort(); }), workspace = new WorkspaceService(f.repository), executor = new WorkspaceToolExecutor(f.repository, workspace), tools = new WorkspaceToolCoordinator(f.repository, executor, () => {}), rooms = new RoomCoordinator(f.repository, f.worker.executor, { transcript: () => {}, roomRuntime: () => {} });
     cleanup.push(async () => { await http.shutdown(); await rooms.shutdown(); });
     const product = new ProductOperationService({ repository: f.repository, routineService: f.routines, automationEventService: f.events, automationEventHttp: http, workspaceService: workspace, workspaceToolCoordinator: tools, sendWorker: f.worker, roomCoordinator: rooms, generalSettings: new GeneralSettingsService(f.repository), providers: { list: async () => [], isSupported: () => true }, updateService: {} } as unknown as ProductDependencies); executor.setProductOperations(product);
     const probe = await http.start(); await http.stop();
@@ -131,6 +132,17 @@ describe("automation host integration", () => {
     await tools.resolve(run.sessionId, stopApproval.id, stopApproval.version, "allow-once"); expect(JSON.parse((await stopping).content)).toMatchObject({ result: { listening: false } });
     const controller = new AbortController(), cancelledTool = call("automationEvents.startListener", { expectedRevision: http.snapshot().revision, port: input.port });
     const cancelled = tools.requestAndWait(run.id, randomUUID(), cancelledTool, controller.signal); controller.abort(); await expect(cancelled).rejects.toThrow(); expect(http.snapshot().listening).toBe(false);
+    const receiptFailureTool = call("automationEvents.startListener", { expectedRevision: http.snapshot().revision, port: input.port });
+    const lostReceipt = f.repository.prepareToolInvocation({ runtimeRunId: run.id, toolCallId: randomUUID(), idempotencyKey: randomUUID(), tool: receiptFailureTool });
+    f.repository.resolveToolApproval(lostReceipt.approval.id, lostReceipt.approval.version, "allow-once");
+    const rejectReceipt = vi.spyOn(f.repository, "completeProductToolInvocation").mockImplementationOnce(() => { throw Error("controlled listener receipt refusal"); });
+    await expect(executor.execute(lostReceipt.invocation.id)).rejects.toMatchObject({ code: "TOOL_EXECUTION_FAILED" }); rejectReceipt.mockRestore();
+    expect(http.snapshot()).toMatchObject({ listening: false, busy: false }); expect(f.repository.findProductOperationResult(run.clientNonce, receiptFailureTool, run.executorBotId)).toBeNull();
+    const publishedTool = call("automationEvents.startListener", { expectedRevision: http.snapshot().revision, port: input.port });
+    const publication = tools.requestAndWait(run.id, randomUUID(), publishedTool, publishedCancel.signal).then(value => ({ value }), error => ({ error }));
+    const publishApproval = f.repository.listPendingApprovalRequests(run.sessionId)[0]!; cancelOnPublish = true;
+    await tools.resolve(run.sessionId, publishApproval.id, publishApproval.version, "allow-once");
+    expect(await publication).toMatchObject({ error: expect.any(DOMException) }); expect(http.snapshot()).toMatchObject({ listening: false, busy: false }); cancelOnPublish = false;
     const unknownTool = call("automationEvents.startListener", { expectedRevision: http.snapshot().revision, port: input.port });
     const interrupted = f.repository.prepareToolInvocation({ runtimeRunId: run.id, toolCallId: randomUUID(), idempotencyKey: randomUUID(), tool: unknownTool });
     f.repository.resolveToolApproval(interrupted.approval.id, interrupted.approval.version, "allow-once");
