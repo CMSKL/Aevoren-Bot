@@ -2,6 +2,8 @@
 
 ## v0.3.0-beta.34 (development candidate)
 
+- Keep a displayed fixed approval actionable during its unchanged background review, preserving independent late-reply ordering and authoritative host permission checks.
+
 - Find Docker in standard macOS installation locations when a desktop launch has a minimal PATH, preserving the existing PATH and local-context restrictions.
 - Recheck included Claude MCP image leases at the actual HTTP body write, including retained JSON batches. Revoked responses stop without cancelling independent requests; cached replies recheck authorization without executing the tool again.
 - Bound owned Windows fixture cleanup with one finite command/stdio window. Startup close uses the existing three-second normal-close contract and explicitly requires exit 0 with no signal.
