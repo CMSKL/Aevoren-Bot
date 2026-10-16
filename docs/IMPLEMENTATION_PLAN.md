@@ -442,3 +442,12 @@ This test-only update extends that fixture's existing bounded diagnostics with a
 ## Beta.35 refresh after MCP34 source acceptance
 
 This branch integrated dev `a743f7d835948a051d316a74fdc3752c190eacc2`, the normal PR #37 merge. MCP34 exact source head `2ccd1c9` passed all four checks in CI 38758776745, including actual Linux Docker and macOS/Windows source plus installed-package acceptance. Prior native focus/close failures above remain historical; no unproven production fix is inferred. The dev integration and Beta promotion are still running. Source version stays beta.35, preserving its separate Notion title/append functionality. This refreshed Notion merge requires new normal cross-platform gates; it has not been released, and master remains deferred.
+
+
+### Native35 parallel-frame focus evidence
+
+PR53 preview CI38837437002 at dev `80ab17e` passed all ordinary verification, then actual Linux Docker40/41. One of six scopes rejected a desktop screenshot at the unchanged focus-before check: epoch1/AI owner/page known and open/document version5 remained stable; no observation was created. Later native diagnostics showed the Chrome window active/focused with no OOM, but did not preserve the exact trusted-world result or window-manager readiness at the rejection. This does not establish a product cause or permit bypassing409.
+
+The opt-in Worker diagnostic now saves only the existing focus check's numeric CDP stage, focused/closed booleans and presence of a JavaScript exception, capped at20 pages. It neither issues extra CDP reads nor repeats bringToFront, input or capture. Raw exception text, URL, DOM, title, frame/page IDs, cookies and credentials remain excluded. The failure-only controlled Docker fixture separately reports numeric supporting-WM window and Openbox process presence without input.
+
+Focused frame/Worker tests passed15/15, with the same409, capture counts and access rules; Browser Worker TypeScript, targeted lint and build passed. Rebuilt engine SHA256 `f2146a8a8185d1646441751a706adb07c30639f79fa8abd591a23a74adc87617`; server `41e2318a05a29e20c1b0777f2d28d2871ecad5505b553ff9d2970d7b55898a73`. This is diagnostic code, not a focus fix. No local Docker or application/package rebuild was performed; older package receipts remain historical and fresh normal CI must build/test the new image and platform packages before promotion.
