@@ -48,7 +48,8 @@ function createV6Fixture(): string {
     ) VALUES('${ROOM_ID}', 'Room', '', 1, 1, NULL, NULL, 0, NULL, '${timestamp}', '${timestamp}');
     INSERT INTO room_members VALUES('${ROOM_ID}', '${BOT_A}', 0, '${timestamp}');
     INSERT INTO room_members VALUES('${ROOM_ID}', '${BOT_B}', 1, '${timestamp}');
-    INSERT INTO sessions VALUES('${SESSION_ID}', NULL, '${ROOM_ID}', 'MAIN', 1, 1, '${timestamp}', '${timestamp}');
+    INSERT INTO sessions(id,bot_id,room_id,kind,generation,transcript_cursor,created_at,updated_at)
+      VALUES('${SESSION_ID}', NULL, '${ROOM_ID}', 'MAIN', 1, 1, '${timestamp}', '${timestamp}');
     INSERT INTO send_journal VALUES('nonce', '${SESSION_ID}', 'digest', 'acked', 0, NULL, NULL, '${timestamp}', '${timestamp}');
     INSERT INTO transcript_entries(
       id, session_id, generation, seq, client_nonce, role, body, status, updated_seq,
@@ -220,6 +221,35 @@ describe("room diagnostics CLI", () => {
     const incompleteSchema = run(incompleteFilename);
     expect(incompleteSchema.status).not.toBe(0);
     expect(JSON.parse(incompleteSchema.stderr).error.code).toBe("UNSUPPORTED_SCHEMA");
+  });
+
+  it("accepts a gap above the required diagnostic baseline without modifying the database", () => {
+    const filename = createV6Fixture();
+    const database = new DatabaseSync(filename);
+    // beta.43 ships migration 49 before the independent template migration 48.
+    // Keep this regression meaningful when that later migration is added.
+    database.prepare("DELETE FROM schema_migrations WHERE version=48").run();
+    const versions = database.prepare("SELECT version FROM schema_migrations WHERE version>=46 ORDER BY version").all() as Array<{ version: number }>;
+    expect(versions.some(value => value.version === 49)).toBe(true);
+    expect(versions.some(value => value.version === 48)).toBe(false);
+    database.close();
+    const before = sha256(filename), result = run(filename);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({ schemaVersion: MIGRATIONS.at(-1)!.version, runId: RUN_ID });
+    expect(sha256(filename)).toBe(before);
+    for (const marker of SECRET_MARKERS) expect(result.stdout).not.toContain(marker);
+  });
+
+  it("rejects a missing required baseline migration even when every queried column exists", () => {
+    const filename = createV6Fixture(), database = new DatabaseSync(filename);
+    database.prepare("DELETE FROM schema_migrations WHERE version=3").run();
+    database.close();
+    const before = sha256(filename), result = run(filename);
+    expect(result.status).not.toBe(0);
+    expect(JSON.parse(result.stderr).error.code).toBe("UNSUPPORTED_SCHEMA");
+    expect(sha256(filename)).toBe(before);
+    for (const marker of SECRET_MARKERS) expect(result.stderr).not.toContain(marker);
   });
 
   it("is exposed through the package command", () => {

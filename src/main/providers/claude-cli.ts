@@ -232,6 +232,7 @@ export class ClaudeCliProvider implements ModelProvider {
   ) {}
 
   async *run(messages: ChatMessage[], signal: AbortSignal, context?: ModelRunContext): AsyncIterable<ModelEvent> {
+    context?.assertAuthority?.();
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     const path = resolveCliPath(this.cliCommand, cliEnvironment());
     if (!path || !this.modelId) throw new AevorenBotError("MODEL_NOT_CONFIGURED");
@@ -273,6 +274,8 @@ export class ClaudeCliProvider implements ModelProvider {
       "--prompt-suggestions", "false",
     ];
     if (bridge) args.push("--allowedTools", ...bridge.toolNames);
+    const input = `${textTools ? `[system]\n${textTools.prompt}\n\n` : ""}${promptText(messages)}`;
+    try { context?.assertAuthority?.(); } catch (error) { await bridge?.close(); throw error; }
     const child = spawn(path, args, {
       cwd: this.cwd,
       env: environment,
@@ -288,12 +291,14 @@ export class ClaudeCliProvider implements ModelProvider {
     signal.addEventListener("abort", abort, { once: true });
     const heartbeat = setInterval(() => events.push({ type: "activity" }), 15_000);
     heartbeat.unref();
-    child.stdin.end(`${textTools ? `[system]\n${textTools.prompt}\n\n` : ""}${promptText(messages)}`);
+    try { context?.assertAuthority?.(); child.stdin.end(input); }
+    catch (error) { clearInterval(heartbeat); signal.removeEventListener("abort", abort); child.kill("SIGTERM"); await bridge?.close(); throw error; }
     child.stderr.resume();
     const lines = createInterface({ input: child.stdout });
     void (async () => {
       try {
       for await (const line of lines) {
+        context?.assertAuthority?.();
         if (!line.trim()) continue;
         let frame: Record<string, unknown>;
         try {

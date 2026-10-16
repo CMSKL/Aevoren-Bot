@@ -1,0 +1,10 @@
+import { z } from "zod";
+const id = z.string().uuid(), version = z.number().int().positive(), name = z.string().trim().min(1).max(80);
+export const organizationContextSchema = z.object({ sessionId: id, executorBotId: id, runtimeRunId: id.optional() }).strict();
+export const organizationCreateSectionSchema = z.object({ expectedVersion: version, name }).strict();
+export const organizationRenameSectionSchema = organizationCreateSectionSchema.extend({ id });
+export const organizationDeleteSectionSchema = z.object({ expectedVersion: version, id }).strict();
+export const organizationReorderSectionsSchema = z.object({ expectedVersion: version, sectionIds: z.array(id).max(100).refine(ids => new Set(ids).size === ids.length, "Section IDs must be unique") }).strict();
+export const organizationMoveSessionSchema = z.object({ expectedVersion: version, sessionId: id, sectionId: id.nullable(), position: z.number().int().min(0).max(100_000).optional() }).strict();
+export const organizationNotificationsSchema = z.object({ approvals: z.boolean(), taskCompletion: z.boolean(), taskFailure: z.boolean(), routines: z.boolean() }).strict();
+export const organizationSavePreferencesSchema = z.object({ expectedVersion: version, patch: z.object({ defaultAssistantBotId: id.nullable().optional(), notifications: organizationNotificationsSchema.partial().refine(value => Object.keys(value).length > 0).optional(), sound: z.boolean().optional() }).strict().refine(value => Object.keys(value).length > 0) }).strict();

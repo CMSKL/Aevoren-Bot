@@ -35,7 +35,8 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
   const outbound = isOutboundSend(invocation);
   const mcpWrite = isMcpWrite(invocation);
   const demonstration = invocation.arguments.kind === "product-call" && invocation.arguments.action === "execute" && invocation.arguments.operation === "demonstrations.publish";
-  const needsReview = script || outbound || demonstration || mcpWrite;
+  const portable=invocation.arguments.kind==="product-call"&&invocation.arguments.action==="execute"&&["templates.commitCapture","templates.commitImport"].includes(invocation.arguments.operation);
+  const needsReview = script || outbound || demonstration || mcpWrite || portable;
   const reviewKey = `${approval.sessionId}:${approval.executorBotId}:${approval.id}:${approval.version}:${approval.argumentsDigest}:${approval.targetDigest}`;
   const currentReview = review?.key === reviewKey ? review.data : null;
   const externalSnapshot = externalReview(currentReview?.status === "ready" ? currentReview.result : undefined);
@@ -43,7 +44,10 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
   const demoArgs = demonstration && invocation.arguments.kind === "product-call" && invocation.arguments.action === "execute" ? invocation.arguments.input as { id?: string; expectedVersion?: number; expectedDigest?: string } : null;
   const demoSnapshot = currentReview?.status === "ready" && currentReview.result.snapshot?.kind === "demonstration-skill" ? currentReview.result.snapshot : null;
   const demoMatches = Boolean(demoSnapshot && demoSnapshot.target.draftId === demoArgs?.id && demoSnapshot.target.draftVersion === demoArgs.expectedVersion && demoSnapshot.target.draftDigest === demoArgs.expectedDigest && demoSnapshot.target.sessionId === approval.sessionId && demoSnapshot.target.executorBotId === approval.executorBotId);
-  const canAllow = !needsReview || currentReview?.status === "ready" && (script ? scriptReviewMatches(invocation, currentReview.result) : outbound ? outboundReviewMatches(invocation, currentReview.result) : mcpWrite ? mcpReviewMatches(invocation, currentReview.result) : currentReview.result.executable && demoMatches);
+  const portableSnapshot=currentReview?.status==="ready"&&currentReview.result.snapshot?.kind==="portable-template"?currentReview.result.snapshot:null;
+  const portableInput=portable&&invocation.arguments.kind==="product-call"&&invocation.arguments.action==="execute"?invocation.arguments.input as {preparedId?:string;expectedDigest?:string}:null;
+  const portableMatches=Boolean(portableSnapshot&&portableSnapshot.target.sessionId===approval.sessionId&&portableSnapshot.target.executorBotId===approval.executorBotId&&portableSnapshot.target.preparedId===portableInput?.preparedId&&portableSnapshot.target.expectedDigest===portableInput?.expectedDigest);
+  const canAllow = !needsReview || currentReview?.status === "ready" && (script ? scriptReviewMatches(invocation, currentReview.result) : outbound ? outboundReviewMatches(invocation, currentReview.result) : mcpWrite ? mcpReviewMatches(invocation, currentReview.result) : currentReview.result.executable && (portable?portableMatches:demoMatches));
   const publicRead = isPublicReadTool(invocation.toolKind);
   const localRead = invocation.toolKind === "workspace-read" || invocation.toolKind === "clipboard-read";
   const target = invocation.arguments.kind === "web-search" || invocation.arguments.kind === "workspace-search"
@@ -80,7 +84,7 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
     return () => { for (const stop of stops) stop(); };
   }, [script, approval.sessionId, approval.executorBotId, reviewGrantId, reviewResourceId]);
   useEffect(() => {
-    if (!outbound && !demonstration && !mcpWrite) return;
+    if (!outbound && !demonstration && !mcpWrite && !portable) return;
     let disposed = false;
     let inFlight = false;
     const refresh = async (): Promise<void> => {
@@ -96,7 +100,7 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
     };
     const timer = setInterval(() => void refresh(), 1000);
     return () => { disposed = true; clearInterval(timer); };
-  }, [outbound, demonstration, mcpWrite, approval.sessionId, approval.executorBotId, approval.id, approval.version, reviewKey]);
+  }, [outbound, demonstration, mcpWrite, portable, approval.sessionId, approval.executorBotId, approval.id, approval.version, reviewKey]);
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -137,6 +141,7 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
         <div className="tool-permission-target"><strong>{label}</strong><span>{target}</span></div>
         {needsReview ? currentReview?.status === "ready" && (scriptSnapshot || externalSnapshot || demoSnapshot || mcpSnapshot) ? <>{scriptSnapshot ? <SkillScriptReview snapshot={scriptSnapshot} /> : externalSnapshot ? <ExternalDraftReview snapshot={externalSnapshot} /> : demoSnapshot ? <DemonstrationReview snapshot={demoSnapshot} /> : mcpSnapshot ? <McpWriteReview snapshot={mcpSnapshot} /> : null}{!canAllow ? <p className="tool-permission-error" role="alert">{currentReview.result.reason ?? "快照与本次请求不一致，或授权已失效；此操作不能批准。"}</p> : null}</> : <p role="status">{currentReview?.status === "unavailable" ? currentReview.reason : outbound ? "正在核对本次外发的固定账号、目标与草稿版本…" : "正在核对本次审批保存的固定内容与授权…"}</p> : null}
         {needsReview && !canAllow ? <button type="button" className="text-button" disabled={busy} onClick={() => { reviewRequestRef.current += 1; setReview(null); setReloadReview(count => count + 1); }}>{outbound ? "重新核对外发审批" : "重新核对本次审批"}</button> : null}
+        {portableSnapshot?<section aria-label="便携模板完整审阅"><p>只包含下列配置、资料和已选文件；不导入权限、模型连接、Memory 或历史。Skill 初始停用。</p><pre>{JSON.stringify(portableSnapshot.target.manifest,null,2)}</pre></section>:null}
         {invocation.arguments.kind === "product-call" && invocation.arguments.action === "execute" ? <details><summary>查看本次操作内容</summary><pre>{JSON.stringify(invocation.arguments.input ?? null, null, 2)}</pre></details> : null}
         {localRead ? <p className="tool-permission-privacy">读取结果会进入模型上下文；使用云端模型时会发送至模型服务。请勿授权密码、密钥等敏感内容。</p> : null}
         {publicRead && onRememberPublicRead ? <p className="tool-permission-privacy">记住的范围仅包括公开网页搜索、抓取、天气与时间。文件、剪贴板、MCP 和外部写操作不包含在内，可在设置中随时关闭。</p> : null}

@@ -1,11 +1,13 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { AppError, Bot, Room } from "@shared/contracts";
 import type { ResourceReference } from "@shared/library-contracts";
+import type { MessageMediaReference } from "@shared/media-contracts";
 import type { EnvironmentScope } from "@shared/environment-contracts";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { CheckIcon, ChevronDownIcon, MenuIcon, RoomIcon } from "./Icons";
 import { ProfileInspector, type ProfileInspectorHandle, type SaveStatus } from "./ProfileInspector";
 import { LibraryPanel, type LibraryPanelHandle } from "./LibraryPanel";
+import { MediaLibraryPanel } from "./MediaLibraryPanel";
 import { EnvironmentPanel } from "./EnvironmentPanel";
 import { ComputerPanel } from "./ComputerPanel";
 import { ConnectorPanel, type ConnectorPanelHandle } from "./ConnectorPanel";
@@ -29,6 +31,7 @@ type Props = {
   editingRequested?: number;
   librarySessionId?: string;
   onUseResource?(reference: ResourceReference, text?: string): void;
+  onUseMedia?(reference: MessageMediaReference): void;
   onSend(bot: Bot): Promise<boolean>;
   onBotUpdated(bot: Bot): void;
   onAddToRoom(bot: Bot, roomId: string): Promise<boolean>;
@@ -43,9 +46,13 @@ type ContactProfileProps = Props & {
 };
 
 const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(function ContactProfile(
-  { bot, active = true, rooms, busy, workspaceIds, librarySessionId, onUseResource, onBotUpdated, onAddToRoom, onLocalError, onSaveStatusChange }, ref,
+  { bot, active = true, rooms, busy, workspaceIds, librarySessionId, onUseResource, onUseMedia, onBotUpdated, onAddToRoom, onLocalError, onSaveStatusChange }, ref,
 ) {
   const [selectedRoomId, setSelectedRoomId] = useState("");
+  const [avatarPicker,setAvatarPicker]=useState(false),[avatarPending,setAvatarPending]=useState(false),[avatarError,setAvatarError]=useState<string|null>(null);
+  const avatarRequest=useRef<string|null>(null),avatarDialog=useRef<HTMLElement>(null);
+  useEffect(()=>{if(!avatarPicker)return;const prior=document.activeElement;avatarDialog.current?.querySelector<HTMLButtonElement>("button")?.focus();return()=>{if(prior instanceof HTMLElement&&prior.isConnected)prior.focus();};},[avatarPicker]);
+  useEffect(()=>()=>{const request=avatarRequest.current;if(request)void window.aevorenBot.botImages.cancel(request);},[]);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState("");
   const [tab, setTab] = useState<ProfileTab>("profile");
@@ -113,16 +120,30 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
     } finally { setPending(false); }
   }
 
+  const closeAvatar=():void=>{const request=avatarRequest.current;avatarRequest.current=null;if(request)void window.aevorenBot.botImages.cancel(request);setAvatarPending(false);setAvatarPicker(false);};
+  const changeAvatar=async(reference?:MessageMediaReference):Promise<void>=>{
+    if(!librarySessionId||avatarPending||!(await flush()))return;
+    const request=crypto.randomUUID();avatarRequest.current=request;setAvatarPending(true);setAvatarError(null);
+    try{const listed=await window.aevorenBot.bots.list();if(avatarRequest.current!==request)return;if(!listed.ok){setAvatarError(listed.error.safeMessage);return;}const current=listed.data.find(item=>item.id===bot.id);if(!current)return;
+      const result=reference?await window.aevorenBot.botImages.set({botId:current.id,expectedVersion:current.version,sessionId:librarySessionId,reference,requestId:request}):await window.aevorenBot.botImages.clear({botId:current.id,expectedVersion:current.version});
+      if(result.ok)onBotUpdated(result.data);
+      if(avatarRequest.current!==request)return;if(!result.ok){setAvatarError(result.error.safeMessage);return;}setAvatarPicker(false);
+    }catch{if(avatarRequest.current===request)setAvatarError("头像未保存，请重试。其他编辑内容仍保留。");}
+    finally{if(avatarRequest.current===request){avatarRequest.current=null;setAvatarPending(false);}}
+  };
   return (
     <section ref={profileElementRef} className="contact-profile-panel" aria-label="联系人资料">
       <div className="contact-profile-hero">
-        <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={92} title={`${bot.name}头像`} />
+        <BotAvatarIcon botId={bot.id} image={bot.avatarImage} shape={bot.avatarShape} color={bot.avatarColor} size={92} title={`${bot.name}头像`} />
         <div><h2>{bot.name}</h2><p>{bot.label || "Bot"}</p></div>
         {tab === "profile" ? <button className="text-button contact-edit-button" type="button" disabled={pending} onClick={() => {
           if (editing) void flush().then((saved) => { if (saved) setEditing(false); });
           else focusName();
         }}>{editing ? "完成编辑" : "编辑资料"}</button> : null}
       </div>
+      <div className="contact-avatar-actions"><button className="text-button" type="button" disabled={avatarPending||!librarySessionId} onClick={()=>{setAvatarError(null);setAvatarPicker(true);}}>更换图片头像</button>{bot.avatarImage?<button className="text-button" type="button" disabled={avatarPending} onClick={()=>void changeAvatar()}>恢复默认头像</button>:null}</div>
+      {avatarError&&!avatarPicker?<p role="alert" className="dialog-error">{avatarError}</p>:null}
+      {avatarPicker&&librarySessionId?<div className="modal-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)closeAvatar();}}><section ref={avatarDialog} role="dialog" aria-modal="true" aria-label="Bot 图片头像" className="bot-avatar-dialog" onKeyDown={event=>{if(event.key==="Escape"){event.stopPropagation();closeAvatar();}if(event.key==="Tab"){const controls=Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled)')).filter(node=>node.getClientRects().length>0);const first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}}}><header><h2>选择图片头像</h2><button type="button" className="text-button" onClick={closeAvatar}>取消头像操作</button></header><p>选择 2 MiB 以内的 PNG 或 JPEG。图片会裁剪为正方形，并展示在此 Bot 的所有会话中。</p>{avatarError?<p role="alert" className="dialog-error">{avatarError}</p>:null}{avatarPending?<p role="status">正在保存头像…</p>:null}<MediaLibraryPanel sessionId={librarySessionId} busy={avatarPending} imageOnly useLabel="设为此 Bot 的头像" onUse={reference=>void changeAvatar(reference)}/></section></div>:null}
       <div className="contact-profile-tabs" role="tablist" aria-label="联系人配置">
         {([ ["profile", "资料"], ["models", "模型与能力"], ["memory", "记忆"], ["library", "资料库"], ["skill", "Skill"], ["environment", "执行环境"], ["browser", "浏览器"], ["computer", "电脑"], ["apps", "应用"] ] as const).map(([value, label]) => (
           <button key={value} id={`contact-${bot.id}-${value}-tab`} role="tab" tabIndex={tab === value ? 0 : -1} disabled={changingTab} aria-selected={tab === value} aria-controls={`contact-${bot.id}-${value}-panel`} type="button" onClick={() => void changeTab(value)} onKeyDown={(event) => {
@@ -138,6 +159,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
       <div hidden={tab === "library" || tab === "skill" || tab === "environment" || tab === "browser" || tab === "computer" || tab === "apps"}><ProfileInspector ref={editorRef} bot={bot} workspaceIds={workspaceIds} activeTab={tab === "models" || tab === "memory" ? tab : "profile"} editing={editing} onBotUpdated={onBotUpdated} onError={onLocalError} onSaveStatusChange={onSaveStatusChange} /></div>
       <div id={`contact-${bot.id}-library-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-library-tab`} hidden={tab !== "library"} className="contact-tab-panel">
         {librarySessionId ? <LibraryPanel ref={documentsRef} sessionId={librarySessionId} kind="document" active={tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊资料范围…</p>}
+        {librarySessionId ? <MediaLibraryPanel key={librarySessionId} sessionId={librarySessionId} active={active && tab === "library"} busy={!onUseMedia} onUse={reference => onUseMedia?.(reference)} /> : null}
       </div>
       <div id={`contact-${bot.id}-skill-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-skill-tab`} hidden={tab !== "skill"} className="contact-tab-panel">
         {librarySessionId ? <LibraryPanel ref={skillsRef} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} kind="skill" active={tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} onOpenExecution={execution => { if (execution.sessionId !== librarySessionId || execution.executorBotId !== bot.id) return; setScriptExecution(execution); void changeTab("environment"); }} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊 Skill 范围…</p>}

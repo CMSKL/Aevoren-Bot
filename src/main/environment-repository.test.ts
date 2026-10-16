@@ -162,6 +162,20 @@ describe("scope-owned execution environment SQLite state", () => {
     expect(() => f.environments.appendLogs(f.scope, task.id, [{ ...rows[0]!, text: "changed bytes" }])).toThrowError(expect.objectContaining({ code: "ENVIRONMENT_EXECUTION_CONFLICT" }));
   });
 
+  it("advances a completed high-water snapshot for newly received log bytes, then keeps duplicate delivery stable", () => {
+    const f = fixture(), task = createTask(f).execution;
+    const running = f.environments.updateExecution(f.scope, task.id, task.version, { state: "running", pid: 4321, startedAt: new Date().toISOString() });
+    const completed = f.environments.updateExecution(f.scope, task.id, running.version, { state: "completed", exitCode: 0, lastSeq: 2 });
+    const rows: WorkerLog[] = [1, 2].map(seq => ({ seq, executionId: task.id, stream: "stdout", text: `completed chunk ${seq}`, at: new Date().toISOString() }));
+    f.environments.appendLogs(f.scope, task.id, rows);
+    const withLogs = f.environments.getExecution(f.scope, task.id);
+    expect(withLogs).toMatchObject({ state: "completed", exitCode: 0, lastSeq: completed.lastSeq, version: completed.version + 1 });
+    expect(withLogs.version).not.toBe(completed.version);
+    f.environments.appendLogs(f.scope, task.id, rows);
+    expect(f.environments.getExecution(f.scope, task.id)).toEqual(withLogs);
+    expect(f.environments.logs(f.scope, task.id).logs).toEqual(rows);
+  });
+
   it("bounds retained logs, lets a new reader use zero and rejects a genuinely expired nonzero cursor", () => {
     const f = fixture();
     const task = createTask(f).execution;

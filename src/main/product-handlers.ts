@@ -1,3 +1,25 @@
+import {TEMPLATE_CHANNELS,EXPORT_CHANNELS} from "@shared/template-export-channels";
+import {TEMPLATE_OPERATION_SCHEMAS} from "@shared/template-export-product";
+import type {TemplateExportService,PreparedOfflineArtifact} from "./template-export-service";
+import { addAutomationEventHandlers, type AutomationEventDependencies } from "./event-product-handlers";
+import { routineRunNowIpcSchema, routineRunCancelSchema } from "@shared/routine-schemas";
+import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
+import { botImageSetSchema,botImageClearSchema,botImageReadSchema } from "@shared/bot-image-schemas";
+import type { BotImageService } from "./bot-image-service";
+import { ORGANIZATION_PRODUCT_OPERATIONS } from "@shared/organization-product";
+import type { OrganizationChanged } from "@shared/organization-contracts";
+import type { OrganizationService } from "./organization-service";
+import type { SearchService } from "./search-service";
+import { SEARCH_CHANNELS } from "@shared/search-channels";
+import { searchOpenSchema, searchQuerySchema } from "@shared/search-schemas";
+import { z } from "zod";
+import { TASK_SESSION_PRODUCT_OPERATIONS } from "@shared/task-session-product";
+import type { TaskSessionService } from "./task-session-service";
+import { REALTIME_PRODUCT_OPERATIONS } from "@shared/realtime-product";
+import { realtimeInputSchema } from "@shared/realtime-schemas";
+import type { RealtimeService } from "./realtime-service";
+import { addVoiceProductHandlers, type VoiceProductDependencies } from "./voice-product-handlers";
+import { addMediaProductHandlers, type MediaProductDependencies } from "./media-product-handlers";
 import { addMcpWriteProductHandlers, type McpWriteProductDependencies } from "./mcp-write-product-handlers";
 import { addNativeOutboundProductHandlers } from "./native-outbound-product-handlers";
 import type { NativeOutboundService } from "./native-outbound-service";
@@ -85,13 +107,23 @@ import { addSkillExecutionProductHandlers, type SkillExecutionProductDependencie
 import { addNativeConnectorProductHandlers, type NativeConnectorProductDependencies } from "./native-connector-product-handlers";
 import { approvalReviewInputSchema } from "@shared/skill-execution-schemas";
 
-export type ProductDependencies = McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & DemonstrationProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
+export type ProductDependencies = AutomationEventDependencies & VoiceProductDependencies & MediaProductDependencies & McpWriteProductDependencies & EnvironmentProductDependencies & BrowserProductDependencies & DemonstrationProductDependencies & SkillExecutionProductDependencies & NativeConnectorProductDependencies & {
   nativeOutboundService?: NativeOutboundService;
   libraryService?: LibraryService;
   libraryChanged?(event: LibraryChangedEvent): void;
   pickLibraryPaths?(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }, signal?: AbortSignal): Promise<string[] | null>;
   exportLibraryResource?(input: { sessionId: string; id: string; revisionId?: string }, signal?: AbortSignal): Promise<LibraryExportResult | null>;
+  realtimeService?: RealtimeService;
+  taskSessionService?: TaskSessionService;
+  searchService?: SearchService;
+  templateExportService?:TemplateExportService;
+  pickTemplateBytes?():Promise<Uint8Array|null>;
+  saveOfflineArtifact?(artifact:PreparedOfflineArtifact):Promise<import("@shared/template-export-contracts").OfflineSaveResult|null>;
+  organizationService?:OrganizationService;
+  botImageService?:BotImageService;
+  organizationChanged?(event:OrganizationChanged):void;
   productChanged?(): void;
+  sessionChanged?(session: import("@shared/contracts").Session): void;
   requestUpdateAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
   requestExitAfterRun?(runId: string): import("@shared/product-view").ProductViewResult;
   requestView?(input: import("@shared/product-view").ProductViewInput): Promise<import("@shared/product-view").ProductViewResult>;
@@ -116,7 +148,7 @@ export type ProductDependencies = McpWriteProductDependencies & EnvironmentProdu
   cancelUpdateInstall(): void;
 };
 
-export function createProductHandlers(dependencies: ProductDependencies, commit: <T>(operation: () => T) => T = (operation) => operation(), memorySourceEntryId?: string, libraryContext?: LibraryExecutionContext): Map<string, (input?: unknown) => unknown> {
+export function createProductHandlers(dependencies: ProductDependencies, commit: <T>(operation: () => T) => T = (operation) => operation(), memorySourceEntryId?: string, libraryContext?: LibraryExecutionContext,uiSignal?:AbortSignal): Map<string, (input?: unknown) => unknown> {
   const { repository, providers, generalSettings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
   const userProfile = new UserProfileService(repository);
 
@@ -139,7 +171,67 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   };
 
   const handlers = new Map<string, (input?: unknown) => unknown>();
+  for(const [operation,schema] of Object.entries(TEMPLATE_OPERATION_SCHEMAS)){
+    const channel=operation==="exports.save"?EXPORT_CHANNELS.save:TEMPLATE_CHANNELS[operation.slice("templates.".length) as keyof typeof TEMPLATE_CHANNELS];
+    handlers.set(channel,async input=>{
+      const signal=libraryContext?.signal??uiSignal;
+      const service=dependencies.templateExportService;if(!service)throw new AevorenBotError("INVALID_REQUEST");const value=schema.parse(input);
+      switch(operation){
+        case "templates.list":return service.list(libraryContext);
+        case "templates.read":return service.read(value as import("@shared/template-export-contracts").TemplateReadInput,libraryContext);
+        case "templates.versions":return service.versions(value as string,libraryContext);
+        case "templates.prepareCapture":return service.prepareCapture(value as import("@shared/template-export-contracts").TemplateCaptureInput,libraryContext,signal);
+        case "templates.commitCapture":return service.commitCapture(value as import("@shared/template-export-contracts").TemplateCommitInput,libraryContext,signal);
+        case "templates.prepareImport":return service.preflightImport(Buffer.from((value as {dataBase64:string}).dataBase64,"base64"),libraryContext,signal);
+        case "templates.pickImport":{const bytes=await dependencies.pickTemplateBytes?.();signal?.throwIfAborted();return bytes?service.preflightImport(bytes,libraryContext,signal):null;}
+        case "templates.commitImport":{const result=await service.commitImport(value as import("@shared/template-export-contracts").TemplateImportInput,libraryContext,signal);dependencies.productChanged?.();return result;}
+        case "templates.export":return dependencies.saveOfflineArtifact?.(await service.prepareTemplateExport(value as import("@shared/template-export-contracts").TemplateReadInput,libraryContext,signal))??null;
+        case "exports.save":return dependencies.saveOfflineArtifact?.(await service.prepareExport(value as import("@shared/template-export-contracts").OfflineExportInput,libraryContext,signal))??null;
+      }
+    });
+  }
+  handlers.set(BOT_IMAGE_CHANNELS.set,input=>{if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.botImageService.set(botImageSetSchema.parse(input),libraryContext);});
+  handlers.set(BOT_IMAGE_CHANNELS.clear,input=>{if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");return commit(()=>dependencies.botImageService!.clear(botImageClearSchema.parse(input),libraryContext));});
+  handlers.set(BOT_IMAGE_CHANNELS.read,input=>{if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.botImageService.read(botImageReadSchema.parse(input));});
+  for(const definition of ORGANIZATION_PRODUCT_OPERATIONS)handlers.set(definition.channel,input=>{
+    const service=dependencies.organizationService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
+    if(definition.name==="organization.snapshot")return service.snapshot(libraryContext);
+    const result=commit(()=>{switch(definition.name){
+      case "organization.createSection":return service.createSection(input as import("@shared/organization-contracts").OrganizationCreateSection,libraryContext);
+      case "organization.renameSection":return service.renameSection(input as import("@shared/organization-contracts").OrganizationRenameSection,libraryContext);
+      case "organization.deleteSection":return service.deleteSection(input as import("@shared/organization-contracts").OrganizationDeleteSection,libraryContext);
+      case "organization.reorderSections":return service.reorderSections(input as import("@shared/organization-contracts").OrganizationReorderSections,libraryContext);
+      case "organization.moveSession":return service.moveSession(input as import("@shared/organization-contracts").OrganizationMoveSession,libraryContext);
+      case "organization.savePreferences":return service.savePreferences(input as import("@shared/organization-contracts").OrganizationSavePreferences,libraryContext);
+      default:throw new AevorenBotError("INVALID_REQUEST");
+    }});dependencies.organizationChanged?.({version:result.version});return result;
+  });
+  handlers.set(SEARCH_CHANNELS.query,input=>{if(!dependencies.searchService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.searchService.query(searchQuerySchema.parse(input),libraryContext);});
+  handlers.set(SEARCH_CHANNELS.open,input=>{if(!dependencies.searchService)throw new AevorenBotError("INVALID_REQUEST");return dependencies.searchService.open(searchOpenSchema.parse(input),libraryContext);});
+  addAutomationEventHandlers(handlers, dependencies, commit, libraryContext);
   addLibraryProductHandlers(handlers, dependencies, commit, libraryContext);
+  addMediaProductHandlers(handlers, dependencies, commit, libraryContext);
+  addVoiceProductHandlers(handlers, dependencies, commit);
+  for (const definition of TASK_SESSION_PRODUCT_OPERATIONS) handlers.set(definition.channel,input=>{
+    const service=dependencies.taskSessionService;if(!service)throw new AevorenBotError("INVALID_REQUEST");
+    switch(definition.name){
+      case "sessions.taskOptions":return service.options(input as import("@shared/task-session-contracts").TaskScopeInput);
+      case "sessions.createTask":return commit(()=>service.create(input as import("@shared/task-session-contracts").TaskCreateInput));
+      case "sessions.listTasks":return service.list(input as import("@shared/task-session-contracts").TaskListInput);
+      case "sessions.getTask":return service.get(input as import("@shared/task-session-contracts").TaskScopeInput);
+      case "sessions.updateTask":return commit(()=>service.update(input as import("@shared/task-session-contracts").TaskUpdateInput));
+      case "sessions.reviseTaskSelection":return commit(()=>service.revise(input as import("@shared/task-session-contracts").TaskSelectionUpdateInput));
+      case "sessions.cancelTask":return service.cancel(input as import("@shared/task-session-contracts").TaskCancelInput);
+      case "sessions.deleteTask":return service.delete(input as import("@shared/task-session-contracts").TaskCancelInput);
+      default:throw new AevorenBotError("INVALID_REQUEST");
+    }
+  });
+  for (const definition of REALTIME_PRODUCT_OPERATIONS) handlers.set(definition.channel, input => {
+    const service = dependencies.realtimeService;
+    if (!service) throw new AevorenBotError("VOICE_UNSUPPORTED");
+    const parsed = realtimeInputSchema.parse(input);
+    return definition.name.endsWith("snapshot") ? service.snapshot(parsed) : definition.name.endsWith("stopTask") ? service.stopTask(parsed) : service.stop(parsed);
+  });
   addEnvironmentProductHandlers(handlers, dependencies, commit, libraryContext);
   addBrowserProductHandlers(handlers, dependencies, commit, libraryContext);
   addDemonstrationProductHandlers(handlers, dependencies, commit, libraryContext);
@@ -159,11 +251,14 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const result = repository.getApprovalReview(parsed);
     if (!result.snapshot || !result.executable) return result;
     try {
-      if (result.snapshot.kind === "demonstration-skill") {
+      if(result.snapshot.kind==="portable-template"){
+        if(!dependencies.templateExportService)throw new AevorenBotError("INVALID_REQUEST");const review=result.snapshot.target;
+        dependencies.templateExportService.assertPrepared(review.preparedId,review.expectedDigest,{sessionId:parsed.sessionId,executorBotId:parsed.executorBotId,runtimeRunId:repository.getApprovalRequest(parsed.id).runtimeRunId});
+      } else if (result.snapshot.kind === "demonstration-skill") {
         dependencies.repository.demonstrations.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
       } else if (result.snapshot.kind === "skill-script") {
         if (!dependencies.skillExecutionService) throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
-        dependencies.skillExecutionService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
+        dependencies.skillExecutionService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId },repository.getApprovalRequest(parsed.id).runtimeRunId);
       } else if (result.snapshot.kind === "mcp-write") {
         if (!dependencies.mcpWriteService) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
         dependencies.mcpWriteService.assertApprovalReview(result.snapshot, { sessionId: parsed.sessionId, executorBotId: parsed.executorBotId });
@@ -202,23 +297,24 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const parsed = mcpServerMutationIdSchema.parse(input);
     return dependencies.mcpService.delete(parsed.id, parsed.expectedVersion);
   });
-  handle(IPC.routinesList, () => dependencies.routineService.list());
+  handle(IPC.routinesList, () => dependencies.routineService.list(libraryContext));
   handle(IPC.routinesListRuns, (routineId: unknown) =>
-    dependencies.routineService.listRuns(routineId === undefined ? undefined : routineIdSchema.parse(routineId)),
+    dependencies.routineService.listRuns(routineId === undefined ? undefined : routineIdSchema.parse(routineId), libraryContext),
   );
-  handle(IPC.routinesCreate, (input: unknown) => dependencies.routineService.create(routineCreateSchema.parse(input)));
+  handle(IPC.routinesCreate, (input: unknown) => commit(() => dependencies.routineService.create(routineCreateSchema.parse(input), libraryContext)));
   handle(IPC.routinesUpdate, (input: unknown) => {
     const parsed = routineUpdateSchema.parse(input);
-    return dependencies.routineService.update(parsed.id, parsed.expectedVersion, parsed.patch);
+    return commit(() => dependencies.routineService.update(parsed.id, parsed.expectedVersion, parsed.patch, libraryContext));
   });
   handle(IPC.routinesSetEnabled, (input: unknown) => {
     const parsed = routineEnabledSchema.parse(input);
-    return dependencies.routineService.setEnabled(parsed.id, parsed.expectedVersion, parsed.enabled);
+    return commit(() => dependencies.routineService.setEnabled(parsed.id, parsed.expectedVersion, parsed.enabled, libraryContext));
   });
-  handle(IPC.routinesRunNow, (id: unknown) => dependencies.routineService.runNow(routineIdSchema.parse(id)));
+  handle(IPC.routinesRunNow, (id: unknown) => dependencies.routineService.runNow(routineRunNowIpcSchema.parse(id), libraryContext));
+  handle(IPC.routinesCancelRun, (input: unknown) => dependencies.routineService.cancelRun(routineRunCancelSchema.parse(input), libraryContext));
   handle(IPC.routinesDelete, (input: unknown) => {
     const parsed = routineMutationSchema.parse(input);
-    return dependencies.routineService.delete(parsed.id, parsed.expectedVersion);
+    return commit(() => dependencies.routineService.delete(parsed.id, parsed.expectedVersion, libraryContext));
   });
   handle(IPC.conversationsList, () => repository.listConversations());
   handle(IPC.conversationsSetPinned, (input: unknown) => {
@@ -233,7 +329,13 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const parsed = conversationHiddenSchema.parse(input);
     return commit(() => repository.setConversationHidden(parsed.sessionId, parsed.hidden));
   });
-  handle(IPC.conversationsClear, (sessionId: unknown) => commit(() => repository.clearConversation(sessionIdSchema.parse(sessionId))));
+  handle(IPC.conversationsClear, (input: unknown) => {
+    const sessionId = sessionIdSchema.parse(input);
+    let changed: import("@shared/contracts").Session | undefined;
+    const result = commit(() => { const value = repository.clearConversation(sessionId); changed = repository.getSession(sessionId); return value; });
+    if (changed) dependencies.sessionChanged?.(changed);
+    return result;
+  });
   handle(IPC.conversationsSetProject, (input: unknown) => {
     const parsed = conversationProjectSchema.parse(input);
     return commit(() => repository.setConversationProject(parsed.sessionId, parsed.projectId, parsed.expectedVersion));
@@ -242,7 +344,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const parsed = conversationBatchDeleteSchema.parse(input);
     const remove = () => commit(() => repository.deleteConversations(parsed));
     return dependencies.environmentService ? dependencies.environmentService.retire(
-      parsed.roomIds.map(id => repository.getRoomMainSession(id).id), parsed.botIds,
+      repository.listConversations().filter(item=>item.roomId&&parsed.roomIds.includes(item.roomId)).map(item=>item.sessionId), parsed.botIds,
       () => repository.assertConversationsDeletable(parsed), remove) : remove();
   });
   handle(IPC.teamsCreateContentTeam, (input: unknown) => {
@@ -395,7 +497,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   });
   handle(IPC.roomsDelete, (id: unknown) => {
     const parsed = roomIdSchema.parse(id), remove = () => commit(() => repository.deleteRoom(parsed));
-    return dependencies.environmentService ? dependencies.environmentService.retire([repository.getRoomMainSession(parsed).id], [], () => repository.assertRoomDeletable(parsed), remove) : remove();
+    return dependencies.environmentService ? dependencies.environmentService.retire(repository.listConversations().filter(item=>item.roomId===parsed).map(item=>item.sessionId), [], () => repository.assertRoomDeletable(parsed), remove) : remove();
   });
   handle(IPC.roomsAddMember, (input: unknown) => {
     const parsed = roomMembershipSchema.parse(input);
@@ -406,7 +508,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     const remove = () => commit(() => repository.removeRoomMember(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion));
     return dependencies.environmentService ? dependencies.environmentService.retire([], [],
       () => repository.assertRoomMemberRemovable(parsed.roomId, parsed.botId, parsed.expectedMembershipVersion), remove,
-      [{ sessionId: repository.getRoomMainSession(parsed.roomId).id, executorBotId: parsed.botId }]) : remove();
+      repository.listConversations().filter(item=>item.roomId===parsed.roomId).map(item=>({sessionId:item.sessionId,executorBotId:parsed.botId}))) : remove();
   });
   handle(IPC.sessionsGetMain, (botId: unknown) => repository.getMainSession(botIdSchema.parse(botId)));
   handle(IPC.transcriptList, (sessionId: unknown) => repository.listTranscript(sessionIdSchema.parse(sessionId)));
@@ -433,7 +535,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     return sendWorker.cancelRun(runId);
   });
   handle(IPC.runtimeRetry, (runId: unknown) => sendWorker.retryRun(runIdSchema.parse(runId)));
-  handle(IPC.roomRuntimeSnapshot, (roomId: unknown) => roomCoordinator.getSnapshot(roomIdSchema.parse(roomId)));
+  handle(IPC.roomRuntimeSnapshot, (input: unknown) => roomCoordinator.getSnapshot(z.union([roomIdSchema,z.object({roomId:roomIdSchema,sessionId:z.string().uuid()}).strict()]).parse(input)));
   handle(IPC.roomRuntimeSend, (command: unknown) => roomCoordinator.routeAndSend(roomSendCommandSchema.parse(command)));
   handle(IPC.roomRuntimeCancel, (batchId: unknown) => roomCoordinator.cancel(batchIdSchema.parse(batchId)));
   handle(IPC.roomRuntimeContinue, (batchId: unknown) => roomCoordinator.continue(batchIdSchema.parse(batchId)));

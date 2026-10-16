@@ -1,3 +1,12 @@
+import {TEMPLATE_PRODUCT_OPERATIONS} from "./template-export-product";
+import { AUTOMATION_EVENT_PRODUCT_OPERATIONS } from "./event-product";
+import { BOT_IMAGE_PRODUCT_OPERATIONS } from "./bot-image-product";
+import { ORGANIZATION_PRODUCT_OPERATIONS } from "./organization-product";
+import { SEARCH_PRODUCT_OPERATIONS } from "./search-product";
+import { TASK_SESSION_PRODUCT_OPERATIONS } from "./task-session-product";
+import { REALTIME_PRODUCT_OPERATIONS } from "./realtime-product";
+import { VOICE_PRODUCT_OPERATIONS } from "./voice-product";
+import { MEDIA_PRODUCT_OPERATIONS } from "./media-product";
 import { MCP_WRITE_PRODUCT_OPERATIONS } from "./mcp-write-product";
 import { DEMONSTRATION_PRODUCT_OPERATIONS } from "./demonstration-product";
 import { NATIVE_OUTBOUND_PRODUCT_OPERATIONS } from "./native-outbound-product";
@@ -13,7 +22,16 @@ export type ProductOperationDefinition = { name: string; channel: string; descri
 
 /** User-facing host operations; lifecycle acknowledgements are intentionally excluded. */
 export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
+  ...TEMPLATE_PRODUCT_OPERATIONS,
+  ...TASK_SESSION_PRODUCT_OPERATIONS,
+  ...SEARCH_PRODUCT_OPERATIONS,
+  ...AUTOMATION_EVENT_PRODUCT_OPERATIONS,
+  ...ORGANIZATION_PRODUCT_OPERATIONS,
+  ...BOT_IMAGE_PRODUCT_OPERATIONS,
   ...LIBRARY_PRODUCT_OPERATIONS,
+  ...MEDIA_PRODUCT_OPERATIONS,
+  ...VOICE_PRODUCT_OPERATIONS,
+  ...REALTIME_PRODUCT_OPERATIONS,
   ...ENVIRONMENT_PRODUCT_OPERATIONS,
   ...BROWSER_PRODUCT_OPERATIONS,
   ...DEMONSTRATION_PRODUCT_OPERATIONS,
@@ -41,6 +59,7 @@ export const PRODUCT_OPERATIONS: readonly ProductOperationDefinition[] = [
   { name: "routines.update", channel: IPC.routinesUpdate, description: "修改 · 定时任务", effectClass: "write-reversible", interaction: "none" },
   { name: "routines.setEnabled", channel: IPC.routinesSetEnabled, description: "启停 · 定时任务", effectClass: "write-reversible", interaction: "none" },
   { name: "routines.runNow", channel: IPC.routinesRunNow, description: "立即执行 · 定时任务", effectClass: "write-reversible", interaction: "none" },
+  { name: "routines.cancelRun", channel: IPC.routinesCancelRun, description: "取消指定执行 · 定时任务", effectClass: "write-reversible", interaction: "none" },
   { name: "routines.delete", channel: IPC.routinesDelete, description: "删除 · 定时任务", effectClass: "irreversible", interaction: "none" },
   { name: "conversations.list", channel: IPC.conversationsList, description: "列出 · 聊天", effectClass: "read-local", interaction: "none" },
   { name: "conversations.setPinned", channel: IPC.conversationsSetPinned, description: "置顶 · 聊天", effectClass: "write-reversible", interaction: "none" },

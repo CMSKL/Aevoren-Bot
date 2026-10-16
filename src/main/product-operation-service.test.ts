@@ -18,6 +18,11 @@ import { SendWorker } from "./send-worker";
 import { RoomCoordinator } from "./room-coordinator";
 import { DemonstrationService } from "./demonstration-service";
 import { LibraryService } from "./library-service";
+import { MediaService } from "./media-service";
+import { BotImageService } from "./bot-image-service";
+import { toolImageResponse } from "./model-image";
+import { VoiceService } from "./voice-service";
+import type { MediaParserAdapter } from "./media-parser-types";
 import { writeLibraryExport } from "./library-export";
 import type { ModelProvider } from "./model";
 vi.mock("electron", () => ({ clipboard: { writeText: vi.fn() } }));
@@ -61,6 +66,149 @@ function libraryRuntime(repository: AppRepository, actor: ReturnType<AppReposito
   repository.transitionRuntimeRun(runtime.id, "dispatching");
   return repository.transitionRuntimeRun(runtime.id, "running", { providerRequestId: "library-tool-test" });
 }
+
+describe("canonical voice intent", () => {
+  it("exposes approved non-secret voice settings without exposing or replacing the host key", async () => {
+    const f = fixture();
+    const voice = new VoiceService(f.repository, { isAvailable: () => true, encrypt: value => `sealed:${value}`, decrypt: value => value.slice(7) },
+      { readBinary: async () => { throw new Error("not used"); } }, join(f.root, "voice-config"), { fetch: async () => { throw new Error("no network expected"); } });
+    f.dependencies.voiceService = voice;
+    try {
+      const current = voice.configurations().find(item => item.kind === "tts")!;
+      const saved = voice.saveConfiguration({ kind: "tts", expectedVersion: current.version, enabled: true, model: "gpt-4o-mini-tts", voice: "coral", apiKey: "private-fixture-key" });
+      const input = { kind: "tts", expectedVersion: saved.version, enabled: true, model: saved.model, voice: "cedar" };
+      expect(() => f.service.validate(call("voice.configure", { ...input, apiKey: "forged" }), f.runtime.id)).toThrow();
+      expect(() => f.service.validate(call("voice.configure", { ...input, clearApiKey: true }), f.runtime.id)).toThrow();
+      expect(f.service.requiresApproval(call("voice.configure", input))).toBe(true);
+      const result = await f.execute(call("voice.configure", input));
+      expect(JSON.parse(result.content).result).toMatchObject({ voice: "cedar", keyConfigured: true, version: saved.version + 1 });
+      expect(result.content).not.toContain("private-fixture-key"); expect(result.content).not.toContain("sealed:");
+      const latest = voice.configurations().find(item => item.kind === "tts")!;
+      voice.saveConfiguration({ kind: "tts", expectedVersion: latest.version, enabled: false, model: latest.model, voice: latest.voice, clearApiKey: true });
+      expect(f.service.requiresApproval(call("voice.configure", input), f.runtime.id)).toBe(false);
+      const replay = await f.execute(call("voice.configure", input));
+      expect(JSON.parse(replay.content)).toMatchObject({ status: "previously_completed", result: { enabled: false, keyConfigured: false, version: latest.version + 1 } });
+
+    } finally { await voice.shutdown(); }
+  });
+
+  it("does not repeat an unknown cloud request when the optional current session is made explicit", async () => {
+    const f = fixture(); let requests = 0;
+    const voice = new VoiceService(f.repository, { isAvailable: () => true, encrypt: value => `sealed:${value}`, decrypt: value => value.slice(7) },
+      { readBinary: async () => { throw new Error("not used for text speech"); } }, join(f.root, "voice"), { fetch: async () => { requests += 1; throw new Error("controlled unknown outcome"); } });
+    f.dependencies.voiceService = voice;
+    try {
+      const current = voice.configurations().find(item => item.kind === "tts")!;
+      const saved = voice.saveConfiguration({ kind: "tts", expectedVersion: current.version, enabled: true, model: "gpt-4o-mini-tts", voice: "coral", apiKey: "controlled-fixture-key" });
+      const input = { expectedConfigVersion: saved.version, source: { text: "canonical voice" } };
+      const first = await f.execute(call("voice.speak", input));
+      expect(JSON.parse(first.content).result.state).toBe("interrupted_unknown");
+      const second = await f.execute(call("voice.speak", { ...input, sessionId: f.actor.session.id }));
+      expect(JSON.parse(second.content).result.id).toBe(JSON.parse(first.content).result.id);
+      expect(requests).toBe(1);
+    } finally { await voice.shutdown(); }
+  });
+});
+
+describe("media product transport", () => {
+  it("shares scoped UI handlers but keeps AI text outside durable tool receipts and rechecks revocation", async () => {
+    const f = fixture();
+    const text = "PRIVATE_EXTRACTED_TEXT";
+    const parser: MediaParserAdapter = {
+      parse: async () => ({ kind: "pdf", width: null, height: null, durationMs: null, parserName: "controlled-unit-parser", parserVersion: "1",
+        extraction: { text, spans: [{ kind: "page", index: 0, start: 0, end: text.length }], warningCodes: [] } }),
+      renderPdfPage: async () => { throw new Error("not used"); }, shutdown: async () => {},
+    };
+    const media = new MediaService(f.repository, join(f.root, "media"), parser);
+    const source = join(f.root, "private.pdf"); writeFileSync(source, "%PDF-1.7 controlled unit fixture");
+    try {
+      const item = (await media.importPaths(f.actor.session.id, [source])).imported[0]!;
+      f.repository.transitionRuntimeRun(f.runtime.id, "completed");
+      const runtime = libraryRuntime(f.repository, f.actor);
+      f.dependencies.mediaService = media;
+      const service = new ProductOperationService(f.dependencies);
+      f.executor.setProductOperations(service);
+      const tool = call("media.read", { id: item.reference.mediaId });
+      const prepared = f.repository.prepareToolInvocation({ runtimeRunId: runtime.id, toolCallId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), tool });
+      f.repository.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
+      const result = await f.executor.execute(prepared.invocation.id);
+      expect(result.modelText?.text).toBe(text);
+      expect(result.modelText?.isAuthorized()).toBe(true);
+      expect(result.content).not.toContain(text);
+      expect(JSON.stringify(f.repository.getToolInvocation(prepared.invocation.id))).not.toContain(text);
+      expect(service.requiresApproval(call("media.available"))).toBe(true);
+      expect(service.requiresApproval(tool)).toBe(false);
+      const ui = await service.handlers.get("media:read")!({ sessionId: f.actor.session.id, id: item.reference.mediaId });
+      expect(ui).toMatchObject({ text });
+      const other = f.repository.createBot();
+      expect(() => service.validate(call("media.read", { sessionId: other.session.id, id: item.reference.mediaId }), runtime.id)).toThrow();
+      media.unbind({ sessionId: f.actor.session.id, id: item.reference.mediaId });
+      expect(result.modelText?.isAuthorized()).toBe(false);
+      expect(() => service.validate(tool, runtime.id)).toThrow();
+    } finally { await media.shutdown(); }
+  });
+});
+
+describe("published Bot image product transport", () => {
+  async function avatarFixture() {
+    const f = fixture();
+    const chunk = (type: string, bytes: Buffer) => {
+      const block = Buffer.alloc(bytes.length + 12); block.writeUInt32BE(bytes.length); block.write(type, 4); bytes.copy(block, 8);
+      let crc = 0xffffffff;
+      for (const byte of block.subarray(4, -4)) { crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = crc >>> 1 ^ (crc & 1 ? 0xedb88320 : 0); }
+      block.writeUInt32BE((crc ^ 0xffffffff) >>> 0, block.length - 4); return block;
+    };
+    const header = Buffer.alloc(13); header.writeUInt32BE(256); header.writeUInt32BE(256, 4); header[8] = 8; header[9] = 6;
+    const pixels = Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk("IHDR", header), chunk("IDAT", deflateSync(Buffer.alloc(256 * (256 * 4 + 1)))), chunk("IEND", Buffer.alloc(0))]);
+    const parser: MediaParserAdapter = { parse: async () => ({ kind: "image", width: 256, height: 256, durationMs: null, extraction: null, parserName: "controlled-image-parser", parserVersion: "1" }), renderPdfPage: async () => { throw new Error("unused"); }, shutdown: async () => {} };
+    const media = new MediaService(f.repository, join(f.root, "avatar-media"), parser);
+    const source = (await media.importBytes({ sessionId: f.actor.session.id, bytes: pixels, mimeType: "image/png", name: "selected.png" })).imported[0]!;
+    f.dependencies.mediaService = media; f.dependencies.botImageService = new BotImageService(f.repository, media, value => value);
+    f.repository.transitionRuntimeRun(f.runtime.id, "completed");
+    const nonce = crypto.randomUUID(); f.repository.prepareMessage({ sessionId: f.actor.session.id, clientNonce: nonce, text: "Publish selected picture", mediaRefs: [source.reference] });
+    const entry = f.repository.getUserMessage(nonce);
+    const runtime = f.repository.createRuntimeRun(nonce, "fake", { schemaVersion: 1, botId: f.actor.bot.id, profileVersion: f.actor.bot.version, sessionId: f.actor.session.id, generation: 1, inputSeq: entry.seq, blocks: [], digest: "selected-avatar" });
+    f.repository.transitionRuntimeRun(runtime.id, "dispatching"); f.repository.transitionRuntimeRun(runtime.id, "running");
+    return { ...f, runtime, media, source, pixels };
+  }
+  it("requires real approval and reuses an atomic image publication receipt without publishing twice", async () => {
+    const f = await avatarFixture();
+    try {
+      const tool = call("bots.setImageAvatar", { botId: f.actor.bot.id, expectedVersion: f.actor.bot.version, reference: f.source.reference });
+      expect(f.service.requiresApproval(tool)).toBe(true);
+      const pending = f.prepare(tool, f.runtime.id);
+      await expect(f.executor.execute(pending.invocation.id)).rejects.toMatchObject({ code: "TOOL_STATE_INVALID" });
+      expect(f.repository.getBot(f.actor.bot.id).avatarImage).toBeUndefined();
+      f.repository.resolveToolApproval(pending.approval.id, pending.approval.version, "allow-once");
+      const first = JSON.parse((await f.executor.execute(pending.invocation.id)).content);
+      expect(f.repository.findProductOperationResult(f.runtime.clientNonce, tool, f.actor.bot.id)).not.toBeNull();
+      const replay = JSON.parse((await f.execute(tool, f.runtime.id)).content);
+      expect(replay).toMatchObject({ reused: true, status: "previously_completed", result: { avatarImage: first.result.avatarImage } });
+      expect(f.media.list({ sessionId: f.actor.session.id })).toHaveLength(2);
+      expect(f.repository.getBot(f.actor.bot.id).version).toBe(f.actor.bot.version + 1);
+    } finally { await f.media.shutdown(); }
+  });
+  it("transfers only real published pixels, keeps bytes out of receipts and retires them after clear", async () => {
+    const f = await avatarFixture();
+    try {
+      const published = await f.dependencies.botImageService!.set({ botId: f.actor.bot.id, expectedVersion: f.actor.bot.version, sessionId: f.actor.session.id, reference: f.source.reference });
+      f.repository.transitionRuntimeRun(f.runtime.id, "completed");
+      const nonce = crypto.randomUUID(); f.repository.prepareMessage({ sessionId: f.actor.session.id, clientNonce: nonce, text: "Read the public Bot picture" });
+      const run = f.repository.createRuntimeRun(nonce, "openai-compatible", { schemaVersion: 1, botId: f.actor.bot.id, profileVersion: published.version, sessionId: f.actor.session.id, generation: 1, inputSeq: f.repository.getUserMessage(nonce).seq, blocks: [], digest: "real-avatar-pixels" });
+      f.repository.transitionRuntimeRun(run.id, "dispatching"); f.repository.transitionRuntimeRun(run.id, "running");
+      f.dependencies.providers.getCapabilities = () => ({ toolImageInput: true }) as ReturnType<ProductDependencies["providers"]["getCapabilities"]>;
+      const tool = call("bots.readImageAvatar", { botId: f.actor.bot.id });
+      expect(f.service.requiresApproval(tool)).toBe(false);
+      const output = await f.execute(tool, run.id);
+      expect(Buffer.from(output.images![0]!.dataBase64, "base64")).toEqual(f.pixels);
+      expect(output.content).not.toContain(f.pixels.toString("base64"));
+      expect(JSON.stringify(output.invocation)).not.toContain(f.pixels.toString("base64"));
+      expect(toolImageResponse(output.content, output.images).images).toHaveLength(1);
+      f.dependencies.botImageService!.clear({ botId: published.id, expectedVersion: published.version });
+      expect(toolImageResponse(output.content, output.images).images).toHaveLength(0);
+    } finally { await f.media.shutdown(); }
+  });
+});
 
 describe("product operations", () => {
   it.each(["allow-once", "deny"] as const)("uses genuine approval for creation after a short reply: %s", async (decision) => {
@@ -453,4 +601,42 @@ describe("demonstration product approvals", () => {
     const resources = f.repository.library.available({ includeDeleted: true, includeDisabled: true });
     expect(resources).toHaveLength(1); expect(resources[0]?.enabled).toBe(false);
   });
+});
+
+describe("portable template product transport",()=>{
+ async function portableFixture(){const f=fixture();const {TemplateExportService}=await import("./template-export-service");const service=new TemplateExportService(f.repository,f.repository.templates,f.libraryService,{readBinary:async()=>{throw Error("not used");}},{templateBlobRoot:join(f.root,"template-blobs"),libraryBlobRoot:join(f.root,"owned")});f.dependencies.templateExportService=service;return {...f,portable:service};}
+ it("reuses capture receipts and commits a template and its durable metadata atomically",async()=>{
+  const f=await portableFixture(),preview=await f.portable.prepareCapture({sessionId:f.actor.session.id,name:"PRIVATE_TEMPLATE_NAME",bots:[{id:f.actor.bot.id,expectedVersion:f.actor.bot.version}],resources:[]},{sessionId:f.actor.session.id,executorBotId:f.actor.bot.id,runtimeRunId:f.runtime.id});
+  const tool=call("templates.commitCapture",{preparedId:preview.id,expectedDigest:preview.digest});
+  const first=await f.execute(tool);expect(first.content).not.toContain("PRIVATE_TEMPLATE_NAME");expect(f.portable.list()).toHaveLength(1);
+  await f.execute(tool);expect(f.portable.list()).toHaveLength(1);
+ });
+ it("rolls back publication if the durable receipt cannot be written",async()=>{
+  const f=await portableFixture(),preview=await f.portable.prepareCapture({sessionId:f.actor.session.id,name:"Atomic",bots:[{id:f.actor.bot.id,expectedVersion:f.actor.bot.version}],resources:[]},{sessionId:f.actor.session.id,executorBotId:f.actor.bot.id,runtimeRunId:f.runtime.id});
+  const database=Reflect.get(f.repository,"database") as DatabaseSync;database.exec("CREATE TRIGGER reject_portable_receipt BEFORE UPDATE OF product_result_content ON tool_invocations WHEN NEW.product_result_content LIKE '%templates.commitCapture%' BEGIN SELECT RAISE(ABORT,'controlled receipt failure'); END");
+  await expect(f.execute(call("templates.commitCapture",{preparedId:preview.id,expectedDigest:preview.digest}))).rejects.toThrow();expect(f.portable.list()).toHaveLength(0);
+ });
+ it("reuses native cancellation receipts and refuses to repeat unknown save attempts",async()=>{
+  const f=await portableFixture(),entry=f.repository.getUserMessage(f.runtime.clientNonce),input={format:"html",sessions:[{sessionId:f.actor.session.id,generation:1,entries:[{id:entry.id,digest:await import("./library-blob-store").then(module=>module.libraryBytesDigest(Buffer.from(entry.body)))}]}],resources:[],media:[]};
+  const save=vi.fn(async()=>null);f.dependencies.saveOfflineArtifact=save;
+  const tool=call("exports.save",input);await f.execute(tool);await f.execute(tool);expect(save).toHaveBeenCalledTimes(1);
+  const other=call("exports.save",{...input,name:"unknown"});save.mockRejectedValueOnce(Error("controlled publication interruption"));await expect(f.execute(other)).rejects.toThrow();await expect(f.execute(other)).rejects.toThrow();expect(save).toHaveBeenCalledTimes(2);
+ });
+
+ it("keeps template names and bodies ephemeral and rechecks source revocation at serialization",async()=>{
+  const f=await portableFixture(),doc=f.repository.library.create({sessionId:f.actor.session.id,kind:"document",name:"PRIVATE_PORTABLE_TITLE",body:"PRIVATE_PORTABLE_BODY"});
+  f.repository.transitionRuntimeRun(f.runtime.id,"failed");const run=libraryRuntime(f.repository,f.actor,[doc.reference]),context={sessionId:f.actor.session.id,executorBotId:f.actor.bot.id,runtimeRunId:run.id};
+  const capture=await f.portable.prepareCapture({sessionId:f.actor.session.id,name:"PRIVATE_PORTABLE_TEMPLATE",bots:[],resources:[{reference:doc.reference,filePaths:[]}]},context);
+  const result=await f.execute(call("templates.commitCapture",{preparedId:capture.id,expectedDigest:capture.digest}),run.id);expect(result.content).not.toMatch(/PRIVATE_PORTABLE/u);expect(toolImageResponse(result.content,undefined,result.modelText).text).toContain("PRIVATE_PORTABLE_BODY");
+  const serialized=JSON.stringify(f.repository.listToolInvocations(f.actor.session.id));expect(serialized).not.toContain('"product_result_content":"PRIVATE_PORTABLE_BODY"');
+  f.repository.library.unbind({sessionId:f.actor.session.id,id:doc.resource.id});expect(result.modelText?.isAuthorized()).toBe(false);expect(toolImageResponse(result.content,undefined,result.modelText).text).not.toContain("PRIVATE_PORTABLE_BODY");
+ });
+
+ it("injects actual capture scope before execution and rejects UI preview tokens and foreign sessions",async()=>{
+  const f=await portableFixture(),input={name:"Scoped",bots:[{id:f.actor.bot.id,expectedVersion:f.actor.bot.version}],resources:[]};
+  const response=await f.execute(call("templates.prepareCapture",input));expect(response.modelText?.isAuthorized()).toBe(true);const preview=JSON.parse(response.modelText!.text);expect(preview.id).toBeTruthy();
+  const trusted=await f.portable.prepareCapture({...input,sessionId:f.actor.session.id});expect(()=>f.service.validate(call("templates.commitCapture",{preparedId:trusted.id,expectedDigest:trusted.digest}),f.runtime.id)).toThrowError(expect.objectContaining({code:"APPROVAL_SCOPE_INVALID"}));
+  expect(()=>f.service.validate(call("templates.prepareCapture",{...input,sessionId:f.repository.createBot().session.id}),f.runtime.id)).toThrowError(expect.objectContaining({code:"APPROVAL_SCOPE_INVALID"}));
+ });
+
 });

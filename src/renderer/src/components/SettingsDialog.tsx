@@ -1,3 +1,4 @@
+import { AutomationEventsPanel } from "./AutomationEventsPanel";
 import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
 import { useEffectEvent, useCallback, useEffect, useRef, useState } from "react";
 import darkThemePreview from "../assets/themes/dark.png";
@@ -10,9 +11,10 @@ import { ScopedMemorySettingsPanel } from "./ScopedMemorySettingsPanel";
 import { RoutinesSettingsPanel } from "./RoutinesSettingsPanel";
 import { DockerStatusCard } from "./EnvironmentPanel";
 import { ConnectorSettingsPanel } from "./ConnectorSettingsPanel";
+import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 import type { UpdateAction } from "../update-actions";
 
-type SettingsSection = "general" | "capabilities" | "memory" | "mcp" | "routines" | "updates" | "apps";
+type SettingsSection = "general" | "capabilities" | "memory" | "mcp" | "routines" | "updates" | "apps" | "voice" | "automation-events";
 
 type SettingsDialogProps = {
   open: boolean;
@@ -37,6 +39,8 @@ type SettingsDialogProps = {
   onRetryUpdate(): void;
   onInstallUpdate(): void;
   onOpenWorkspaceManager?(): void;
+  onOpenOrganization?(): void;
+  onOpenPortable?():void;
 };
 
 const themeLabels: Record<Exclude<AppearanceTheme, "system">, string> = {
@@ -88,6 +92,8 @@ export function SettingsDialog({
   onRetryUpdate,
   onInstallUpdate,
   onOpenWorkspaceManager,
+  onOpenOrganization,
+  onOpenPortable,
 }: SettingsDialogProps): React.JSX.Element | null {
   const [section, setSection] = useState<SettingsSection>("general");
   const handleProductView = useEffectEvent((event: Event) => {
@@ -180,8 +186,10 @@ export function SettingsDialog({
             <button type="button" aria-label="能力与权限" className={section === "capabilities" ? "selected" : ""} aria-current={section === "capabilities" ? "page" : undefined} onClick={() => setSection("capabilities")}><EyeIcon /><span>能力与权限</span></button>
             <button type="button" aria-label="长期记忆" className={section === "memory" ? "selected" : ""} aria-current={section === "memory" ? "page" : undefined} onClick={() => setSection("memory")}><BotIcon /><span>长期记忆</span></button>
             <button type="button" aria-label="应用连接" className={section === "apps" ? "selected" : ""} aria-current={section === "apps" ? "page" : undefined} onClick={() => setSection("apps")}><PanelIcon /><span>应用连接</span></button>
+            <button type="button" aria-label="语音" className={section === "voice" ? "selected" : ""} aria-current={section === "voice" ? "page" : undefined} onClick={() => setSection("voice")}><PanelIcon /><span>语音</span></button>
             <button type="button" aria-label="MCP" className={section === "mcp" ? "selected" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => setSection("mcp")}><PanelIcon /><span>MCP</span></button>
             <button type="button" aria-label="主动服务" className={section === "routines" ? "selected" : ""} aria-current={section === "routines" ? "page" : undefined} onClick={() => setSection("routines")}><BellIcon /><span>主动服务</span></button>
+            <button type="button" aria-label="事件与 Webhook" className={section === "automation-events" ? "selected" : ""} aria-current={section === "automation-events" ? "page" : undefined} onClick={() => setSection("automation-events")}><BellIcon /><span>事件与 Webhook</span></button>
             <button type="button" aria-label="版本更新" className={section === "updates" ? "selected" : ""} aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}><RefreshIcon /><span>版本更新</span></button>
           </nav>
         </aside>
@@ -212,6 +220,8 @@ export function SettingsDialog({
               </div>
             </div>
             {themeError ? <div className="dialog-error" role="alert">{themeError.safeMessage}</div> : null}
+            {onOpenOrganization ? <section className="settings-card settings-organization-entry"><div><strong>聊天整理与通知</strong><p>管理分区、默认助理、通知类别与声音；聊天和权限保持独立。</p></div><button type="button" className="secondary-button" onClick={onOpenOrganization}>聊天整理与通知</button></section> : null}
+            {onOpenPortable?<section className="settings-card settings-portable-entry"><strong>模板与离线导出</strong><p>在当前会话明确选择配置、消息、资料和文件；导入前审阅完整模板。</p><button type="button" className="secondary-button" onClick={onOpenPortable}>模板与选择范围导出</button></section>:null}
             <h3>工具自动化</h3>
             <div className="settings-card settings-form-group">
               <label className="settings-row">
@@ -267,11 +277,13 @@ export function SettingsDialog({
           {section === "apps" ? <section className="settings-panel" aria-label="应用连接设置">
             <ConnectorSettingsPanel active={open && section === "apps"} />
           </section> : null}
+          {section === "voice" ? <section className="settings-panel"><VoiceSettingsPanel /></section> : null}
 
           {section === "mcp" ? <section className="settings-panel" aria-label="MCP">
             <McpSettingsPanel active={open && section === "mcp"} />
           </section> : null}
 
+          {section === "automation-events" ? <section className="settings-panel" aria-label="事件与 Webhook"><AutomationEventsPanel active={open && section === "automation-events"} /></section> : null}
           {section === "routines" ? <section className="settings-panel" aria-label="主动服务">
             <RoutinesSettingsPanel active={open && section === "routines"} />
           </section> : null}

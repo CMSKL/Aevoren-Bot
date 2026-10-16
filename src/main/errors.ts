@@ -1,3 +1,4 @@
+import { EventStateError } from "./event-repository";
 import { ZodError } from "zod";
 import type { ApiResult, AppError, ErrorDomain } from "@shared/contracts";
 import { NativeConnectorError } from "./native-connectors/types";
@@ -11,6 +12,40 @@ type ErrorDescriptor = {
 };
 
 export const ERROR_REGISTRY = {
+  EVENT_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这项事件订阅或回执。", allowedDetailKeys: [] },
+  EVENT_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "事件或 Routine 版本已变化，当前草稿仍保留，请核对后再保存。", allowedDetailKeys: ["currentVersion"] },
+  EVENT_UNAUTHORIZED: { domain: "security", retryable: false, safeMessage: "Webhook 版本或密钥已失效。", allowedDetailKeys: [] },
+  EVENT_STOPPED: { domain: "tool", retryable: false, safeMessage: "事件监听或订阅已停止。", allowedDetailKeys: [] },
+  EVENT_LIMIT: { domain: "validation", retryable: false, safeMessage: "事件内容、订阅或待处理数量超过限制。", allowedDetailKeys: [] },
+  EVENT_LOOP: { domain: "security", retryable: false, safeMessage: "事件循环或超过四跳的触发已阻止。", allowedDetailKeys: [] },
+  EVENT_INVALID: { domain: "validation", retryable: false, safeMessage: "事件数据或摘要校验失败，未派发。", allowedDetailKeys: [] },
+  ORG_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "侧栏设置已变化，请刷新后保存；当前草稿仍保留。", allowedDetailKeys: ["currentVersion"] },
+  VOICE_CONFIGURATION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "语音配置已改变，请刷新后保存。", allowedDetailKeys: [] },
+  VOICE_CONFIGURATION_REQUIRED: { domain: "provider", retryable: false, safeMessage: "请在语音设置中启用并配置这项独立服务。", allowedDetailKeys: [] },
+  VOICE_TASK_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这项语音任务。", allowedDetailKeys: [] },
+  VOICE_NOT_GRANTED: { domain: "security", retryable: false, safeMessage: "当前会话或任务没有这项语音内容的有效授权。", allowedDetailKeys: [] },
+  VOICE_NONCE_CONFLICT: { domain: "storage", retryable: false, safeMessage: "同一语音请求标识对应了不同内容或配置。", allowedDetailKeys: [] },
+  VOICE_RESPONSE_INVALID: { domain: "provider", retryable: false, safeMessage: "语音服务返回的文字或音频未通过校验。", allowedDetailKeys: [] },
+  VOICE_TOO_LARGE: { domain: "validation", retryable: false, safeMessage: "语音内容超过当前文件、文字或录制时长限制。", allowedDetailKeys: [] },
+  VOICE_REQUEST_FAILED: { domain: "provider", retryable: false, safeMessage: "语音请求失败，请检查配置与服务状态。", allowedDetailKeys: [] },
+  VOICE_REQUEST_UNKNOWN: { domain: "provider", retryable: false, safeMessage: "语音请求结果未知，系统不会自动再次发送。", allowedDetailKeys: [] },
+  VOICE_CAPTURE_INVALID: { domain: "security", retryable: false, safeMessage: "录音意图已失效，请重新点击开始录音。", allowedDetailKeys: [] },
+  VOICE_PERMISSION_DENIED: { domain: "security", retryable: false, safeMessage: "麦克风权限不可用，请在系统设置中允许后重新开始。", allowedDetailKeys: [] },
+  VOICE_SOURCE_CHANGED: { domain: "storage", retryable: false, safeMessage: "语音来源或会话状态已改变，请重新选择。", allowedDetailKeys: [] },
+  VOICE_UNSUPPORTED: { domain: "validation", retryable: false, safeMessage: "当前语音服务或录制格式尚不支持这项操作。", allowedDetailKeys: [] },
+
+  MEDIA_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到这份媒体。", allowedDetailKeys: [] },
+  MEDIA_NOT_GRANTED: { domain: "security", retryable: false, safeMessage: "当前会话或任务没有这份媒体的有效授权，请重新选择并发送。", allowedDetailKeys: [] },
+  MEDIA_REFERENCE_INVALID: { domain: "security", retryable: false, safeMessage: "媒体或解析版本引用未通过校验，请重新选择。", allowedDetailKeys: [] },
+  MEDIA_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "媒体状态已改变，请刷新后重试。", allowedDetailKeys: [] },
+  MEDIA_UNSUPPORTED: { domain: "validation", retryable: false, safeMessage: "当前支持图片、PDF、DOCX 及可解码的音视频文件；具体格式与大小请查看媒体说明。", allowedDetailKeys: [] },
+  MEDIA_IMPORT_TOO_LARGE: { domain: "validation", retryable: false, safeMessage: "媒体超过当前文件、像素、页数或导入总量限制。", allowedDetailKeys: [] },
+  MEDIA_CODEC_UNSUPPORTED: { domain: "validation", retryable: false, safeMessage: "当前平台无法解码这份音视频，请使用支持的编码格式。", allowedDetailKeys: [] },
+  MEDIA_CONTENT_INVALID: { domain: "security", retryable: false, safeMessage: "媒体内容、编码或摘要未通过校验。", allowedDetailKeys: [] },
+  MEDIA_PARSE_FAILED: { domain: "storage", retryable: false, safeMessage: "无法解析这份媒体，未发布不完整内容。", allowedDetailKeys: [] },
+  MEDIA_PARSE_TIMEOUT: { domain: "storage", retryable: true, safeMessage: "媒体解析超时，已停止所属任务，未发布不完整内容。", allowedDetailKeys: [] },
+  MEDIA_ENCRYPTED: { domain: "validation", retryable: false, safeMessage: "当前不支持加密或需要密码的媒体。", allowedDetailKeys: [] },
+  MEDIA_PARSER_UNAVAILABLE: { domain: "storage", retryable: true, safeMessage: "媒体解析组件不可用，请检查应用安装或构建资源。", allowedDetailKeys: [] },
   DEMONSTRATION_NOT_FOUND: { domain: "storage", retryable: false, safeMessage: "没有找到当前会话成员的示范草稿或录制。", allowedDetailKeys: [] },
   DEMONSTRATION_STATE_INVALID: { domain: "tool", retryable: false, safeMessage: "示范状态已变化，请刷新后再处理。", allowedDetailKeys: [] },
   DEMONSTRATION_VERSION_CONFLICT: { domain: "storage", retryable: true, safeMessage: "示范草稿已更新，当前编辑仍保留；请读取最新版本后再保存。", allowedDetailKeys: ["currentVersion"] },
@@ -278,6 +313,7 @@ export class AevorenBotError extends Error {
 
 export function asAppError(error: unknown): AppError {
   if (error instanceof AevorenBotError) return error.toAppError();
+  if (error instanceof EventStateError) return new AevorenBotError(error.code, undefined, undefined, error.currentVersion === undefined ? undefined : { currentVersion: error.currentVersion }).toAppError();
   if (error instanceof ConnectorStateError) return new AevorenBotError(error.code, undefined, undefined,
     error.currentVersion === undefined ? undefined : { currentVersion: error.currentVersion }).toAppError();
   if (error instanceof NativeConnectorError) return new AevorenBotError(`CONNECTOR_${error.code}` as keyof typeof ERROR_REGISTRY).toAppError();

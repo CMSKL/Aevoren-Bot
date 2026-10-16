@@ -14,7 +14,7 @@ import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { MemoryCaptureService } from "./memory-capture-service";
 
-const cleanup: Array<{ repository: AppRepository; root: string; coordinator: RoomCoordinator }> = [];
+const cleanup: Array<{ repository: AppRepository; root: string; coordinator: RoomCoordinator; executor: RuntimeExecutor }> = [];
 
 async function fixture(options: { memberCount?: number; files?: boolean; firstFails?: boolean; summaryUsesTool?: boolean; holdWork?: boolean } = {}) {
   const repository = new AppRepository(":memory:");
@@ -94,14 +94,28 @@ async function fixture(options: { memberCount?: number; files?: boolean; firstFa
   const capture = vi.spyOn(memoryCapture, "enqueue").mockImplementation(() => {});
   const tools = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
   const executor = new RuntimeExecutor(repository, providers, { runtime: vi.fn(), transcript: vi.fn() }, false, undefined, tools, undefined, undefined, undefined, memoryCapture);
-  const coordinator = new RoomCoordinator(repository, executor, { roomRuntime: vi.fn(), transcript: vi.fn() });
-  cleanup.push({ repository, root, coordinator });
+  const terminalWaiters = new Map<string, Set<() => void>>();
+  const terminal = (id: string): Promise<void> => new Promise(resolve => {
+    let listeners = terminalWaiters.get(id);
+    if (!listeners) { listeners = new Set(); terminalWaiters.set(id, listeners); }
+    listeners.add(resolve);
+  });
+  const coordinator = new RoomCoordinator(repository, executor, {
+    roomRuntime: event => {
+      if (!["completed", "partial", "cancelled", "interrupted"].includes(event.batch.state)) return;
+      for (const resolve of terminalWaiters.get(event.batch.id) ?? []) resolve();
+      terminalWaiters.delete(event.batch.id);
+    },
+    transcript: vi.fn(),
+  });
+  cleanup.push({ repository, root, coordinator, executor });
   const command: RoomSendCommand = { roomId: detail.room.id, sessionId: detail.session.id, clientNonce: crypto.randomUUID(), text: options.files ? "请先保存 result.md，再由另一位成员读取核验，最后协调者汇总。" : "请成员依次完成分析并由协调者汇总。", targetBotIds: [], routingMode: "automatic" };
-  return { repository, root, bots, detail, calls, summaryInputs, plan, leadProvider, workerProvider, providers, executor, coordinator, capture, command };
+  return { repository, root, bots, detail, calls, summaryInputs, plan, leadProvider, workerProvider, providers, executor, coordinator, capture, command, terminal };
 }
 
 afterEach(async () => {
   for (const item of cleanup.splice(0)) {
+    await item.executor.shutdown();
     await item.coordinator.shutdown();
     item.repository.close();
     rmSync(item.root, { recursive: true, force: true });
@@ -110,7 +124,9 @@ afterEach(async () => {
 });
 
 async function settled(f: Awaited<ReturnType<typeof fixture>>, batchId: string) {
-  await vi.waitFor(() => expect(["completed", "partial", "cancelled", "interrupted"]).toContain(f.repository.getRoomBatch(batchId).state));
+  // Observe actual Room completion under the original enclosing test deadline.
+  if (!["completed", "partial", "cancelled", "interrupted"].includes(f.repository.getRoomBatch(batchId).state)) await f.terminal(batchId);
+  expect(["completed","partial","cancelled","interrupted"]).toContain(f.repository.getRoomBatch(batchId).state);
   return f.repository.getRoomBatch(batchId);
 }
 

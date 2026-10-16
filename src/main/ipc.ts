@@ -1,3 +1,14 @@
+import {TEMPLATE_CHANNELS,TEMPLATE_CANCEL_CHANNEL} from "@shared/template-export-channels";
+import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
+import { REALTIME_CHANNELS } from "@shared/realtime-channels";
+import { AUTOMATION_EVENT_CHANNELS } from "@shared/event-channels";
+import { eventVersionSchema } from "@shared/event-schemas";
+import { realtimeStartSchema, realtimeAppendSchema, realtimeCommitSchema, realtimePlaybackSchema, realtimeInputSchema } from "@shared/realtime-schemas";
+import type { RealtimeService } from "./realtime-service";
+import { captureRealtimeAdmission } from "./realtime-admission";
+import { VOICE_CHANNELS } from "@shared/voice-channels";
+import { voiceConfigurationSaveSchema } from "@shared/voice-schemas";
+import type { VoiceCaptureGate } from "./voice-capture";
 import { MCP_WRITE_CHANNELS } from "@shared/mcp-write-channels";
 import { mcpWriteIdSchema } from "@shared/mcp-write-schemas";
 import { NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "@shared/native-outbound-channels";
@@ -8,11 +19,12 @@ import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent
 import { IPC } from '@shared/channels';
 import { apiResult, AevorenBotError } from './errors';
 import { ProductOperationService } from './product-operation-service';
+import {createProductHandlers} from "./product-handlers";
 import type { ProductDependencies } from './product-handlers';
 import { NATIVE_CONNECTOR_CHANNELS } from '@shared/native-connector-channels';
 import { connectorConfigureSchema } from '@shared/native-connector-schemas';
 
-type IpcDependencies = ProductDependencies & { window: BrowserWindow; rendererReady(): void; confirmClose(canClose: boolean): void };
+type IpcDependencies = ProductDependencies & { realtimeService?: RealtimeService; voiceCapture?: VoiceCaptureGate; window: BrowserWindow; rendererReady(): void; confirmClose(canClose: boolean): void };
 
 function isTrusted(event: IpcMainEvent | IpcMainInvokeEvent, window: BrowserWindow): boolean {
   return event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame;
@@ -28,6 +40,54 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
   const { window } = dependencies;
   const view = new ProductViewService(window);
   const product = new ProductOperationService({ ...dependencies, requestView: (input) => view.request(input) });
+  const portablePending=new Map<string,AbortController>();
+  ipcMain.handle(TEMPLATE_CANCEL_CHANNEL,(event,id:unknown)=>apiResult(()=>{assertTrusted(event,window);portablePending.get(z.string().uuid().parse(id))?.abort();}));
+  ipcMain.handle(TEMPLATE_CHANNELS.reviewPrepared,(event,input:unknown)=>apiResult(()=>{assertTrusted(event,window);if(!dependencies.templateExportService)throw new AevorenBotError("INVALID_REQUEST");const value=z.object({preparedId:z.string().uuid(),expectedDigest:z.string().regex(/^[a-f0-9]{64}$/u)}).strict().parse(input);return dependencies.templateExportService.reviewPrepared(value.preparedId,value.expectedDigest);}));
+  ipcMain.handle(AUTOMATION_EVENT_CHANNELS.rotateToken, (event, input: unknown) => apiResult(() => {
+    assertTrusted(event, window); if (!dependencies.automationEventService) throw new AevorenBotError("INTERNAL_ERROR");
+    return dependencies.automationEventService.rotateToken(eventVersionSchema.parse(input));
+  }));
+  ipcMain.handle(BOT_IMAGE_CHANNELS.cancel,(event,input:unknown)=>apiResult(()=>{assertTrusted(event,window);if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");dependencies.botImageService.cancelUI(z.string().uuid().parse(input));}));
+  ipcMain.handle(REALTIME_CHANNELS.start, (event, input: unknown) => apiResult(async () => {
+    assertTrusted(event, window);
+    const service = dependencies.realtimeService, capture = dependencies.voiceCapture;
+    if (!service || !capture) throw new AevorenBotError("VOICE_UNSUPPORTED");
+    const parsed = realtimeStartSchema.parse(input), admission = captureRealtimeAdmission(dependencies.repository, parsed);
+    const intent = await capture.beginRealtime(parsed.sessionId);
+    try { return await service.start(parsed, capture.realtimeLease(parsed.sessionId, intent.captureId), admission); }
+    catch (error) { capture.cancel({ sessionId: parsed.sessionId, captureId: intent.captureId }); throw error; }
+  }));
+  for (const method of ["append", "commitTurn", "playbackAck", "interrupt", "stop", "snapshot", "stopTask"] as const) {
+    ipcMain.handle(REALTIME_CHANNELS[method], (event, input: unknown) => apiResult<unknown>(async () => {
+      assertTrusted(event, window);
+      const service = dependencies.realtimeService;
+      if (!service) throw new AevorenBotError("VOICE_UNSUPPORTED");
+      if (method === "append") return service.append(realtimeAppendSchema.parse(input));
+      if (method === "commitTurn") return service.commitTurn(realtimeCommitSchema.parse(input));
+      if (method === "playbackAck") return service.playbackAck(realtimePlaybackSchema.parse(input));
+      if (method === "interrupt") return service.interrupt(realtimePlaybackSchema.parse(input));
+      const parsed = realtimeInputSchema.parse(input);
+      if (method === "stop") {
+        const snapshot = await service.stop(parsed);
+        dependencies.voiceCapture?.cancel({ sessionId: parsed.sessionId, captureId: snapshot.session.captureId });
+        return snapshot;
+      }
+      return method === "stopTask" ? service.stopTask(parsed) : service.snapshot(parsed);
+    }));
+  }
+  ipcMain.handle(VOICE_CHANNELS.saveConfiguration, (event, input: unknown) => apiResult(() => {
+    assertTrusted(event, window); if (!dependencies.voiceService) throw new AevorenBotError("VOICE_UNSUPPORTED");
+    const result = dependencies.voiceService.saveConfiguration(voiceConfigurationSaveSchema.parse(input));
+    return result;
+  }));
+  for (const [channel, method] of [[VOICE_CHANNELS.beginCapture, "begin"], [VOICE_CHANNELS.commitCapture, "commit"], [VOICE_CHANNELS.cancelCapture, "cancel"]] as const) {
+    ipcMain.handle(channel, (event, input: unknown) => apiResult<unknown>(() => {
+      assertTrusted(event, window); if (!dependencies.voiceCapture) throw new AevorenBotError("VOICE_UNSUPPORTED");
+      if (method === "begin") return dependencies.voiceCapture.begin(input as import("@shared/voice-contracts").VoiceCaptureBegin);
+      if (method === "commit") return dependencies.voiceCapture.commit(input as import("@shared/voice-contracts").VoiceCaptureCommit);
+      return dependencies.voiceCapture.cancel(input as import("@shared/voice-contracts").VoiceScope & { captureId: string });
+    }));
+  }
   ipcMain.handle(MCP_WRITE_CHANNELS.requestToolApproval, (event, input: unknown) => apiResult(() => {
     assertTrusted(event, window); if (!dependencies.mcpWriteService) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
     return dependencies.mcpWriteService.requestApproval(mcpWriteIdSchema.parse(input), dependencies.workspaceToolCoordinator);
@@ -49,6 +109,10 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
   for (const [channel, operation] of product.handlers) {
     ipcMain.handle(channel, (event, input: unknown) => apiResult(() => {
       assertTrusted(event, window);
+      if(channel.startsWith("templates:")||channel.startsWith("exports:")){
+        const wrapper=z.object({requestId:z.string().uuid(),input:z.unknown().optional()}).strict().safeParse(input);
+        if(wrapper.success){const controller=new AbortController();if(portablePending.has(wrapper.data.requestId))throw new AevorenBotError("INVALID_REQUEST");portablePending.set(wrapper.data.requestId,controller);const handlers=createProductHandlers(dependencies,work=>work(),undefined,undefined,controller.signal);return Promise.resolve(handlers.get(channel)!(wrapper.data.input)).finally(()=>portablePending.delete(wrapper.data.requestId));}
+      }
       return operation(input);
     }));
   }

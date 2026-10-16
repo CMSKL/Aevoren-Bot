@@ -1,8 +1,9 @@
+import { routineTargetSchema, routineResourcesShape } from "./routine-schemas";
 import { z } from "zod";
 import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "./bot-avatar";
 import { resourceReferencesSchema } from "./library-schemas";
+import { messageMediaReferencesSchema } from "./media-schemas";
 
-const nonEmptyText = z.string().trim().min(1).max(20_000);
 const providerInstanceIdSchema = z.string().trim().min(1).max(120).regex(/^[a-z0-9][a-z0-9._-]*$/i);
 export const workspaceIdSchema = z.string().uuid();
 export const projectIdSchema = z.string().uuid();
@@ -277,13 +278,13 @@ export const briefApprovalCommandSchema = briefApprovalReadSchema.extend({
   candidate: z.enum(["A", "B", "C"]),
 }).strict();
 
-export const sendCommandSchema = z.object({
-  sessionId: sessionIdSchema,
-  clientNonce: nonceSchema,
-  text: nonEmptyText,
+export const messageBodySchema = z.object({
+  text: z.string().trim().max(20_000),
   attachments: messageAttachmentsSchema.optional(),
   resourceRefs: resourceReferencesSchema.optional(),
-});
+  mediaRefs: messageMediaReferencesSchema.optional(),
+}).refine(command => Boolean(command.text || command.attachments?.length || command.resourceRefs?.length || command.mediaRefs?.length), "A message needs text or a selected resource");
+export const sendCommandSchema = messageBodySchema.safeExtend({ sessionId: sessionIdSchema, clientNonce: nonceSchema });
 
 const roomMemberIdsSchema = z.array(botIdSchema).min(2).max(6).refine(
   (ids) => new Set(ids).size === ids.length,
@@ -324,7 +325,7 @@ const uniqueRoomTargets = z.array(botIdSchema).max(6).refine(
   "Room targets must be unique",
 );
 
-export const roomSendCommandSchema = sendCommandSchema.extend({
+export const roomSendCommandSchema = sendCommandSchema.safeExtend({
   roomId: roomIdSchema,
   targetBotIds: uniqueRoomTargets,
   routingMode: z.enum(["automatic", "explicit", "everyone"]),
@@ -422,17 +423,19 @@ export const routineScheduleSchema = z.discriminatedUnion("type", [
     timeZone: z.string().trim().min(1).max(128),
   }).strict(),
 ]);
-export const routineCreateSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  prompt: z.string().trim().min(1).max(20_000),
-  botId: botIdSchema,
-  schedule: routineScheduleSchema,
-  enabled: z.boolean().optional(),
-}).strict();
+const routineCreateFields = {
+  name: z.string().trim().min(1).max(120), prompt: z.string().trim().min(1).max(20_000),
+  schedule: routineScheduleSchema, enabled: z.boolean().optional(), ...routineResourcesShape,
+};
+export const routineCreateSchema = z.union([
+  z.object({ ...routineCreateFields, botId: botIdSchema }).strict(),
+  z.object({ ...routineCreateFields, target: routineTargetSchema }).strict(),
+]);
 export const routineUpdateSchema = z.object({
   id: routineIdSchema,
   expectedVersion: z.number().int().positive(),
   patch: z.object({
+    target: routineTargetSchema.optional(), ...routineResourcesShape,
     name: z.string().trim().min(1).max(120).optional(),
     prompt: z.string().trim().min(1).max(20_000).optional(),
     schedule: routineScheduleSchema.optional(),

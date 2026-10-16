@@ -1,3 +1,8 @@
+import {TemplateExportRepository,TEMPLATE_EXPORT_MIGRATION,templateDigest} from "./template-export-repository";
+import { EventRepository, AUTOMATION_EVENT_MIGRATION } from "./event-repository";
+import { RoutineRepository, GROUP_ROUTINE_MIGRATION } from "./routine-repository";
+import { OrganizationRepository,ORGANIZATION_MIGRATION } from "./organization-repository";
+import { SearchRepository } from "./search-repository";
 import { McpWriteRepository, MCP_WRITE_MIGRATION } from "./mcp-write-repository";
 import { normalizeProductRequest } from "./product-request";
 import { productOperation } from "@shared/product-operations";
@@ -61,7 +66,6 @@ import type {
   RoomTurnState,
   Routine,
   RoutineRun,
-  RoutineSchedule,
   RuntimeRoute,
   RuntimeRun,
   RuntimeState,
@@ -87,6 +91,13 @@ import { normalizeBotAvatarColor, normalizeBotAvatarShape } from "@shared/bot-av
 import { messageAttachmentsSchema, toolInvocationCommandSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
 import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
+import { MediaRepository, MEDIA_MIGRATION } from "./media-repository";
+import { VoiceRepository, VOICE_MIGRATION } from "./voice-repository";
+import { RealtimeRepository, REALTIME_MIGRATION } from "./realtime-repository";
+import { TaskSessionRepository, TASK_SESSION_MIGRATION } from "./task-session-repository";
+import { assertRealtimeAdmission } from "./realtime-admission";
+import { messageMediaReferencesSchema } from "@shared/media-schemas";
+import type { MessageMediaReference } from "@shared/media-contracts";
 import { EnvironmentRepository, ENVIRONMENT_MIGRATION } from "./environment-repository";
 import { BrowserRepository, BROWSER_MIGRATION } from "./browser-repository";
 import { DemonstrationRepository, DEMONSTRATION_MIGRATION } from "./demonstration-repository";
@@ -2078,6 +2089,14 @@ export const MIGRATIONS = [
   NATIVE_OUTBOUND_MIGRATION,
   DEMONSTRATION_MIGRATION,
   MCP_WRITE_MIGRATION,
+  MEDIA_MIGRATION,
+  VOICE_MIGRATION,
+  REALTIME_MIGRATION,
+  TASK_SESSION_MIGRATION,
+  ORGANIZATION_MIGRATION,
+  GROUP_ROUTINE_MIGRATION,
+  TEMPLATE_EXPORT_MIGRATION,
+  AUTOMATION_EVENT_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -2088,6 +2107,9 @@ type ConversationSidebarRow = {
 };
 
 type ConversationRow = {
+  kind: Session["kind"];
+  task_title: string;
+  task_parent_id: string | null;
   session_id: string;
   bot_id: string | null;
   room_id: string | null;
@@ -2102,6 +2124,7 @@ type ConversationRow = {
 };
 
 type BotRow = ConversationSidebarRow & {
+  avatar_image_json?:string|null;
   id: string;
   project_id: string;
   name: string;
@@ -2207,7 +2230,7 @@ type SessionRow = {
   id: string;
   bot_id: string | null;
   room_id: string | null;
-  kind: "MAIN";
+  kind: "MAIN" | "TASK";
   generation: number;
   transcript_cursor: number;
   created_at: string;
@@ -2224,6 +2247,7 @@ type TranscriptRow = {
   body: string;
   attachments_json?: string;
   resource_references_json?: string;
+  media_references_json?: string;
   origin_json?: string | null;
   status: TranscriptStatus;
   send_state?: SendState | null;
@@ -2359,38 +2383,6 @@ type McpServerRow = {
   last_connected_at: string | null;
   created_at: string;
   updated_at: string;
-};
-
-type RoutineRow = {
-  id: string;
-  name: string;
-  prompt: string;
-  bot_id: string;
-  schedule_json: string;
-  enabled: number;
-  next_run_at: number | null;
-  version: number;
-  created_at: string;
-  updated_at: string;
-};
-
-type RoutineRunRow = {
-  id: string;
-  routine_id: string;
-  routine_name: string;
-  bot_id: string;
-  prompt_snapshot: string;
-  schedule_snapshot_json: string;
-  trigger: "schedule" | "manual";
-  trigger_key: string;
-  scheduled_for: number;
-  state: RoutineRun["state"];
-  client_nonce: string;
-  runtime_run_id: string | null;
-  last_error_code: string | null;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
 };
 
 export type McpServerConfig = {
@@ -2554,6 +2546,8 @@ function conversationSidebar(row: (BotRow | RoomRow)): Pick<Bot, "pinnedAt" | "h
 
 function toConversation(row: ConversationRow): ConversationSummary {
   return {
+    kind: row.kind,
+    ...(row.kind === "TASK" ? { title: row.task_title, parentSessionId: row.task_parent_id } : {}),
     sessionId: row.session_id,
     botId: row.bot_id,
     roomId: row.room_id,
@@ -2587,6 +2581,7 @@ function toBot(row: BotRow): Bot {
     },
     avatarShape: normalizeBotAvatarShape(row.avatar_shape),
     avatarColor: normalizeBotAvatarColor(row.avatar_color),
+    ...(row.avatar_image_json?{avatarImage:JSON.parse(row.avatar_image_json) as import("@shared/library-contracts").MediaRef}:{}),
     mcpServerIds,
     memoryWorkspaceIds,
     ...conversationSidebar(row),
@@ -2672,6 +2667,8 @@ function toSession(row: SessionRow): Session {
 
 function toTranscript(row: TranscriptRow): TranscriptEntry {
   return {
+    ...(row.media_references_json && row.media_references_json !== "[]"
+      ? { mediaRefs: messageMediaReferencesSchema.parse(JSON.parse(row.media_references_json)) } : {}),
     ...(row.resource_references_json && row.resource_references_json !== "[]"
       ? { resourceRefs: resourceReferencesSchema.parse(JSON.parse(row.resource_references_json)) } : {}),
     ...(row.origin_json ? { origin: JSON.parse(row.origin_json) as import("@shared/contracts").DelegationOrigin } : {}),
@@ -2837,42 +2834,6 @@ function toMcpServerConfig(row: McpServerRow): McpServerConfig {
   };
 }
 
-function toRoutine(row: RoutineRow): Routine {
-  return {
-    id: row.id,
-    name: row.name,
-    prompt: row.prompt,
-    botId: row.bot_id,
-    enabled: row.enabled === 1,
-    schedule: JSON.parse(row.schedule_json) as RoutineSchedule,
-    nextRunAt: row.next_run_at === null ? null : Number(row.next_run_at),
-    version: Number(row.version),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function toRoutineRun(row: RoutineRunRow): RoutineRun {
-  return {
-    id: row.id,
-    routineId: row.routine_id,
-    routineName: row.routine_name,
-    botId: row.bot_id,
-    promptSnapshot: row.prompt_snapshot,
-    scheduleSnapshot: JSON.parse(row.schedule_snapshot_json) as RoutineSchedule,
-    trigger: row.trigger,
-    triggerKey: row.trigger_key,
-    scheduledFor: Number(row.scheduled_for),
-    state: row.state,
-    clientNonce: row.client_nonce,
-    runtimeRunId: row.runtime_run_id,
-    lastErrorCode: row.last_error_code,
-    createdAt: row.created_at,
-    startedAt: row.started_at,
-    finishedAt: row.finished_at,
-  };
-}
-
 function toRoom(row: RoomRow): Room {
   return {
     id: row.id,
@@ -3033,13 +2994,14 @@ function toRuntime(row: RuntimeRow): RuntimeRun {
   };
 }
 
-export function digestMessage(text: string, attachments: readonly MessageAttachment[] = [], resourceRefs: readonly ResourceReference[] = []): string {
-  if (attachments.length === 0 && resourceRefs.length === 0) return createHash("sha256").update(text, "utf8").digest("hex");
+export function digestMessage(text: string, attachments: readonly MessageAttachment[] = [], resourceRefs: readonly ResourceReference[] = [], mediaRefs: readonly MessageMediaReference[] = []): string {
+  if (attachments.length === 0 && resourceRefs.length === 0 && mediaRefs.length === 0) return createHash("sha256").update(text, "utf8").digest("hex");
   return createHash("sha256")
     .update(JSON.stringify({
       text,
       attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
       ...(resourceRefs.length ? { resourceRefs } : {}),
+      ...(mediaRefs.length ? { mediaRefs } : {}),
     }), "utf8")
     .digest("hex");
 }
@@ -3175,6 +3137,7 @@ export function digestRoomCommand(
   routingMode: RoomRoutingMode = "legacy",
   attachments: readonly MessageAttachment[] = [],
   resourceRefs: readonly ResourceReference[] = [],
+  mediaRefs: readonly MessageMediaReference[] = [],
 ): string {
   const command = attachments.length === 0
     ? { roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() }
@@ -3185,7 +3148,8 @@ export function digestRoomCommand(
         targetBotIds: targetBotIds.toSorted(),
         attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
       };
-  const scopedCommand = resourceRefs.length ? { ...command, resourceRefs } : command;
+  const resources = resourceRefs.length ? { ...command, resourceRefs } : command;
+  const scopedCommand = mediaRefs.length ? { ...resources, mediaRefs } : resources;
   return digestMessage(JSON.stringify(routingMode === "legacy" ? scopedCommand : { ...scopedCommand, routingMode }));
 }
 
@@ -3222,10 +3186,10 @@ const ROOM_RUN_SELECT = `SELECT room_batches.*,
    WHERE room_turns.batch_id = room_batches.id) AS used_turns
   FROM room_batches`;
 
-const CONVERSATION_SELECT = `SELECT conversation_metadata.*, sessions.bot_id, sessions.room_id,
-  (SELECT substr(CASE WHEN length(trim(body)) > 0 THEN body ELSE '[附件]' END, 1, 500)
+const CONVERSATION_SELECT = `SELECT conversation_metadata.*, sessions.bot_id, sessions.room_id, sessions.kind, sessions.task_title, sessions.task_parent_id,
+  (SELECT substr(CASE WHEN length(trim(body)) > 0 THEN body WHEN media_references_json <> '[]' THEN '[媒体]' ELSE '[附件]' END, 1, 500)
    FROM transcript_entries WHERE session_id = sessions.id AND generation = sessions.generation
-     AND (length(trim(body)) > 0 OR attachments_json <> '[]')
+     AND (length(trim(body)) > 0 OR attachments_json <> '[]' OR media_references_json <> '[]')
    ORDER BY seq DESC LIMIT 1) AS last_message,
   (SELECT json_group_array(session_workspace_grants.workspace_id)
    FROM session_workspace_grants JOIN workspaces ON workspaces.id = session_workspace_grants.workspace_id
@@ -3246,6 +3210,15 @@ const ROOM_SELECT = `SELECT rooms.*, ${CONVERSATION_SIDEBAR_COLUMNS} FROM rooms
 export class AppRepository {
   private readonly database: DatabaseSync;
   readonly library: LibraryRepository;
+  readonly media: MediaRepository;
+  readonly voice: VoiceRepository;
+  readonly realtime: RealtimeRepository;
+  readonly tasks: TaskSessionRepository;
+  readonly routineTargets: RoutineRepository;
+  readonly automationEvents: EventRepository;
+  readonly search: SearchRepository;
+  readonly organization:OrganizationRepository;
+  readonly templates:TemplateExportRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
   readonly demonstrations: DemonstrationRepository;
@@ -3267,6 +3240,19 @@ export class AppRepository {
         else if (session.botId) this.getBot(session.botId);
         else if (session.roomId) this.getRoom(session.roomId);
       });
+      this.media = new MediaRepository(this.database, (sessionId, executorBotId) => {
+        const session = this.getSession(sessionId);
+        if (session.roomId && this.getRoom(session.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
+        if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
+        else if (session.botId) this.getBot(session.botId);
+        else if (session.roomId) this.getRoom(session.roomId);
+      });
+      this.voice = new VoiceRepository(this.database, (sessionId, executorBotId) => {
+        const session = this.getSession(sessionId);
+        if (session.roomId && this.getRoom(session.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
+        if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
+      });
+      this.realtime = new RealtimeRepository(this.database, (sessionId, executorBotId) => this.voice.assertScope(sessionId, { executorBotId }), admission => assertRealtimeAdmission(this, admission));
       this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.demonstrations = new DemonstrationRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.browsers = new BrowserRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
@@ -3274,7 +3260,16 @@ export class AppRepository {
       this.mcpWrites = new McpWriteRepository(this.database, scope => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.outbound = new NativeOutboundRepository(this.database, this.connectors, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
       this.skillExecutions = new SkillExecutionRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId),
-        (scope, reference) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId)[0]!);
+        (scope, reference, runtimeRunId) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId, runtimeRunId)[0]!);
+      this.tasks = new TaskSessionRepository(this.database, this);
+      this.templates=new TemplateExportRepository(this.database);
+      this.search = new SearchRepository(this.database);
+      this.organization=new OrganizationRepository(this.database,{assertSession:id=>{this.getSession(id);},assertBot:id=>{this.getBot(id);},assertContext:context=>{this.assertSessionExecutor(context.sessionId,context.executorBotId);if(context.runtimeRunId){const run=this.getRuntimeRun(context.runtimeRunId);if(run.sessionId!==context.sessionId||run.executorBotId!==context.executorBotId||!["running","streaming"].includes(run.state))throw new AevorenBotError("RUNTIME_CONTROL_SCOPE_INVALID");this.tasks.assertTaskRuntime(run.id);}}});
+      this.library.setTaskReferenceReader((sessionId, executor, runtimeId) => this.tasks.libraryReferences(sessionId, executor, runtimeId));
+      this.media.setTaskRuntimeReferencesReader(runtimeId => this.tasks.runtimeTaskPolicy(runtimeId)?.selection.mediaRefs ?? null);
+      this.routineTargets = new RoutineRepository(this.database, this);
+      this.automationEvents = new EventRepository(this.database);
+      this.media.setTaskSessionReferencesReader((sessionId, executor) => this.tasks.mediaReferences(sessionId, executor));
     } catch (error) {
       this.database.close();
       throw error;
@@ -3293,7 +3288,8 @@ export class AppRepository {
       ? Number((this.database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as { version: number }).version)
       : 0;
     const targetSchemaVersion = MIGRATIONS.at(-1)?.version ?? 0;
-    if (this.filename !== ":memory:" && hadMigrationTable && sourceSchemaVersion < targetSchemaVersion) {
+    const previouslyApplied = new Set(hadMigrationTable ? (this.database.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: number }>).map(row => row.version) : []);
+    if (this.filename !== ":memory:" && hadMigrationTable && MIGRATIONS.some(migration => !previouslyApplied.has(migration.version))) {
       this.createMigrationBackup(sourceSchemaVersion, targetSchemaVersion);
     }
     this.database.exec(`
@@ -3495,7 +3491,7 @@ export class AppRepository {
     const row = this.database.prepare(`SELECT
       EXISTS(SELECT 1 FROM runtime_runs WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested'))
       OR EXISTS(SELECT 1 FROM room_batches WHERE state IN ('queued', 'running'))
-      OR EXISTS(SELECT 1 FROM routine_runs WHERE state = 'running') AS active`).get() as { active: number };
+      OR EXISTS(SELECT 1 FROM routine_runs WHERE state IN ('dispatching', 'running', 'cancel-requested')) AS active`).get() as { active: number };
     return Boolean(row.active);
   }
 
@@ -3640,6 +3636,7 @@ export class AppRepository {
   }
 
   getMemoryCaptureScopes(botId: string, sessionId: string): MemoryScopeSelector[] {
+    if (this.getSession(sessionId).kind === "TASK") return [];
     const bot = this.getBot(botId);
     const workspaces = this.listSessionWorkspaces(sessionId, botId);
     return [
@@ -3651,6 +3648,7 @@ export class AppRepository {
   }
 
   listRuntimeMemories(botId: string, sessionId = this.getMainSession(botId).id): MemoryItem[] {
+    if (this.getSession(sessionId).kind === "TASK") return this.tasks.listTaskMemories(sessionId, botId);
     const scopes = this.getMemoryCaptureScopes(botId, sessionId);
     const timestamp = now();
     const candidates = [
@@ -4083,7 +4081,7 @@ export class AppRepository {
       }
       const linked = this.database.prepare("SELECT * FROM projects WHERE workspace_id = ?").get(result.workspace.id) as ProjectRow;
       if (project) {
-        const sessions = this.database.prepare("SELECT session_id FROM conversation_metadata WHERE project_id = ?")
+        const sessions = this.database.prepare("SELECT session_id FROM conversation_metadata JOIN sessions ON sessions.id=conversation_metadata.session_id WHERE project_id = ? AND sessions.kind='MAIN'")
           .all(project.id) as Array<{ session_id: string }>;
         for (const { session_id: sessionId } of sessions) {
           this.assertConversationIdle(sessionId);
@@ -4162,6 +4160,7 @@ export class AppRepository {
   assertSessionExecutor(sessionId: string, executorBotId: string): void {
     const session = this.getSession(sessionId);
     this.getBot(executorBotId);
+    if (session.kind === "TASK") this.tasks.assertExecutor(sessionId, executorBotId);
     if (session.botId === executorBotId) return;
     if (session.roomId && this.database.prepare("SELECT 1 FROM room_members WHERE room_id = ? AND bot_id = ?")
       .get(session.roomId, executorBotId)) return;
@@ -4173,12 +4172,22 @@ export class AppRepository {
     return (this.database.prepare(
       `SELECT workspaces.* FROM workspaces JOIN session_workspace_grants ON session_workspace_grants.workspace_id = workspaces.id
        WHERE session_workspace_grants.session_id = ? AND workspaces.removed_at IS NULL ORDER BY workspaces.created_at, workspaces.id`,
-    ).all(sessionId) as WorkspaceRow[]).map(toWorkspace);
+    ).all(sessionId) as WorkspaceRow[]).map(toWorkspace).flatMap(workspace => {
+      const limits = this.tasks.workspaceLimits(sessionId, executorBotId);
+      if (limits === null) return [workspace];
+      const limit = limits.find(item => item.id === workspace.id);
+      return limit?.read ? [{ ...workspace, writeEnabled: workspace.writeEnabled && limit.write, automationEnabled: workspace.automationEnabled && limit.automation }] : [];
+    });
   }
 
   assertSessionWorkspaceAccess(sessionId: string, executorBotId: string, workspaceId: string, operation?: string): void {
     this.assertSessionExecutor(sessionId, executorBotId);
     const workspace = this.getWorkspace(workspaceId);
+    const taskLimits = this.tasks.workspaceLimits(sessionId, executorBotId);
+    if (taskLimits !== null) {
+      const limit = taskLimits.find(item => item.id === workspaceId);
+      if (!limit?.read || ((operation === "workspace-write" || operation === "write") && !limit.write) || operation === "automation" && !limit.automation) throw new AevorenBotError("WORKSPACE_PATH_OUTSIDE_ROOT");
+    }
     if (!this.database.prepare("SELECT 1 FROM session_workspace_grants WHERE session_id = ? AND workspace_id = ?").get(sessionId, workspaceId)) {
       throw new AevorenBotError("WORKSPACE_PATH_OUTSIDE_ROOT");
     }
@@ -4205,6 +4214,7 @@ export class AppRepository {
   private configureSessionProject(sessionId: string, projectId: string | null, grantWorkspace = true): void {
     const project = projectId ? this.getProject(projectId) : null;
     this.database.prepare("UPDATE conversation_metadata SET project_id = ? WHERE session_id = ?").run(projectId, sessionId);
+    if (this.getSession(sessionId).kind === "TASK") return;
     this.database.prepare("DELETE FROM session_workspace_grants WHERE session_id = ?").run(sessionId);
     if (grantWorkspace && project?.workspaceId) {
       this.getWorkspace(project.workspaceId);
@@ -4213,6 +4223,8 @@ export class AppRepository {
   }
 
   private assertRuntimeSessionScope(runtimeRunId: string): void {
+    this.tasks.assertTaskRuntime(runtimeRunId);
+    this.routineTargets.assertRuntime(runtimeRunId);
     const scope = this.database.prepare(
       `SELECT runtime_session_scopes.scope_version, conversation_scope_versions.version
        FROM runtime_runs JOIN runtime_session_scopes ON runtime_session_scopes.runtime_run_id = runtime_runs.id
@@ -4221,9 +4233,10 @@ export class AppRepository {
     if (!scope || scope.scope_version !== scope.version) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
   }
 
-  private assertToolSessionScope(invocation: Pick<ToolInvocation, "sessionId" | "executorBotId" | "runtimeRunId" | "workspaceId" | "toolKind">): void {
+  private assertToolSessionScope(invocation: Pick<ToolInvocation, "sessionId" | "executorBotId" | "runtimeRunId" | "workspaceId" | "toolKind"> & Partial<Pick<ToolInvocation, "arguments">>): void {
     this.assertSessionExecutor(invocation.sessionId, invocation.executorBotId);
     this.assertRuntimeSessionScope(invocation.runtimeRunId);
+    if (invocation.arguments) this.tasks.assertToolAllowed(invocation.runtimeRunId, invocation.arguments);
     if (invocation.workspaceId) {
       this.assertSessionWorkspaceAccess(invocation.sessionId, invocation.executorBotId, invocation.workspaceId, invocation.toolKind);
     }
@@ -4346,6 +4359,7 @@ export class AppRepository {
     if (parsed.tool.kind === "product-call") parsed.tool = normalizeProductRequest(parsed.tool);
     if (!Number.isFinite(Date.parse(expiresAt))) throw new AevorenBotError("INVALID_REQUEST");
     const runtime = this.getRuntimeRun(parsed.runtimeRunId);
+    this.tasks.assertToolAllowed(runtime.id, parsed.tool);
     if (runtime.state !== "running" && runtime.state !== "streaming") {
       throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
     }
@@ -4354,13 +4368,15 @@ export class AppRepository {
     if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "skills.runScript") {
       if (review?.kind !== "skill-script") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
       const value = parsed.tool.input as { grantId: string; expectedGrantVersion: number; args: string[]; cwd: string; timeoutMs: number };
-      const { grant, content } = this.skillExecutions.assertGranted({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, value.grantId, value.expectedGrantVersion);
+      const { grant, content } = this.skillExecutions.assertGranted({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, value.grantId, value.expectedGrantVersion, runtime.id);
       if (review.target.grantId !== grant.id || review.target.grantVersion !== grant.version || review.target.environmentId !== grant.environmentId ||
           review.target.imageDigest !== grant.imageDigest || review.target.workerVersion !== grant.workerVersion ||
           JSON.stringify(review.target.reference) !== JSON.stringify(grant.reference) || review.target.entryPath !== grant.entryPath ||
           review.target.entrySha256 !== grant.entrySha256 || review.target.interpreter !== grant.interpreter ||
           JSON.stringify(review.target.args) !== JSON.stringify(value.args) || review.target.cwd !== value.cwd || review.target.timeoutMs !== value.timeoutMs ||
           review.resourceName !== content.revision.name || review.revisionNumber !== content.revision.number) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if(parsed.tool.kind==="product-call"&&parsed.tool.action==="execute"&&["templates.commitCapture","templates.commitImport"].includes(parsed.tool.operation)&&!this.findProductOperationResult(runtime.clientNonce,parsed.tool,runtime.executorBotId)){
+      const input=parsed.tool.input as {preparedId:string;expectedDigest:string};if(review?.kind!=="portable-template"||review.target.operation!==parsed.tool.operation||review.target.preparedId!==input.preparedId||review.target.expectedDigest!==input.expectedDigest||review.target.sessionId!==runtime.sessionId||review.target.executorBotId!==runtime.executorBotId||templateDigest(review.target.manifest)!==input.expectedDigest)throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
     } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "demonstrations.publish") {
       if (review?.kind !== "demonstration-skill") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
       const input = { ...(parsed.tool.input as object), sessionId: runtime.sessionId, executorBotId: runtime.executorBotId } as import("@shared/demonstration-contracts").DemonstrationPublishInput;
@@ -4924,6 +4940,11 @@ export class AppRepository {
     return this.getBot(id);
   }
 
+  setBotImageAvatar(id:string,expectedVersion:number,reference:import("@shared/library-contracts").MediaRef|null):Bot{
+    this.getBot(id);const changed=this.database.prepare("UPDATE bots SET avatar_image_json=?,version=version+1,updated_at=? WHERE id=? AND version=? AND deleted_at IS NULL").run(reference?JSON.stringify(reference):null,now(),id,expectedVersion);
+    if(!changed.changes)throw new AevorenBotError("BOT_VERSION_CONFLICT");return this.getBot(id);
+  }
+
   duplicateBot(id: string): { bot: Bot; session: Session } {
     const source = this.getBot(id);
     const timestamp = now();
@@ -4962,6 +4983,11 @@ export class AppRepository {
            VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
         )
         .run(sessionId, botId, timestamp, timestamp);
+      if(source.avatarImage){
+        try{const media=this.media.metadata({sessionId:this.getMainSession(source.id).id,id:source.avatarImage.id});
+          if(media.asset.enabled&&!media.asset.deletedAt&&media.asset.reference.sha256===source.avatarImage.sha256){const copy=this.media.publishImport(sessionId,[{asset:{...media.asset,reference:{...media.asset.reference,id:randomUUID()}},extraction:null}])[0]!;this.database.prepare("UPDATE bots SET avatar_image_json=? WHERE id=?").run(JSON.stringify(copy.asset.reference),botId);}
+        }catch(error){if(!(error instanceof AevorenBotError)||!["MEDIA_NOT_GRANTED","MEDIA_NOT_FOUND"].includes(error.code))throw error;}
+      }
     });
     return { bot: this.getBot(botId), session: this.getMainSession(botId) };
   }
@@ -5052,8 +5078,11 @@ export class AppRepository {
     return toRoom(row);
   }
 
-  getRoomDetail(id: string): RoomDetail {
-    return { room: this.getRoom(id), members: this.listRoomMembers(id), session: this.getRoomMainSession(id) };
+  getRoomDetail(id: string, sessionId?: string): RoomDetail {
+    const session = sessionId ? this.getSession(sessionId) : this.getRoomMainSession(id);
+    if (session.roomId !== id) throw new AevorenBotError("INVALID_REQUEST");
+    const admitted = session.kind === "TASK" ? this.tasks.get(session.id).admittedExecutorBotIds : null;
+    return { room: this.getRoom(id), members: this.listRoomMembers(id).filter(member => admitted === null || admitted.includes(member.botId)), session };
   }
 
   listRoomMembers(roomId: string): RoomMember[] {
@@ -5210,7 +5239,7 @@ export class AppRepository {
   updateRoom(id: string, expectedVersion: number, patch: RoomPatch): Room {
     const room = this.getRoom(id);
     if (patch.leadBotId !== undefined && patch.leadBotId !== room.leadBotId) {
-      this.assertConversationIdle(this.getRoomMainSession(id).id, "ROOM_BUSY");
+      for (const sessionId of this.roomSessionIds(id)) this.assertConversationIdle(sessionId, "ROOM_BUSY");
       if (patch.leadBotId !== null && !this.listRoomMembers(id).some((member) => member.botId === patch.leadBotId)) {
         throw new AevorenBotError("ROOM_MEMBER_INVALID");
       }
@@ -5235,8 +5264,7 @@ export class AppRepository {
 
   archiveRoom(id: string, archived: boolean): Room {
     const room = this.getRoom(id);
-    const sessionId = this.getRoomMainSession(room.id).id;
-    if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new AevorenBotError("ROOM_BUSY");
+    for (const sessionId of this.roomSessionIds(room.id)) this.assertConversationIdle(sessionId, "ROOM_BUSY");
     const timestamp = now();
     const result = this.database
       .prepare("UPDATE rooms SET archived_at = ?, version = version + 1, updated_at = ? WHERE id = ?")
@@ -5291,14 +5319,13 @@ export class AppRepository {
 
   assertRoomDeletable(id: string): void {
     const room = this.getRoom(id);
-    const sessionId = this.getRoomMainSession(room.id).id;
-    if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) {
-      throw new AevorenBotError("ROOM_DELETE_BUSY");
+    for (const sessionId of this.roomSessionIds(room.id)) {
+      try { this.assertConversationIdle(sessionId, "ROOM_BUSY"); } catch { throw new AevorenBotError("ROOM_DELETE_BUSY"); }
     }
   }
 
   private deleteRoomRecord(id: string): RoomDeleteResult {
-    this.environments.deleteSession(this.getRoomMainSession(id).id);
+    for (const sessionId of this.roomSessionIds(id)) this.environments.deleteSession(sessionId);
     this.database
       .prepare(
         `UPDATE room_turns
@@ -5316,8 +5343,7 @@ export class AppRepository {
   addRoomMember(roomId: string, botId: string, expectedMembershipVersion: number): RoomDetail {
     this.transaction(() => {
       const room = this.getRoom(roomId);
-      const sessionId = this.getRoomMainSession(roomId).id;
-      this.assertConversationIdle(sessionId, "ROOM_BUSY");
+      for (const sessionId of this.roomSessionIds(roomId)) this.assertConversationIdle(sessionId, "ROOM_BUSY");
       this.getBot(botId);
       if (room.membershipVersion !== expectedMembershipVersion) {
         throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
@@ -5335,8 +5361,10 @@ export class AppRepository {
   removeRoomMember(roomId: string, botId: string, expectedMembershipVersion: number): RoomDetail {
     this.transaction(() => {
       this.assertRoomMemberRemovable(roomId, botId, expectedMembershipVersion);
-      const sessionId = this.getRoomMainSession(roomId).id;
-      this.environments.deleteScope({ sessionId, executorBotId: botId });
+      for (const sessionId of this.roomSessionIds(roomId)) {
+        this.environments.deleteScope({ sessionId, executorBotId: botId });
+        this.media.revokeExecutor(sessionId, botId);
+      }
       this.database.prepare("DELETE FROM room_members WHERE room_id = ? AND bot_id = ?").run(roomId, botId);
       this.database.prepare(
         "UPDATE rooms SET lead_bot_id = NULL, version = version + 1 WHERE id = ? AND lead_bot_id = ?",
@@ -5352,13 +5380,15 @@ export class AppRepository {
   }
 
   assertRoomMemberRemovable(roomId: string, botId: string, expectedMembershipVersion: number): void {
-    const room = this.getRoom(roomId), sessionId = this.getRoomMainSession(roomId).id;
-    this.assertConversationIdle(sessionId, "ROOM_BUSY");
+    const room = this.getRoom(roomId);
+    for (const sessionId of this.roomSessionIds(roomId)) this.assertConversationIdle(sessionId, "ROOM_BUSY");
     if (room.membershipVersion !== expectedMembershipVersion) throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
     const members = this.listRoomMembers(roomId);
     if (members.length <= 2) throw new AevorenBotError("ROOM_MEMBER_INVALID");
     if (!members.some(member => member.botId === botId)) throw new AevorenBotError("ROOM_MEMBER_NOT_FOUND");
   }
+
+  private roomSessionIds(roomId: string): string[] { return (this.database.prepare("SELECT id FROM sessions WHERE room_id=?").all(roomId) as { id: string }[]).map(row => row.id); }
 
   private bumpMembership(roomId: string, expectedVersion: number): void {
     const result = this.database
@@ -5451,6 +5481,11 @@ export class AppRepository {
     return this.getConversation(sessionId);
   }
 
+  assertTaskSessionIdle(sessionId: string): void {
+    if (this.getSession(sessionId).kind !== "TASK") throw new AevorenBotError("INVALID_REQUEST");
+    this.assertConversationIdle(sessionId);
+  }
+
   private assertConversationIdle(sessionId: string, errorCode: "CONVERSATION_BUSY" | "ROOM_BUSY" = "CONVERSATION_BUSY"): void {
     const session = this.getSession(sessionId);
     const activeApproval = this.database.prepare(
@@ -5468,9 +5503,9 @@ export class AppRepository {
         `SELECT 1 FROM agent_handoffs INNER JOIN room_batches ON room_batches.id = agent_handoffs.run_id
          WHERE room_batches.session_id = ? AND agent_handoffs.state = 'dispatching' LIMIT 1`,
       ).get(sessionId);
-      const activeRoutine = session.botId && this.database.prepare(
-        "SELECT 1 FROM routine_runs WHERE bot_id = ? AND state IN ('queued', 'waiting', 'running') LIMIT 1",
-      ).get(session.botId);
+      const activeRoutine = session.kind === "MAIN" && this.database.prepare(
+        "SELECT 1 FROM routine_runs WHERE json_extract(target_snapshot_json, '$.target.sessionId') = ? AND state IN ('queued', 'waiting', 'dispatching', 'running', 'cancel-requested') LIMIT 1",
+      ).get(session.id);
       const pendingSend = this.database.prepare(
         `SELECT 1 FROM send_journal WHERE session_id = ?
          AND NOT EXISTS (SELECT 1 FROM retired_conversation_sends WHERE client_nonce = send_journal.client_nonce)
@@ -5585,7 +5620,7 @@ export class AppRepository {
         entry.seq <= inputSeq &&
         entry.status !== "failed" &&
         entry.status !== "cancelled" &&
-        entry.body.trim().length > 0,
+        (entry.body.trim().length > 0 || Boolean(entry.attachments?.length) || Boolean(entry.resourceRefs?.length) || Boolean(entry.mediaRefs?.length)),
     ).map((entry) => {
       const rows = this.database.prepare(
         `SELECT id, name, mime_type, size, sha256, kind, content
@@ -5658,12 +5693,21 @@ export class AppRepository {
   }
 
   private recordDelegationOrigin(clientNonce: string, origin: import("@shared/contracts").DelegationOrigin): void {
+    if (origin.kind === "voice-input") {
+      const message = this.getUserMessage(clientNonce);
+      this.realtime.assertVoiceOrigin(origin, { sessionId: message.sessionId, clientNonce, text: message.body });
+      this.database.prepare("UPDATE transcript_entries SET origin_json=? WHERE client_nonce=? AND role='user' AND origin_json IS NULL")
+        .run(JSON.stringify(origin), clientNonce);
+      return;
+    }
     if (origin.kind === "routine") {
       if (!origin.routineRunId) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
       const run = this.getRoutineRun(origin.routineRunId);
       const message = this.getUserMessage(clientNonce);
+      this.routineTargets.assertRun(run.id);
+      this.routineTargets.assertMessage(run.id, message);
       if (run.clientNonce !== clientNonce || origin.rootClientNonce !== clientNonce || run.routineId !== origin.routineId ||
-          run.botId !== origin.fromBotId || message.sessionId !== this.getMainSession(run.botId).id || origin.depth !== 0 ||
+          (run.botId ?? undefined) !== origin.fromBotId || message.sessionId !== run.targetSnapshot.target.sessionId || origin.fromSessionId !== message.sessionId || origin.depth !== 0 ||
           message.body !== `[Routine: ${run.routineName}]\n${run.promptSnapshot}`) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
       this.database.prepare("UPDATE transcript_entries SET origin_json = ? WHERE client_nonce = ? AND role = 'user' AND origin_json IS NULL").run(JSON.stringify(origin), clientNonce);
       return;
@@ -5692,7 +5736,8 @@ export class AppRepository {
     const attachments = normalizeAttachmentDrafts(command.attachments);
     const attachmentMetadata = attachments.map(({ content: _content, ...attachment }) => attachment);
     const resourceRefs = resourceReferencesSchema.parse(command.resourceRefs ?? []);
-    const digest = digestMessage(command.text, attachmentMetadata, resourceRefs);
+    const mediaRefs = messageMediaReferencesSchema.parse(command.mediaRefs ?? []);
+    const digest = digestMessage(command.text, attachmentMetadata, resourceRefs, mediaRefs);
     const existing = this.getSend(command.clientNonce);
     if (existing) {
       if (existing.bodyDigest !== digest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
@@ -5706,6 +5751,7 @@ export class AppRepository {
     const timestamp = now();
     const userEntryId = randomUUID();
     this.transaction(() => {
+      const capturedMedia = this.media.captureSendReferences(session.id, mediaRefs, session.botId ?? undefined);
       const sequence = this.nextSequence(session.id, session.generation);
       const updatedSeq = this.nextTranscriptUpdateSeq(session.id);
       this.database
@@ -5725,6 +5771,10 @@ export class AppRepository {
         .run(userEntryId, session.id, session.generation, sequence, command.clientNonce, command.text, JSON.stringify(attachmentMetadata), updatedSeq, timestamp, timestamp);
       this.insertMessageAttachments(userEntryId, command.clientNonce, attachments);
       if (resourceRefs.length) this.database.prepare("UPDATE transcript_entries SET resource_references_json = ? WHERE id = ?").run(JSON.stringify(resourceRefs), userEntryId);
+      if (mediaRefs.length) {
+        this.database.prepare("UPDATE transcript_entries SET media_references_json = ? WHERE id = ?").run(JSON.stringify(mediaRefs), userEntryId);
+        this.media.storeSendAdmissions(userEntryId, capturedMedia);
+      }
       if (origin) this.recordDelegationOrigin(command.clientNonce, origin);
     });
     return { disposition: "prepared", journal: this.getSendOrThrow(command.clientNonce) };
@@ -5838,7 +5888,7 @@ export class AppRepository {
       input.initialTurns.length === 0 ||
       input.initialTurns.length > 6 ||
       input.clientNonce.trim().length === 0 ||
-      input.text.trim().length === 0 ||
+      (input.text.trim().length === 0 && attachments.length === 0 && !input.resourceRefs?.length && !input.mediaRefs?.length) ||
       new Set(input.initialTurns.map((turn) => turn.agentId)).size !== input.initialTurns.length ||
       input.initialTurns.some((turn) => turn.nonce.trim().length === 0) ||
       !Number.isInteger(input.maxTurns) ||
@@ -5858,7 +5908,8 @@ export class AppRepository {
       throw new AevorenBotError("INVALID_REQUEST");
     }
     const resourceRefs = resourceReferencesSchema.parse(input.resourceRefs ?? []);
-    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode, attachmentMetadata, resourceRefs);
+    const mediaRefs = messageMediaReferencesSchema.parse(input.mediaRefs ?? []);
+    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode, attachmentMetadata, resourceRefs, mediaRefs);
     const targetDigest = digestMessage(JSON.stringify(canonicalTargetIds));
     const existingJournal = this.getSend(input.clientNonce);
     if (existingJournal) {
@@ -5912,6 +5963,7 @@ export class AppRepository {
     const triggerMessageId = randomUUID();
     const timestamp = now();
     this.transaction(() => {
+      const capturedMedia = this.media.captureSendReferences(session.id, mediaRefs);
       const sequence = this.nextSequence(session.id, session.generation);
       const updatedSeq = this.nextTranscriptUpdateSeq(session.id);
       this.database
@@ -5943,6 +5995,10 @@ export class AppRepository {
         );
       this.insertMessageAttachments(triggerMessageId, input.clientNonce, attachments);
       if (resourceRefs.length) this.database.prepare("UPDATE transcript_entries SET resource_references_json = ? WHERE id = ?").run(JSON.stringify(resourceRefs), triggerMessageId);
+      if (mediaRefs.length) {
+        this.database.prepare("UPDATE transcript_entries SET media_references_json = ? WHERE id = ?").run(JSON.stringify(mediaRefs), triggerMessageId);
+        this.media.storeSendAdmissions(triggerMessageId, capturedMedia);
+      }
       if (input.origin) this.recordDelegationOrigin(input.clientNonce, input.origin);
       this.database
         .prepare(
@@ -7897,121 +7953,20 @@ export class AppRepository {
       .all() as McpServerRow[]).map(toMcpServerConfig);
   }
 
-  listRoutines(): Routine[] {
-    return (this.database.prepare("SELECT * FROM routines ORDER BY created_at ASC, id ASC").all() as RoutineRow[]).map(toRoutine);
-  }
-
-  getRoutine(id: string): Routine {
-    const row = this.database.prepare("SELECT * FROM routines WHERE id = ?").get(id) as RoutineRow | undefined;
-    if (!row) throw new AevorenBotError("ROUTINE_NOT_FOUND");
-    return toRoutine(row);
-  }
-
-  createRoutine(input: { name: string; prompt: string; botId: string; schedule: RoutineSchedule; enabled: boolean; nextRunAt: number | null }): Routine {
-    this.getBot(input.botId);
-    const id = randomUUID();
-    const timestamp = now();
-    this.database.prepare(
-      `INSERT INTO routines(id,name,prompt,bot_id,schedule_json,enabled,next_run_at,version,created_at,updated_at)
-       VALUES(?,?,?,?,?,?,?,1,?,?)`,
-    ).run(id, input.name, input.prompt, input.botId, JSON.stringify(input.schedule), input.enabled ? 1 : 0, input.nextRunAt, timestamp, timestamp);
-    return this.getRoutine(id);
-  }
-
-  updateRoutine(id: string, expectedVersion: number, patch: Partial<Pick<Routine, "name" | "prompt" | "schedule">>, nextRunAt: number | null): Routine {
-    const current = this.getRoutine(id);
-    const updated = this.database.prepare(
-      `UPDATE routines SET name=?,prompt=?,schedule_json=?,next_run_at=?,version=version+1,updated_at=? WHERE id=? AND version=?`,
-    ).run(patch.name ?? current.name, patch.prompt ?? current.prompt, JSON.stringify(patch.schedule ?? current.schedule), nextRunAt, now(), id, expectedVersion);
-    if (Number(updated.changes) !== 1) this.throwRoutineConflict(id);
-    return this.getRoutine(id);
-  }
-
-  setRoutineEnabled(id: string, expectedVersion: number, enabled: boolean, nextRunAt: number | null): Routine {
-    const updated = this.database.prepare(
-      "UPDATE routines SET enabled=?,next_run_at=?,version=version+1,updated_at=? WHERE id=? AND version=?",
-    ).run(enabled ? 1 : 0, nextRunAt, now(), id, expectedVersion);
-    if (Number(updated.changes) !== 1) this.throwRoutineConflict(id);
-    return this.getRoutine(id);
-  }
-
-  deleteRoutine(id: string, expectedVersion: number): void {
-    const active = this.database.prepare("SELECT 1 FROM routine_runs WHERE routine_id=? AND state IN ('queued','waiting','running')").get(id);
-    if (active) throw new AevorenBotError("ROUTINE_BUSY");
-    const deleted = this.database.prepare("DELETE FROM routines WHERE id=? AND version=?").run(id, expectedVersion);
-    if (Number(deleted.changes) !== 1) this.throwRoutineConflict(id);
-  }
-
-  listRoutineRuns(routineId?: string): RoutineRun[] {
-    if (routineId) this.getRoutine(routineId);
-    const rows = this.database.prepare(
-      `SELECT * FROM routine_runs ${routineId ? "WHERE routine_id = ?" : ""} ORDER BY scheduled_for DESC, id DESC LIMIT 500`,
-    ).all(...(routineId ? [routineId] : [])) as RoutineRunRow[];
-    return rows.map(toRoutineRun);
-  }
-
-  createRoutineRun(routine: Routine, trigger: "schedule" | "manual", triggerKey: string, scheduledFor: number, state: RoutineRun["state"] = "queued"): RoutineRun {
-    const id = randomUUID();
-    const clientNonce = randomUUID();
-    const timestamp = now();
-    this.database.prepare(
-      `INSERT INTO routine_runs(
-         id,routine_id,routine_name,bot_id,prompt_snapshot,schedule_snapshot_json,trigger,trigger_key,
-         scheduled_for,state,client_nonce,runtime_run_id,last_error_code,created_at,started_at,finished_at
-       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,NULL,?)`,
-    ).run(
-      id, routine.id, routine.name, routine.botId, routine.prompt, JSON.stringify(routine.schedule), trigger, triggerKey,
-      scheduledFor, state, clientNonce, timestamp, ["missed", "cancelled"].includes(state) ? timestamp : null,
-    );
-    return this.getRoutineRun(id);
-  }
-
-  getRoutineRun(id: string): RoutineRun {
-    const row = this.database.prepare("SELECT * FROM routine_runs WHERE id=?").get(id) as RoutineRunRow | undefined;
-    if (!row) throw new AevorenBotError("ROUTINE_RUN_NOT_FOUND");
-    return toRoutineRun(row);
-  }
-
-  listPendingRoutineRuns(): RoutineRun[] {
-    return (this.database.prepare("SELECT * FROM routine_runs WHERE state IN ('queued','waiting','running') ORDER BY scheduled_for ASC,id ASC").all() as RoutineRunRow[]).map(toRoutineRun);
-  }
-
-  advanceRoutineAndCreateRun(routineId: string, expectedNextRunAt: number, nextRunAt: number | null, missed: boolean): RoutineRun | null {
-    return this.transaction(() => {
-      const routine = this.getRoutine(routineId);
-      const updated = this.database.prepare(
-        "UPDATE routines SET next_run_at=?,enabled=CASE WHEN json_extract(schedule_json,'$.type')='once' THEN 0 ELSE enabled END,version=version+1,updated_at=? WHERE id=? AND enabled=1 AND next_run_at=?",
-      ).run(nextRunAt, now(), routineId, expectedNextRunAt);
-      if (Number(updated.changes) !== 1) return null;
-      return this.createRoutineRun(routine, "schedule", `${routine.id}:schedule:${expectedNextRunAt}`, expectedNextRunAt, missed ? "missed" : "queued");
-    });
-  }
-
-  attachRoutineRuntime(runId: string, runtimeRunId: string): RoutineRun {
-    const updated = this.database.prepare(
-      "UPDATE routine_runs SET runtime_run_id=?,state='running',started_at=? WHERE id=? AND state IN ('queued','waiting')",
-    ).run(runtimeRunId, now(), runId);
-    if (Number(updated.changes) !== 1) throw new AevorenBotError("ROUTINE_RUN_STATE_INVALID");
-    return this.getRoutineRun(runId);
-  }
-
-  transitionRoutineRun(runId: string, state: RoutineRun["state"], errorCode: string | null = null): RoutineRun {
-    const terminal = ["completed", "failed", "cancelled", "missed"].includes(state);
-    const updated = this.database.prepare(
-      "UPDATE routine_runs SET state=?,last_error_code=?,finished_at=CASE WHEN ?=1 THEN ? ELSE finished_at END WHERE id=?",
-    ).run(state, errorCode, terminal ? 1 : 0, now(), runId);
-    if (Number(updated.changes) !== 1) throw new AevorenBotError("ROUTINE_RUN_NOT_FOUND");
-    return this.getRoutineRun(runId);
-  }
-
-  hasEnabledRoutines(): boolean {
-    return Boolean(this.database.prepare("SELECT 1 FROM routines WHERE enabled=1 LIMIT 1").get());
-  }
-
-  private throwRoutineConflict(id: string): never {
-    const current = this.getRoutine(id);
-    throw new AevorenBotError("ROUTINE_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
-  }
+  listRoutines(): Routine[] { return this.routineTargets.list(); }
+  getRoutine(id: string): Routine { return this.routineTargets.get(id); }
+  createRoutine(input: import("@shared/routine-contracts").RoutineCreateInput & { enabled: boolean; nextRunAt: number | null }): Routine { return this.routineTargets.create(input); }
+  updateRoutine(id: string, expectedVersion: number, patch: import("@shared/routine-contracts").RoutineUpdatePatch, nextRunAt: number | null): Routine { return this.routineTargets.update(id, expectedVersion, patch, nextRunAt); }
+  setRoutineEnabled(id: string, expectedVersion: number, enabled: boolean, nextRunAt: number | null): Routine { return this.routineTargets.setEnabled(id, expectedVersion, enabled, nextRunAt); }
+  deleteRoutine(id: string, expectedVersion: number): void { this.routineTargets.delete(id, expectedVersion); }
+  listRoutineRuns(routineId?: string): RoutineRun[] { return this.routineTargets.listRuns(routineId); }
+  createRoutineRun(routine: Routine, trigger: RoutineRun["trigger"], triggerKey: string, scheduledFor: number, state: RoutineRun["state"] = "queued"): RoutineRun { return this.routineTargets.createRun(routine, trigger, triggerKey, scheduledFor, state); }
+  getRoutineRun(id: string): RoutineRun { return this.routineTargets.getRun(id); }
+  listPendingRoutineRuns(): RoutineRun[] { return this.routineTargets.pending(); }
+  advanceRoutineAndCreateRun(id: string, expectedNext: number, next: number | null, missed: boolean): RoutineRun | null { return this.routineTargets.advanceDue(id, expectedNext, next, missed); }
+  attachRoutineRuntime(runId: string, runtimeRunId: string): RoutineRun { return this.routineTargets.attach(runId, { runtimeRunId }); }
+  transitionRoutineRun(id: string, state: RoutineRun["state"], errorCode: string | null = null): RoutineRun { return this.routineTargets.transition(id, state, errorCode); }
+  hasEnabledRoutines(): boolean { return this.routineTargets.hasEnabled(); }
 
   getMcpServerConfig(id: string): McpServerConfig {
     const row = this.database.prepare("SELECT * FROM mcp_servers WHERE id = ?").get(id) as McpServerRow | undefined;

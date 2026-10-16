@@ -114,6 +114,10 @@ jobs:
         run: pnpm release:mac
       - name: Verify fixture Keychain setup and recovery
         run: node --test scripts/fixture-keychain.test.mjs
+      - name: Verify signed parser assets and licenses
+        run: node scripts/verify-media-parser-package.mjs "dist/mac-arm64/Aevoren Bot.app"
+      - name: Verify signed microphone permissions in app and Helpers
+        run: node scripts/verify-voice-macos-permissions.mjs "dist/mac-arm64/Aevoren Bot.app" --signed
       - name: Validate library and Skills in the signed macOS app
         shell: bash
         env:
@@ -135,7 +139,7 @@ jobs:
           node scripts/fixture-keychain.mjs create "$signed_fixture_snapshot"
           export AEVOREN_PACKAGED_APP_PATH="$PWD/dist/mac-arm64/Aevoren Bot.app/Contents/MacOS/Aevoren Bot"
           test -f "$AEVOREN_PACKAGED_APP_PATH"
-          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts
+          pnpm exec playwright test tests/smoke/library.spec.ts tests/smoke/native-connectors.spec.ts tests/smoke/native-outbound.spec.ts tests/smoke/demonstrations.spec.ts tests/smoke/mcp-apps.spec.ts tests/smoke/media.spec.ts tests/smoke/media-av-ui.spec.ts tests/smoke/voice.spec.ts tests/smoke/realtime-voice.spec.ts tests/smoke/task-sessions.spec.ts tests/smoke/search.spec.ts tests/smoke/group-routines.spec.ts tests/smoke/automation-events.spec.ts tests/smoke/automation-listener-ai.spec.ts tests/smoke/template-exports.spec.ts tests/smoke/organization.spec.ts tests/smoke/bot-image-avatar.spec.ts
       - name: Validate close handshakes in the signed macOS app
         env:
           AEVOREN_PACKAGED_APP_PATH: "${{ github.workspace }}/dist/mac-arm64/Aevoren Bot.app/Contents/MacOS/Aevoren Bot"

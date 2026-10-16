@@ -114,6 +114,34 @@ describe("real local model image wire", () => {
     });
   });
 
+  it("rechecks media text and pixels on later API rounds without serializing private attachment fields", async () => {
+    await withApi(async (url, requests) => {
+      let allowed = true;
+      const captured = image(() => allowed); captured.origin = "media";
+      const messages = toolMessages([captured]);
+      const result = messages.at(-1)!;
+      if (result.role !== "tool") throw new Error("Expected tool fixture");
+      result.modelText = { text: "PRIVATE_PINNED_MEDIA_TEXT", isAuthorized: () => allowed };
+      const provider = new OpenAiCompatibleProvider(url, "controlled-model", "fixture-key");
+      await consume(provider.run(messages, new AbortController().signal));
+      expect(JSON.stringify(requests[0])).toContain("PRIVATE_PINNED_MEDIA_TEXT");
+      const blocks = (requests[0]!.messages as { content: unknown }[]).at(-1)!.content as { type: string; image_url?: { url: string } }[];
+      verifyPixels(blocks.find(block => block.type === "image_url")!.image_url!.url.split(",")[1]!);
+      allowed = false;
+      await consume(provider.run(messages, new AbortController().signal));
+      const revoked = JSON.stringify(requests[1]);
+      expect(revoked).not.toContain("PRIVATE_PINNED_MEDIA_TEXT");
+      expect(revoked).not.toContain(captured.dataBase64);
+      expect(revoked).toContain("媒体授权已失效");
+      for (const request of requests) {
+        expect(JSON.stringify(request)).not.toContain("isAuthorized");
+        expect(JSON.stringify(request)).not.toContain("modelText");
+        expect(JSON.stringify(request)).not.toContain('"origin":"media"');
+      }
+      expect(result.content).not.toContain("PRIVATE_PINNED_MEDIA_TEXT");
+    });
+  });
+
   it("rejects an invalid image before any HTTP request reaches the provider", async () => {
     await withApi(async (url, requests) => {
       const invalid = image(); invalid.reference.sha256 = "0".repeat(64);
@@ -144,22 +172,45 @@ describe("real local model image wire", () => {
     } finally { await client.close(); await bridge.close(); rmSync(directory, { recursive: true, force: true }); }
   });
 
-  it("rechecks the image lease when a completed MCP request is redelivered with the same id", async () => {
+  it.each(["browser", "media"] as const)("rechecks the %s lease when a completed MCP request is redelivered with the same id", async origin => {
     const directory = mkdtempSync(join(tmpdir(), "aevoren-image-mcp-retry-"));
     let owned = true, dispatched = 0; const captured = image(() => owned);
-    const bridge = new ClaudeToolBridge(context(), event => { if (event.type === "network-tool") { dispatched++; void event.respond?.('{"ok":true}', [captured]); } }, new AbortController().signal);
+    captured.origin = origin;
+    const modelText = origin === "media" ? { text: "PRIVATE_MCP_MEDIA_TEXT", isAuthorized: () => owned } : undefined;
+    const bridge = new ClaudeToolBridge(context(), event => { if (event.type === "network-tool") { dispatched++; void event.respond?.('{"ok":true}', [captured], modelText); } }, new AbortController().signal);
     const client = new Client({ name: "controlled-image-redelivery", version: "1" });
     try {
       await bridge.start(directory); const configuration = config(bridge);
       const transport = new StreamableHTTPClientTransport(new URL(configuration.url), { requestInit: { headers: configuration.headers } });
       await client.connect(transport);
       const call = async () => (await fetch(configuration.url, { method: "POST", headers: { ...configuration.headers, "content-type": "application/json", Accept: "application/json, text/event-stream", "mcp-session-id": transport.sessionId!, "mcp-protocol-version": "2025-11-25" }, body: JSON.stringify({ jsonrpc: "2.0", id: "same-frame-delivery", method: "tools/call", params: { name: "time_now", arguments: { timezone: "UTC" } } }) })).json() as Promise<{ result: { content: { type: string; data?: string; text?: string }[] } }>;
-      expect((await call()).result.content.some(block => block.type === "image")).toBe(true);
+      const first = await call();
+      expect(first.result.content.some(block => block.type === "image")).toBe(true);
+      if (origin === "media") expect(JSON.stringify(first)).toContain("PRIVATE_MCP_MEDIA_TEXT");
       owned = false;
       const retry = await call(); expect(dispatched).toBe(1);
       expect(JSON.stringify(retry).includes(captured.dataBase64)).toBe(false);
       expect(JSON.stringify(retry)).toContain("授权已失效");
+      expect(JSON.stringify(retry)).not.toContain("PRIVATE_MCP_MEDIA_TEXT");
     } finally { await client.close(); await bridge.close(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it.each([true, false])("checks media text and actual pixels at Codex native dispatch: authorized=%s", async allowed => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-media-codex-wire-"));
+    isolateFixtureCli();
+    try {
+      const captured = image(() => allowed); captured.origin = "media";
+      for await (const event of new CodexCliProvider(createCodexFixture(directory), "fixture-model", directory).run([{ role: "user", content: "Read media" }], new AbortController().signal, context())) {
+        if (event.type === "network-tool") await event.respond?.('{"ok":true}', [captured], { text: "PRIVATE_CODEX_MEDIA_TEXT", isAuthorized: () => allowed });
+      }
+      const reply = codexResponseSchema.parse(JSON.parse(readFileSync(join(directory, "received.json"), "utf8")));
+      expect(JSON.stringify(reply).includes("PRIVATE_CODEX_MEDIA_TEXT")).toBe(allowed);
+      const pictures = reply.contentItems.filter(item => item.type === "inputImage");
+      expect(pictures).toHaveLength(allowed ? 1 : 0);
+      if (pictures[0]?.type === "inputImage") verifyPixels(pictures[0].imageUrl.split(",")[1]!);
+      expect(JSON.stringify(reply)).not.toContain("isAuthorized");
+      if (!allowed) expect(JSON.stringify(reply)).toContain("媒体授权已失效");
+    } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
   });
 
   it("sends the published Codex inputImage/imageUrl shape through an actual fixture JSON-RPC process", async () => {

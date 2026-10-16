@@ -3,6 +3,9 @@ import { useEffectEvent, useCallback, useEffect, useMemo, useRef, useState, type
 import type { Bot, ConversationBatchDeleteInput, ConversationSummary, Project, Room, Workspace } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import { buildBotIdentityMap } from "../bot-identity";
+import { mainConversationSummaries, taskConversationKey } from "../task-session-state";
+import type { OrganizationSnapshot } from "@shared/organization-contracts";
+import { groupSidebarConversations } from "../organization-state";
 import { BatchContextMenu } from "./BatchContextMenu";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { BotContextMenu } from "./BotContextMenu";
@@ -22,6 +25,8 @@ type SidebarProps = {
   bots: Bot[];
   rooms: Room[];
   conversations: ConversationSummary[];
+  organization?: OrganizationSnapshot | null;
+  onOpenOrganization?(): void;
   tab: "chats" | "contacts" | "workspace";
   settingsActive?: boolean;
   selectedContactId: string | null;
@@ -34,6 +39,8 @@ type SidebarProps = {
   workspaces: Workspace[];
   selectedBotId: string | null;
   selectedRoomId: string | null;
+  selectedSessionId?: string | null;
+  onSelectTask?(sessionId: string): void;
   busy: boolean;
   addingWorkspace: boolean;
   workspaceError: string | null;
@@ -50,6 +57,7 @@ type SidebarProps = {
   onCreateBot(projectId: string): void;
   onCreateRoom(projectId: string): void;
   onOpenSettings(): void;
+  onOpenSearch?():void;
   onOpenUserProfile?(): void;
   onMobileClose(): void;
   onSelectBot(bot: Bot): void;
@@ -100,7 +108,7 @@ function RoomAvatar({ bots, userProfile }: { bots: readonly Bot[] | undefined; u
   return (
     <span className={`conversation-room-avatar${members.length > 0 ? " is-collage" : ""}`} data-member-count={members.length > 0 ? members.length + 1 : 0} aria-hidden="true">
       {members.length === 0 ? <RoomIcon /> : members.map((bot) => (
-        <BotAvatarIcon key={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={23} />
+        <BotAvatarIcon key={bot.id} botId={bot.id} image={bot.avatarImage} shape={bot.avatarShape} color={bot.avatarColor} size={23} />
       ))}
       {members.length > 0 ? <UserAvatar name={userProfile?.name} avatarUrl={userProfile?.avatarUrl} size={23} /> : null}
     </span>
@@ -152,6 +160,8 @@ export function Sidebar({
   bots: sourceBots,
   rooms: sourceRooms,
   conversations,
+  organization,
+  onOpenOrganization,
   tab,
   settingsActive = false,
   selectedContactId,
@@ -164,6 +174,8 @@ export function Sidebar({
   workspaces,
   selectedBotId,
   selectedRoomId,
+  selectedSessionId,
+  onSelectTask,
   busy,
   addingWorkspace,
   workspaceError,
@@ -180,6 +192,7 @@ export function Sidebar({
   onCreateBot,
   onCreateRoom,
   onOpenSettings,
+  onOpenSearch,
   onOpenUserProfile,
   onMobileClose,
   onSelectBot,
@@ -207,7 +220,7 @@ export function Sidebar({
 }: SidebarProps): React.JSX.Element {
   const [query, setQuery] = useState("");
   const [unreadOnly, setUnreadOnly] = useState(false);
-  const summaryByKey = useMemo(() => new Map(conversations.map((item) => [item.botId ? botKey(item.botId) : roomKey(item.roomId!), item])), [conversations]);
+  const summaryByKey = useMemo(() => new Map(mainConversationSummaries(conversations).map((item) => [item.botId ? botKey(item.botId) : roomKey(item.roomId!), item])), [conversations]);
   const bots = useMemo(() => sourceBots.map((bot) => {
     const summary = summaryByKey.get(botKey(bot.id));
     return { ...bot, pinnedAt: summary?.pinnedAt ?? null, hiddenAt: summary?.hiddenAt ?? null, hasUnread: summary?.hasUnread ?? false };
@@ -275,7 +288,7 @@ export function Sidebar({
   const roomById = useMemo(() => new Map(rooms.map((room) => [room.id, room])), [rooms]);
   const recentConversations = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    return conversations.filter((item) => {
+    return mainConversationSummaries(conversations).filter((item) => {
       const bot = item.botId ? botById.get(item.botId) : undefined;
       const room = item.roomId ? roomById.get(item.roomId) : undefined;
       if ((!bot && !room) || item.hiddenAt || room?.archivedAt || (unreadOnly && !item.hasUnread)) return false;
@@ -283,6 +296,15 @@ export function Sidebar({
     }).toSorted((left, right) => Number(!!right.pinnedAt) - Number(!!left.pinnedAt)
       || right.lastActivityAt.localeCompare(left.lastActivityAt) || left.sessionId.localeCompare(right.sessionId));
   }, [botById, conversations, query, roomById, unreadOnly]);
+  const taskConversations = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return conversations.filter(item => item.kind === "TASK" && !item.hiddenAt && (!unreadOnly || item.hasUnread)
+      && (!normalized || `${item.title ?? "任务"}\n${item.lastMessage ?? ""}`.toLocaleLowerCase().includes(normalized)))
+      .toSorted((left, right) => right.lastActivityAt.localeCompare(left.lastActivityAt) || left.sessionId.localeCompare(right.sessionId));
+  }, [conversations, query, unreadOnly]);
+  const organizedConversations = useMemo(() => groupSidebarConversations([...recentConversations, ...taskConversations], organization), [recentConversations, taskConversations, organization]);
+  const unassignedMain = organizedConversations.unassigned.filter(item => item.kind !== "TASK");
+  const unassignedTasks = organizedConversations.unassigned.filter(item => item.kind === "TASK");
   const contacts = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     return bots.filter((bot) => !normalized || `${bot.name}\n${bot.label}\n${bot.description}`.toLocaleLowerCase().includes(normalized))
@@ -309,14 +331,14 @@ export function Sidebar({
   const contextBot = contextMenu ? bots.find((bot) => bot.id === contextMenu.botId) ?? null : null;
   const contextRoom = roomContextMenu ? rooms.find((room) => room.id === roomContextMenu.roomId) ?? null : null;
   const conversationOrder = useMemo<ConversationKey[]>(() => tab === "chats"
-    ? recentConversations.map((item) => item.botId ? botKey(item.botId) : roomKey(item.roomId!))
+    ? [...organizedConversations.sections.flatMap(group => group.items), ...organizedConversations.unassigned].filter(item => item.kind !== "TASK").map((item) => item.botId ? botKey(item.botId) : roomKey(item.roomId!))
     : tab === "contacts" ? contacts.map((bot) => botKey(bot.id))
     : !workspaceExpanded ? [] : projectGroups.flatMap(({ project, activeRooms: projectRooms, visibleBots: projectBots }) => (
     collapsedProjectIds.has(project.id) ? [] : [
       ...(collapsedRoomGroupIds.has(project.id) ? [] : projectRooms).map((room) => roomKey(room.id)),
       ...(collapsedBotGroupIds.has(project.id) ? [] : projectBots).map((bot) => botKey(bot.id)),
     ]
-  )), [collapsedBotGroupIds, collapsedProjectIds, collapsedRoomGroupIds, contacts, projectGroups, recentConversations, tab, workspaceExpanded]);
+  )), [collapsedBotGroupIds, collapsedProjectIds, collapsedRoomGroupIds, contacts, organizedConversations, projectGroups, tab, workspaceExpanded]);
   const visibleSelectedKeys = useMemo(() => {
     const available = new Set(conversationOrder);
     return new Set([...selectedKeys].filter((key) => available.has(key)));
@@ -712,7 +734,7 @@ export function Sidebar({
     if (renamingId === bot.id) {
       return (
         <div className={`bot-row conversation-row renaming${selected ? " selected" : ""}`} key={bot.id} role="listitem">
-          <span className="bot-icon bot-avatar-container conversation-avatar"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span>
+          <span className="bot-icon bot-avatar-container conversation-avatar"><BotAvatarIcon botId={bot.id} image={bot.avatarImage} shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span>
           <input
             ref={renameRef}
             className="bot-rename-input"
@@ -767,7 +789,7 @@ export function Sidebar({
         data-multi-selected={multiSelected ? "true" : undefined}
       >
         <span className={`bot-icon conversation-avatar${multiSelected ? "" : " bot-avatar-container"}`}>
-          {multiSelected ? <CheckIcon /> : <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} />}
+          {multiSelected ? <CheckIcon /> : <BotAvatarIcon botId={bot.id} image={bot.avatarImage} shape={bot.avatarShape} color={bot.avatarColor} size={48} />}
         </span>
         <span className="bot-copy">
           <strong>{identity.primary}</strong>
@@ -783,6 +805,13 @@ export function Sidebar({
       </button>
     );
   }
+
+  function renderTaskRow(item: ConversationSummary): React.JSX.Element { return <button
+              key={taskConversationKey(item.sessionId)} type="button" role="listitem" className={`bot-row task-thread-row${item.sessionId === selectedSessionId ? " selected" : ""}`}
+              aria-label={`任务：${item.title ?? "未命名任务"}`} aria-current={item.sessionId === selectedSessionId ? "true" : undefined}
+              disabled={busy} onClick={() => { clearMultiSelection(); setContextMenu(null); setRoomContextMenu(null); setNotice(null); onSelectTask?.(item.sessionId); }}>
+              <span className="task-thread-icon" aria-hidden="true"><ChatIcon /></span><span className="task-thread-copy"><strong>{item.title ?? "未命名任务"}</strong><small>{item.lastMessage ?? "独立历史与明确授权"}</small></span>{item.hasUnread ? <span className="unread-dot" aria-label="未读" /> : null}
+            </button>; }
 
   return (
     <aside className={`sidebar${mobileOpen ? " mobile-open" : ""}${settingsActive ? " settings-sidebar" : ""}`} aria-label="聊天列表">
@@ -857,7 +886,7 @@ export function Sidebar({
             <>
               {tab !== "workspace" ? (
                 <div className="sidebar-search">
-                  <SearchIcon />
+                  {onOpenSearch?<button type="button" className="icon-button sidebar-global-search-button" title="全资源搜索" aria-label="打开全资源搜索" onClick={onOpenSearch}><SearchIcon/></button>:<SearchIcon/>}
                   <input type="search" aria-label={tab === "chats" ? "搜索聊天" : "搜索联系人"} placeholder={tab === "chats" ? "搜索聊天" : "搜索联系人"} value={query} onChange={(event) => { clearMultiSelection(); setQuery(event.target.value); }} />
                   {tab === "chats" ? <button type="button" className="sidebar-unread-filter" aria-pressed={unreadOnly} title="只看未读聊天" onClick={() => { clearMultiSelection(); setUnreadOnly((current) => !current); }}>未读</button> : null}
                 </div>
@@ -871,12 +900,16 @@ export function Sidebar({
             <CloseIcon />
           </button>
         </div>
+      {tab === "chats" && onOpenOrganization ? <button className="sidebar-organization-button" type="button" onClick={onOpenOrganization}>整理聊天</button> : null}
       <div className="bot-list" id="sidebar-tab-content" role="tabpanel" aria-labelledby={`navigation-${tab}`}>
         {tab === "chats" ? <>
+          {organizedConversations.sections.filter(group => group.items.length > 0 || (!query && !unreadOnly)).map(({ section, items }) => <section className="sidebar-conversation-section" key={section.id} aria-label={`聊天分区 ${section.name}`}><h3>{section.name}</h3><div role="list" aria-label={`分区 ${section.name}`}>{items.map(item => item.kind === "TASK" ? renderTaskRow(item) : item.botId ? renderBotRow(botById.get(item.botId)!) : renderRoomRow(roomById.get(item.roomId!)!))}</div>{items.length === 0 ? <p className="organization-empty-section">暂无聊天</p> : null}</section>)}
+          {organizedConversations.sections.length > 0 && organizedConversations.unassigned.length > 0 ? <h3 className="sidebar-unassigned-title">未分组</h3> : null}
           <div role="list" aria-label="最近聊天">
-            {recentConversations.map((item) => item.botId ? renderBotRow(botById.get(item.botId)!) : renderRoomRow(roomById.get(item.roomId!)!))}
-            {recentConversations.length === 0 ? <div className="bot-list-empty">{query || unreadOnly ? "没有匹配的聊天" : "还没有聊天。点击新建聊天开始。"}</div> : null}
+            {unassignedMain.map((item) => item.botId ? renderBotRow(botById.get(item.botId)!) : renderRoomRow(roomById.get(item.roomId!)!))}
+            {recentConversations.length + taskConversations.length === 0 ? <div className="bot-list-empty">{query || unreadOnly ? "没有匹配的聊天" : "还没有聊天。点击新建聊天开始。"}</div> : null}
           </div>
+          {unassignedTasks.length > 0 ? <section className="sidebar-task-threads" aria-label="任务线程"><h3>任务线程</h3><div role="list" aria-label="独立任务线程">{unassignedTasks.map(renderTaskRow)}</div></section> : null}
           {hiddenBots.length + hiddenRooms.length > 0 ? <>
             <button className="archived-toggle" type="button" aria-expanded={hiddenOpen} onClick={() => setHiddenOpen((open) => !open)}>已移除的聊天 ({hiddenBots.length + hiddenRooms.length})</button>
             {hiddenOpen ? <div role="list">{hiddenRooms.map(renderRoomRow)}{hiddenBots.map(renderBotRow)}</div> : null}

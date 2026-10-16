@@ -1,3 +1,31 @@
+import {TemplateExportService} from "./template-export-service";
+import {saveOfflineArtifact} from "./offline-artifact";
+import {TEMPLATE_MAX_JSON_BYTES} from "@shared/template-export-schemas";
+import { EventService } from "./event-service";
+import { EventHttpServer } from "./event-http-server";
+import { emitAutomationRuntime } from "./event-runtime";
+import { AUTOMATION_EVENTS_CHANGED } from "@shared/event-channels";
+import { BotImageService } from "./bot-image-service";
+import { OrganizationService } from "./organization-service";
+import { ORGANIZATION_CHANGED_CHANNEL } from "@shared/organization-channels";
+import type { OrganizationNotifications } from "@shared/organization-contracts";
+import { notificationOptions } from "./notification-policy";
+import { SearchService } from "./search-service";
+import { TaskSessionService } from "./task-session-service";
+import { registerTaskMcpAuthority } from "./task-mcp-authority";
+import { TASK_SESSION_CHANGED_CHANNEL } from "@shared/task-session-channels";
+import { WebSocket } from "ws";
+import type { RealtimeSocketFactory } from "./realtime-socket-adapter";
+import { RealtimeService } from "./realtime-service";
+import { RealtimeBusinessHost } from "./realtime-business-host";
+import { REALTIME_CHANGED_CHANNEL } from "@shared/realtime-channels";
+import { VoiceService } from "./voice-service";
+import { installVoiceCaptureHost } from "./voice-capture-host";
+import { VOICE_CHANGED_CHANNEL } from "@shared/voice-channels";
+import type { VoiceFetch } from "./voice-http-adapter";
+import { MediaService } from "./media-service";
+import { MediaParserHost, registerMediaParserScheme } from "./media-parser-host";
+import { MEDIA_CHANGED_CHANNEL } from "@shared/media-channels";
 import { McpWriteService } from "./mcp-write-service";
 import { McpAppsBridge } from "./mcp-apps-bridge";
 import { NativeOutboundAdapter } from "./native-connectors/outbound";
@@ -8,7 +36,7 @@ import "./identity";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
-import { app, BrowserWindow, clipboard, dialog, nativeTheme, Notification, safeStorage, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, nativeTheme, nativeImage, Notification, safeStorage, shell } from "electron";
 import { valid } from "semver";
 import { IPC } from "@shared/channels";
 import type { RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateState } from "@shared/contracts";
@@ -52,6 +80,8 @@ import { ENVIRONMENT_EVENTS } from "@shared/environment-channels";
 import { environmentDirectoryPathSchema, environmentFilePathSchema } from "@shared/environment-schemas";
 import { readEnvironmentUpload, writeEnvironmentDownload } from "./environment-file-transfer";
 
+registerMediaParserScheme();
+
 const userDataOverride = process.env.AEVOREN_BOT_USER_DATA_DIR;
 if (userDataOverride) app.setPath("userData", userDataOverride);
 const hideTestWindow = process.env.AEVOREN_BOT_TEST_HIDDEN === "1";
@@ -65,6 +95,7 @@ if (process.env.AEVOREN_BOT_TEST_HIDDEN === "0") {
 
 let mainWindow: BrowserWindow | null = null;
 let repository: AppRepository | null = null;
+let organizationService:OrganizationService|null=null;
 let runtimeCoordinator: SendWorker | null = null;
 let roomCoordinator: RoomCoordinator | null = null;
 let updateService: UpdateService | null = null;
@@ -74,10 +105,17 @@ let mcpWriteService: McpWriteService | null = null;
 let mcpAppsBridge: McpAppsBridge | null = null;
 let environmentService: EnvironmentService | null = null;
 let browserService: BrowserService | null = null;
+let mediaService: MediaService | null = null;
+let voiceService: VoiceService | null = null;
+let realtimeService: RealtimeService | null = null;
+let realtimeBusiness: RealtimeBusinessHost | null = null;
+let voiceCapture: ReturnType<typeof installVoiceCaptureHost> | null = null;
 let skillExecutionService: SkillExecutionService | null = null;
 let nativeConnectorService: NativeConnectorService | null = null;
 let nativeOutboundService: NativeOutboundService | null = null;
 let routineService: RoutineService | null = null;
+let automationEventService: EventService | null = null;
+let automationEventHttp: EventHttpServer | null = null;
 let allowClose = false;
 let closeRequested = false;
 let quitRequested = false;
@@ -112,24 +150,36 @@ function emitSendState(event: SendStateEvent): void {
 }
 
 function emitRuntime(event: RuntimeEvent): void {
+  if (repository && automationEventService && ["completed", "failed"].includes(event.run.state)) {
+    const hostRepository = repository, events = automationEventService;
+    void (routineService?.reconcileCompletedRuns() ?? Promise.resolve()).then(() => emitAutomationRuntime(hostRepository, events, event.run)).then(() => events.reconcile()).catch(() => undefined);
+  }
+  realtimeBusiness?.changed();
   if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void browserService?.cancelRuntime(event.run.id).catch(() => undefined);
   if (["cancel-requested", "completed", "failed", "cancelled", "interrupted"].includes(event.run.state)) void environmentService?.cancelRuntime(event.run.id).catch(() => undefined);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.runtimeEvent, event);
+  if(event.run.state==="completed"&&!event.run.promptManifest.sourceTurnId)showNotification("任务已完成","本次对话任务已完成。","taskCompletion");
+  if(["failed","interrupted"].includes(event.run.state)&&!event.run.promptManifest.sourceTurnId)showNotification("任务需要处理","本次对话任务未完成，可在应用中查看原因。","taskFailure");
 }
 
 function emitRoomRuntime(event: RoomRuntimeEvent): void {
+  realtimeBusiness?.changed();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.roomRuntimeEvent, event);
+  if(event.batch.state==="completed")showNotification("群任务已完成","本次群任务已完成。","taskCompletion");
+  if(["failed","partial","interrupted"].includes(event.batch.state))showNotification("群任务需要处理","本次群任务有尚未完成的内容。","taskFailure");
 }
 
 function emitTool(event: ToolEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.toolEvent, event);
-  if (event.approval.state === "pending") showNotification("Aevoren Bot 等待确认", "有一项工具调用需要你的批准。");
+  if (event.approval.state === "pending") showNotification("Aevoren Bot 等待确认", "有一项工具调用需要你的批准。","approvals");
 }
 
-function showNotification(title: string, body: string): void {
-  if (hideTestWindow) return;
-  if (!Notification.isSupported()) return;
-  const notification = new Notification({ title, body, silent: false });
+function showNotification(title: string, body: string,category:keyof OrganizationNotifications): void {
+  if(hideTestWindow||!organizationService)return;
+  let options:{silent:boolean}|null;
+  try{options=notificationOptions(organizationService.snapshot().preferences,category,hideTestWindow,Notification.isSupported());}catch{return;}
+  if(!options)return;
+  const notification = new Notification({ title, body, ...options });
   notification.on("click", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.show();
@@ -162,27 +212,35 @@ function armCloseConfirmationTimer(): void {
 
 async function finishClose(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (!quitRequested && routineService?.hasEnabled()) {
+  if (!quitRequested && (routineService?.hasEnabled() || automationEventHttp?.snapshot().listening)) {
     clearCloseConfirmationTimer();
     closeRequested = false;
     pendingClose = false;
-    mainWindow.hide();
+    voiceCapture?.invalidate();
+    await realtimeService?.stopAll();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
     return;
   }
-  roomCoordinator?.beginShutdown();
   shutdownPromise ??= (async () => {
+    await automationEventHttp?.shutdown();
+    await automationEventService?.shutdown();
+    await routineService?.shutdown();
+    roomCoordinator?.beginShutdown();
     await mcpAppsBridge?.dispose();
     await mcpWriteService?.shutdown();
     await nativeOutboundService?.shutdown();
     await nativeConnectorService?.shutdown();
     await skillExecutionService?.shutdown();
+    await realtimeService?.shutdown();
+    await voiceCapture?.shutdown();
+    await voiceService?.shutdown();
+    await mediaService?.shutdown();
     await runtimeCoordinator?.shutdown();
     await roomCoordinator?.shutdown();
     await environmentService?.shutdown();
     await browserService?.shutdown();
     await providerService?.dispose();
     await mcpService?.dispose();
-    routineService?.stop();
   })();
   try {
     await shutdownPromise;
@@ -328,6 +386,26 @@ app.whenReady().then(async () => {
   })();
   const workspaceService = new WorkspaceService(repository);
   const libraryService = new LibraryService(repository, join(app.getPath("userData"), "library-blobs"), { workspaceService });
+  const productMediaService = new MediaService(repository, join(app.getPath("userData"), "media-blobs"),
+    new MediaParserHost({ directory: app.isPackaged ? join(process.resourcesPath, "media-parser") : join(app.getAppPath(), "out", "media-parser") }), {
+      workspaceService, onChanged: event => {
+        voiceService?.mediaChanged(event);
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(MEDIA_CHANGED_CHANNEL, event);
+      },
+    });
+  mediaService = productMediaService;
+  const voiceTestOrigin = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_VOICE_TEST_ORIGIN : undefined;
+  let voiceFetch: VoiceFetch | undefined;
+  if (voiceTestOrigin) {
+    const origin = new URL(voiceTestOrigin);
+    if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.pathname !== "/" || origin.username || origin.password || origin.search || origin.hash) throw new AevorenBotError("INVALID_REQUEST");
+    voiceFetch = (url, input) => fetch(new URL(url.pathname + url.search, origin), { ...input, redirect: "error" });
+  }
+  const productVoiceService = new VoiceService(repository, electronSecretCodec, productMediaService,
+    join(app.getPath("userData"), "voice-blobs"), { ...(voiceFetch ? { fetch: voiceFetch } : {}), onConfigurationChanged: () => realtimeService?.configurationChanged(), onChanged: event => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(VOICE_CHANGED_CHANNEL, event);
+    } });
+  voiceService = productVoiceService;
   environmentService = new EnvironmentService(repository.environments, electronSecretCodec,
     app.isPackaged ? join(process.resourcesPath, "environment-worker") : join(app.getAppPath(), "out", "worker"), (event) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ENVIRONMENT_EVENTS.changed, event);
@@ -368,6 +446,7 @@ app.whenReady().then(async () => {
   for (const saved of repository.browsers.listInternal()) void browserService.get(saved).catch(() => undefined);
   mcpService = new McpService(repository, electronSecretCodec, app.getVersion(), (url) => shell.openExternal(url));
   await mcpService.initialize();
+  registerTaskMcpAuthority(repository,mcpService);
   const workspaceToolExecutor = new WorkspaceToolExecutor(repository, workspaceService, new NetworkToolExecutor(), mcpService, new DeviceToolExecutor(() => clipboard.readText()));
   const workspaceToolCoordinator = new WorkspaceToolCoordinator(
     repository,
@@ -388,8 +467,14 @@ app.whenReady().then(async () => {
     platform,
     architecture: process.arch,
     packaged: app.isPackaged,
-  }, undefined, mcpService, () => routineService?.list() ?? []);
+  }, undefined, mcpService, () => routineService?.list() ?? [], () => productVoiceService.configurations());
   mainWindow = createWindow(!hideTestWindow && !openedAtLogin);
+  voiceCapture = installVoiceCaptureHost(repository, mainWindow, async (input, context) => {
+    const result = await productMediaService.importBytes({ ...input, requiredKind: "audio" }, context);
+    const item = result.imported[0];
+    if (!item || result.failed.length) throw new AevorenBotError("VOICE_RESPONSE_INVALID");
+    return item.reference;
+  });
   const sendWorker = new SendWorker(
     repository,
     providerService,
@@ -404,14 +489,40 @@ app.whenReady().then(async () => {
     forceFakeProvider ? undefined : new MemoryCaptureService(repository, providerService),
   );
   runtimeCoordinator = sendWorker;
-  routineService = new RoutineService(repository, sendWorker, (run) => {
-    const title = run.state === "completed" ? "定时任务已完成" : run.state === "missed" ? "定时任务已错过" : "定时任务需要关注";
-    showNotification(title, `${run.routineName} · ${run.state}`);
-  });
   roomCoordinator = new RoomCoordinator(repository, sendWorker.executor, {
     transcript: emitTranscript,
     roomRuntime: emitRoomRuntime,
   }, decisionService);
+  routineService = new RoutineService(repository, sendWorker, (run) => {
+    const title = run.state === "completed" ? "定时任务已完成" : run.state === "missed" ? "定时任务已错过" : "定时任务需要关注";
+    showNotification(title, `${run.routineName} · ${run.state}`,"routines");
+  }, undefined, roomCoordinator);
+  const automationChanged = (): void => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(AUTOMATION_EVENTS_CHANGED); };
+  automationEventService = new EventService(repository.automationEvents, routineService, electronSecretCodec, automationChanged, { assertSourceSession: id => { repository!.getSession(id); } });
+  automationEventHttp = new EventHttpServer(automationEventService, automationChanged);
+  await automationEventService.reconcile();
+  const realtimeTestOrigin = hideTestWindow && userDataOverride ? process.env.AEVOREN_BOT_REALTIME_TEST_ORIGIN : undefined;
+  let realtimeSocketFactory: RealtimeSocketFactory | undefined;
+  if (realtimeTestOrigin) {
+    const origin = new URL(realtimeTestOrigin);
+    if (origin.protocol !== "ws:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.pathname !== "/" || origin.username || origin.password || origin.search || origin.hash) throw new AevorenBotError("INVALID_REQUEST");
+    realtimeSocketFactory = (url, options) => new WebSocket(new URL(url.pathname + url.search, origin), options);
+  }
+  realtimeBusiness = new RealtimeBusinessHost(repository, sendWorker, roomCoordinator);
+  const business = realtimeBusiness;
+  const productRealtimeService = new RealtimeService(repository, electronSecretCodec, {
+    dispatch: (request, signal) => business.dispatch(request, signal),
+    lookup: request => business.lookup(request), wait: (link, signal) => business.wait(link, signal), cancel: link => business.cancel(link),
+  }, { ...(realtimeSocketFactory ? { socketFactory: realtimeSocketFactory } : {}), onEvent: event => {
+    if (event.type === "snapshot" && ["stopped", "failed", "interrupted_unknown"].includes(event.snapshot.session.state))
+      voiceCapture?.cancel({ sessionId: event.snapshot.session.sessionId, captureId: event.snapshot.session.captureId });
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(REALTIME_CHANGED_CHANNEL, event);
+  } });
+  realtimeService = productRealtimeService;
+  organizationService=new OrganizationService(repository.organization);
+  const taskSessionService=new TaskSessionService(repository,sendWorker,roomCoordinator,mcpService,event=>{
+    if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send(TASK_SESSION_CHANGED_CHANNEL,event);
+  },environmentService??undefined);
   const updateConfigurationPath = join(process.resourcesPath, "app-update.yml");
   const updateChannel = resolveUpdateChannel({
     isPackaged: app.isPackaged,
@@ -446,10 +557,45 @@ app.whenReady().then(async () => {
   });
   const updateRepository = repository;
   const productUpdateService = updateService;
+  const templateExportService=new TemplateExportService(repository,repository.templates,libraryService,mediaService!,{templateBlobRoot:join(app.getPath("userData"),"template-blobs"),libraryBlobRoot:join(app.getPath("userData"),"library-blobs")});
   const productOperations = registerIpc({
+    templateExportService,
+    async pickTemplateBytes(){
+      let path=hideTestWindow&&userDataOverride?process.env.AEVOREN_BOT_TEMPLATE_IMPORT_TEST_PATH:undefined;
+      if(!path){if(!mainWindow||mainWindow.isDestroyed())return null;const selected=await dialog.showOpenDialog(mainWindow,{title:"选择 Aevoren 便携模板",filters:[{name:"Aevoren template",extensions:["json"]}],properties:["openFile"]});if(selected.canceled||!selected.filePaths[0])return null;path=selected.filePaths[0];}
+      const {open}=await import("node:fs/promises");const handle=await open(path,"r");try{const stat=await handle.stat();if(!stat.isFile()||stat.size>TEMPLATE_MAX_JSON_BYTES)throw new AevorenBotError("LIBRARY_IMPORT_TOO_LARGE");const bytes=await handle.readFile();if(bytes.length>TEMPLATE_MAX_JSON_BYTES)throw new AevorenBotError("LIBRARY_IMPORT_TOO_LARGE");return bytes;}finally{await handle.close();}
+    },
+    async saveOfflineArtifact(artifact){
+      artifact.assertCurrent();let path=hideTestWindow&&userDataOverride?process.env.AEVOREN_BOT_OFFLINE_EXPORT_TEST_PATH:undefined;
+      if(!path){if(!mainWindow||mainWindow.isDestroyed())return null;const selected=await dialog.showSaveDialog(mainWindow,{title:"保存离线导出",defaultPath:artifact.name,filters:[{name:artifact.mimeType==="text/html"?"HTML":"JSON",extensions:[artifact.mimeType==="text/html"?"html":"json"]}]});if(selected.canceled||!selected.filePath)return null;path=selected.filePath;}
+      return saveOfflineArtifact(path,artifact);
+    },
     window: mainWindow,
     repository,
     libraryService,
+    mediaService: productMediaService,
+    voiceService: productVoiceService,
+    realtimeService: productRealtimeService,
+    taskSessionService,
+    organizationService,
+    botImageService:new BotImageService(repository,productMediaService,bytes=>{const image=nativeImage.createFromBuffer(Buffer.from(bytes));if(image.isEmpty())throw new Error("Avatar cannot be decoded");const size=image.getSize(),side=Math.min(size.width,size.height);return image.crop({x:Math.floor((size.width-side)/2),y:Math.floor((size.height-side)/2),width:side,height:side}).resize({width:256,height:256,quality:"best"}).toPNG();}),
+    organizationChanged:event=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send(ORGANIZATION_CHANGED_CHANNEL,event);},
+    searchService:new SearchService(repository,repository.search,productVoiceService),
+    voiceCapture,
+    sessionChanged(session) {
+      voiceCapture?.cancelSession(session.id);
+      productVoiceService.sessionChanged(session.id, session.generation);
+      productRealtimeService.sessionChanged(session.id, session.generation);
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.sessionChangedEvent, { session });
+    },
+    async pickMediaPaths(_input, signal) {
+      signal?.throwIfAborted();
+      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      const result = await dialog.showOpenDialog(mainWindow, { title: "导入媒体与文档", properties: ["openFile", "multiSelections"],
+        filters: [{ name: "媒体与文档", extensions: ["png", "jpg", "jpeg", "pdf", "docx", "wav", "mp3", "ogg", "webm", "mp4", "m4a"] }] });
+      signal?.throwIfAborted();
+      return result.canceled ? null : result.filePaths;
+    },
     environmentService,
     browserService,
     demonstrationService: new DemonstrationService(repository, browserService, libraryService),
@@ -553,6 +699,7 @@ app.whenReady().then(async () => {
     capabilityRegistry,
     mcpService,
     routineService,
+    automationEventService, automationEventHttp,
     updateService,
     async pickWorkspaceRoot() {
       const testPath = process.env.AEVOREN_BOT_TEST_HIDDEN === "1"
@@ -719,4 +866,5 @@ app.on("quit", () => {
   mcpWriteService = null;
   mcpAppsBridge = null;
   routineService = null;
+  automationEventService = null; automationEventHttp = null;
 });

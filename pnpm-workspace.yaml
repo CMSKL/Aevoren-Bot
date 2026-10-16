@@ -16,3 +16,5 @@ minimumReleaseAgeExclude:
   - react@19.3.0
   - scheduler@0.28.0
   - zod@4.6.1
+ignoredOptionalDependencies:
+  - '@napi-rs/canvas'

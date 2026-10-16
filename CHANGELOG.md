@@ -1,5 +1,72 @@
 # Changelog
 
+## v0.3.0-beta.44 (development candidate)
+
+- Add versioned portable templates with exact profile/roster/resource/file selection, owned immutable bytes, full review and independent import copies with Skills initially disabled.
+- Add explicit-scope JSON and self-contained offline HTML exports through native no-overwrite save dialogs; cancel and revoke only the selected operation.
+- Share scoped template/export operations with connected AI, fixed original Runtime revisions, private revocable model text, concrete approvals and atomic mutation receipts. TASK cannot import new contacts.
+- Flush early Webhook rejection responses before closing incomplete uploads, retaining bounded cleanup and all authentication/body limits. Preserve exact request-phase diagnostics and owned fixture cleanup in CI.
+- Keep the portable export settings entry within narrow/200% zoom layouts while preserving complete category keyboard navigation.
+- No new dependency. Local verification and actual packaged evidence are recorded separately; Windows and signed publication remain pending.
+
+## v0.3.0-beta.43 (development candidate)
+
+- Configure reviewed MAIN Bot/group Routine subscriptions for authenticated local Webhooks and metadata-only Runtime completion/failure events, with concrete source/target/version checks.
+- Add an explicitly started loopback listener, once-displayed host-encrypted Bearer secrets, versioned URLs, bounded untrusted JSON attachments and durable idempotent receipts.
+- Preserve subscription drafts on conflicts, revoke only owned active runs, prevent event ancestry loops and reconcile uncertain acceptance without replay.
+- Flush early HTTP rejection responses before gracefully closing incomplete uploads, retaining authentication, the 64 KiB boundary and bounded cleanup; support independent later migration gaps in the read-only Room diagnostics CLI.
+- Share scoped subscription operations with connected AI through `automationEvents`; listener start/stop require concrete application-wide approval and shared state fencing; secret rotation remains trusted credential management. Existing Runtime `events` API is preserved.
+- Focused SQLite, actual HTTP and Runtime delegation checks pass, plus two hidden source cases and Events2/typed API in the actual unsigned macOS package (3/3). Cross-platform and signed publication remain pending; no new dependency is introduced.
+
+## v0.3.0-beta.42 (development candidate)
+
+- Extend Routines to reviewed Bot/group MAIN targets, fixed Everyone/subset membership snapshots, parallel execution, conflict-preserving editing and exact owned-run cancellation.
+- Keep TASK Routine targets unsupported and preserve unknown acceptance across restart without replay; existing approvals and scoped resource grants still apply.
+- Local source and actual unsigned macOS-package checks are tracked in the implementation plan. Cross-platform and signed publication remain separate gates.
+
+## v0.3.0-beta.41 (development candidate)
+
+- Persist session-based chat sections/order, a fallback default assistant and independent notification/sound preferences. Keep concurrent edits through explicit version conflicts.
+- Publish actual centered 256×256 Bot image avatars from authorized PNG/JPEG media; preserve owned copies through source removal/restart and independent Bot duplication.
+- Share validated organization/avatar operations with connected AI, retaining actual Runtime/TASK scope, approvals and revocable pixel transport.
+- Focused business checks, two hidden source UI scenarios and actual unsigned macOS-package checks pass. Platform and signed-release gates remain pending; group automation, events/Webhooks and templates/exports follow separately.
+
+## v0.3.0-beta.40 (development candidate)
+
+- Search saved messages, immutable document/Skill versions, media/transcripts, Task threads, routines and authorized local drafts from one scoped interface.
+- Recheck exact source identity, generation, version and grants; preserve original Task Runtime selections and prevent same-text replacements after history is cleared.
+- Share search with connected AI through host-scoped product operations. Keep private titles/snippets outside durable tool receipts and reauthorize text before provider serialization.
+- Local SQLite, guarded transport and two controlled UI cases pass. The actual unsigned macOS package passed Search2 plus Task3 in one run; platform and signed-release gates remain pending.
+
+
+## v0.3.0-beta.39 (development candidate)
+
+- Add multiple independent TASK conversations beside each Bot/group's MAIN chat, migration 45, separate session identities and explicit executor admission.
+- Default all task context and permissions to empty. Capture selected per-member Memory/history/resource/media versions, Workspace ceilings, exact read-only MCP identities and product/network/clipboard permissions; Runtime retries retain their original snapshot.
+- Add task creation, separate sidebar rows, session-specific history/drafts, conflict-preserving titles, explicit authorization revision and task-only stop/delete controls. Preserve the owner Bot/group and ordinary MAIN entry points.
+- Scope capability metadata, model tools and live events to the actual task/executor, without inheriting global connection state or unselected authority.
+- The source build, focused checks and all three distinct hidden Task scenarios pass across separate recorded runs. The actual unsigned macOS package passes Task3 plus typed API (4/4). Cross-platform and signed publication remain pending; search and the remaining Phase 6B–6F deliveries are not included.
+
+## v0.3.0-beta.38 (development candidate)
+
+- Add user-initiated, manually committed Realtime voice turns with host-owned credentials, final human transcript provenance, ordinary Runtime delegation and independent speech/task stop controls.
+- Add persistent turn/call journals, fixed resource and member admissions, actual rendered-sample interrupt acknowledgements and fail-closed disconnect/recovery.
+- Local controlled source coverage totals 159 distinct passes and 32 conditional skips: preserve the sleep-affected full run's 156 passes/3 failures and the subsequent focused 3/3 passes separately. This is not one all-green full run. Existing unsigned macOS-package evidence remains separate; cross-platform and signed publication are pending. Physical devices and a live cloud account remain unverified.
+
+## v0.3.0-beta.37 (development candidate)
+
+- Add separate encrypted STT/TTS/Realtime settings, completed-file streaming transcription and actual PCM-to-WAV speech, durable non-replaying task intents and scoped cancellation/recovery. Realtime configuration is saved; connection support follows separately.
+- Add explicit audio-only microphone intents, draft-version guarded manual transcript insertion, current-session completion-order reading, AI voice identity and late-result/generation cancellation guards.
+- Add genuinely decoded bounded audio/video imports and local players, persisted durations and revocable binary reads; video is preview-only.
+- Node24 ordinary tests pass1,669 with45 skips; controlled hidden voice4, typed API1 and A/V plus legacy media5 pass. Cloud/hardware, package and final cross-platform gates remain distinct.
+
+## v0.3.0-beta.36 (development candidate)
+
+- Add owned PNG/JPEG/PDF/DOCX storage, fixed message/extraction references, conversation bindings and immutable Runtime admission snapshots; revocation blocks later reads and rebinding does not revive old tasks.
+- Add bounded PDF text/page previews and DOCX plain-text extraction in independent hidden sandbox parser jobs, explicit assets and licenses, cancellation and shutdown.
+- Share twelve media operations with the UI and AI. Actual text/pixels travel as revocable ephemeral tool attachments across API, Claude and Codex; receipts contain metadata only.
+- Preserve composer drafts across late imports, sends and navigation with monotonic versions. Node24 ordinary tests pass1,630/45 skipped; fresh hidden source150/32 skipped and actual unsigned macOS package34 scenarios pass after the CAS hardlink regression fix. Final cross-platform CI and signed publication remain pending; no OCR, audio/video or voice is claimed.
+
 ## v0.3.0-beta.35 (development candidate)
 
 - Add distinct Notion saved-draft operations and exact page write grants for title-only updates and end-of-page paragraph appends. Preserve existing page body and ordinary/data-source title property identity.
@@ -14,11 +81,11 @@
 - Share one Apps approval owner across native and MCP actions, preserving six-member execution and exact Stop/revoke.
 - Retain read-only MCP compatibility, existing themes and icons. External App domains and device permissions are disabled; real accounts and final package acceptance remain separate verification gates.
 
-## v0.3.0-beta.33
+## v0.3.0-beta.33 (published Beta)
 
 - Added explicit isolated-computer demonstration recording and scoped editable text Skill drafts; publication reviews a fixed saved version and creates a disabled Skill.
 - Browser Worker 1.1.0 redacts printable keys and clipboard input, and seals captures on disconnect or control change.
-- Retain native connector and outbound features from beta.31/beta.32. Development and beta CI passed; signed and notarized macOS artifacts are publicly available. Real third-party accounts and Windows Docker remain unverified.
+- Native connector and outbound features from beta.31/beta.32 are retained. The signed/notarized macOS release is published; real Windows Docker and live third-party accounts remain separate, unverified boundaries.
 
 
 ## v0.3.0-beta.32 (development candidate)

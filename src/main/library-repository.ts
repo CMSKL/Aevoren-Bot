@@ -86,6 +86,23 @@ function assertContentSize(body: string, files: ResourceFileRef[]): void {
 
 export class LibraryRepository {
   private savepointSequence = 0;
+  private taskReferenceReader: ((sessionId: string, executorBotId: string, runtimeRunId?: string) => Array<{ reference: ResourceReference; bindingVersion: number }> | null) | null = null;
+  setTaskReferenceReader(reader: NonNullable<LibraryRepository["taskReferenceReader"]>): void { this.taskReferenceReader = reader; }
+  private taskReferences(sessionId: string, executorBotId?: string, runtimeRunId?: string): ResourceReference[] | null {
+    if (!executorBotId) { if (runtimeRunId) throw new AevorenBotError("INVALID_REQUEST"); return null; }
+    const selected = this.taskReferenceReader?.(sessionId, executorBotId, runtimeRunId) ?? null;
+    if (selected === null && (this.database.prepare("SELECT kind FROM sessions WHERE id=?").get(sessionId) as { kind: string } | undefined)?.kind === "TASK") throw new AevorenBotError("LIBRARY_NOT_BOUND");
+    return selected?.map(item => item.reference) ?? null;
+  }
+  private selectedReference(sessionId: string, id: string, executorBotId?: string, runtimeRunId?: string): ResourceReference | null {
+    const references = this.taskReferences(sessionId, executorBotId, runtimeRunId);
+    if (references === null) return null;
+    const reference = references.find(item => item.resourceId === id);
+    if (!reference) throw new AevorenBotError("LIBRARY_NOT_BOUND");
+    return reference;
+  }
+  private pinnedMetadata(content: LibraryContent): LibraryResource { return { ...content.resource, name: content.revision.name, description: content.revision.description, currentRevisionId: content.revision.id, updatedAt: content.revision.createdAt }; }
+
 
   constructor(private readonly database: DatabaseSync, private readonly assertSession: (sessionId: string, executorBotId?: string) => void) {}
 
@@ -103,13 +120,22 @@ export class LibraryRepository {
     }
   }
 
-  list(input: LibraryListInput, executorBotId?: string): LibraryResource[] {
+  list(input: LibraryListInput, executorBotId?: string, runtimeRunId?: string): LibraryResource[] {
     const parsed = libraryListSchema.parse(input);
     this.assertSession(parsed.sessionId, executorBotId);
     const rows = this.database.prepare(`SELECT library_resources.* FROM library_resources
       JOIN session_resource_bindings ON session_resource_bindings.resource_id = library_resources.id
       WHERE session_resource_bindings.session_id = ? AND session_resource_bindings.revoked_at IS NULL
       ORDER BY library_resources.updated_at DESC, library_resources.id`).all(parsed.sessionId) as ResourceRow[];
+    const selected = this.taskReferences(parsed.sessionId, executorBotId, runtimeRunId);
+    if (selected !== null) return selected.flatMap(reference => {
+      const row = rows.find(item => item.id === reference.resourceId);
+      if (!row || parsed.kind && row.kind !== parsed.kind) return [];
+      const content = this.read({ sessionId: parsed.sessionId, id: row.id, revisionId: reference.revisionId }, executorBotId, runtimeRunId);
+      const text = `${content.revision.name}\n${content.revision.description}\n${content.revision.body}`.toLocaleLowerCase();
+      const tokens = parsed.query?.trim().toLocaleLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [];
+      return parsed.query?.trim() && (!tokens.length || !tokens.every(token => text.includes(token))) ? [] : [this.pinnedMetadata(content)];
+    });
     return this.filterRows(rows, parsed, true);
   }
 
@@ -141,11 +167,15 @@ export class LibraryRepository {
       .slice(0, 500).map(resource);
   }
 
-  read(input: LibraryReadInput, executorBotId?: string): LibraryContent {
+  read(input: LibraryReadInput, executorBotId?: string, runtimeRunId?: string): LibraryContent {
     const parsed = libraryReadSchema.parse(input);
-    const current = this.scopedResource(parsed.sessionId, parsed.id, executorBotId);
+    const current = this.scopedResource(parsed.sessionId, parsed.id, executorBotId, runtimeRunId);
     this.assertVisible(current, parsed);
-    return this.content(current, parsed.revisionId ?? current.currentRevisionId);
+    const selected = this.selectedReference(parsed.sessionId, parsed.id, executorBotId, runtimeRunId);
+    if (selected && parsed.revisionId && parsed.revisionId !== selected.revisionId) throw new AevorenBotError("LIBRARY_REFERENCE_INVALID");
+    const content = this.content(current, parsed.revisionId ?? selected?.revisionId ?? current.currentRevisionId);
+    if (selected && content.reference.digest !== selected.digest) throw new AevorenBotError("LIBRARY_REFERENCE_INVALID");
+    return selected ? { ...content, resource: this.pinnedMetadata(content) } : content;
   }
 
   create(input: StoredCreateInput, executorBotId?: string): LibraryContent {
@@ -180,6 +210,8 @@ export class LibraryRepository {
       const current = this.scopedResource(parsed.sessionId, parsed.id, executorBotId);
       this.assertVisible(current, { includeDisabled: true });
       this.assertVersion(current, parsed.expectedVersion);
+      const selected = this.selectedReference(parsed.sessionId, parsed.id, executorBotId);
+      if (selected && selected.revisionId !== current.currentRevisionId) throw new AevorenBotError("LIBRARY_VERSION_CONFLICT");
       const previous = this.content(current, current.currentRevisionId).revision;
       return this.replaceRevision(current, {
         name: parsed.name ?? previous.name, description: parsed.description ?? previous.description,
@@ -224,10 +256,13 @@ export class LibraryRepository {
     });
   }
 
-  versions(input: LibraryVersionsInput, executorBotId?: string): ResourceRevisionSummary[] {
+  versions(input: LibraryVersionsInput, executorBotId?: string, runtimeRunId?: string): ResourceRevisionSummary[] {
     const parsed = libraryVersionsSchema.parse(input);
-    const current = this.scopedResource(parsed.sessionId, parsed.id, executorBotId);
+    const current = this.scopedResource(parsed.sessionId, parsed.id, executorBotId, runtimeRunId);
     this.assertVisible(current, parsed);
+    const selected = this.selectedReference(parsed.sessionId, parsed.id, executorBotId, runtimeRunId);
+    if (selected) { const revision = this.read({ sessionId: parsed.sessionId, id: parsed.id, revisionId: selected.revisionId }, executorBotId, runtimeRunId).revision;
+      return [{ id: revision.id, resourceId: revision.resourceId, number: revision.number, name: revision.name, description: revision.description, digest: revision.digest, createdAt: revision.createdAt, fileCount: revision.files.length }]; }
     return (this.database.prepare(`SELECT id,resource_id,number,name,description,digest,created_at,
       json_array_length(files_json) AS file_count FROM library_revisions WHERE resource_id=? ORDER BY number DESC LIMIT 50`)
       .all(current.id) as (Omit<RevisionRow, "body" | "files_json"> & { file_count: number })[]).map((row) => ({
@@ -242,7 +277,7 @@ export class LibraryRepository {
       const current = this.scopedResource(parsed.sessionId, parsed.id, executorBotId);
       this.assertVisible(current, { includeDisabled: true });
       this.assertVersion(current, parsed.expectedVersion);
-      const previous = this.content(current, parsed.revisionId).revision;
+      const previous = this.read({ sessionId: parsed.sessionId, id: parsed.id, revisionId: parsed.revisionId }, executorBotId).revision;
       return this.replaceRevision(current, previous);
     });
   }
@@ -263,6 +298,7 @@ export class LibraryRepository {
     const parsed = libraryBindingSchema.parse(input);
     return this.transaction(() => {
       this.assertSession(parsed.sessionId, executorBotId);
+      this.selectedReference(parsed.sessionId, parsed.id, executorBotId);
       // A trusted user can rebind an inactive resource to recover it. AI cannot grant itself that access.
       this.assertVisible(this.getResource(parsed.id), { includeDisabled: !executorBotId, includeDeleted: !executorBotId });
       const existing = this.database.prepare("SELECT * FROM session_resource_bindings WHERE session_id=? AND resource_id=? AND revoked_at IS NULL")
@@ -281,28 +317,46 @@ export class LibraryRepository {
     const parsed = libraryBindingSchema.parse(input);
     return this.transaction(() => {
       this.assertSession(parsed.sessionId, executorBotId);
+      this.selectedReference(parsed.sessionId, parsed.id, executorBotId);
       return this.database.prepare(`UPDATE session_resource_bindings SET revoked_at=?,version=version+1
         WHERE session_id=? AND resource_id=? AND revoked_at IS NULL`).run(new Date().toISOString(), parsed.sessionId, parsed.id).changes > 0;
     });
   }
 
-  resolveReferences(sessionId: string, references: ResourceReference[], executorBotId?: string): LibraryContent[] {
+  resolveReferences(sessionId: string, references: ResourceReference[], executorBotId?: string, runtimeRunId?: string): LibraryContent[] {
     libraryListSchema.parse({ sessionId });
     const parsed = resourceReferencesSchema.parse(references);
     this.assertSession(sessionId, executorBotId);
     return parsed.map((reference) => {
-      const content = this.read({ sessionId, id: reference.resourceId, revisionId: reference.revisionId }, executorBotId);
+      const content = this.read({ sessionId, id: reference.resourceId, revisionId: reference.revisionId }, executorBotId, runtimeRunId);
       if (content.reference.digest !== reference.digest) throw new AevorenBotError("LIBRARY_REFERENCE_INVALID");
       return content;
     });
   }
 
-  assertReferences(sessionId: string, references: ResourceReference[], executorBotId?: string): void {
-    this.resolveReferences(sessionId, references, executorBotId);
+  /** Host-only immutable revision plus the original authorization incarnation. */
+  captureReferenceBindings(sessionId: string, references: ResourceReference[], executorBotId?: string, runtimeRunId?: string): Array<{ reference: ResourceReference; bindingVersion: number }> {
+    this.assertReferences(sessionId, references, executorBotId, runtimeRunId);
+    return references.map(reference => {
+      const row = this.database.prepare("SELECT version FROM session_resource_bindings WHERE session_id=? AND resource_id=? AND revoked_at IS NULL")
+        .get(sessionId, reference.resourceId) as { version: number } | undefined;
+      if (!row) throw new AevorenBotError("LIBRARY_NOT_BOUND");
+      return { reference: structuredClone(reference), bindingVersion: row.version };
+    });
   }
 
-  private scopedResource(sessionId: string, id: string, executorBotId?: string): LibraryResource {
+  assertReferenceBindings(sessionId: string, admissions: Array<{ reference: ResourceReference; bindingVersion: number }>, executorBotId?: string, runtimeRunId?: string): void {
+    const current = this.captureReferenceBindings(sessionId, admissions.map(item => item.reference), executorBotId, runtimeRunId);
+    if (current.some((item, index) => item.bindingVersion !== admissions[index]?.bindingVersion)) throw new AevorenBotError("LIBRARY_NOT_BOUND");
+  }
+
+  assertReferences(sessionId: string, references: ResourceReference[], executorBotId?: string, runtimeRunId?: string): void {
+    this.resolveReferences(sessionId, references, executorBotId, runtimeRunId);
+  }
+
+  private scopedResource(sessionId: string, id: string, executorBotId?: string, runtimeRunId?: string): LibraryResource {
     this.assertSession(sessionId, executorBotId);
+    this.selectedReference(sessionId, id, executorBotId, runtimeRunId);
     if (!this.database.prepare("SELECT 1 FROM session_resource_bindings WHERE session_id=? AND resource_id=? AND revoked_at IS NULL").get(sessionId, id)) {
       throw new AevorenBotError("LIBRARY_NOT_BOUND");
     }

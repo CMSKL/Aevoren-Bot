@@ -78,6 +78,7 @@ describe("Conversation repository", () => {
 
     const first = repository(filename);
     expect(first.getConversation("direct")).toEqual({
+      kind: "MAIN",
       sessionId: "direct", botId: "bot", roomId: null, projectId: "project", workspaceIds: [], pinnedAt: "2026-01-02",
       hiddenAt: "2026-01-03", hasUnread: true, lastMessage: "Latest reply", lastActivityAt: "2026-01-08", version: 1,
     });
@@ -90,10 +91,14 @@ describe("Conversation repository", () => {
     const reopened = repository(filename);
     expect(reopened.listConversations()).toEqual(expected);
     const inspected = new DatabaseSync(filename, { readOnly: true });
-    expect(inspected.prepare("SELECT * FROM bots").all()).toEqual(identities);
-    expect(inspected.prepare("SELECT * FROM transcript_entries ORDER BY id").all().map(({ origin_json, resource_references_json, ...row }) => {
+    expect(inspected.prepare("SELECT * FROM bots").all().map(({ avatar_image_json, ...row }) => {
+      expect(avatar_image_json).toBeNull();
+      return row;
+    })).toEqual(identities);
+    expect(inspected.prepare("SELECT * FROM transcript_entries ORDER BY id").all().map(({ origin_json, resource_references_json, media_references_json, ...row }) => {
       expect(origin_json).toBeNull();
       expect(resource_references_json).toBe("[]");
+      expect(media_references_json).toBe("[]");
       return row;
     })).toEqual(transcript);
     expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
