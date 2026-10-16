@@ -90,9 +90,10 @@ createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line)
       const assertAuthority = guard.context.assertAuthority!;
       guard.context.assertAuthority = () => { if (existsSync(join(root, "gate"))) guard.revoke(); assertAuthority(); };
     }
+    // A pre-existing release needs an immediate check; publish readiness after watching.
     const script = install(root, `import {createInterface} from 'node:readline';import {existsSync,watch,writeFileSync} from 'node:fs';
 writeFileSync('fixture-boot','ready');const input=createInterface({input:process.stdin});const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');
-input.on('line',line=>{writeFileSync('fixture-wire',line);const m=JSON.parse(line);if(m.method==='initialize'){writeFileSync('gate','ready');const watcher=watch('.',()=>{if(existsSync('release')){watcher.close();send({jsonrpc:'2.0',id:m.id,result:{}})}})}});
+input.on('line',line=>{writeFileSync('fixture-wire',line);const m=JSON.parse(line);if(m.method==='initialize'){let answered=false;const finish=()=>{if(!answered&&existsSync('release')){answered=true;watcher.close();send({jsonrpc:'2.0',id:m.id,result:{}})}};const watcher=watch('.',finish);writeFileSync('gate','ready');finish()}});
 input.on('close',()=>{writeFileSync('stdin-closed','ready');const finish=()=>{if(existsSync('exit-release')){writeFileSync('owned-exited','yes');process.exit(0)}};const watcher=watch('.',finish);finish()});`);
     vi.spyOn(cliUtils, "resolveCliPath").mockReturnValue(script);
     vi.spyOn(cliUtils, "isolatedCodexEnvironment").mockImplementation(runtimeHome => ({ PATH: process.env.PATH, CODEX_HOME: runtimeHome }));
