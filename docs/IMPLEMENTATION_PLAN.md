@@ -689,3 +689,9 @@ This test-only update extends that fixture's existing bounded diagnostics with a
 修复仅修改测试：Room与duplicate-write场景等待真实终态事件，保留原五秒it期限及全部终态／hash／证据断言；所有workspace夹具Worker先awaitshutdown再关闭库。Codex夹具在watch注册后消费已经存在的release，并保留单次响应保护。最初测试事件缓存误复用旧promise，随后中间版本会丢失pendingawaiter，原失败及终止的诊断日志保留；最终采用当前状态检查加每次新建终态waiter集合，不缓存已完成promise。
 
 最终三文件55/55（17.75秒，`templates44-ci-causes-final.log`）通过且没有未处理错误，定向lint和Node类型检查通过。不扩大任何timeout，不弱化审批／hash／authority断言，不修改生产／共享合同／打包字节，因此原真实未签名macOS包证据仍对应相同业务产物。后续正常CI按新提交验证，未取消或盲重试首轮运行，也不以定向55项代替新的完整CI。
+
+### beta.44 第二轮正常 CI 的 Windows HTTP 诊断
+
+正常 CI `38834434666` 的 Linux Validate/build 与真实 Docker 检查通过；Windows 普通单元记录 **1,905通过／1失败／61跳过**。唯一失败为本机 Webhook 负例集合中的 fetch `ECONNRESET`，原日志没有定位到集合内哪次请求；完整日志保留于 `templates44-ci-windows-second-raw.log`。不能由该日志推断为Memory迁移或已确定的服务端故障。
+
+仅修测试HTTP客户端的所有权与诊断：每次请求读取实际response body到EOF后才开始下一次，并用明确阶段、实际已收到状态和安全cause code/syscall包装异常；保留错误认证、重复幂等、非法JSON/UTF-8、Origin、Content-Type、缺key、超限413、精确上限202和撤销token的全部原始断言。不忽略网络异常、不加重试、不延长Windows60秒或hook10秒期限，不修改服务端响应规则。15项本地真实HTTP/SQLite测试、Node类型及lint通过；这不证明Windows reset原因已解决，后续正常CI仍需给出结果或更精确阶段证据。已验收生产/安装包字节不变，原运行继续，不手动取消或重试。
