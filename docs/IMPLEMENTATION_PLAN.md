@@ -396,3 +396,10 @@ Development candidate76e5ada has passed its full Linux and macOS normal checks; 
 
 
 The local Beta34 composition passed all four TypeScript projects, targeted lint and34-document link checks; MCP foundation/service tests passed19 cases with one existing optional generated-protocol check skipped. English/Chinese README and the beta34 changelog describe the review-validity correction without claiming a new package or publication. Development71 exact-head full acceptance and fresh Beta normal CI remain required before promotion.
+
+
+### Accepted development source for the Beta34 correction
+
+PR71 exact source76e5adacb6e26fa746b55ed2aee1ebb3ee5dc828 passed all four jobs in normal CI38918904604. Windows source51/close8 and installed43/close8 passed, followed by verified unsigned artifact upload. It was normally merged to protected dev86a9dc836135f2c7bf286d051c24a0f297037a59; its complete tree93f7404e7c8b80d91a1378df709ffc7397096aee equals the tested source. The actual dev push38926440451 remains a separate pending check.
+
+This Beta34 candidate keeps only the generation-safe shared dialog, exact accepted MCP fixture, the accepted legacy-SQL/browser-focus fixtures and release/status documentation relative to actual betae751134. Package version, dependencies, builder, release workflows and all other production files match that Beta baseline exactly; no Notion35 or Media36 feature enters. Its new exact-head normal CI must still pass before normal Beta merge; actual Beta push/install acceptance, signing/publication and version-order gates remain.
