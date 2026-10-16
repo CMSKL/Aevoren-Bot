@@ -146,10 +146,17 @@ async function withMcp(callback: (fixture: { page: Page; application: ElectronAp
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
   } finally {
     release?.();
-    if (application) await closeTestApplication(application);
-    await Promise.allSettled(remotes.map(remote => remote.close()));
-    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
-    removeTestDirectory(directory);
+    try {
+      if (application) {
+        const owned = application.process();
+        await closeTestApplication(application);
+        expect({ code: owned.exitCode, signal: owned.signalCode }).toEqual({ code: 0, signal: null });
+      }
+    } finally {
+      await Promise.allSettled(remotes.map(remote => remote.close()));
+      server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+      removeTestDirectory(directory);
+    }
   }
 }
 
@@ -278,7 +285,7 @@ test("MCP fixed operation uses a real approval and an opaque App sandbox with sc
   });
 });
 
-test("keeps approval disabled while its saved review refresh is pending and submits only once afterwards", async () => {
+test("submits one rendered approval while its unchanged background review reply remains pending", async () => {
   test.setTimeout(90_000);
   await withMcp(async f => {
     await openMcp(f.page);
@@ -315,12 +322,10 @@ test("keeps approval disabled while its saved review refresh is pending and subm
     }, { channel: IPC.approvalsReview, approvalId });
     try {
       await expect.poll(() => f.application.evaluate(() => (globalThis as { ownedReviewGate?: { entered: boolean } }).ownedReviewGate?.entered)).toBe(true);
-      await expect(allow).toBeDisabled();
+      await expect(allow).toBeEnabled();
       await expect(dialog.getByRole("button", { name: "拒绝", exact: true })).toBeEnabled();
       await expect(dialog.getByRole("button", { name: "停止任务", exact: true })).toBeEnabled();
       expect(f.writes()).toBe(0);
-      await f.application.evaluate(() => (globalThis as { ownedReviewGate?: { release?: () => void } }).ownedReviewGate?.release?.());
-      await expect(allow).toBeEnabled();
       await allow.click();
       await expect.poll(f.writes).toBe(1);
       await expect(dialog).toHaveCount(0);
