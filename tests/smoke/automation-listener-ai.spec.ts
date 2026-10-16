@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,6 +11,82 @@ import type { EventListenerControl } from "../../src/shared/event-contracts";
 import { AppRepository } from "../../src/main/database";
 import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
 const data = <T>(result: ApiResult<T>): T => { if (!result.ok) throw Error(result.error.code); return result.data; };
+
+type CloseProbe = { record(phase: string): void; phases: Record<string, unknown>[]; owned: ReturnType<ElectronApplication["process"]>; detach(): void };
+const CLOSE_PHASE_PREFIX = "AEVOREN_CLOSE_PHASE ";
+
+/** Fixture-owned, bounded diagnostics only; no process arguments or application data. */
+async function installCloseProbe(application: ElectronApplication): Promise<CloseProbe> {
+  const owned = application.process(), started = performance.now(), phases: Record<string, unknown>[] = [];
+  let exitSeen = false, closeSeen = false, buffered = "";
+  const record = (phase: string): void => {
+    if (phases.length >= 120) return;
+    phases.push({ phase, elapsedMs: Math.round(performance.now() - started), pid: owned.pid ?? null, exitCode: owned.exitCode, signalCode: owned.signalCode,
+      killed: owned.killed, exitSeen, closeSeen, stdio: owned.stdio.map(stream => stream ? { destroyed: stream.destroyed } : null) });
+  };
+  const exited = (): void => { exitSeen = true; record("owned-exit"); };
+  const closed = (): void => { closeSeen = true; record("owned-close"); };
+  const streams = owned.stdio.flatMap((stream, index) => stream ? [{ stream, listener: () => record(`stdio-${index}-close`) }] : []);
+  const stderr = (chunk: Buffer): void => {
+    buffered += chunk.toString("utf8"); const lines = buffered.split("\n"); buffered = lines.pop() ?? "";
+    for (const line of lines) if (line.startsWith(CLOSE_PHASE_PREFIX) && phases.length < 120) {
+      try { phases.push({ source: "main", ...JSON.parse(line.slice(CLOSE_PHASE_PREFIX.length)) as Record<string, unknown> }); } catch { record("invalid-main-phase"); }
+    }
+    if (buffered.length > 4_096) buffered = "";
+  };
+  owned.once("exit", exited); owned.once("close", closed); owned.stderr?.on("data", stderr);
+  for (const { stream, listener } of streams) stream.once("close", listener);
+  record("probe-installed");
+  try {
+    await application.evaluate(({ app, BrowserWindow, ipcMain }) => {
+      const started = performance.now();
+      const record = (phase: string, state: Record<string, unknown> = {}): void => {
+        try { console.error("AEVOREN_CLOSE_PHASE " + JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started), ...state })); } catch { /* Diagnostics must not change application close behavior. */ }
+      };
+      const resources = (): Record<string, number> => {
+        const counts: Record<string, number> = {};
+        for (const name of process.getActiveResourcesInfo()) {
+          if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(name) || !(name in counts) && Object.keys(counts).length >= 20) continue;
+          counts[name] = (counts[name] ?? 0) + 1;
+        }
+        return counts;
+      };
+      app.on("before-quit", () => record("app-before-quit", { windows: BrowserWindow.getAllWindows().length }));
+      app.on("will-quit", () => record("app-will-quit", { resources: resources() }));
+      app.on("quit", (_event, exitCode) => record("app-quit", { exitCode, resources: resources() }));
+      app.on("window-all-closed", () => record("app-window-all-closed", { windows: BrowserWindow.getAllWindows().length }));
+      process.on("beforeExit", () => record("node-before-exit", { resources: resources() }));
+      try {
+        const { DatabaseSync } = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
+        const original = DatabaseSync.prototype.close;
+        DatabaseSync.prototype.close = function(this: import("node:sqlite").DatabaseSync, ...args: Parameters<typeof original>): ReturnType<typeof original> {
+          const began = performance.now(); let ok = false;
+          record("database-close-begin");
+          try { const value = Reflect.apply(original, this, args); ok = true; return value; }
+          catch (error) {
+            const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" && /^(?:ERR_SQLITE_[A-Z0-9_]+|ERR_INVALID_STATE|SQLITE_BUSY|SQLITE_LOCKED)$/u.test(error.code) ? error.code : "unknown";
+            record("database-close-error", { code }); throw error;
+          } finally { DatabaseSync.prototype.close = original; record("database-close-end", { ok, durationMs: Math.round(performance.now() - began) }); }
+        };
+        record("database-close-probe-installed");
+      } catch { record("database-close-probe-unavailable"); }
+      for (const window of BrowserWindow.getAllWindows()) {
+        const contents = window.webContents, send = contents.send.bind(contents);
+        contents.send = (channel, ...args) => {
+          if (channel === "app:before-close" || channel === "app:close-blocked") record(channel, { loading: contents.isLoadingMainFrame(), destroyed: contents.isDestroyed() });
+          return send(channel, ...args);
+        };
+        window.on("close", () => record("window-close", { loading: contents.isLoadingMainFrame() })); window.on("closed", () => record("window-closed"));
+        contents.on("did-navigate", () => record("main-navigation-committed")); contents.on("did-stop-loading", () => record("loading-stopped"));
+        contents.on("render-process-gone", (_event, details) => record("renderer-gone", { reason: details.reason, exitCode: details.exitCode }));
+      }
+      ipcMain.on("app:renderer-ready", event => record("renderer-ready", { mainFrame: event.senderFrame === event.sender.mainFrame }));
+      ipcMain.on("app:confirm-close", (event, value: unknown) => record("flush-ack", { mainFrame: event.senderFrame === event.sender.mainFrame, canClose: value === true }));
+    });
+  } catch { record("main-probe-unavailable"); }
+  return { record, phases, owned, detach() { owned.removeListener("exit", exited); owned.removeListener("close", closed); owned.stderr?.removeListener("data", stderr); for (const { stream, listener } of streams) stream.removeListener("close", listener); } };
+}
+
 
 test("requires actual AI approval for a fixed application listener port and verifies ingress stops", async () => {
   test.setTimeout(90_000);
@@ -33,9 +109,10 @@ test("requires actual AI approval for a fixed application listener port and veri
   await new Promise<void>(resolve => model.listen(0, "127.0.0.1", resolve)); const modelAddress = model.address(); if (!modelAddress || typeof modelAddress === "string") throw Error("No controlled model port");
   const probe = createServer(); await new Promise<void>(resolve => probe.listen(0, "127.0.0.1", resolve)); const address = probe.address(); if (!address || typeof address === "string") throw Error("No controlled listener port"); const port = address.port; await new Promise<void>(resolve => probe.close(() => resolve()));
   const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
-  let application: ElectronApplication | undefined, passed = false;
+  let application: ElectronApplication | undefined, closeProbe: CloseProbe | undefined, passed = false;
   try {
     const app = application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: { ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !key.startsWith("AEVOREN_"))), AEVOREN_BOT_USER_DATA_DIR: directory, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_FAKE_PROVIDER: "0", AEVOREN_BOT_DISABLE_UPDATES: "1" } });
+    closeProbe = await installCloseProbe(app);
     const page = await app.firstWindow(); await page.waitForURL(pathToFileURL(join(await app.evaluate(({ app }) => app.getAppPath()), "out/renderer/index.html")).href, { waitUntil: "domcontentloaded" }); page.on("pageerror", error => failures.push(error.message)); await expect(page.getByRole("heading", { name: "Listener AI fixture", exact: true })).toBeVisible();
     if (executablePath) expect(await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion() }))).toEqual({ packaged: true, version: JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version });
     data(await page.evaluate(async baseUrl => { const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot, list = await api.providers.list(); if (!list.ok) throw Error(list.error.code); const provider = list.data.find(item => item.id === "openai-compatible.default")!; return api.providers.saveOpenAiCompatible({ instanceId: provider.id, expectedVersion: provider.version, baseUrl, apiKey: "listener-model-fixture-key" }); }, `http://127.0.0.1:${modelAddress.port}/v1`));
@@ -58,11 +135,19 @@ test("requires actual AI approval for a fixed application listener port and veri
   } finally {
     let closeFailure: unknown, normalClose = false;
     if (application) {
-      const process = application.process();
-      try { await closeTestApplication(application); expect({ code: process.exitCode, signal: process.signalCode }).toEqual({ code: 0, signal: null }); normalClose = true; }
-      catch (error) { closeFailure = error; }
+      const process = closeProbe?.owned ?? application.process();
+      closeProbe?.record("fixture-close-requested");
+      try {
+        const target = application;
+        await closeTestApplication({ close: async () => { closeProbe?.record("close-transport-called"); try { await target.close(); closeProbe?.record("close-transport-resolved"); } catch (error) { closeProbe?.record("close-transport-rejected"); throw error; } }, process: () => process });
+        closeProbe?.record("fixture-close-returned"); expect({ code: process.exitCode, signal: process.signalCode }).toEqual({ code: 0, signal: null }); normalClose = true;
+      } catch (error) { closeProbe?.record("fixture-close-failed"); closeFailure = error; }
     }
     try {
+      const diagnostic = { businessPassed: passed, normalClose, phases: closeProbe?.phases ?? [] };
+      await test.info().attach("listener-close-diagnostics", { body: JSON.stringify(diagnostic), contentType: "application/json" });
+      if (process.env.AEVOREN_LISTENER_CLOSE_EVIDENCE_PATH) appendFileSync(process.env.AEVOREN_LISTENER_CLOSE_EVIDENCE_PATH, JSON.stringify(diagnostic) + "\n", { encoding: "utf8", mode: 0o600 });
+      closeProbe?.detach();
       if (passed && normalClose) {
         const database = new DatabaseSync(filename, { readOnly: true });
         try { const receipts = database.prepare("SELECT state,product_result_content FROM tool_invocations WHERE tool_kind='product-call'").all() as { state: string; product_result_content: string }[]; expect(receipts).toHaveLength(2); expect(receipts.every(receipt => receipt.state === "succeeded" && JSON.parse(receipt.product_result_content).result.host === "127.0.0.1")).toBe(true); }
@@ -71,6 +156,7 @@ test("requires actual AI approval for a fixed application listener port and veri
         const copy = test.info().outputPath("owned-listener.sqlite"); copyFileSync(filename, copy); await test.info().attach("owned-listener-database", { path: copy, contentType: "application/octet-stream" });
       }
     } finally {
+      closeProbe?.detach();
       await finishOwnedCleanup();
     }
     async function finishOwnedCleanup(): Promise<void> {
