@@ -54,6 +54,8 @@ Text Skill metadata, including declared tool names, does not grant tool permissi
 
 ## Docker execution environments (development)
 
+On macOS, Docker installed in standard Docker Desktop, user or Homebrew locations is detected when the app launches from Finder. A stopped engine is reported separately; start Docker and check again before preparing an environment.
+
 Use your own running local Docker Linux engine. Open **Contacts → select Bot → Execution environment (执行环境)**, or **Group settings → Execution environment → select member**. Check Docker, prepare the Linux image, then start or wake the environment. Settings → General also provides a Docker status card. The first image build needs network access; remote Docker contexts and Windows containers are not supported.
 
 Enter a command and a workspace-relative directory (`.` means the workspace root), then choose **Run command** or **Run in background**. The panel shows real task status, stdout/stderr, exit codes and cancellation controls. Foreground tasks default to 120 seconds; background services have separate lifetimes. Six group members use independent environments; cancelling one foreground task does not stop a sibling or registered background service.

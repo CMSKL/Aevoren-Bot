@@ -2,6 +2,7 @@
 
 ## v0.3.0-beta.35 (development candidate)
 
+- Find the Docker CLI in standard macOS installation locations when a desktop launch has a minimal PATH, keeping an explicitly configured PATH first. Preserve local-context restrictions and distinguish an installed but stopped engine from a missing CLI.
 - Add distinct Notion saved-draft operations and exact page write grants for title-only updates and end-of-page paragraph appends. Preserve existing page body and ordinary/data-source title property identity.
 - Pin observed target metadata in the fixed approval review and recheck the current account and grant before a single PATCH. Changed drafts invalidate pending approval.
 - Verify appended blocks by returned or committed child IDs, parent and text; ambiguous attempts remain unknown and cannot resend. Label title reconciliation based only on current state without claiming the original request caused that state.
