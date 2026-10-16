@@ -1,11 +1,13 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { AppError, Bot, Room } from "@shared/contracts";
 import type { ResourceReference } from "@shared/library-contracts";
+import type { MessageMediaReference } from "@shared/media-contracts";
 import type { EnvironmentScope } from "@shared/environment-contracts";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { CheckIcon, ChevronDownIcon, MenuIcon, RoomIcon } from "./Icons";
 import { ProfileInspector, type ProfileInspectorHandle, type SaveStatus } from "./ProfileInspector";
 import { LibraryPanel, type LibraryPanelHandle } from "./LibraryPanel";
+import { MediaLibraryPanel } from "./MediaLibraryPanel";
 import { EnvironmentPanel } from "./EnvironmentPanel";
 import { ComputerPanel } from "./ComputerPanel";
 import { ConnectorPanel, type ConnectorPanelHandle } from "./ConnectorPanel";
@@ -29,6 +31,7 @@ type Props = {
   editingRequested?: number;
   librarySessionId?: string;
   onUseResource?(reference: ResourceReference, text?: string): void;
+  onUseMedia?(reference: MessageMediaReference): void;
   onSend(bot: Bot): Promise<boolean>;
   onBotUpdated(bot: Bot): void;
   onAddToRoom(bot: Bot, roomId: string): Promise<boolean>;
@@ -43,7 +46,7 @@ type ContactProfileProps = Props & {
 };
 
 const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(function ContactProfile(
-  { bot, active = true, rooms, busy, workspaceIds, librarySessionId, onUseResource, onBotUpdated, onAddToRoom, onLocalError, onSaveStatusChange }, ref,
+  { bot, active = true, rooms, busy, workspaceIds, librarySessionId, onUseResource, onUseMedia, onBotUpdated, onAddToRoom, onLocalError, onSaveStatusChange }, ref,
 ) {
   const [selectedRoomId, setSelectedRoomId] = useState("");
   const [pending, setPending] = useState(false);
@@ -138,6 +141,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
       <div hidden={tab === "library" || tab === "skill" || tab === "environment" || tab === "browser" || tab === "computer" || tab === "apps"}><ProfileInspector ref={editorRef} bot={bot} workspaceIds={workspaceIds} activeTab={tab === "models" || tab === "memory" ? tab : "profile"} editing={editing} onBotUpdated={onBotUpdated} onError={onLocalError} onSaveStatusChange={onSaveStatusChange} /></div>
       <div id={`contact-${bot.id}-library-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-library-tab`} hidden={tab !== "library"} className="contact-tab-panel">
         {librarySessionId ? <LibraryPanel ref={documentsRef} sessionId={librarySessionId} kind="document" active={tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊资料范围…</p>}
+        {librarySessionId ? <MediaLibraryPanel key={librarySessionId} sessionId={librarySessionId} active={active && tab === "library"} busy={!onUseMedia} onUse={reference => onUseMedia?.(reference)} /> : null}
       </div>
       <div id={`contact-${bot.id}-skill-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-skill-tab`} hidden={tab !== "skill"} className="contact-tab-panel">
         {librarySessionId ? <LibraryPanel ref={skillsRef} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} kind="skill" active={tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} onOpenExecution={execution => { if (execution.sessionId !== librarySessionId || execution.executorBotId !== bot.id) return; setScriptExecution(execution); void changeTab("environment"); }} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊 Skill 范围…</p>}

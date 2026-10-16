@@ -124,7 +124,25 @@ async function withRoom(callback: (room: RoomCase) => Promise<void>, task = "每
       pending.response.writeHead(200, { "content-type": "text/event-stream" });
       pending.response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "parallel-approval-create", type: "function", function: { name: "bot_create", arguments: JSON.stringify({ name: "并行审批测试 Bot", description: "本次审批停止后不应创建。" }) } }] }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`);
     };
-    await callback({ page, bots, replies, snapshot, release, requestApproval });
+    try { await callback({ page, bots, replies, snapshot, release, requestApproval }); }
+    catch (error) {
+      // Capture the actual owned Runtime state before cleanup cancels survivors.
+      const diagnostic = await Promise.race([
+        snapshot().then(current => ({
+          batches: current.batches.map(({ id, state }) => ({ id, state })),
+          turns: current.turns.map(({ memberBotId, state }) => ({ memberBotId, state })),
+          runs: current.runs.map(({ executorBotId, state, lastErrorCode }) => ({ executorBotId, state, lastErrorCode })),
+          assistantStatuses: current.entries.filter(entry => entry.role === "assistant").map(({ speakerBotId, status }) => ({ speakerBotId, status })),
+        })).catch(() => ({ unavailable: true })),
+        new Promise<{ unavailable: true }>(resolve => { const timer = setTimeout(() => resolve({ unavailable: true }), 1_000); timer.unref(); }),
+      ]);
+      await test.info().attach("controlled-room-failure-state", { body: JSON.stringify({
+        runtime: diagnostic,
+        responses: [...replies.entries()].map(([modelId, pending]) => ({ modelId, released: pending.released, aborted: pending.aborted, destroyed: pending.response.destroyed, ended: pending.response.writableEnded, finished: pending.response.writableFinished })),
+        fixtureErrors, pageErrors,
+      }), contentType: "application/json" });
+      throw error;
+    }
     expect((await snapshot()).handoffs).toEqual([]);
     expect(requests).toHaveLength(6);
     expect(fixtureErrors).toEqual([]);

@@ -87,6 +87,9 @@ import { normalizeBotAvatarColor, normalizeBotAvatarShape } from "@shared/bot-av
 import { messageAttachmentsSchema, toolInvocationCommandSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
 import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
+import { MediaRepository, MEDIA_MIGRATION } from "./media-repository";
+import { messageMediaReferencesSchema } from "@shared/media-schemas";
+import type { MessageMediaReference } from "@shared/media-contracts";
 import { EnvironmentRepository, ENVIRONMENT_MIGRATION } from "./environment-repository";
 import { BrowserRepository, BROWSER_MIGRATION } from "./browser-repository";
 import { DemonstrationRepository, DEMONSTRATION_MIGRATION } from "./demonstration-repository";
@@ -2078,6 +2081,7 @@ export const MIGRATIONS = [
   NATIVE_OUTBOUND_MIGRATION,
   DEMONSTRATION_MIGRATION,
   MCP_WRITE_MIGRATION,
+  MEDIA_MIGRATION,
 ] as const;
 
 type ConversationSidebarRow = {
@@ -2224,6 +2228,7 @@ type TranscriptRow = {
   body: string;
   attachments_json?: string;
   resource_references_json?: string;
+  media_references_json?: string;
   origin_json?: string | null;
   status: TranscriptStatus;
   send_state?: SendState | null;
@@ -2672,6 +2677,8 @@ function toSession(row: SessionRow): Session {
 
 function toTranscript(row: TranscriptRow): TranscriptEntry {
   return {
+    ...(row.media_references_json && row.media_references_json !== "[]"
+      ? { mediaRefs: messageMediaReferencesSchema.parse(JSON.parse(row.media_references_json)) } : {}),
     ...(row.resource_references_json && row.resource_references_json !== "[]"
       ? { resourceRefs: resourceReferencesSchema.parse(JSON.parse(row.resource_references_json)) } : {}),
     ...(row.origin_json ? { origin: JSON.parse(row.origin_json) as import("@shared/contracts").DelegationOrigin } : {}),
@@ -3033,13 +3040,14 @@ function toRuntime(row: RuntimeRow): RuntimeRun {
   };
 }
 
-export function digestMessage(text: string, attachments: readonly MessageAttachment[] = [], resourceRefs: readonly ResourceReference[] = []): string {
-  if (attachments.length === 0 && resourceRefs.length === 0) return createHash("sha256").update(text, "utf8").digest("hex");
+export function digestMessage(text: string, attachments: readonly MessageAttachment[] = [], resourceRefs: readonly ResourceReference[] = [], mediaRefs: readonly MessageMediaReference[] = []): string {
+  if (attachments.length === 0 && resourceRefs.length === 0 && mediaRefs.length === 0) return createHash("sha256").update(text, "utf8").digest("hex");
   return createHash("sha256")
     .update(JSON.stringify({
       text,
       attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
       ...(resourceRefs.length ? { resourceRefs } : {}),
+      ...(mediaRefs.length ? { mediaRefs } : {}),
     }), "utf8")
     .digest("hex");
 }
@@ -3175,6 +3183,7 @@ export function digestRoomCommand(
   routingMode: RoomRoutingMode = "legacy",
   attachments: readonly MessageAttachment[] = [],
   resourceRefs: readonly ResourceReference[] = [],
+  mediaRefs: readonly MessageMediaReference[] = [],
 ): string {
   const command = attachments.length === 0
     ? { roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() }
@@ -3185,7 +3194,8 @@ export function digestRoomCommand(
         targetBotIds: targetBotIds.toSorted(),
         attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
       };
-  const scopedCommand = resourceRefs.length ? { ...command, resourceRefs } : command;
+  const resources = resourceRefs.length ? { ...command, resourceRefs } : command;
+  const scopedCommand = mediaRefs.length ? { ...resources, mediaRefs } : resources;
   return digestMessage(JSON.stringify(routingMode === "legacy" ? scopedCommand : { ...scopedCommand, routingMode }));
 }
 
@@ -3223,9 +3233,9 @@ const ROOM_RUN_SELECT = `SELECT room_batches.*,
   FROM room_batches`;
 
 const CONVERSATION_SELECT = `SELECT conversation_metadata.*, sessions.bot_id, sessions.room_id,
-  (SELECT substr(CASE WHEN length(trim(body)) > 0 THEN body ELSE '[附件]' END, 1, 500)
+  (SELECT substr(CASE WHEN length(trim(body)) > 0 THEN body WHEN media_references_json <> '[]' THEN '[媒体]' ELSE '[附件]' END, 1, 500)
    FROM transcript_entries WHERE session_id = sessions.id AND generation = sessions.generation
-     AND (length(trim(body)) > 0 OR attachments_json <> '[]')
+     AND (length(trim(body)) > 0 OR attachments_json <> '[]' OR media_references_json <> '[]')
    ORDER BY seq DESC LIMIT 1) AS last_message,
   (SELECT json_group_array(session_workspace_grants.workspace_id)
    FROM session_workspace_grants JOIN workspaces ON workspaces.id = session_workspace_grants.workspace_id
@@ -3246,6 +3256,7 @@ const ROOM_SELECT = `SELECT rooms.*, ${CONVERSATION_SIDEBAR_COLUMNS} FROM rooms
 export class AppRepository {
   private readonly database: DatabaseSync;
   readonly library: LibraryRepository;
+  readonly media: MediaRepository;
   readonly environments: EnvironmentRepository;
   readonly browsers: BrowserRepository;
   readonly demonstrations: DemonstrationRepository;
@@ -3263,6 +3274,13 @@ export class AppRepository {
       this.migrate();
       this.library = new LibraryRepository(this.database, (sessionId, executorBotId) => {
         const session = this.getSession(sessionId);
+        if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
+        else if (session.botId) this.getBot(session.botId);
+        else if (session.roomId) this.getRoom(session.roomId);
+      });
+      this.media = new MediaRepository(this.database, (sessionId, executorBotId) => {
+        const session = this.getSession(sessionId);
+        if (session.roomId && this.getRoom(session.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
         if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
         else if (session.botId) this.getBot(session.botId);
         else if (session.roomId) this.getRoom(session.roomId);
@@ -5337,6 +5355,7 @@ export class AppRepository {
       this.assertRoomMemberRemovable(roomId, botId, expectedMembershipVersion);
       const sessionId = this.getRoomMainSession(roomId).id;
       this.environments.deleteScope({ sessionId, executorBotId: botId });
+      this.media.revokeExecutor(sessionId, botId);
       this.database.prepare("DELETE FROM room_members WHERE room_id = ? AND bot_id = ?").run(roomId, botId);
       this.database.prepare(
         "UPDATE rooms SET lead_bot_id = NULL, version = version + 1 WHERE id = ? AND lead_bot_id = ?",
@@ -5585,7 +5604,7 @@ export class AppRepository {
         entry.seq <= inputSeq &&
         entry.status !== "failed" &&
         entry.status !== "cancelled" &&
-        entry.body.trim().length > 0,
+        (entry.body.trim().length > 0 || Boolean(entry.attachments?.length) || Boolean(entry.resourceRefs?.length) || Boolean(entry.mediaRefs?.length)),
     ).map((entry) => {
       const rows = this.database.prepare(
         `SELECT id, name, mime_type, size, sha256, kind, content
@@ -5692,7 +5711,8 @@ export class AppRepository {
     const attachments = normalizeAttachmentDrafts(command.attachments);
     const attachmentMetadata = attachments.map(({ content: _content, ...attachment }) => attachment);
     const resourceRefs = resourceReferencesSchema.parse(command.resourceRefs ?? []);
-    const digest = digestMessage(command.text, attachmentMetadata, resourceRefs);
+    const mediaRefs = messageMediaReferencesSchema.parse(command.mediaRefs ?? []);
+    const digest = digestMessage(command.text, attachmentMetadata, resourceRefs, mediaRefs);
     const existing = this.getSend(command.clientNonce);
     if (existing) {
       if (existing.bodyDigest !== digest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
@@ -5706,6 +5726,7 @@ export class AppRepository {
     const timestamp = now();
     const userEntryId = randomUUID();
     this.transaction(() => {
+      const capturedMedia = this.media.captureSendReferences(session.id, mediaRefs, session.botId ?? undefined);
       const sequence = this.nextSequence(session.id, session.generation);
       const updatedSeq = this.nextTranscriptUpdateSeq(session.id);
       this.database
@@ -5725,6 +5746,10 @@ export class AppRepository {
         .run(userEntryId, session.id, session.generation, sequence, command.clientNonce, command.text, JSON.stringify(attachmentMetadata), updatedSeq, timestamp, timestamp);
       this.insertMessageAttachments(userEntryId, command.clientNonce, attachments);
       if (resourceRefs.length) this.database.prepare("UPDATE transcript_entries SET resource_references_json = ? WHERE id = ?").run(JSON.stringify(resourceRefs), userEntryId);
+      if (mediaRefs.length) {
+        this.database.prepare("UPDATE transcript_entries SET media_references_json = ? WHERE id = ?").run(JSON.stringify(mediaRefs), userEntryId);
+        this.media.storeSendAdmissions(userEntryId, capturedMedia);
+      }
       if (origin) this.recordDelegationOrigin(command.clientNonce, origin);
     });
     return { disposition: "prepared", journal: this.getSendOrThrow(command.clientNonce) };
@@ -5838,7 +5863,7 @@ export class AppRepository {
       input.initialTurns.length === 0 ||
       input.initialTurns.length > 6 ||
       input.clientNonce.trim().length === 0 ||
-      input.text.trim().length === 0 ||
+      (input.text.trim().length === 0 && attachments.length === 0 && !input.resourceRefs?.length && !input.mediaRefs?.length) ||
       new Set(input.initialTurns.map((turn) => turn.agentId)).size !== input.initialTurns.length ||
       input.initialTurns.some((turn) => turn.nonce.trim().length === 0) ||
       !Number.isInteger(input.maxTurns) ||
@@ -5858,7 +5883,8 @@ export class AppRepository {
       throw new AevorenBotError("INVALID_REQUEST");
     }
     const resourceRefs = resourceReferencesSchema.parse(input.resourceRefs ?? []);
-    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode, attachmentMetadata, resourceRefs);
+    const mediaRefs = messageMediaReferencesSchema.parse(input.mediaRefs ?? []);
+    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode, attachmentMetadata, resourceRefs, mediaRefs);
     const targetDigest = digestMessage(JSON.stringify(canonicalTargetIds));
     const existingJournal = this.getSend(input.clientNonce);
     if (existingJournal) {
@@ -5912,6 +5938,7 @@ export class AppRepository {
     const triggerMessageId = randomUUID();
     const timestamp = now();
     this.transaction(() => {
+      const capturedMedia = this.media.captureSendReferences(session.id, mediaRefs);
       const sequence = this.nextSequence(session.id, session.generation);
       const updatedSeq = this.nextTranscriptUpdateSeq(session.id);
       this.database
@@ -5943,6 +5970,10 @@ export class AppRepository {
         );
       this.insertMessageAttachments(triggerMessageId, input.clientNonce, attachments);
       if (resourceRefs.length) this.database.prepare("UPDATE transcript_entries SET resource_references_json = ? WHERE id = ?").run(JSON.stringify(resourceRefs), triggerMessageId);
+      if (mediaRefs.length) {
+        this.database.prepare("UPDATE transcript_entries SET media_references_json = ? WHERE id = ?").run(JSON.stringify(mediaRefs), triggerMessageId);
+        this.media.storeSendAdmissions(triggerMessageId, capturedMedia);
+      }
       if (input.origin) this.recordDelegationOrigin(input.clientNonce, input.origin);
       this.database
         .prepare(

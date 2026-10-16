@@ -5,6 +5,13 @@
 - Correct the Windows fixture cleanup budget: preserve the 3-second graceful close, share the previous 1.5-second command plus 2-second pipe allowance as one finite 3.5-second forced-cleanup window, and require the actual owned exit and closed pipes. Keep descendant/sibling checks and distinguish forced cleanup from a normal exit.
 - Preserve the exact installed-and-accepted unsigned Windows x64 NSIS file with its SHA-256 and version/head identity after successful CI gates, for a 30-day manual validation download. Official Release signing and automatic-update requirements remain unchanged.
 
+## v0.3.0-beta.36 (development candidate)
+
+- Add owned PNG/JPEG/PDF/DOCX storage, fixed message/extraction references, conversation bindings and immutable Runtime admission snapshots; revocation blocks later reads and rebinding does not revive old tasks.
+- Add bounded PDF text/page previews and DOCX plain-text extraction in independent hidden sandbox parser jobs, explicit assets and licenses, cancellation and shutdown.
+- Share twelve media operations with the UI and AI. Actual text/pixels travel as revocable ephemeral tool attachments across API, Claude and Codex; receipts contain metadata only.
+- Preserve composer drafts across late imports, sends and navigation with monotonic versions. Earlier beta.36 snapshots recorded 1,630 ordinary passes / 45 skips, 150 hidden source scenarios / 32 skips and 34 actual unsigned macOS package scenarios after the CAS hardlink regression fix. Those receipts remain historical; the current local combination passed 106 targeted tests, six source-parser cases and ten actual unsigned macOS-package cases, including private-text response leases. Normal combined development and Beta acceptance remain pending. Final cross-platform CI and signed publication remain pending; no OCR, audio/video or voice is claimed.
+
 ## v0.3.0-beta.35 (development candidate)
 
 - Recheck retained Claude MCP image leases at the actual HTTP body write. A takeover or closed source refuses only its response; independent requests, redacted cached retries and normal cancellation errors retain their existing behavior.

@@ -401,8 +401,15 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "library", "mcp", "mcpWrites", "memories", "messages", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "library", "mcp", "mcpWrites", "media", "memories", "messages", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
     ]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media,
+    ).toSorted())).toEqual(["available", "bind", "delete", "importPath", "list", "metadata", "onChanged", "pickImport", "preview", "read", "restore", "setEnabled", "unbind"]);
+    const mediaResult = await launched.page.evaluate(() =>
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media.metadata({ sessionId: "not-a-uuid", id: "not-a-uuid" }),
+    );
+    expect(mediaResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.connectors,
     ).toSorted())).toEqual(["authorize", "bind", "bindings", "cancelAuthorization", "configure", "list", "read", "revoke", "search", "unbind"]);
