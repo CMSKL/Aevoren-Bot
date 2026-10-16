@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.0-beta.43 (development candidate)
+
+- Configure reviewed MAIN Bot/group Routine subscriptions for authenticated local Webhooks and metadata-only Runtime completion/failure events, with concrete source/target/version checks.
+- Add an explicitly started loopback listener, once-displayed host-encrypted Bearer secrets, versioned URLs, bounded untrusted JSON attachments and durable idempotent receipts.
+- Preserve subscription drafts on conflicts, revoke only owned active runs, prevent event ancestry loops and reconcile uncertain acceptance without replay.
+- Share scoped subscription operations with connected AI through `automationEvents`; listener controls and secret rotation remain trusted settings operations. Existing Runtime `events` API is preserved.
+- Focused SQLite, actual HTTP, Runtime delegation and UI checks pass. Source/package/platform publication evidence is recorded separately; no new dependency is introduced.
+
+## v0.3.0-beta.42 (development candidate)
+
+- Extend Routines to reviewed Bot/group MAIN targets, fixed Everyone/subset membership snapshots, parallel execution, conflict-preserving editing and exact owned-run cancellation.
+- Keep TASK Routine targets unsupported and preserve unknown acceptance across restart without replay; existing approvals and scoped resource grants still apply.
+- Local source and actual unsigned macOS-package checks are tracked in the implementation plan. Cross-platform and signed publication remain separate gates.
+
 ## v0.3.0-beta.41 (development candidate)
 
 - Persist session-based chat sections/order, a fallback default assistant and independent notification/sound preferences. Keep concurrent edits through explicit version conflicts.

@@ -2,7 +2,7 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.41**。阶段 6A 已实现 MAIN/TASK 隔离、固定上下文、权限、独立线程与共用业务入口，三项不同源码场景和真实未签名 macOS 包四项本地验收通过；普通回归原整轮 1,777 通过／9 失败／45 跳过，九项旧迁移断言修正后七文件 72 项定向通过，累计 1,786 个不同通过场景，不记为单轮全绿。阶段 6B 全资源搜索的 11 项 SQLite、2 项产品传输及2项实际界面场景通过，当前安装包和跨平台仍待验收。6C 分区／偏好／图片头像已通过业务、源码界面和实际未签名 macOS 包检查，跨平台／签名发行待验收；6D–6F 继续实施。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，后续版本按正常顺序晋级；master 不晋级。真实第三方账号、音频硬件及 Windows Docker 未验证。
+当前开发候选为 **v0.3.0-beta.43**。阶段 6A 已实现 MAIN/TASK 隔离、固定上下文、权限、独立线程与共用业务入口，三项不同源码场景和真实未签名 macOS 包四项本地验收通过；普通回归原整轮 1,777 通过／9 失败／45 跳过，九项旧迁移断言修正后七文件 72 项定向通过，累计 1,786 个不同通过场景，不记为单轮全绿。阶段 6B 全资源搜索的 11 项 SQLite、2 项产品传输及2项实际界面场景通过，当前安装包和跨平台仍待验收。6C 分区／偏好／图片头像已通过业务、源码界面和实际未签名 macOS 包检查，跨平台／签名发行待验收；6D–6F 继续实施。[beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开签名公证 macOS 包，后续版本按正常顺序晋级；master 不晋级。真实第三方账号、音频硬件及 Windows Docker 未验证。
 
 ## 已确定的方案
 
@@ -572,3 +572,14 @@ Search2 与继承的 Task3 同轮 **5/5 通过（40.3 秒）**，实际 app.isPa
 头像原子回执修复后重新构建 Main／Preload／Renderer，用已安装且核验版本的 Electron44.3 arm64 执行标准 ASAR／afterPack 未签名打包。最终真实包 Org、Avatar 与 typed API 同轮 **3/3（24.7 秒）** 通过，实际 packaged=true／版本41，所有自有进程正常退出。历史 Task3 仍按修复前六项包回执保留，不重记为最终三项。
 
 最终 Main SHA-256 `f851b04cb6fcac2b12ad1cec643dfef98382b3992bfec5ccc5999eaacc1bc636`，ASAR `e551a5091e67e08215480ff7b1f961ff91737552c931da02c6b5762880f5b00f`。17 项应用和216项Worker/parser文件逐字节一致；随包整理指南与打包时源文档相同。207 parser资产／235资源文件／9556 ASAR条目验证通过，四 Helper 麦克风用途声明通过，不作为签名或真实硬件证据。此处后续文档验收说明未重写已冻结的包内历史指南；生产业务字节不变。持久回执为 `organization41-actual-package-final.log`、`organization41-final-package-bytes.json`、`organization41-final-package-parser.json` 和 `organization41-final-package-microphone.json`。Windows／跨平台及签名发行待正常门禁，master 不晋级。
+
+
+## 阶段 6E：事件与本机 Webhook（beta.43）
+
+迁移 49 新增持久订阅、独立加密凭据与幂等接收回执；允许已装 49 后补入尚未应用的 48，按缺失迁移执行并在修改前备份。真实 SQLite 升级／备份回归已通过。设置界面提供明确来源、保存 Routine 的版本／指令／目标／成员审阅、保留冲突草稿、一次性密钥显示、真实监听地址与接收历史。AI 只提供当前 MAIN 会话的 `automationEvents.snapshot/create/update/revoke/cancel`；原 `events` 命名空间、Runtime 取消和审批仍独立，监听控制与密钥轮换不进入 AI 目录。
+
+监听默认停止，显式启动时仅绑定 127.0.0.1；每次重启仍停止。HTTP 先认证再解析并在接收前复查凭据，限制连接数／正文时间／UTF-8 JSON 大小和结构，拒绝网页 Origin。相同 key 与规范化载荷返回原回执，载荷改变报告冲突。事件正文固定为普通不可信 JSON 附件，不能覆盖 Routine 提示词或成为批准。订阅、目标版本与准入快照固定；旋转／暂停／撤销只取消所属运行，未知接收结果不重新派发。
+
+内部完成／失败事件由宿主核验实际 Runtime 后发出，只有不透明 ID 和状态，不携带私有 TASK 文本、Memory 或工具参数。真实 Routine → AI `messages.send` → 子 Runtime 的宿主 rootClientNonce 链已验证；持久 ancestry 阻止重复订阅与超过四跳的循环。
+
+已保存 70 项关联 SQLite／HTTP／Runtime 检查，以及 9 项补充 UI／委派检查通过记录。五配置类型与完整构建通过；补充 7 文件 54 项（含真实旧库迁移）通过。新增隐藏 Electron 两项同轮 2/2（16.1 秒）通过，真实 loopback HTTP、六成员在首个结果返回前全部启动、独立兄弟任务、所属取消、私有 TASK 元数据、一次性密钥、监听重启停止及冲突草稿均经实际 IPC／Renderer 检查；拥有进程正常 exitCode=0。实际未签名 macOS 包最终证据待下文验收，不从源码通过推断发行可用。无新依赖／许可；Windows、真实用户端点／账号、远程转发、公开入口及签名发行未验证。证据标签 `$CODEX_HOME/aevoren-evidence/2026-10-15/event43-*`，详见[使用说明](AUTOMATION_EVENTS.md)。

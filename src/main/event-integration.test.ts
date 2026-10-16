@@ -14,12 +14,19 @@ import { ProductOperationService } from "./product-operation-service";
 import type { ProductDependencies } from "./product-handlers";
 import { emitAutomationRuntime } from "./event-runtime";
 import { apiResult } from "./errors";
+import { WorkspaceService } from "./workspace-service";
+import { WorkspaceToolExecutor } from "./workspace-tool-executor";
+import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
+import { RoomCoordinator } from "./room-coordinator";
+import { GeneralSettingsService } from "./settings";
+import type { ModelProvider } from "./model";
 
 const cleanup: Array<() => void | Promise<void>> = [];
+vi.mock("electron", () => ({ clipboard: { writeText: vi.fn() } }));
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
-function fixture() {
+function fixture(modelRun?: ModelProvider["run"]) {
   const root = mkdtempSync(join(tmpdir(), "aevoren-event-host-")), path = join(root, "app.sqlite"), repository = new AppRepository(path);
-  const worker = new SendWorker(repository, null, { transcript: () => {}, sendState: () => {}, runtime: () => {} }, false, { run: async function* () { yield { type: "started", requestId: randomUUID() }; yield { type: "completed", finishReason: "stop" }; }, testConnection: async () => {} });
+  const worker = new SendWorker(repository, null, { transcript: () => {}, sendState: () => {}, runtime: () => {} }, false, { run: modelRun ?? async function* () { yield { type: "started", requestId: randomUUID() }; yield { type: "completed", finishReason: "stop" }; }, testConnection: async () => {} });
   const routines = new RoutineService(repository, worker, () => {}), events = new EventService(repository.automationEvents, routines, { isAvailable: () => true, encrypt: value => `test-sealed:${value}`, decrypt: value => value.slice(12) }, () => {}, { assertSourceSession: id => { repository.getSession(id); } });
   cleanup.push(async () => { await events.shutdown(); await routines.shutdown(); await worker.shutdown(); repository.close(); rmSync(root, { recursive: true, force: true }); });
   const owner = repository.createBot(), other = repository.createBot();
@@ -70,6 +77,47 @@ describe("automation host integration", () => {
     expect(emit).toHaveBeenCalledExactlyOnceWith({ eventId: `runtime:${run.id}:completed`, sessionId: f.owner.session.id, runtimeRunId: run.id, state: "completed" });
     expect(JSON.stringify(emit.mock.calls)).not.toContain("PRIVATE_USER_BODY");
     await emitAutomationRuntime(f.repository, f.events, { ...completed, version: completed.version - 1 }); expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  it("commits AI mutation receipts atomically and reuses the original update result on retry", async () => {
+    const f = fixture(), run = runtime(f), workspace = new WorkspaceService(f.repository), executor = new WorkspaceToolExecutor(f.repository, workspace), tools = new WorkspaceToolCoordinator(f.repository, executor, () => {}), rooms = new RoomCoordinator(f.repository, f.worker.executor, { transcript: () => {}, roomRuntime: () => {} });
+    cleanup.push(() => rooms.shutdown());
+    const product = new ProductOperationService({ repository: f.repository, routineService: f.routines, automationEventService: f.events, workspaceService: workspace, workspaceToolCoordinator: tools, sendWorker: f.worker, roomCoordinator: rooms, generalSettings: new GeneralSettingsService(f.repository), providers: { list: async () => [], isSupported: () => true }, updateService: {}, productChanged: () => {} } as unknown as ProductDependencies); executor.setProductOperations(product);
+    const execute = async (tool: ProductToolRequest) => {
+      product.validate(tool, run.id);
+      const prepared = f.repository.prepareToolInvocation({ runtimeRunId: run.id, toolCallId: randomUUID(), idempotencyKey: randomUUID(), tool });
+      f.repository.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
+      return JSON.parse((await executor.execute(prepared.invocation.id)).content).result;
+    };
+    const create = call("automationEvents.create", { name: "Atomic", source: { kind: "webhook" }, routineId: f.saved.id, expectedRoutineVersion: f.saved.version, enabled: false });
+    const created = await execute(create); expect(await execute(create)).toEqual(created); expect(f.events.snapshot().subscriptions).toHaveLength(1);
+    const update = call("automationEvents.update", { id: created.id, expectedVersion: created.version, patch: { name: "One version only" } });
+    const changed = await execute(update); expect(changed.version).toBe(created.version + 1); expect(await execute(update)).toEqual(changed); expect(f.events.snapshot().subscriptions[0]!.version).toBe(changed.version);
+    const complete = vi.spyOn(f.repository, "completeProductToolInvocation").mockImplementationOnce(() => { throw new Error("controlled receipt commit failure"); });
+    await expect(execute(call("automationEvents.create", { name: "Must rollback", source: { kind: "webhook" }, routineId: f.saved.id, expectedRoutineVersion: f.saved.version }))).rejects.toThrow(); complete.mockRestore();
+    expect(f.events.snapshot().subscriptions.map(hook => hook.name)).toEqual(["One version only"]);
+  });
+
+  it("retains durable event ancestry through an actual Routine and approved AI delegation", async () => {
+    let release!: () => void, parentBotId = ""; const gate = new Promise<void>(resolve => { release = resolve; });
+    const f = fixture(async function* (_messages, _signal, context) { yield { type: "started", requestId: randomUUID() }; if (context?.executorBotId === parentBotId) await gate; yield { type: "completed", finishReason: "stop" }; }); parentBotId = f.owner.bot.id;
+    const origin = f.events.create({ name: "Origin", source: { kind: "webhook" }, routineId: f.saved.id, expectedRoutineVersion: f.saved.version, enabled: true }), credential = await f.events.rotateToken({ id: origin.id, expectedVersion: origin.version });
+    const third = f.repository.createBot(), target = f.routines.create({ name: "Downstream", prompt: "Metadata only", botId: third.bot.id, enabled: true, schedule: f.saved.schedule });
+    const downstream = f.events.create({ name: "Delegated completion", source: { kind: "runtime.completed", sessionId: f.other.session.id }, routineId: target.id, expectedRoutineVersion: target.version, enabled: true });
+    try {
+      const receipt = await f.events.receiveWebhook({ id: origin.id, version: credential.subscription.version, bearer: credential.token, eventId: "origin", payload: { data: "untrusted" } }), parent = f.repository.getRoutineRun(receipt.routineRunId!);
+      await vi.waitFor(() => expect(f.repository.getRuntimeRun(parent.runtimeRunId!).state).toBe("running"));
+      const workspace = new WorkspaceService(f.repository), executor = new WorkspaceToolExecutor(f.repository, workspace), tools = new WorkspaceToolCoordinator(f.repository, executor, () => {}), rooms = new RoomCoordinator(f.repository, f.worker.executor, { transcript: () => {}, roomRuntime: () => {} }); cleanup.push(() => rooms.shutdown());
+      const product = new ProductOperationService({ repository: f.repository, routineService: f.routines, automationEventService: f.events, workspaceService: workspace, workspaceToolCoordinator: tools, sendWorker: f.worker, roomCoordinator: rooms, generalSettings: new GeneralSettingsService(f.repository), providers: { list: async () => [], isSupported: () => true }, updateService: {} } as unknown as ProductDependencies); executor.setProductOperations(product);
+      const tool = call("messages.send", { sessionId: f.other.session.id, text: "Delegated task without forged provenance" }); product.validate(tool, parent.runtimeRunId!);
+      const prepared = f.repository.prepareToolInvocation({ runtimeRunId: parent.runtimeRunId!, toolCallId: randomUUID(), idempotencyKey: randomUUID(), tool }); f.repository.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
+      const child = JSON.parse((await executor.execute(prepared.invocation.id)).content).result as { runId: string; clientNonce: string };
+      await vi.waitFor(() => expect(f.repository.getRuntimeRun(child.runId).state).toBe("completed"));
+      expect(f.repository.getUserMessage(child.clientNonce).origin).toMatchObject({ kind: "ai-delegation", fromRuntimeRunId: parent.runtimeRunId, rootClientNonce: parent.clientNonce });
+      const emit = vi.spyOn(f.events, "emitRuntime"); await emitAutomationRuntime(f.repository, f.events, f.repository.getRuntimeRun(child.runId));
+      expect(emit).toHaveBeenCalledWith(expect.objectContaining({ originRoutineRunId: parent.id }));
+      expect(f.events.snapshot().deliveries.find(item => item.subscriptionId === downstream.id)).toMatchObject({ ancestry: [origin.id, downstream.id], state: "dispatched", routineRunId: expect.any(String) });
+    } finally { release(); }
   });
 
   it("backs up and fills a later lower-numbered migration without losing existing higher versions or chat data", () => {

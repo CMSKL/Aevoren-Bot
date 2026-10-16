@@ -33,6 +33,7 @@ module.exports = {
     { from: "docs/TASK_THREADS.md", to: "docs/TASK_THREADS.md" },
     { from: "docs/SEARCH.md", to: "docs/SEARCH.md" },
     { from: "docs/GROUP_ROUTINES.md", to: "docs/GROUP_ROUTINES.md" },
+    { from: "docs/AUTOMATION_EVENTS.md", to: "docs/AUTOMATION_EVENTS.md" },
     { from: "docs/ORGANIZATION.md", to: "docs/ORGANIZATION.md" },
     { from: "NOTICE", to: "NOTICE" },
     { from: "out/worker", to: "environment-worker" },

@@ -120,13 +120,19 @@ For a running background service, register its listening port. The Worker verifi
 
 ## Bot and group Routines (beta.42 local candidate)
 
-Open **Settings → 主动服务**, enter a name and saved task prompt, and choose **Routine 执行目标**. Only Bot and Room MAIN conversations are offered. A new rule starts paused; enable it after review or choose **立即运行** for one execution. TASK targets, event subscriptions and Webhooks are not available in this delivery.
+Open **Settings → 主动服务**, enter a name and saved task prompt, and choose **Routine 执行目标**. Only Bot and Room MAIN conversations are offered. A new rule starts paused; enable it after review or choose **立即运行** for one execution. TASK Routine targets are not supported. Events and local Webhooks are configured separately as described below.
 
 A Room defaults to **Everyone · 保存当前全部成员**. This saves a fixed roster and uses the existing parallel group path; a member waiting for approval does not block its siblings. **只运行勾选成员** saves an explicit subset instead. The saved card shows the chosen members, session generation, reviewed membership version and rule version. Adding a member never silently adds it to an existing rule.
 
 After a membership, selected Bot profile or authorization change, edit the rule and choose **重新选择并审阅目标**, check the members, then save. Explicit subsets retain only their still-present selected members; new members start unchecked. The UI refreshes the actual MAIN target before saving and the host checks the reviewed membership version. Conflicts preserve the draft. Changing the target conversation explicitly clears that rule's fixed document/media references; this editor currently has no resource picker.
 
 **取消本次运行** cancels only the selected accepted Runtime or Room batch. **正在取消** remains visible until the host confirms an outcome; pausing the definition affects future scheduling. Recent runs show actual durable states and can be refreshed. An unknown acceptance result is kept as **结果未知**, without replaying the saved task after restart. Tool approvals and external-write verification still apply. Connected AI uses the same business handlers and current version checks, scoped to its actual MAIN conversation. See [Group Routines](GROUP_ROUTINES.md) for scope, recovery and pending acceptance gates.
+
+## Events and local Webhooks (beta.43 local candidate)
+
+Open **Settings → 事件与 Webhook**, explicitly select and review an enabled MAIN Bot/group Routine, then save a paused or enabled subscription. Internal completion/failure events require an explicitly selected source conversation and carry only opaque IDs/status, including for a private TASK source. Connected AI can manage subscriptions only within its current admitted MAIN session.
+
+For Webhooks, explicitly rotate the secret, copy the once-displayed token and start the listener. It is stopped by default and after restart; the page shows the actual loopback port and versioned URL. Send UTF-8 JSON with Bearer authentication and an Idempotency-Key. The payload remains an untrusted ordinary attachment; it cannot grant permissions or approve tools. Edits invalidate the old URL, rotation/revocation invalidate its token, and changes stop only that subscription's owned active runs. Unknown outcomes are reconciled without replay. See [Events and local Webhooks](AUTOMATION_EVENTS.md) for limits, recovery and acceptance evidence.
 
 ## Updating
 
