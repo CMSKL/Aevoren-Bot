@@ -790,3 +790,13 @@ Focused frame/Worker tests passed15/15, with the same409, capture counts and acc
 监听快照新增不复用的状态 revision 和 busy；审批前、执行前及绑定完成后重新检查实际执行成员，UI／AI 并发控制使用同一资源锁，旧批准／结果未知请求不会重放。已完成工具回执只返回历史结果与当前状态，不恢复旧监听；内部关闭等待已经拥有的启动／停止操作，避免遗漏清理。
 
 真实 Node loopback 启动与立即停止的旧实现回归已确定性失败：启动尚未完成时停止直接清空资源引用；这不是对旧 CI 的 runner 失联或关闭失败作归因。修复后实际并发、取消、占用端口、旧 revision、重启、真实 SQLite 审批／回执及成员撤销等五文件74项检查通过，Node／Web 类型与定向 lint 通过。新增 AI 批准启停隐藏场景及更新后的真实安装包验收待完成；前述包证据保留为新控制功能之前的历史。
+
+### beta.44 同步审阅后的监听 AI 控制与最终新包
+
+按最小提交合入43监听控制及取消／回执闭环，保留44模板、选择范围导出、UIintent取消、固定Runtime版本、私有模型文本及原回执逻辑，package仍为44。AI新增 `automationEvents.startListener/stopListener`，实际活跃MAIN执行成员才可请求，固定非零端口/current revision/app-wide影响独立审批，不返回或轮换token；UI可选择0自动分配，密钥轮换仍可信设置。启动发布后再复验signal/实际actor，同步提交成功回执后才结束资源准入；通知／回执失败只清本次新监听，停止不恢复监听。
+
+合并相关六文件101/101（17.28秒）通过，Node/Web类型和定向lint通过；已验证原取消窗口及receipt失败实际负例。新AI场景保留exactRenderer初始文档等待、原90秒与关闭预算，失败copy隔离库并关闭自有modelserver。完整五类型及所有输出构建一次通过于 `templates44-listener-final-build.log`。
+
+新的真实未签名macOS arm64包同轮 **3/3（13.0秒）** 通过AI经真实模型网关/审批启停固定端口与实际未认证401/停止拒绝连接、typed API、模板真实二进制源移除/重启导入/离线HTML（`templates44-listener-package-three.log`），全部自有进程正常退出。Main SHA-256 `e12740752eb016312585517a1f806d2ce1c4108f627456c88e0e78e940a5ed98`，ASAR `23de89cdec4945a7c497a357615c668ad210fd3d0d2d3e65d883672d8c10b7f8`；17项应用与216项Worker/parser输出逐字节一致，模板随包指南一致，parser与四Helper麦克风用途声明检查通过。此包包含新browser-worker受信任focus诊断字节；先前2857五项layout/Event2包结果保留为历史，不重记为这次三项。
+
+回执为 `templates44-listener-package-{bytes,parser,microphone}.json`，完整来源为冻结业务/测试 `b613881`；本次后续文档总结不重写包内指南或业务字节。没有新增依赖。完整fresh正常CI仍覆盖全套Windows/macOS/实际LinuxDocker及安装清单，签名发行、真实账号/音频设备分别验收，master不晋级。
