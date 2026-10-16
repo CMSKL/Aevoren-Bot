@@ -658,3 +658,11 @@ This test-only update extends that fixture's existing bounded diagnostics with a
 ### beta.43 同步 dev beta.34
 
 本候选合并正常已晋级的 dev `a743f7d`。冲突保留 beta.43 的较新功能、MCP 实际 Runtime 发送前授权检查、完整检查列表和版本，两侧历史回执均保存。相对已验收的 `1d3b15b`，合并只增加历史文档及四个诊断／导航夹具，不改变业务源码、共享合同、package、依赖、构建或 Worker 输出；不重建或重复宣称实包业务验收。Node 类型、定向 lint、文档／开源及工作流 YAML 检查通过；新正常 CI 仍须验证。
+
+### beta.43 跨平台迁移缺口诊断修复
+
+[正常 CI 38834467154](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38834467154) 在合并检查 `f039876` 上，Linux 普通套件 1,882 通过／3 失败／45 跳过，Windows 1,865 通过／4 失败／61 跳过；均未到达后续构建与实包门禁。共同三项来自独立只读 Room diagnostics CLI：它要求迁移总数等于最大版本，把合法已安装46／47／49但尚未安装独立48的数据库误报为不支持。原三项本机复现失败，新增高号缺口回归也在旧代码失败，缺必需基线3的负向检查通过，保留 before 与 new-before 日志。
+
+修正只要求诊断实际依赖的1–6迁移完整，同时保留原最低版本、实际表及每个查询字段检查；不修改数据库或把缺少所需字段的库视为有效。修后两文件20项通过，含CLI五项与HTTP十五项；Node 类型、定向 lint、文档／开源检查通过。独立CLI脚本不进入已冻结应用ASAR，应用／Preload／Renderer／Worker业务字节未变，不重建或重记实际包证据。
+
+Windows 另有一项 Webhook 负向 HTTP 测试 fetch ECONNRESET，原日志没有请求阶段或状态，不能推断产品根因。同步模板候选的 test-only 修正，完整消费每个实际 HTTP 响应至EOF并记录允许的阶段／状态／错误码，保持全部状态、鉴权和长度断言及原时限，无重试或生产改动。后续正常CI仍需验证该平台。原两平台完整日志保存在 `$CODEX_HOME/aevoren-evidence/2026-10-15/releases/events43-{linux,win}-current-failed.log`；新定向日志为 `event43-ci-fix-focused.log`，没有把本机20项称为完整跨平台全绿。
