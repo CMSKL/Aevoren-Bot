@@ -18,7 +18,8 @@ export type EventDelivery = {
   ancestry: string[]; state: EventDeliveryState; routineRunId: string | null; version: number; errorCode: string | null;
   createdAt: string; updatedAt: string;
 };
-export type EventListenerState = { listening: boolean; host: "127.0.0.1"; port: number | null };
+export type EventListenerState = { listening: boolean; host: "127.0.0.1"; port: number | null; revision: string; busy: boolean };
+export type EventListenerControl = { expectedRevision: string; port: number };
 export type EventSnapshot = { subscriptions: EventSubscription[]; deliveries: EventDelivery[]; listener: EventListenerState };
 export type EventTokenReceipt = { subscription: EventSubscription; token: string };
 export type EventApi = {
@@ -28,8 +29,8 @@ export type EventApi = {
   update(input: EventSubscriptionUpdate): Promise<ApiResult<EventSubscription>>;
   revoke(input: EventVersionInput): Promise<ApiResult<EventSubscription>>;
   cancel(input: EventVersionInput): Promise<ApiResult<EventDelivery>>;
-  /** Trusted setup only; these methods must never be added to the AI operation catalog. */
+  /** Credential management stays outside the AI operation catalog. */
   rotateToken(input: EventVersionInput): Promise<ApiResult<EventTokenReceipt>>;
-  startListener(input: { port?: number }): Promise<ApiResult<EventListenerState>>;
-  stopListener(): Promise<ApiResult<EventListenerState>>;
+  startListener(input: EventListenerControl): Promise<ApiResult<EventListenerState>>;
+  stopListener(input: EventListenerControl): Promise<ApiResult<EventListenerState>>;
 };

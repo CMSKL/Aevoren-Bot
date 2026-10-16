@@ -10,6 +10,9 @@ export const eventCreateSchema = z.object(configuration).strict();
 export const eventUpdateSchema = z.object({ id, expectedVersion: version, patch: z.object(configuration).partial().strict().refine(value => Object.keys(value).length > 0 && (value.routineId === undefined || value.expectedRoutineVersion !== undefined)) }).strict();
 export const eventVersionSchema = z.object({ id, expectedVersion: version }).strict();
 export const eventListenerSchema = z.object({ port: z.number().int().min(0).max(65535).optional() }).strict();
+export const eventListenerStartSchema = z.object({ expectedRevision: id, port: z.number().int().min(0).max(65535) }).strict();
+export const eventListenerStopSchema = eventListenerStartSchema.extend({ port: z.number().int().min(1).max(65535) });
+export const eventListenerAiStartSchema = eventListenerStopSchema;
 export const eventIdempotencySchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9._:-]+$/);
 /** Host-only metadata. Runtime text, arguments, credentials and approval fields cannot enter this envelope. */
 export const runtimeEventSchema = z.object({

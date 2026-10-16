@@ -150,7 +150,7 @@ test("routes authenticated Webhook data to all six saved members once and revoke
     expect((await fetch(url, options)).status).toBe(401); release(captures[6]!);
     await expect.poll(async () => (await snapshot(page)).deliveries.find(item => item.id === receipt.id)?.state).toBe("cancelled"); await page.getByRole("button", { name: "关闭密钥显示", exact: true }).click();
     await page.reload(); await expect(page.locator(".app-shell")).toBeVisible(); expect((await snapshot(page)).listener.listening).toBe(true); expect((await snapshot(page)).deliveries).toHaveLength(1);
-    page = await restart(); expect((await snapshot(page)).listener).toEqual({ listening: false, host: "127.0.0.1", port: null }); expect((await snapshot(page)).deliveries).toHaveLength(1); expect((await snapshot(page)).subscriptions[0]!.hasToken).toBe(true);
+    page = await restart(); expect((await snapshot(page)).listener).toMatchObject({ listening: false, host: "127.0.0.1", port: null, busy: false }); expect((await snapshot(page)).deliveries).toHaveLength(1); expect((await snapshot(page)).subscriptions[0]!.hasToken).toBe(true);
   });
 });
 

@@ -130,7 +130,7 @@ After a membership, selected Bot profile or authorization change, edit the rule 
 
 ## Events and local Webhooks (beta.43 local candidate)
 
-Open **Settings → 事件与 Webhook**, explicitly select and review an enabled MAIN Bot/group Routine, then save a paused or enabled subscription. Internal completion/failure events require an explicitly selected source conversation and carry only opaque IDs/status, including for a private TASK source. Connected AI can manage subscriptions only within its current admitted MAIN session.
+Open **Settings → 事件与 Webhook**, explicitly select and review an enabled MAIN Bot/group Routine, then save a paused or enabled subscription. Internal completion/failure events require an explicitly selected source conversation and carry only opaque IDs/status, including for a private TASK source. Connected AI can manage subscriptions only within its current admitted MAIN session. It can also request application-wide listener start/stop through explicit approval of a fixed port and current state. Credential rotation stays in trusted settings.
 
 For Webhooks, explicitly rotate the secret, copy the once-displayed token and start the listener. It is stopped by default and after restart; the page shows the actual loopback port and versioned URL. Send UTF-8 JSON with Bearer authentication and an Idempotency-Key. The payload remains an untrusted ordinary attachment; it cannot grant permissions or approve tools. Edits invalidate the old URL, rotation/revocation invalidate its token, and changes stop only that subscription's owned active runs. Unknown outcomes are reconciled without replay. See [Events and local Webhooks](AUTOMATION_EVENTS.md) for limits, recovery and acceptance evidence.
 

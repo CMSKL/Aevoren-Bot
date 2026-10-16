@@ -783,3 +783,10 @@ Focused frame/Worker tests passed15/15, with the same409, capture counts and acc
 当前候选同步已验证dev `28ad959`（PR54示范初始文档、PR55受信任focus诊断、PR56联系人初始文档）。唯一业务源冲突在browser-worker focusedPage：保留本候选的执行取消检查，同时合入dev仅显式诊断环境启用的stage/exception/closed元数据。相关focus与diagnostic19项通过、Browser Worker类型和定向lint通过。Main/Preload/Renderer/package/lock不变，Realtime诊断仍为测试修改；browser-worker输出字节因新诊断字段变化，旧17/216包校验不能冒称覆盖当前Worker，需要后续构建/正常实包门禁核验该资源。
 
 合并后的窄范围browser-worker build通过（`templates44-dev-focus-build.log`），新engine.mjs SHA-256 `02e4b1083efd0cec14487356a0714d100ba0d7316b6e99aaf130dbd78fd7e96a`；四个Worker文件摘要与19项focus/cancel/diagnostic验证、类型/lint回执保存于 `templates44-dev-focus-worker-probe.json`。Main及Preload实际输出摘要仍与2857最终包一致。未重跑既已通过的五项app包场景，未为新Worker宣称新的17/216安装资源一致性；新正常CI负责该合并产物的实际资源与跨平台验收。
+### beta.43 监听控制的 AI 入口补齐
+
+监听启停属于产品业务控制，现增加 `automationEvents.startListener/stopListener`，与界面共用同一宿主资源控制。AI 仅限实际活跃 MAIN 执行成员，每次审批显示固定的本机端口、影响全部会话的应用级范围，以及停止监听不会取消已派发 Routine。凭据轮换及内部事件发送仍不进入 AI 目录；AI 不读取 token。界面可自动选择端口，AI 必须指定明确非零端口。
+
+监听快照新增不复用的状态 revision 和 busy；审批前、执行前及绑定完成后重新检查实际执行成员，UI／AI 并发控制使用同一资源锁，旧批准／结果未知请求不会重放。已完成工具回执只返回历史结果与当前状态，不恢复旧监听；内部关闭等待已经拥有的启动／停止操作，避免遗漏清理。
+
+真实 Node loopback 启动与立即停止的旧实现回归已确定性失败：启动尚未完成时停止直接清空资源引用；这不是对旧 CI 的 runner 失联或关闭失败作归因。修复后实际并发、取消、占用端口、旧 revision、重启、真实 SQLite 审批／回执及成员撤销等五文件74项检查通过，Node／Web 类型与定向 lint 通过。新增 AI 批准启停隐藏场景及更新后的真实安装包验收待完成；前述包证据保留为新控制功能之前的历史。

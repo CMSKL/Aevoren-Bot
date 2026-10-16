@@ -43,6 +43,7 @@ const mcpWriteOperation = (operation: string): boolean => MCP_WRITE_PRODUCT_OPER
 const mediaOperation = (operation: string): boolean => operation.startsWith("media.");
 const voiceOperation = (operation: string): boolean => operation.startsWith("voice.");
 const botImageOperation=(operation:string):boolean=>["bots.setImageAvatar","bots.clearImageAvatar","bots.readImageAvatar"].includes(operation);
+const listenerOperation = (operation: string): boolean => ["automationEvents.startListener", "automationEvents.stopListener"].includes(operation);
 const portableOperation=(operation:string):boolean=>operation.startsWith("templates.")||operation.startsWith("exports.");
 const scopedOperation = (operation: string): boolean => portableOperation(operation) || operation.startsWith("routines.") || operation.startsWith("automationEvents.") || botImageOperation(operation) || voiceOperation(operation) || mediaOperation(operation) || environmentOperation(operation) || browserOperation(operation) || scriptOperation(operation) || nativeScopedOperation(operation) || mcpWriteOperation(operation) || operation.startsWith("demonstrations.");
 type ProductExecutionResult = { content: string; metadata: Record<string, string | number | boolean | null>; images?: ModelImageAttachment[]; modelText?: ModelTextAttachment };
@@ -88,6 +89,7 @@ export class ProductOperationService {
       const target = repository.getToolInvocation(approval.toolInvocationId);
       return `${value.resolution === "deny" ? "拒绝" : "批准一次"} · ${repository.getBot(approval.executorBotId).name} · ${target.targetPath}`.slice(0, 2_048);
     }
+    if (listenerOperation(tool.operation)) return `${label}\n本机地址 127.0.0.1:${value.port}。这是应用级监听，影响全部会话的 Webhook 入站请求。\n停止监听不会取消已交给 Routine 的任务；不会读取或返回密钥。\n已审阅状态：${value.expectedRevision}`;
     if (tool.operation.startsWith("routines.")) {
       const routine = id ? repository.getRoutine(id) : tool.operation === "routines.cancelRun" ? repository.getRoutine(repository.getRoutineRun(value.runId as string).routineId) : null;
       const target = (value.target ?? (value.patch as { target?: unknown } | undefined)?.target ?? routine?.target) as import("@shared/routine-contracts").RoutineTarget | undefined;
@@ -105,6 +107,11 @@ export class ProductOperationService {
   }
 
   requiresApproval(tool: ProductToolRequest, runtimeRunId?: string): boolean {
+    if (tool.action === "execute" && listenerOperation(tool.operation) && runtimeRunId) {
+      this.validate(tool, runtimeRunId);
+      const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
+      if (this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, runtime.executorBotId)) return false;
+    }
     if (tool.action === "execute" && tool.operation === "voice.configure" && runtimeRunId) {
       this.validate(tool, runtimeRunId);
       const runtime = this.dependencies.repository.getRuntimeRun(runtimeRunId);
@@ -174,7 +181,13 @@ export class ProductOperationService {
     if (tool.operation.startsWith("automationEvents.")) {
       this.dependencies.routineService.assertOperationScope("routines.list", undefined, { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId, runtimeRunId: runtime.id });
       if (!this.dependencies.automationEventService) throw new AevorenBotError("INTERNAL_ERROR");
-      this.dependencies.automationEventService.assertOperationScope(tool.operation, input, { sessionId: runtime.sessionId });
+      if (listenerOperation(tool.operation)) {
+        if (!this.dependencies.automationEventHttp) throw new AevorenBotError("INTERNAL_ERROR");
+        if (!repository.findProductOperationResult(runtime.clientNonce, tool, runtime.executorBotId)) {
+          repository.assertProductReplaySafe(runtime.clientNonce, tool, runtime.executorBotId);
+          this.dependencies.automationEventHttp.assertControl(tool.operation.endsWith("startListener") ? "start" : "stop", input as import("@shared/event-contracts").EventListenerControl);
+        }
+      } else this.dependencies.automationEventService.assertOperationScope(tool.operation, input, { sessionId: runtime.sessionId });
     }
     const taskPolicy=repository.tasks.runtimeTaskPolicy(runtimeRunId);
     if(taskPolicy){
@@ -412,6 +425,9 @@ export class ProductOperationService {
     if (!PUBLIC_READS.has(tool.operation) && !mcpWriteOperation(tool.operation) && tool.operation !== "media.available") {
       const previous = this.dependencies.repository.findProductOperationResult(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
       if (previous) {
+        if (listenerOperation(tool.operation)) return this.result({ status: "previously_completed", operation: tool.operation, reused: true,
+          result: JSON.parse(previous).result, currentListener: this.dependencies.automationEventHttp?.snapshot(),
+          receiptNotice: "原监听操作未再次执行；请查询当前监听状态，再申请需要重新批准的变更。" });
         if (tool.operation === "bots.setImageAvatar") {
           const receipt = JSON.parse(previous) as { result: unknown };
           return this.result({ status: "previously_completed", operation: tool.operation, reused: true, result: receipt.result,
