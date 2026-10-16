@@ -223,6 +223,35 @@ describe("room diagnostics CLI", () => {
     expect(JSON.parse(incompleteSchema.stderr).error.code).toBe("UNSUPPORTED_SCHEMA");
   });
 
+  it("accepts a gap above the required diagnostic baseline without modifying the database", () => {
+    const filename = createV6Fixture();
+    const database = new DatabaseSync(filename);
+    // beta.43 ships migration 49 before the independent template migration 48.
+    // Keep this regression meaningful when that later migration is added.
+    database.prepare("DELETE FROM schema_migrations WHERE version=48").run();
+    const versions = database.prepare("SELECT version FROM schema_migrations WHERE version>=46 ORDER BY version").all() as Array<{ version: number }>;
+    expect(versions.some(value => value.version === 49)).toBe(true);
+    expect(versions.some(value => value.version === 48)).toBe(false);
+    database.close();
+    const before = sha256(filename), result = run(filename);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({ schemaVersion: MIGRATIONS.at(-1)!.version, runId: RUN_ID });
+    expect(sha256(filename)).toBe(before);
+    for (const marker of SECRET_MARKERS) expect(result.stdout).not.toContain(marker);
+  });
+
+  it("rejects a missing required baseline migration even when every queried column exists", () => {
+    const filename = createV6Fixture(), database = new DatabaseSync(filename);
+    database.prepare("DELETE FROM schema_migrations WHERE version=3").run();
+    database.close();
+    const before = sha256(filename), result = run(filename);
+    expect(result.status).not.toBe(0);
+    expect(JSON.parse(result.stderr).error.code).toBe("UNSUPPORTED_SCHEMA");
+    expect(sha256(filename)).toBe(before);
+    for (const marker of SECRET_MARKERS) expect(result.stderr).not.toContain(marker);
+  });
+
   it("is exposed through the package command", () => {
     const filename = createV6Fixture();
     const stdout = execFileSync(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["--silent", "diagnostics:room", "--", "--db", filename, "--run", RUN_ID], {
