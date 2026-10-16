@@ -14,7 +14,7 @@ Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联�
 
 > **源码版本：v0.3.0-beta.36（开发候选）。** 当前候选增加图片／PDF／DOCX 导入、固定引用、隔离解析及真实工具图片传输，并保留既有 MCP／Apps、示范 Skill 和原生应用外发审批。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
-[v0.3.0-beta.32](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.32) 已公开发布签名公证 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输、登记服务预览、脚本 Skill、Gmail／Drive／Notion 原生读取、本地草稿，以及独立审批的 Gmail 发信、Drive 普通文本文件写入和 Notion 页面创建。示范草稿、可写 MCP／Apps、Notion 页面更新及后续媒体／语音仍属源码候选。真实 Windows Docker、真实第三方账号未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
+[v0.3.0-beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开发布签名公证 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输、登记服务预览、脚本 Skill、可审阅的示范草稿、Gmail／Drive／Notion 原生读取、本地草稿，以及独立审批的 Gmail 发信、Drive 普通文本文件写入和 Notion 页面创建。可写 MCP／Apps、Notion 页面更新及后续媒体／语音仍属源码候选。真实 Windows Docker、真实第三方账号未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
 
 > **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 
@@ -153,7 +153,7 @@ Electron Smoke 使用隐藏窗口和临时用户数据目录。`pnpm package:mac
 
 应用数据存储在 Electron 的 user-data 目录。Aevoren Bot 会在 SQLite 中保存 Bot、Room、Transcript、显式 Memory、设置、Tool Journal 元数据和 Routine 历史；密钥值通过 `safeStorage` 单独存储。
 
-资料与 Skill 的正文、版本和会话绑定保存在 SQLite；导入的辅助文件由应用内容寻址存储保存并核对摘要。开发环境／任务／浏览器元数据也在 SQLite 中，工作目录、Worker 状态与独立浏览器 profile 位于各自命名 Docker 卷；截图和下载由应用存储并核对摘要。模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远端主机控制、宿主 Shell／GUI 控制或未经审核的自动 Memory 写入。beta.36 源码通过明确的会话／执行成员授权与逐次审批调用可写 MCP 工具；公开 beta.31 尚未包含该交付。宿主 Workspace 写入只允许在明确开启的根目录中新建 UTF-8 Markdown/CSV；经过批准的 Docker 命令可以修改隔离工作目录或访问外部服务，其副作用不能自动撤销。
+资料与 Skill 的正文、版本和会话绑定保存在 SQLite；导入的辅助文件由应用内容寻址存储保存并核对摘要。开发环境／任务／浏览器元数据也在 SQLite 中，工作目录、Worker 状态与独立浏览器 profile 位于各自命名 Docker 卷；截图和下载由应用存储并核对摘要。模型和启用的外部服务只会收到完成用户请求所需的上下文和工具输入。后台 Memory 捕获仅从当前用户消息生成待确认候选，未经用户批准不会进入长期上下文。当前版本不提供云同步、多用户账号、计费、远端主机控制、宿主 Shell／GUI 控制或未经审核的自动 Memory 写入。beta.36 源码通过明确的会话／执行成员授权与逐次审批调用可写 MCP 工具；公开 beta.33 尚未包含该交付。宿主 Workspace 写入只允许在明确开启的根目录中新建 UTF-8 Markdown/CSV；经过批准的 Docker 命令可以修改隔离工作目录或访问外部服务，其副作用不能自动撤销。
 
 ## 文档、贡献和支持
 
