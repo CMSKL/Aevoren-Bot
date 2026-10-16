@@ -245,7 +245,7 @@ describe("explicit loopback Webhook ingress", () => {
 
   it("authenticates before parsing, limits UTF-8 JSON, rejects browser origins, and stops cleanly", async () => {
     const f = fixture(), { subscription: hook, token } = await f.setup(), server = new EventHttpServer(f.service); cleanup.push(async () => { await server.stop(); });
-    expect(server.snapshot()).toEqual({ listening: false, host: "127.0.0.1", port: null });
+    expect(server.snapshot()).toMatchObject({ listening: false, host: "127.0.0.1", port: null, busy: false });
     const listening = await server.start(), base = `http://127.0.0.1:${listening.port}`, url = `${base}${hook.webhookPath}`;
     expect(listening.host).toBe("127.0.0.1");
     const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "Idempotency-Key": "http:one" };
@@ -272,7 +272,7 @@ describe("explicit loopback Webhook ingress", () => {
     expect((await send("oversized-body", JSON.stringify({ x: "x".repeat(65_536) }))).status).toBe(413);
     expect((await send("exact-limit", JSON.stringify({ x: "x".repeat(65_528) }), { "Idempotency-Key": "http:limit" })).status).toBe(202);
     await f.service.rotateToken({ id: hook.id, expectedVersion: hook.version }); expect((await send("revoked-token", "{}")).status).toBe(401);
-    expect(await server.stop()).toEqual({ listening: false, host: "127.0.0.1", port: null });
+    expect(await server.stop()).toMatchObject({ listening: false, host: "127.0.0.1", port: null, busy: false });
     await expect(fetch(url)).rejects.toThrow();
   });
 });

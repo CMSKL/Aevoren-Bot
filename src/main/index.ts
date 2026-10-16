@@ -219,7 +219,7 @@ async function finishClose(): Promise<void> {
     return;
   }
   shutdownPromise ??= (async () => {
-    await automationEventHttp?.stop();
+    await automationEventHttp?.shutdown();
     await automationEventService?.shutdown();
     await routineService?.shutdown();
     roomCoordinator?.beginShutdown();

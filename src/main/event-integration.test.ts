@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductToolRequest } from "@shared/contracts";
 import { PRODUCT_OPERATIONS } from "@shared/product-operations";
 import { AppRepository, MIGRATIONS } from "./database";
+import { EventHttpServer } from "./event-http-server";
+import { AUTOMATION_EVENT_CHANNELS } from "@shared/event-channels";
 import { EventService } from "./event-service";
 import { RoutineService } from "./routine-service";
 import { SendWorker } from "./send-worker";
@@ -36,15 +38,15 @@ function fixture(modelRun?: ModelProvider["run"]) {
 const call = (operation: string, input?: unknown): ProductToolRequest => ({ kind: "product-call", action: "execute", operation, ...(input === undefined ? {} : { input }) });
 function runtime(f: ReturnType<typeof fixture>, sessionId = f.owner.session.id, text = "Instruction") {
   const nonce = randomUUID(); f.repository.prepareMessage({ clientNonce: nonce, sessionId, text }); const entry = f.repository.getUserMessage(nonce);
-  const run = f.repository.createRuntimeRun(nonce, "fake", { schemaVersion: 1, botId: f.owner.bot.id, profileVersion: f.owner.bot.version, sessionId, generation: entry.generation, inputSeq: entry.seq, blocks: [], digest: "event-test" });
+  const run = f.repository.createRuntimeRun(nonce, "fake", { schemaVersion: 1, botId: f.owner.bot.id, profileVersion: f.owner.bot.version, sessionId, generation: entry.generation, inputSeq: entry.seq, blocks: [], digest: "event-test" }, { executorBotId: f.owner.bot.id });
   f.repository.transitionRuntimeRun(run.id, "dispatching"); return f.repository.transitionRuntimeRun(run.id, "running");
 }
 
 describe("automation host integration", () => {
-  it("has a separate public directory without listener or bearer operations and preserves Runtime events", () => {
+  it("shares reviewed listener controls while excluding credentials and preserving Runtime events", () => {
     const names = PRODUCT_OPERATIONS.filter(item => item.name.startsWith("automationEvents.")).map(item => item.name);
-    expect(names).toEqual(["automationEvents.snapshot", "automationEvents.create", "automationEvents.update", "automationEvents.revoke", "automationEvents.cancel"]);
-    for (const secret of ["rotateToken", "startListener", "stopListener", "emitRuntime", "authenticate"]) expect(PRODUCT_OPERATIONS.some(item => item.name.endsWith(`.${secret}`))).toBe(false);
+    expect(names).toEqual(["automationEvents.snapshot", "automationEvents.create", "automationEvents.update", "automationEvents.revoke", "automationEvents.cancel", "automationEvents.startListener", "automationEvents.stopListener"]);
+    for (const secret of ["rotateToken", "emitRuntime", "authenticate"]) expect(PRODUCT_OPERATIONS.some(item => item.name.endsWith(`.${secret}`))).toBe(false);
   });
 
   it("rejects unknown trusted source sessions and maps event conflicts to useful structured errors", async () => {
@@ -96,6 +98,66 @@ describe("automation host integration", () => {
     const complete = vi.spyOn(f.repository, "completeProductToolInvocation").mockImplementationOnce(() => { throw new Error("controlled receipt commit failure"); });
     await expect(execute(call("automationEvents.create", { name: "Must rollback", source: { kind: "webhook" }, routineId: f.saved.id, expectedRoutineVersion: f.saved.version }))).rejects.toThrow(); complete.mockRestore();
     expect(f.events.snapshot().subscriptions.map(hook => hook.name)).toEqual(["One version only"]);
+  });
+
+  it("requires gateway approval for application listener controls and replays receipts without restoring stopped ingress", async () => {
+    const f = fixture(), run = runtime(f), http = new EventHttpServer(f.events), workspace = new WorkspaceService(f.repository), executor = new WorkspaceToolExecutor(f.repository, workspace), tools = new WorkspaceToolCoordinator(f.repository, executor, () => {}), rooms = new RoomCoordinator(f.repository, f.worker.executor, { transcript: () => {}, roomRuntime: () => {} });
+    cleanup.push(async () => { await http.shutdown(); await rooms.shutdown(); });
+    const product = new ProductOperationService({ repository: f.repository, routineService: f.routines, automationEventService: f.events, automationEventHttp: http, workspaceService: workspace, workspaceToolCoordinator: tools, sendWorker: f.worker, roomCoordinator: rooms, generalSettings: new GeneralSettingsService(f.repository), providers: { list: async () => [], isSupported: () => true }, updateService: {} } as unknown as ProductDependencies); executor.setProductOperations(product);
+    const probe = await http.start(); await http.stop();
+    const input = { expectedRevision: http.snapshot().revision, port: probe.port! }, tool = call("automationEvents.startListener", input), start = vi.spyOn(http, "startControlled");
+    expect(product.requiresApproval(tool, run.id)).toBe(true); expect(product.preview(tool)).toContain(`127.0.0.1:${input.port}`);
+    const request = tools.requestAndWait(run.id, randomUUID(), tool, new AbortController().signal);
+    expect(http.snapshot().listening).toBe(false); expect(start).not.toHaveBeenCalled();
+    const approval = f.repository.listPendingApprovalRequests(run.sessionId)[0]!;
+    await tools.resolve(run.sessionId, approval.id, approval.version, "allow-once");
+    const first = JSON.parse((await request).content); expect(first).toMatchObject({ status: "completed", result: { listening: true, port: input.port, busy: false } });
+    expect(f.repository.findProductOperationResult(run.clientNonce, tool, run.executorBotId)).not.toBeNull();
+    const live = http.snapshot();
+    await product.handlers.get(AUTOMATION_EVENT_CHANNELS.stopListener)!({ expectedRevision: live.revision, port: live.port });
+    const replay = JSON.parse((await tools.requestAndWait(run.id, randomUUID(), tool, new AbortController().signal)).content);
+    expect(replay).toMatchObject({ status: "previously_completed", reused: true, currentListener: { listening: false } }); expect(start).toHaveBeenCalledTimes(1); expect(f.repository.listPendingApprovalRequests(run.sessionId)).toHaveLength(0);
+    expect(JSON.stringify(replay)).not.toContain("test-sealed");
+    expect(() => product.validate(call("automationEvents.startListener", { expectedRevision: http.snapshot().revision, port: 0 }), run.id)).toThrowError(expect.objectContaining({ issues: expect.any(Array) }));
+    const staleTool = call("automationEvents.startListener", { expectedRevision: http.snapshot().revision, port: input.port });
+    const stale = tools.requestAndWait(run.id, randomUUID(), staleTool, new AbortController().signal), pending = f.repository.listPendingApprovalRequests(run.sessionId)[0]!;
+    const ui = await product.handlers.get(AUTOMATION_EVENT_CHANNELS.startListener)!({ expectedRevision: http.snapshot().revision, port: 0 });
+    expect(ui).toMatchObject({ listening: true });
+    await tools.resolve(run.sessionId, pending.id, pending.version, "allow-once");
+    expect(JSON.parse((await stale).content)).toMatchObject({ ok: false, error: { code: "EVENT_VERSION_CONFLICT" } }); expect(start).toHaveBeenCalledTimes(2);
+    const stillLive = http.snapshot(); expect(stillLive.listening).toBe(true);
+    const stop = call("automationEvents.stopListener", { expectedRevision: stillLive.revision, port: stillLive.port! });
+    const stopping = tools.requestAndWait(run.id, randomUUID(), stop, new AbortController().signal), stopApproval = f.repository.listPendingApprovalRequests(run.sessionId)[0]!;
+    await tools.resolve(run.sessionId, stopApproval.id, stopApproval.version, "allow-once"); expect(JSON.parse((await stopping).content)).toMatchObject({ result: { listening: false } });
+    const controller = new AbortController(), cancelledTool = call("automationEvents.startListener", { expectedRevision: http.snapshot().revision, port: input.port });
+    const cancelled = tools.requestAndWait(run.id, randomUUID(), cancelledTool, controller.signal); controller.abort(); await expect(cancelled).rejects.toThrow(); expect(http.snapshot().listening).toBe(false);
+    const unknownTool = call("automationEvents.startListener", { expectedRevision: http.snapshot().revision, port: input.port });
+    const interrupted = f.repository.prepareToolInvocation({ runtimeRunId: run.id, toolCallId: randomUUID(), idempotencyKey: randomUUID(), tool: unknownTool });
+    f.repository.resolveToolApproval(interrupted.approval.id, interrupted.approval.version, "allow-once");
+    f.repository.transitionToolInvocation(interrupted.invocation.id, "dispatching"); f.repository.transitionToolInvocation(interrupted.invocation.id, "running");
+    f.repository.interruptProductToolInvocation(interrupted.invocation.id, JSON.stringify({ status: "unknown" }));
+    expect(() => product.validate(unknownTool, run.id)).toThrowError(expect.objectContaining({ code: "TOOL_STATE_INVALID" })); expect(http.snapshot().listening).toBe(false);
+    const task = f.repository.tasks.create({ title: "No global listener permission", parentSessionId: f.owner.session.id, expectedScopeVersion: f.repository.tasks.scopeVersion(f.owner.session.id), clientNonce: randomUUID(), selections: [{ executorBotId: f.owner.bot.id, memories: [], history: [], workspaces: [], mcp: [], resourceRefs: [], mediaRefs: [], productOperations: ["automationEvents.startListener"], network: false, clipboard: false }] });
+    expect(() => product.validate(call("automationEvents.startListener", { expectedRevision: http.snapshot().revision, port: input.port }), runtime(f, task.session.id).id)).toThrowError(expect.objectContaining({ code: "RUNTIME_CONTROL_SCOPE_INVALID" }));
+    f.repository.transitionRuntimeRun(run.id, "completed"); expect(() => product.validate(tool, run.id)).toThrowError(expect.objectContaining({ code: "TOOL_EXECUTION_CANCELLED" }));
+  });
+
+  it("rechecks actual group membership after bind before exposing the listener", async () => {
+    const f = fixture(), third = f.repository.createBot(), room = f.repository.createRoom({ name: "Scope review", leadBotId: null, memberBotIds: [f.owner.bot.id, f.other.bot.id, third.bot.id] }), run = runtime(f, room.session.id), http = new EventHttpServer(f.events), workspace = new WorkspaceService(f.repository), executor = new WorkspaceToolExecutor(f.repository, workspace), tools = new WorkspaceToolCoordinator(f.repository, executor, () => {}), rooms = new RoomCoordinator(f.repository, f.worker.executor, { transcript: () => {}, roomRuntime: () => {} });
+    cleanup.push(async () => { await http.shutdown(); await rooms.shutdown(); });
+    const product = new ProductOperationService({ repository: f.repository, routineService: f.routines, automationEventService: f.events, automationEventHttp: http, workspaceService: workspace, workspaceToolCoordinator: tools, sendWorker: f.worker, roomCoordinator: rooms, generalSettings: new GeneralSettingsService(f.repository), providers: { list: async () => [], isSupported: () => true }, updateService: {} } as unknown as ProductDependencies); executor.setProductOperations(product);
+    const probe = await http.start(); await http.stop();
+    const tool = call("automationEvents.startListener", { expectedRevision: http.snapshot().revision, port: probe.port! });
+    product.validate(tool, run.id);
+    const prepared = f.repository.prepareToolInvocation({ runtimeRunId: run.id, toolCallId: randomUUID(), idempotencyKey: randomUUID(), tool });
+    f.repository.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
+    const executing = executor.execute(prepared.invocation.id), server = Reflect.get(http, "server") as import("node:http").Server;
+    expect(server).not.toBeNull();
+    server.once("listening", () => {
+      // Force the real persisted retirement boundary while the approved OS bind is pending.
+      const concurrent = new DatabaseSync(f.path); concurrent.prepare("DELETE FROM room_members WHERE room_id=? AND bot_id=?").run(room.room.id, f.owner.bot.id); concurrent.close();
+    });
+    await expect(executing).rejects.toThrow(); expect(http.snapshot()).toMatchObject({ listening: false, port: null, busy: false }); expect(server.listening).toBe(false);
   });
 
   it("retains durable event ancestry through an actual Routine and approved AI delegation", async () => {

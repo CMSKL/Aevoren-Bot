@@ -1,7 +1,7 @@
 import { BOT_IMAGE_CHANNELS } from "@shared/bot-image-channels";
 import { REALTIME_CHANNELS } from "@shared/realtime-channels";
 import { AUTOMATION_EVENT_CHANNELS } from "@shared/event-channels";
-import { eventListenerSchema, eventVersionSchema } from "@shared/event-schemas";
+import { eventVersionSchema } from "@shared/event-schemas";
 import { realtimeStartSchema, realtimeAppendSchema, realtimeCommitSchema, realtimePlaybackSchema, realtimeInputSchema } from "@shared/realtime-schemas";
 import type { RealtimeService } from "./realtime-service";
 import { captureRealtimeAdmission } from "./realtime-admission";
@@ -41,14 +41,6 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
   ipcMain.handle(AUTOMATION_EVENT_CHANNELS.rotateToken, (event, input: unknown) => apiResult(() => {
     assertTrusted(event, window); if (!dependencies.automationEventService) throw new AevorenBotError("INTERNAL_ERROR");
     return dependencies.automationEventService.rotateToken(eventVersionSchema.parse(input));
-  }));
-  ipcMain.handle(AUTOMATION_EVENT_CHANNELS.startListener, (event, input: unknown) => apiResult(() => {
-    assertTrusted(event, window); if (!dependencies.automationEventHttp) throw new AevorenBotError("INTERNAL_ERROR");
-    return dependencies.automationEventHttp.start(eventListenerSchema.parse(input));
-  }));
-  ipcMain.handle(AUTOMATION_EVENT_CHANNELS.stopListener, (event) => apiResult(() => {
-    assertTrusted(event, window); if (!dependencies.automationEventHttp) throw new AevorenBotError("INTERNAL_ERROR");
-    return dependencies.automationEventHttp.stop();
   }));
   ipcMain.handle(BOT_IMAGE_CHANNELS.cancel,(event,input:unknown)=>apiResult(()=>{assertTrusted(event,window);if(!dependencies.botImageService)throw new AevorenBotError("INVALID_REQUEST");dependencies.botImageService.cancelUI(z.string().uuid().parse(input));}));
   ipcMain.handle(REALTIME_CHANNELS.start, (event, input: unknown) => apiResult(async () => {
