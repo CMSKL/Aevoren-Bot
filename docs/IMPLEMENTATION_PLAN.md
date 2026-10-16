@@ -674,3 +674,17 @@ Windows 另有一项 Webhook 负向 HTTP 测试 fetch ECONNRESET，原日志没�
 本候选四文件30项（真实HTTP、关闭边界、CLI及内部委派）通过，五配置类型、完整构建和定向 lint 通过。按新业务字节重新执行标准未签名 macOS arm64 打包，Events2＋typed API 同轮 **3/3（30.0秒）** 通过。首项明确验证超限413及完整EOF、零接收／零模型调用，然后再验证六成员并行与所属撤销；第二项验证私有TASK元数据、冲突草稿及正常退出。拥有进程全部 exitCode=0，无强制清理，没有扩大原时限。前一轮包回执保留为修复前历史，不混为新字节结果。
 
 新Main SHA-256 `6e52d0c1ccd6378dee5df299c8e9d923eacde473476a84a457db03a3895fe85b`，ASAR `6c8dab1ee7ed089d414ef015fffd228ae6f3da97a8763e6ec7ded9c50dd38cea`；与前包相比17项应用输出仅Main变化，实际17项与216项Worker／parser输出逐字节匹配，事件指南一致。207 parser资产／237资源文件／9556 ASAR条目与四Helper声明验证通过。新持久回执为 `event43-http-{build,focused,actual-package}.log` 和 `event43-http-package-{bytes,parser,microphone}.json`。Windows及签名发行仍等待新正常门禁，不用本机成功替代其因果验证。
+
+
+## dev beta.35 historical validation retained
+
+These prior records do not replace the current beta.43 delivery status.
+
+## Beta.35 refresh after MCP34 source acceptance
+
+This branch integrated dev `a743f7d835948a051d316a74fdc3752c190eacc2`, the normal PR #37 merge. MCP34 exact source head `2ccd1c9` passed all four checks in CI 38758776745, including actual Linux Docker and macOS/Windows source plus installed-package acceptance. Prior native focus/close failures above remain historical; no unproven production fix is inferred. The dev integration and Beta promotion are still running. Source version stays beta.35, preserving its separate Notion title/append functionality. This refreshed Notion merge requires new normal cross-platform gates; it has not been released, and master remains deferred.
+
+
+### beta.43 dev beta.35 integration
+
+Merged verified dev `80ab17ecdc037b3d3f6537f0d02e82f758e37034`, retaining beta.43 functionality, version and current MCP authority checks. Relative to the freshly verified `6d2a5af` package source, only historical documentation differs; production source, shared contracts, package/build configuration and dependencies are byte-identical. Documentation and open-source checks pass. Existing package and business checks are retained without rebuilding or repeating them. Normal CI still must validate the refreshed merge.
