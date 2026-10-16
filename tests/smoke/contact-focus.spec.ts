@@ -1,6 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
@@ -29,6 +30,10 @@ test("delayed contact autofocus preserves the user's chosen field and persisted 
     const page = await application.firstWindow();
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
+    const rendererUrl = pathToFileURL(join(await application.evaluate(({ app }) => app.getAppPath()), "out", "renderer", "index.html")).href;
+    // Readiness is tied to the real document, not the early BrowserWindow event.
+    await page.waitForURL(rendererUrl, { waitUntil: "domcontentloaded" });
+    await expect(page.locator(".app-shell")).toBeVisible();
     await page.getByRole("tab", { name: "联系人", exact: true }).click();
     await page.locator(".sidebar").getByRole("listitem", { name: "研究员", exact: true }).click();
     const contact = page.getByRole("main", { name: "联系人资料", exact: true });
@@ -82,6 +87,14 @@ test("delayed contact autofocus preserves the user's chosen field and persisted 
     expect(readProfile()).toEqual({ name: "研究员", description });
     expect(errors).toEqual([]);
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(window => !window.isVisible()))).toBe(true);
+  } catch (error) {
+    const page = application.windows()[0];
+    const document = await page?.evaluate(() => ({ readyState: window.document.readyState, hasApi: Boolean((window as unknown as { aevorenBot?: unknown }).aevorenBot),
+      shell: Boolean(window.document.querySelector(".app-shell")), focusTag: window.document.activeElement?.tagName ?? null,
+      selectedTab: window.document.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute("aria-selected") ?? null,
+    })).catch(() => ({ unavailable: true }));
+    await test.info().attach("contact-initial-document-state", { body: JSON.stringify(document ?? { unavailable: true }), contentType: "application/json" });
+    throw error;
   } finally {
     // The business body retains its 30s deadline. Teardown gets its own bounded
     // allowance after those focus, persistence and hidden-window checks finish.

@@ -688,3 +688,11 @@ This branch integrated dev `a743f7d835948a051d316a74fdc3752c190eacc2`, the norma
 ### beta.43 dev beta.35 integration
 
 Merged verified dev `80ab17ecdc037b3d3f6537f0d02e82f758e37034`, retaining beta.43 functionality, version and current MCP authority checks. Relative to the freshly verified `6d2a5af` package source, only historical documentation differs; production source, shared contracts, package/build configuration and dependencies are byte-identical. Documentation and open-source checks pass. Existing package and business checks are retained without rebuilding or repeating them. Normal CI still must validate the refreshed merge.
+
+### Native35 parallel-frame focus evidence
+
+PR53 preview CI38837437002 at dev `80ab17e` passed all ordinary verification, then actual Linux Docker40/41. One of six scopes rejected a desktop screenshot at the unchanged focus-before check: epoch1/AI owner/page known and open/document version5 remained stable; no observation was created. Later native diagnostics showed the Chrome window active/focused with no OOM, but did not preserve the exact trusted-world result or window-manager readiness at the rejection. This does not establish a product cause or permit bypassing409.
+
+The opt-in Worker diagnostic now saves only the existing focus check's numeric CDP stage, focused/closed booleans and presence of a JavaScript exception, capped at20 pages. It neither issues extra CDP reads nor repeats bringToFront, input or capture. Raw exception text, URL, DOM, title, frame/page IDs, cookies and credentials remain excluded. The failure-only controlled Docker fixture separately reports numeric supporting-WM window and Openbox process presence without input.
+
+Focused frame/Worker tests passed15/15, with the same409, capture counts and access rules; Browser Worker TypeScript, targeted lint and build passed. Rebuilt engine SHA256 `f2146a8a8185d1646441751a706adb07c30639f79fa8abd591a23a74adc87617`; server `41e2318a05a29e20c1b0777f2d28d2871ecad5505b553ff9d2970d7b55898a73`. This is diagnostic code, not a focus fix. No local Docker or application/package rebuild was performed; older package receipts remain historical and fresh normal CI must build/test the new image and platform packages before promotion.

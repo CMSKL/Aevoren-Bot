@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { _electron as electron, expect, test } from "@playwright/test";
 import type { AevorenBotApi } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
@@ -21,7 +22,20 @@ test("hidden demonstration UI retains conflicts and publishes only an explicitly
       const resourcesPath = await app.evaluate(() => process.resourcesPath);
       expect(readFileSync(join(resourcesPath, "docs", "SKILL_DEMONSTRATIONS.md"), "utf8")).toContain("Browser Worker **1.1.0**");
     }
-    const page = await app.firstWindow(); const errors: string[] = []; page.on("pageerror", error => errors.push(error.message)); await expect(page.locator(".app-shell")).toBeVisible();
+    const page = await app.firstWindow(); const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+    const rendererUrl = pathToFileURL(join(await app.evaluate(({ app }) => app.getAppPath()), "out", "renderer", "index.html")).href;
+    try {
+      // A window event can precede its initial production document navigation.
+      await page.waitForURL(rendererUrl, { waitUntil: "domcontentloaded" });
+      await expect(page.locator(".app-shell")).toBeVisible();
+    } catch (error) {
+      const main = await app.evaluate(({ app, BrowserWindow }) => ({ ready: app.isReady(), windows: BrowserWindow.getAllWindows().map(window => ({
+        destroyed: window.isDestroyed(), loading: window.webContents.isLoadingMainFrame(), rendererFile: /^file:.*[/\\]out[/\\]renderer[/\\]index\.html$/u.test(window.webContents.getURL()),
+      })) })).catch(() => ({ unavailable: true }));
+      const document = await page.evaluate(() => ({ readyState: window.document.readyState, hasApi: Boolean((window as unknown as { aevorenBot?: unknown }).aevorenBot) })).catch(() => ({ unavailable: true }));
+      await test.info().attach("demonstration-initial-document", { body: JSON.stringify({ main, document, pageErrorCount: errors.length }), contentType: "application/json" });
+      throw error;
+    }
     await page.getByRole("listitem", { name: "示范验收 Bot", exact: true }).click();
     await expect(page.getByRole("heading", { name: "示范验收 Bot", exact: true })).toBeVisible();
     await openInspector(page); const inspector = page.getByRole("main", { name: "联系人资料", exact: true }); await inspector.getByRole("tab", { name: "电脑", exact: true }).click();

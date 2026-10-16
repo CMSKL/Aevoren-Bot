@@ -53,8 +53,37 @@ describe("opt-in stale frame diagnostics", () => {
     const diagnostic = JSON.parse(String(bytes)) as Record<string, unknown>;
     expect(diagnostic).toMatchObject({ phase, desktop: true, ai: true, expectedEpoch: 7, currentEpoch: 7, ownerIsAi: true,
       pageKnown: true, pageClosed: false, pageCount: 1, versionBefore: 4, versionAfter: phase.startsWith("document-version") ? 5 : 4 });
-    expect(Object.values(diagnostic).every(value => value === phase || value === null || typeof value === "boolean" || typeof value === "number")).toBe(true);
+    const { focusChecks, ...scalar } = diagnostic;
+    expect(Object.values(scalar).every(value => value === phase || value === null || typeof value === "boolean" || typeof value === "number")).toBe(true);
+    expect(focusChecks).toEqual([{ focused: phase !== "focus-before" && phase !== "focus-after", closed: false, stage: 3, exception: false }]);
     expect(String(bytes)).not.toContain("PRIVATE_");
+  });
+
+  it.each(["Page.getFrameTree", "Page.createIsolatedWorld", "Runtime.evaluate"])("classifies an existing %s failure without recording provider error text", async method => {
+    vi.stubEnv("AEVOREN_BROWSER_DIAGNOSTICS", "1");
+    const f = await fixture("focus-before"), original = vi.mocked(f.record.session.send).getMockImplementation()!;
+    vi.mocked(f.record.session.send).mockImplementation(async (name, ...args) => {
+      if (name === method) throw new Error("PRIVATE_CDP_ERROR_WITH_URL_AND_TOKEN");
+      return Reflect.apply(original, f.record.session, [name, ...args]);
+    });
+    await expect(f.engine.perform("desktop-frame", { actor: "ai", expectedEpoch: 7, pageId: f.record.id })).rejects.toMatchObject({ code: "BROWSER_OBSERVATION_STALE", status: 409 });
+    const diagnostic = JSON.parse(String(vi.mocked(writeFile).mock.calls[0]![1]));
+    expect(diagnostic.focusChecks).toEqual([{ focused: false, closed: false, stage: ["Page.getFrameTree", "Page.createIsolatedWorld", "Runtime.evaluate"].indexOf(method), exception: false }]);
+    expect(f.capture).not.toHaveBeenCalled();
+    expect(JSON.stringify(diagnostic)).not.toContain("PRIVATE_");
+  });
+
+  it("records only the presence of a JavaScript exception in the trusted focus result", async () => {
+    vi.stubEnv("AEVOREN_BROWSER_DIAGNOSTICS", "1");
+    const f = await fixture("focus-before"), original = vi.mocked(f.record.session.send).getMockImplementation()!;
+    vi.mocked(f.record.session.send).mockImplementation(async (name, ...args) => name === "Runtime.evaluate"
+      ? { result: { value: false }, exceptionDetails: { text: "PRIVATE_FOCUS_EXCEPTION" } }
+      : Reflect.apply(original, f.record.session, [name, ...args]));
+    await expect(f.engine.perform("desktop-frame", { actor: "ai", expectedEpoch: 7, pageId: f.record.id })).rejects.toMatchObject({ code: "BROWSER_OBSERVATION_STALE", status: 409 });
+    const diagnostic = JSON.parse(String(vi.mocked(writeFile).mock.calls[0]![1]));
+    expect(diagnostic.focusChecks).toEqual([{ focused: false, closed: false, stage: 3, exception: true }]);
+    expect(JSON.stringify(diagnostic)).not.toContain("PRIVATE_");
+    expect(f.capture).not.toHaveBeenCalled();
   });
 
   it("does not write diagnostics unless explicitly enabled", async () => {
