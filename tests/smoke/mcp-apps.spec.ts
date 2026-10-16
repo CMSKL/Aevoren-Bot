@@ -14,6 +14,7 @@ import type { EnvironmentScope } from "../../src/shared/environment-contracts";
 import type { McpWriteApi } from "../../src/shared/mcp-write-contracts";
 import { AppRepository } from "../../src/main/database";
 import { NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "../../src/shared/native-outbound-channels";
+import { IPC } from "../../src/shared/channels";
 import { openBotList } from "./navigation";
 import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
 
@@ -274,6 +275,64 @@ test("MCP fixed operation uses a real approval and an opaque App sandbox with sc
     await f.page.getByRole("button", { name: "确认 MCP 工具授权", exact: true }).click();
     await expect(f.page.locator('iframe[title^="MCP App："]')).toHaveCount(0);
     expect(f.writes()).toBe(2);
+  });
+});
+
+test("keeps approval disabled while its saved review refresh is pending and submits only once afterwards", async () => {
+  test.setTimeout(90_000);
+  await withMcp(async f => {
+    await openMcp(f.page);
+    await f.page.getByLabel("当前聊天的 MCP 服务器", { exact: true }).selectOption(f.serverId);
+    await f.page.getByLabel("当前 MCP 工具", { exact: true }).selectOption("change");
+    await f.page.getByRole("button", { name: "授权当前成员使用此工具", exact: true }).click();
+    await f.page.getByRole("button", { name: "确认 MCP 工具授权", exact: true }).click();
+    await f.page.getByLabel("MCP 工具参数 JSON", { exact: true }).fill('{"target":"review-refresh","value":"once"}');
+    await f.page.getByLabel("MCP 写入目标说明", { exact: true }).fill("review-refresh");
+    await f.page.getByRole("button", { name: "准备固定 MCP 操作", exact: true }).click();
+    await f.page.getByRole("button", { name: "审阅并批准固定 MCP 操作", exact: true }).click();
+    const dialog = f.page.getByTestId("tool-permission-dialog");
+    const allow = dialog.getByRole("button", { name: "仅允许一次", exact: true });
+    await expect(allow).toBeEnabled();
+    const approvalId = await f.page.evaluate(async sessionId => {
+      const result = await (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.approvals.listPending({ sessionId });
+      if (!result.ok || result.data.length !== 1) throw new Error("Missing owned approval");
+      return result.data[0]!.id;
+    }, f.scope.sessionId);
+    await f.application.evaluate(({ ipcMain }, input) => {
+      const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => unknown> })._invokeHandlers;
+      const original = handlers.get(input.channel);
+      if (!original) throw new Error("Missing approval review handler");
+      const gate = { entered: false, release: undefined as (() => void) | undefined, original };
+      (globalThis as { ownedReviewGate?: typeof gate }).ownedReviewGate = gate;
+      ipcMain.removeHandler(input.channel);
+      ipcMain.handle(input.channel, async (...args: unknown[]) => {
+        const result = await original(...args);
+        if ((args[1] as { id?: string } | undefined)?.id !== input.approvalId || gate.entered) return result;
+        gate.entered = true;
+        await new Promise<void>(resolve => { gate.release = resolve; });
+        return result;
+      });
+    }, { channel: IPC.approvalsReview, approvalId });
+    try {
+      await expect.poll(() => f.application.evaluate(() => (globalThis as { ownedReviewGate?: { entered: boolean } }).ownedReviewGate?.entered)).toBe(true);
+      await expect(allow).toBeDisabled();
+      await expect(dialog.getByRole("button", { name: "拒绝", exact: true })).toBeEnabled();
+      await expect(dialog.getByRole("button", { name: "停止任务", exact: true })).toBeEnabled();
+      expect(f.writes()).toBe(0);
+      await f.application.evaluate(() => (globalThis as { ownedReviewGate?: { release?: () => void } }).ownedReviewGate?.release?.());
+      await expect(allow).toBeEnabled();
+      await allow.click();
+      await expect.poll(f.writes).toBe(1);
+      await expect(dialog).toHaveCount(0);
+      await expect.poll(f.receiptState).toMatchObject({ approvals: [{ state: "allowed", resolution: "allow-once" }], tools: [{ state: "succeeded" }] });
+    } finally {
+      await test.info().attach("controlled-review-refresh", { body: JSON.stringify({ writes: f.writes(), receipts: f.receiptState(), held: await f.application.evaluate(() => (globalThis as { ownedReviewGate?: { entered: boolean } }).ownedReviewGate?.entered) }), contentType: "application/json" });
+      await f.application.evaluate(({ ipcMain }, channel) => {
+        const gate = (globalThis as { ownedReviewGate?: { release?: () => void; original: (...args: unknown[]) => unknown } }).ownedReviewGate;
+        gate?.release?.();
+        if (gate) { ipcMain.removeHandler(channel); ipcMain.handle(channel, gate.original); }
+      }, IPC.approvalsReview);
+    }
   });
 });
 

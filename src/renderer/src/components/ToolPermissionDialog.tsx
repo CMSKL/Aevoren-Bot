@@ -27,6 +27,7 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
   const dialogRef = useRef<HTMLElement>(null);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const [failed, setFailed] = useState(false);
   const [review, setReview] = useState<{ key: string; request: number; data: ScriptReviewLoad } | null>(null);
   const reviewRequestRef = useRef(0);
@@ -86,13 +87,14 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
     const refresh = async (): Promise<void> => {
       if (inFlight) return;
       inFlight = true;
+      setReviewing(true);
       const request = ++reviewRequestRef.current;
       try {
         const result = await window.aevorenBot.approvals.review({ sessionId: approval.sessionId, executorBotId: approval.executorBotId, id: approval.id, expectedVersion: approval.version });
         if (disposed || request !== reviewRequestRef.current) return;
         setReview({ key: reviewKey, request, data: result.ok ? { status: "ready", result: result.data } : { status: "unavailable", reason: result.error.safeMessage } });
       } catch { if (!disposed && request === reviewRequestRef.current) { reviewRequestRef.current += 1; setReview(null); } }
-      finally { inFlight = false; }
+      finally { inFlight = false; if (!disposed) setReviewing(false); }
     };
     const timer = setInterval(() => void refresh(), 1000);
     return () => { disposed = true; clearInterval(timer); };
@@ -113,7 +115,7 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
-        aria-busy={busy}
+        aria-busy={busy || reviewing}
         tabIndex={-1}
         data-testid="tool-permission-dialog"
         onKeyDown={(event) => {
@@ -144,7 +146,7 @@ export function ToolPermissionDialog({ approval, invocation, label, botName, onR
         <footer>
           <button type="button" className="text-button" disabled={busy} onClick={onStop}>停止任务</button>
           <div>
-            <button type="button" className={publicRead && onRememberPublicRead ? "secondary-button" : "primary-button"} disabled={busy || !canAllow} onClick={() => void decide("allow-once")}>仅允许一次</button>
+            <button type="button" className={publicRead && onRememberPublicRead ? "secondary-button" : "primary-button"} disabled={busy || reviewing || !canAllow} onClick={() => void decide("allow-once")}>仅允许一次</button>
             {publicRead && onRememberPublicRead ? <button type="button" className="primary-button" disabled={busy} onClick={() => void decide("remember")}>{busy ? "正在保存…" : "允许公开查询并记住"}</button> : null}
           </div>
         </footer>
