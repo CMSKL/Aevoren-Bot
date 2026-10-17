@@ -295,6 +295,14 @@ test("MCP fixed operation uses a real approval and an opaque App sandbox with sc
       expect(f.writes()).toBe(1);
       await approval.getByRole("button", { name: "仅允许一次", exact: true }).click();
       await expect.poll(f.writes).toBe(2);
+      // A remote write receipt can precede the response reaching the App frame.
+      // Finish the real RPC before revoking its grant and starting teardown.
+      await expect(inner.locator("body")).toHaveAttribute("data-write", /"result":/u);
+      const appReply = JSON.parse((await inner.locator("body").getAttribute("data-write"))!) as { jsonrpc?: unknown; result?: unknown; error?: unknown };
+      expect(appReply.jsonrpc).toBe("2.0");
+      expect(appReply).toHaveProperty("result");
+      expect(appReply).not.toHaveProperty("error");
+      await test.info().attach("mcp-completed-app-rpc", { body: JSON.stringify({ responseReceived: true, hasResult: true, rpcPhases }), contentType: "application/json" });
     } catch (error) {
       const receiptState = (() => { try { return f.receiptState(); } catch { return { unavailable: true }; } })();
       const dialogCount = await approval.count().catch(() => null);
