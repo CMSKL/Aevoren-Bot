@@ -2,6 +2,8 @@
 
 ## Unreleased — compact messenger interface
 
+- Open Computer to prepare its scoped execution environment and browser automatically, with in-place progress, Docker recovery, cancellation and retry. Combine takeover and connection in one action, prioritize the actual screen, and retain technical controls under More. Existing images, background services and per-member isolation remain intact.
+
 - Replace the navigation rail with a compact conversation list, keyboard-search dialog and account navigation menu. Open existing app settings through Connect apps.
 - Add centered title capsules and modeless Bot/group details drawers, with primary tabs and a More menu for retained tools. Preserve session bindings and draft-save guards.
 - Present existing settings in a modal and compact the composer into a growing text field plus an attachment/Skill/routing menu. Keep selected references visible and tool approvals reachable.

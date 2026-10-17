@@ -1,3 +1,4 @@
+import { selectDetailsTab } from "../smoke/navigation";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -108,7 +109,7 @@ test.describe("actual Linux Docker through hidden Electron", () => {
       await f.page.getByRole("listitem", { name: bot.name, exact: true }).click();
       await openInspector(f.page);
       const contact = f.page.getByRole("main", { name: "联系人资料", exact: true });
-      await contact.getByRole("tab", { name: "执行环境", exact: true }).click();
+      await selectDetailsTab(contact, "执行环境");
       const panel = contact.getByRole("region", { name: "执行环境", exact: true });
       await expect(panel.getByRole("button", { name: "启动环境", exact: true })).toBeEnabled();
       await panel.getByRole("button", { name: "启动环境", exact: true }).click();
@@ -158,7 +159,7 @@ test.describe("actual Linux Docker through hidden Electron", () => {
       await f.page.getByRole("listitem", { name: f.room.name, exact: true }).click();
       await openInspector(f.page);
       const dialog = f.page.getByRole("dialog", { name: "群聊设置", exact: true });
-      await dialog.getByRole("tab", { name: "执行环境", exact: true }).click();
+      await selectDetailsTab(dialog, "执行环境");
       const member = dialog.getByLabel("执行环境成员", { exact: true });
       const panel = dialog.getByRole("region", { name: "执行环境", exact: true });
       const firstDraft = "printf 'GROUP_A_DRAFT_PRESERVED\\n'";
@@ -210,7 +211,7 @@ test.describe("actual Linux Docker through hidden Electron", () => {
       await f.page.getByRole("listitem", { name: bot.name, exact: true }).click();
       await openInspector(f.page);
       const contact = (): ReturnType<Page["getByRole"]> => f.page.getByRole("main", { name: "联系人资料", exact: true });
-      await contact().getByRole("tab", { name: "执行环境", exact: true }).click();
+      await selectDetailsTab(contact(), "执行环境");
       const panel = (): ReturnType<Page["getByRole"]> => contact().getByRole("region", { name: "执行环境", exact: true });
       await expect(panel().getByRole("button", { name: "启动环境", exact: true })).toBeEnabled();
       await panel().getByRole("button", { name: "启动环境", exact: true }).click();
@@ -243,7 +244,7 @@ test.describe("actual Linux Docker through hidden Electron", () => {
       expect(value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.processes.listPorts(input), scope))[0]?.state).toBe("listening");
       await f.page.getByRole("listitem", { name: bot.name, exact: true }).click();
       await openInspector(f.page);
-      await contact().getByRole("tab", { name: "执行环境", exact: true }).click();
+      await selectDetailsTab(contact(), "执行环境");
       const afterCommand = `node -e 'console.log("NEW_FOREGROUND_AFTER_RESTART=" + (6 * 7 + 1))'`;
       await panel().getByLabel("执行命令", { exact: true }).fill(afterCommand);
       await panel().getByRole("button", { name: "运行命令", exact: true }).click();

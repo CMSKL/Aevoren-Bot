@@ -7,7 +7,7 @@ import { LIBRARY_CHANNELS } from "@shared/library-channels";
 import { MEDIA_CHANNELS, MEDIA_CHANGED_CHANNEL } from "@shared/media-channels";
 import type { MediaChangedEvent } from "@shared/media-contracts";
 import { ENVIRONMENT_CHANNELS, EXECUTION_CHANNELS, PROCESS_CHANNELS, ENVIRONMENT_EVENTS } from "@shared/environment-channels";
-import { BROWSER_CHANNELS, COMPUTER_CHANNELS, PREVIEW_CHANNELS, BROWSER_EVENTS } from "@shared/browser-channels";
+import { BROWSER_CHANNELS, COMPUTER_CHANNELS, COMPUTER_UI_CHANNELS, PREVIEW_CHANNELS, BROWSER_EVENTS } from "@shared/browser-channels";
 import { SKILL_EXECUTION_CHANNELS, SKILL_EXECUTION_EVENTS } from "@shared/skill-execution-channels";
 import { NATIVE_CONNECTOR_CHANNELS, CONNECTOR_DRAFT_CHANNELS } from "@shared/native-connector-channels";
 import type { SkillExecutionChangedEvent } from "@shared/skill-execution-contracts";
@@ -118,6 +118,9 @@ const api: AevorenBotApi = {
     onChanged: onBrowserChanged,
   },
   computer: {
+    startupStatus: input => ipcRenderer.invoke(COMPUTER_UI_CHANNELS.startupStatus, input),
+    cancelStartup: input => ipcRenderer.invoke(COMPUTER_UI_CHANNELS.cancelStartup, input),
+    openDocker: input => ipcRenderer.invoke(COMPUTER_UI_CHANNELS.openDocker, input),
     view: input => ipcRenderer.invoke(COMPUTER_CHANNELS.view, input),
     screenshot: input => ipcRenderer.invoke(COMPUTER_CHANNELS.screenshot, input),
     click: input => ipcRenderer.invoke(COMPUTER_CHANNELS.click, input),

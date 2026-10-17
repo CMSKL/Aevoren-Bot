@@ -64,8 +64,16 @@ export type PreviewOpenInput = BrowserEpochInput & { clientNonce: string; regist
 export type PreviewCloseInput = BrowserEpochInput & { clientNonce: string; id: string };
 /** A separate app-preview capability; never the execution or browser administration credential. */
 export type ExecutionPreviewTicket = { id: string; registeredPortId: string; processId: string; port: number; host: string; expiresAt: string };
-export type BrowserChangedEvent = BrowserScope & { type: "browser" | "pages" | "control" | "download" | "preview";
-  browserSessionId: string; controlEpoch: number };
+export type ComputerStartup = {
+  attemptId: string;
+  phase: "checking" | "preparing-environment" | "starting-environment" | "preparing-browser" | "starting-browser" | "ready" | "error" | "cancelled";
+  message: string;
+  blocker: "docker-missing" | "docker-stopped" | "docker-unsupported" | "startup-failed" | null;
+};
+export type BrowserChangedEvent = BrowserScope & (
+  { type: "startup"; startup: ComputerStartup } |
+  { type: "browser" | "pages" | "control" | "download" | "preview"; browserSessionId: string; controlEpoch: number }
+);
 
 export type BrowserApi = {
   get(input: BrowserScope): Promise<ApiResult<BrowserSession | null>>;
@@ -86,6 +94,9 @@ export type BrowserApi = {
   onChanged(listener: (event: BrowserChangedEvent) => void): () => void;
 };
 export type ComputerApi = {
+  startupStatus(input: BrowserScope): Promise<ApiResult<ComputerStartup | null>>;
+  cancelStartup(input: BrowserScope & { attemptId: string }): Promise<ApiResult<ComputerStartup | null>>;
+  openDocker(input: BrowserScope): Promise<ApiResult<void>>;
   view(input: BrowserScope): Promise<ApiResult<ComputerView | null>>;
   screenshot(input: ComputerScreenshotInput): Promise<ApiResult<ComputerScreenshot>>;
   click(input: ComputerClickInput): Promise<ApiResult<BrowserPage>>;

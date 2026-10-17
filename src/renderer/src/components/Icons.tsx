@@ -32,4 +32,6 @@ export {
   FileText as DocumentIcon,
   ArrowRight as ArrowRightIcon,
   WarningCircle as WarningIcon,
+  CircleNotch as LoadingIcon,
+  Circle as StatusDotIcon,
 } from "@phosphor-icons/react";

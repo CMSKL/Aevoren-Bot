@@ -243,7 +243,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
       <div className="room-detail-identity"><RoomAvatar bots={detail.members.map(member => member.bot)} userProfile={userProfile} size={64} /><h3>{detail.room.name}</h3></div>
       <DetailsTabs idPrefix={`room-${detail.room.id}`} label="群聊配置" tabs={[
         { id: "details", label: "详情" }, { id: "library", label: "资料库" }, { id: "members", label: "成员" },
-        { id: "skill", label: "Skill" }, { id: "environment", label: "执行环境" }, { id: "browser", label: "浏览器" }, { id: "computer", label: "电脑" }, { id: "apps", label: "应用" },
+        { id: "skill", label: "Skill" }, { id: "environment", label: "高级工具" }, { id: "browser", label: "电脑工具" }, { id: "computer", label: "电脑" }, { id: "apps", label: "应用" },
       ]} primary={["details", "library", "members"]} value={tab} disabled={changingTab} onChange={next => changeTab(next as InspectorTab)} />
       <div id={`room-${detail.room.id}-details-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-details-tab`} hidden={tab !== "details"}>
       <ConversationWorkspace {...conversationWorkspace} />

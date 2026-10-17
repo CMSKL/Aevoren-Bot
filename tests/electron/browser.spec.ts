@@ -11,8 +11,8 @@ import { ENV_WORKER_VERSION } from "../../src/shared/environment-contracts";
 import { AppRepository } from "../../src/main/database";
 import { DockerDriver } from "../../src/main/docker-driver";
 import { BrowserDockerDriver } from "../../src/main/browser-docker-driver";
-import { openInspector } from "../smoke/navigation";
-import { removeTestDirectory } from "../smoke/test-cleanup";
+import { openInspector, selectDetailsTab } from "../smoke/navigation";
+import { closeTestApplication, removeTestDirectory } from "../smoke/test-cleanup";
 
 type TestBot = { id: string; sessionId: string; name: string };
 type Fixture = { page: Page; application: ElectronApplication; bots: TestBot[]; room: { id: string; sessionId: string; name: string }; url: string; cookie: string; downloadPath: string };
@@ -20,24 +20,19 @@ function value<T>(result: ApiResult<T>): T { if (!result.ok) throw new Error(`${
 async function control(page: Page, scope: BrowserScope): Promise<ComputerView | null> {
   return value(await page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computer.view(input), scope));
 }
-async function closeApplication(application: ElectronApplication): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try { await Promise.race([application.close(), new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("fixture close timeout")), 15_000); })]); }
-  catch { application.process().kill("SIGKILL"); }
-  finally { if (timer) clearTimeout(timer); }
-}
 function shellQuote(text: string): string { return `'${text.replaceAll("'", "'\\''")}'`; }
 
 async function withBrowser(callback: (fixture: Fixture) => Promise<void>): Promise<void> {
   const directory = mkdtempSync(join(tmpdir(), "aevoren-electron-browser-"));
   const databasePath = join(directory, "aevoren-bot.sqlite");
   const repository = new AppRepository(databasePath);
-  const bots = ["浏览器验收成员 A", "浏览器验收成员 B"].map(name => {
+  const bots = ["浏览器验收成员 A", "浏览器验收成员 B"].map((name, index) => {
     const created = repository.createBot();
-    const bot = repository.updateBot(created.bot.id, created.bot.version, { name });
+    const bot = repository.updateBot(created.bot.id, created.bot.version, { name, avatarShape: "rounded", avatarColor: index === 0 ? "cobalt" : "cyan" });
     return { id: bot.id, sessionId: created.session.id, name };
   });
   const createdRoom = repository.createRoom({ name: "浏览器验收群", memberBotIds: bots.map(bot => bot.id), leadBotId: null });
+  repository.setSetting("appearance.theme", "dark", false);
   repository.setSetting("memory.capture.enabled", "false", false); repository.close();
   const cookie = randomUUID(); const route = `/fixture-${randomUUID()}`;
   const bytes = Buffer.from("BROWSER_ACTUAL_DOWNLOAD\n", "utf8");
@@ -50,6 +45,7 @@ async function withBrowser(callback: (fixture: Fixture) => Promise<void>): Promi
   });
   let application: ElectronApplication | undefined;
   const downloadPath = join(directory, "browser-downloaded.txt");
+  let closeError: unknown;
   try {
     await new Promise<void>(accept => server.listen(0, "0.0.0.0", accept));
     const address = server.address(); if (!address || typeof address === "string") throw new Error("fixture server port missing");
@@ -79,7 +75,7 @@ async function withBrowser(callback: (fixture: Fixture) => Promise<void>): Promi
     expect(errors).toEqual([]);
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
   } finally {
-    if (application) await closeApplication(application);
+    if (application) { try { await closeTestApplication(application); } catch (error) { closeError = error; } }
     server.closeAllConnections();
     await new Promise<void>(accept => server.close(() => accept()));
     const cleanup = new AppRepository(databasePath);
@@ -96,6 +92,7 @@ async function withBrowser(callback: (fixture: Fixture) => Promise<void>): Promi
     for (const environment of environments) { await docker.stop(environment.id); await docker.remove(environment.id); command(["volume", "rm", `aevoren-work-${environment.id}`, `aevoren-state-${environment.id}`]); command(["network", "rm", `aevoren-scope-${environment.id}`]); }
     removeTestDirectory(directory);
   }
+  if (closeError) throw closeError;
 }
 
 async function nativeUrl(page: Page, canvas: Locator, url: string, newTab = false): Promise<void> {
@@ -111,7 +108,7 @@ async function privateInspector(f: Fixture, bot: TestBot): Promise<Locator> {
 }
 async function startBrowser(f: Fixture, parent: Locator, scope: BrowserScope): Promise<Locator> {
   value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.environments.start(input), scope));
-  await parent.getByRole("tab", { name: "浏览器", exact: true }).click();
+  await selectDetailsTab(parent, "浏览器");
   const panel = parent.getByRole("region", { name: "浏览器", exact: true });
   await expect(panel.getByRole("button", { name: "启动浏览器与电脑", exact: true })).toBeEnabled();
   await panel.getByRole("button", { name: "启动浏览器与电脑", exact: true }).click();
@@ -119,8 +116,8 @@ async function startBrowser(f: Fixture, parent: Locator, scope: BrowserScope): P
   return panel;
 }
 async function takeover(panel: Locator): Promise<void> {
-  await panel.getByRole("button", { name: "接管电脑", exact: true }).click();
-  await expect(panel.getByRole("button", { name: "归还 AI", exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "我来操作", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "交给 AI", exact: true })).toBeVisible();
 }
 async function navigate(panel: Locator, url: string): Promise<void> {
   await panel.getByLabel("浏览器网址", { exact: true }).fill(url); await panel.getByRole("button", { name: "打开网址", exact: true }).click();
@@ -133,6 +130,49 @@ test.describe("actual browser companion through hidden Electron", () => {
   test.skip(process.platform !== "darwin" && process.platform !== "win32", "This desktop fixture uses Docker Desktop's actual host alias.");
   test.setTimeout(300_000);
 
+  test("opens a cold computer, connects with one takeover action, and returns real control to AI", async () => {
+    await withBrowser(async f => {
+      const bot = f.bots[0]!, scope = { sessionId: bot.sessionId, executorBotId: bot.id };
+      expect(value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.environments.get(input), scope))).toBeNull();
+      const contact = await privateInspector(f, bot);
+      await selectDetailsTab(contact, "电脑");
+      const panel = contact.getByRole("region", { name: "电脑", exact: true });
+      await expect(panel.getByRole("status").first()).toHaveText("运行中", { timeout: 120_000 });
+      const image = panel.getByRole("img", { name: "当前聊天与成员的真实浏览器屏幕", exact: true });
+      await expect(image).toBeVisible();
+      expect(await image.evaluate(element => (element as HTMLImageElement).naturalWidth)).toBe(1280);
+      await expect(panel.getByRole("button", { name: "启动浏览器与电脑", exact: true })).toHaveCount(0);
+      await panel.getByRole("button", { name: "放大", exact: true }).click();
+      await expect(panel.getByRole("dialog", { name: "电脑大图", exact: true })).toBeVisible();
+      await f.page.keyboard.press("Escape");
+      await expect(panel.getByRole("dialog", { name: "电脑大图", exact: true })).toHaveCount(0);
+      await expect(panel.getByRole("button", { name: "放大", exact: true })).toBeFocused();
+      await panel.getByRole("button", { name: "我来操作", exact: true }).click();
+      const canvas = panel.locator(".computer-vnc canvas"); await expect(canvas).toBeVisible();
+      await expect.poll(() => canvas.evaluate(element => (element as HTMLCanvasElement).width)).toBe(1280);
+      const user = (await control(f.page, scope))!; expect(user.owner).toBe("user");
+      await expect(image).toBeHidden();
+      await nativeUrl(f.page, canvas, f.url);
+      await expect.poll(async () => value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser.tabs(input), { ...scope, expectedEpoch: user.epoch })).map(tab => tab.url)).toContain(f.url);
+      await expect.poll(async () => {
+        const tabs = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser.tabs(input), { ...scope, expectedEpoch: user.epoch }));
+        const target = tabs.find(tab => tab.url === f.url); if (!target) return "";
+        const observed = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser.observe(input), { ...scope, expectedEpoch: user.epoch, pageId: target.id }));
+        return observed.text;
+      }).toContain("BROWSER_ACTUAL_PAGE");
+      if (process.env.AEVOREN_COMPUTER_REAL_SCREENSHOT) await f.page.screenshot({ path: process.env.AEVOREN_COMPUTER_REAL_SCREENSHOT });
+      await panel.getByRole("button", { name: "交给 AI", exact: true }).click();
+      await expect(image).toBeVisible(); expect((await control(f.page, scope))?.owner).toBe("ai");
+      await expect(canvas).toHaveCount(0);
+      await selectDetailsTab(contact, "详情"); await selectDetailsTab(contact, "电脑");
+      await expect(image).toBeVisible();
+      await panel.getByRole("button", { name: "我来操作", exact: true }).click();
+      await expect(panel.locator(".computer-vnc canvas")).toBeVisible();
+      await panel.getByRole("button", { name: "交给 AI", exact: true }).click();
+      await expect(image).toBeVisible();
+    });
+  });
+
   test("renders real pixels, connects noVNC only after takeover, runs human DOM actions and previews an actual registered service", async () => {
     await withBrowser(async f => {
       const bot = f.bots[0]!; const scope = { sessionId: bot.sessionId, executorBotId: bot.id };
@@ -143,8 +183,8 @@ test.describe("actual browser companion through hidden Electron", () => {
       expect(await image.evaluate(element => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(1000);
       await expect(panel.locator(".computer-vnc canvas")).toHaveCount(0);
       await takeover(panel); await expect(image).toBeHidden();
-      await panel.getByRole("button", { name: "连接电脑", exact: true }).click();
-      await expect(panel.getByRole("button", { name: "电脑已连接", exact: true })).toBeVisible();
+      await expect(panel.locator(".computer-vnc canvas")).toBeVisible();
+      await expect(panel.locator(".computer-toolbar")).toContainText("你在操作");
       const canvas = panel.locator(".computer-vnc canvas"); await expect(canvas).toBeVisible();
       expect(await canvas.evaluate(element => (element as HTMLCanvasElement).width)).toBeGreaterThan(1000);
       await expect.poll(() => canvas.evaluate(element => (element as HTMLCanvasElement).getContext("2d")?.getImageData(0, 0, 1, 1).data[3])).toBe(255);
@@ -220,11 +260,11 @@ test.describe("actual browser companion through hidden Electron", () => {
       expect(focusedAfter.frame.pageId).toBe(nativeNewPage.id); expect(focusedAfter.frame.pageId).not.toBe(focusedBefore.frame.pageId);
       await panel.getByRole("button", { name: "刷新状态", exact: true }).click(); await panel.getByLabel("当前浏览器页面", { exact: true }).selectOption(selectedBeforeNativeTab);
       // The desktop's focused native tab differs from the DOM selector. UI capture must retain the actual screen's provenance.
-      await panel.getByRole("button", { name: "归还 AI", exact: true }).click(); await expect(image).toBeVisible();
-      await takeover(panel); await panel.getByRole("button", { name: "连接电脑", exact: true }).click(); await expect(canvas).toBeVisible();
+      await panel.getByRole("button", { name: "交给 AI", exact: true }).click(); await expect(image).toBeVisible();
+      await takeover(panel); await expect(panel.locator(".computer-vnc canvas")).toBeVisible(); await expect(canvas).toBeVisible();
 
       const takeoverView = (await control(f.page, scope))!;
-      await contact.getByRole("tab", { name: "执行环境", exact: true }).click();
+      await selectDetailsTab(contact, "执行环境");
       await expect(panel.locator(".computer-vnc canvas")).toHaveCount(0);
       expect(await control(f.page, scope)).toMatchObject({ owner: "user", epoch: takeoverView.epoch });
       const program = `require('node:http').createServer((q,s)=>{s.setHeader('content-type','text/html');s.end('<h1>REGISTERED_SERVICE_ACTUAL</h1>')}).listen(8230,'0.0.0.0',()=>console.log('PREVIEW_ACTUAL_LISTENING'))`;
@@ -238,7 +278,7 @@ test.describe("actual browser companion through hidden Electron", () => {
       await panel.getByRole("button", { name: "读取页面", exact: true }).click(); await expect(panel.locator(".computer-page-text")).toContainText("REGISTERED_SERVICE_ACTUAL");
       const previews = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.preview.list(input), { ...scope, expectedEpoch: takeoverView.epoch }));
       expect(previews).toEqual(expect.arrayContaining([expect.objectContaining({ registeredPortId: port.id, state: "open" })]));
-      await panel.getByRole("button", { name: "归还 AI", exact: true }).click();
+      await panel.getByRole("button", { name: "交给 AI", exact: true }).click();
       await expect.poll(async () => (await control(f.page, scope))?.owner).toBe("ai");
       expect((await control(f.page, scope))!.epoch).toBeGreaterThan(takeoverView.epoch);
       await expect(panel.getByRole("img", { name: "当前聊天与成员的真实浏览器屏幕", exact: true })).toBeVisible();
@@ -254,7 +294,7 @@ test.describe("actual browser companion through hidden Electron", () => {
       value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser.stop(input), { ...privateScope, expectedVersion: privateSession.version, clientNonce: randomUUID() }));
       await contact.getByRole("button", { name: "发消息", exact: true }).click();
       await f.page.getByRole("listitem", { name: f.room.name, exact: true }).click(); await openInspector(f.page);
-      const room = f.page.getByRole("dialog", { name: "群聊设置", exact: true }); await room.getByRole("tab", { name: "浏览器", exact: true }).click();
+      const room = f.page.getByRole("dialog", { name: "群聊设置", exact: true }); await selectDetailsTab(room, "浏览器");
       const member = room.getByLabel("浏览器成员", { exact: true }); const groupScope = { sessionId: f.room.sessionId, executorBotId: bot.id };
       await member.selectOption(bot.id); panel = room.getByRole("region", { name: "浏览器", exact: true });
       // Before startup the only URL draft belongs to this exact member and chat.
@@ -263,7 +303,7 @@ test.describe("actual browser companion through hidden Electron", () => {
       await expect(panel.getByRole("status").first()).toHaveText("运行中", { timeout: 120_000 }); await takeover(panel); await navigate(panel, `${f.url}/check`);
       await expect(panel.locator(".computer-page-text")).toContainText("COOKIE_EMPTY");
       await panel.getByLabel("浏览器网址", { exact: true }).fill(`${f.url}/group-a-unsent`);
-      await member.selectOption(f.bots[1]!.id); await expect(panel.getByRole("status").first()).toHaveText("尚未创建浏览器");
+      await member.selectOption(f.bots[1]!.id); await expect(panel.getByRole("status").first()).toHaveText("已停止");
       await expect(panel.getByLabel("浏览器网址", { exact: true })).toHaveValue(""); await panel.getByLabel("浏览器网址", { exact: true }).fill(`${f.url}/group-b-unsent`);
       expect(value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser.get(input), { sessionId: f.room.sessionId, executorBotId: f.bots[1]!.id }))).toBeNull();
       await member.selectOption(bot.id); await expect(panel.getByLabel("浏览器网址", { exact: true })).toHaveValue(`${f.url}/group-a-unsent`);

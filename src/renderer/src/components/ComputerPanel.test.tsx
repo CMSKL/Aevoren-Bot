@@ -15,10 +15,11 @@ describe("browser and computer surfaces", () => {
   it("requires real host state before showing ownership, a screen or usable mutation controls", () => {
     const html = renderToStaticMarkup(<ComputerPanel sessionId="session-main" executorBotId="bot-1" ownerName="电脑成员" />);
     expect(html).toContain('aria-label="电脑"');
-    expect(html).toContain("状态未确认");
-    expect(html).toContain("当前聊天和执行成员隔离");
-    expect(html).toContain("私聊、群聊与其他成员分别授权");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>启动浏览器与电脑<\/button>/);
+    expect(html).toContain("准备中");
+    expect(html).toContain("电脑仅用于当前聊天");
+    expect(html).not.toContain("示范技能");
+    expect(html).not.toContain("我来操作");
+    expect(html).not.toContain("启动浏览器与电脑");
     expect(html).not.toContain("AI 持有控制权");
     expect(html).not.toContain("你持有控制权");
     expect(html).not.toContain("<img");

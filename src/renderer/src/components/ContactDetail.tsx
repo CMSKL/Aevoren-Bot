@@ -119,10 +119,10 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
   }
 
   return (
-    <section ref={profileElementRef} className="contact-profile-panel" aria-label="联系人资料">
+    <section ref={profileElementRef} className={`contact-profile-panel${tab === "computer" ? " computer-profile" : ""}`} aria-label="联系人资料">
       <div className="contact-profile-hero">
         <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={64} title={`${bot.name}头像`} />
-        <div><h2>{bot.name}</h2><p>{bot.label || "Bot"}</p></div>
+        <div><h2>{bot.name}</h2><p>{tab === "computer" ? "当前聊天" : bot.label || "Bot"}</p></div>
         {tab === "profile" ? <button className="text-button contact-edit-button" type="button" disabled={pending} onClick={() => {
           if (editing) void flush().then((saved) => { if (saved) setEditing(false); });
           else focusName();
@@ -131,7 +131,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
       <DetailsTabs idPrefix={`contact-${bot.id}`} label="联系人配置" tabs={[
         { id: "profile", label: "详情" }, { id: "library", label: "资料库" }, { id: "computer", label: "电脑" },
         { id: "models", label: "模型与能力" }, { id: "memory", label: "记忆" }, { id: "skill", label: "Skill" },
-        { id: "environment", label: "执行环境" }, { id: "browser", label: "浏览器" }, { id: "apps", label: "应用" },
+        { id: "environment", label: "高级工具" }, { id: "browser", label: "电脑工具" }, { id: "apps", label: "应用" },
       ]} primary={["profile", "library", "computer"]} value={tab} disabled={changingTab} onChange={next => changeTab(next as ProfileTab)} />
       <div hidden={tab === "library" || tab === "skill" || tab === "environment" || tab === "browser" || tab === "computer" || tab === "apps"}><ProfileInspector ref={editorRef} bot={bot} workspaceIds={workspaceIds} activeTab={tab === "models" || tab === "memory" ? tab : "profile"} editing={editing} onBotUpdated={onBotUpdated} onError={onLocalError} onSaveStatusChange={onSaveStatusChange} /></div>
       <div id={`contact-${bot.id}-library-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-library-tab`} hidden={tab !== "library"} className="contact-tab-panel">

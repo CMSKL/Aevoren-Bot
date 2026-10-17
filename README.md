@@ -109,9 +109,11 @@ Choose `/Skill` or the `@` **Documents / Skill** group in the composer. The sele
 
 ## Docker execution environments (development)
 
+The development Computer view now prepares its scoped execution environment and browser when opened, shows setup progress or an actionable Docker error, and combines takeover with connection in **My turn (我来操作)**. Technical environment and browser tools remain under **More**. Existing environments keep their recorded images and background services; only the selected conversation/member starts. This UI update is not yet in a published installer.
+
 On macOS, desktop launches find Docker in standard installation locations and distinguish a missing CLI from a stopped engine.
 
-Bring your own local Docker Linux runtime and keep the same local Docker context selected while using existing environments; switching Docker engines is not validated. Open **Contacts → select Bot → Execution environment (执行环境)**, or choose a member in **Group settings → Execution environment**. Check Docker, prepare the Linux image and start the environment. Each `(conversation, executing Bot)` has its own container and persistent workspace; six group members can run independently.
+The published beta.36 uses the following manual setup; development builds also provide the automatic Computer entry above. Bring your own local Docker Linux runtime and keep the same local Docker context selected while using existing environments; switching Docker engines is not validated. Open **Contacts → select Bot → Execution environment (执行环境)**, or choose a member in **Group settings → Execution environment**. Check Docker, prepare the Linux image and start the environment. Each `(conversation, executing Bot)` has its own container and persistent workspace; six group members can run independently.
 
 Run Node, Python or shell commands, inspect real output/exit codes, stop an individual task, or start a separately managed background service. Environment files support bounded uploads/downloads and create-only writes; replacing a file requires its previously read SHA-256. Background services survive closing the app and clearing chat history while Docker remains running. Sleeping the environment interrupts its tasks and retains the workspace; waking it does not replay old commands. See [environment setup, limits and validation](docs/EXECUTION_ENVIRONMENT.md). Final unsigned macOS package scenarios passed; Windows Linux-container execution remains unverified.
 

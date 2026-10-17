@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import type { ApiResult } from "@shared/contracts";
-import type { BrowserChangedEvent, BrowserDownload, BrowserDownloadFailure, BrowserDownloadsPage, BrowserObservation, BrowserPage, BrowserSession, ComputerScreenshot, ComputerView, ComputerVncTicket, ServicePreview } from "@shared/browser-contracts";
+import type { BrowserChangedEvent, BrowserDownload, BrowserDownloadFailure, BrowserDownloadsPage, BrowserObservation, BrowserPage, BrowserSession, ComputerStartup, ComputerScreenshot, ComputerView, ComputerVncTicket, ServicePreview } from "@shared/browser-contracts";
 import type RFB from "@novnc/novnc";
 import { DemonstrationPanel } from "./DemonstrationPanel";
 import { pollBrowserDownloads } from "./browser-download-poller";
+import { CloseIcon, WarningIcon, LoadingIcon, StatusDotIcon } from "./Icons";
 import "../styles/computer.css";
 
 type BrowserDraft = { url: string; ref: string; text: string; key: string };
@@ -11,7 +12,6 @@ const emptyDraft: BrowserDraft = { url: "", ref: "", text: "", key: "Enter" };
 const scopeDrafts = new Map<string, BrowserDraft>();
 // An unconfirmed mutation keeps the original nonce and payload for an explicit retry.
 const mutationNonces = new Map<string, { key: string; nonce: string }>();
-const stateLabels: Record<BrowserSession["state"], string> = { starting: "正在启动", running: "运行中", stopped: "已停止", error: "浏览器异常", unknown: "连接未确认" };
 
 export type ComputerPanelProps = { sessionId: string; executorBotId: string; ownerName?: string; active?: boolean; mode?: "browser" | "computer"; initialPageId?: string };
 
@@ -31,6 +31,12 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
   const pageRef = useRef(pageId);
   const [observation, setObservation] = useState<BrowserObservation | null>(null);
   const [screenshot, setScreenshot] = useState<ComputerScreenshot | null>(null);
+  const [startup, setStartup] = useState<ComputerStartup | null>(null);
+  const [waitingDocker, setWaitingDocker] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const autoOpenedRef = useRef(false);
+  const autoConnectedRef = useRef(false);
   const [pending, setPending] = useState<string | null>(null);
   const [retryMutation, setRetryMutation] = useState<(() => void) | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +44,7 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
   const [confirmStop, setConfirmStop] = useState(false);
   const [ticket, setTicket] = useState<ComputerVncTicket | null>(null);
   const [vncState, setVncState] = useState<"disconnected" | "connecting" | "connected">("disconnected");
+  const mainElement = useRef<HTMLDivElement>(null);
   const vncTarget = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<RFB | null>(null);
   const scopeRef = useRef(scopeKey);
@@ -61,11 +68,11 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
     const request = ++snapshotRequestRef.current;
     try {
       const scope = { sessionId, executorBotId };
-      const [sessionResult, viewResult] = await Promise.all([window.aevorenBot.browser.get(scope), window.aevorenBot.computer.view(scope)]);
+      const [sessionResult, viewResult, startupResult] = await Promise.all([window.aevorenBot.browser.get(scope), window.aevorenBot.computer.view(scope), window.aevorenBot.computer.startupStatus(scope)]);
       if (!current(scopeKey, generation) || request !== snapshotRequestRef.current) return;
-      if (!sessionResult.ok || !viewResult.ok) { setError(!sessionResult.ok ? sessionResult.error.safeMessage : !viewResult.ok ? viewResult.error.safeMessage : "无法读取浏览器状态。"); return; }
+      if (!sessionResult.ok || !viewResult.ok) { setLoaded(true); setError(!sessionResult.ok ? sessionResult.error.safeMessage : !viewResult.ok ? viewResult.error.safeMessage : "无法读取浏览器状态。"); return; }
       const nextSession = sessionResult.data; const nextView = viewResult.data;
-      setLoaded(true); setSession(nextSession); setView(nextView);
+      setLoaded(true); setSession(nextSession); setView(nextView); if (startupResult.ok) setStartup(startupResult.data);
       if (nextSession?.state !== "running" || !nextView || nextView.browserSessionId !== nextSession.id || nextView.epoch !== nextSession.controlEpoch) { setPages([]); setDownloads([]); setDownloadFailures([]); setPreviews([]); return; }
       const input = { ...scope, expectedEpoch: nextView.epoch };
       const results = await Promise.allSettled([window.aevorenBot.browser.tabs(input), window.aevorenBot.preview.list(input)]);
@@ -82,12 +89,13 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
       });
       inspect(results[1]!, setPreviews);
       if (messages.length) setError([...new Set(messages)].join(" "));
-    } catch { if (current(scopeKey, generation) && request === snapshotRequestRef.current) setError("无法确认浏览器连接，请刷新实际状态。草稿仍然保留。"); }
+    } catch { if (current(scopeKey, generation) && request === snapshotRequestRef.current) { setLoaded(true); setError("无法确认电脑连接，请重试。草稿仍然保留。"); } }
   }, [active, sessionId, executorBotId, scopeKey, initialPageId, current]);
 
   const resetScope = useEffectEvent((): void => {
     const nextDraft = scopeDrafts.get(scopeKey) ?? { ...emptyDraft };
     draftRef.current = nextDraft; setDraft(nextDraft); setVisibleScope(scopeKey);
+    autoOpenedRef.current = false; autoConnectedRef.current = false; setStartup(null); setWaitingDocker(false); setToolsOpen(false); setExpanded(false);
     setSession(null); setView(null); setLoaded(false); setPages([]); setDownloads([]); setDownloadFailures([]); setPreviews([]);
     pageRef.current = initialPageId ?? ""; setPageId(pageRef.current); setObservation(null); setScreenshot(null);
     mutationPendingRef.current = false; setPending(null); setRetryMutation(null); setError(null); setNotice(null); setConfirmStop(false); setTicket(null); setVncState("disconnected");
@@ -104,6 +112,7 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
   useEffect(() => { let cancelled = false; queueMicrotask(() => { if (active && !cancelled) void load(); }); return () => { cancelled = true; }; }, [active, load]);
   const changed = useEffectEvent((event: BrowserChangedEvent): void => {
     if (!active || event.sessionId !== sessionId || event.executorBotId !== executorBotId) return;
+    if (event.type === "startup") { setStartup(event.startup); if (["ready", "error", "cancelled"].includes(event.startup.phase)) void load(); return; }
     if (event.type === "control") { rfbRef.current?.disconnect(); rfbRef.current = null; setTicket(null); setVncState("disconnected"); setScreenshot(null); setObservation(null); frameRequestRef.current += 1; observationRequestRef.current += 1; }
     if (event.type === "pages" || event.type === "browser") { setObservation(null); setScreenshot(null); observationRequestRef.current += 1; frameRequestRef.current += 1; }
     void load();
@@ -123,11 +132,59 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
       const result = await operation(record.nonce);
       if (result.ok && !(typeof result.data === "object" && result.data !== null && "state" in result.data && result.data.state === "unknown") && mutationNonces.get(nonceScope) === record) mutationNonces.delete(nonceScope);
       if (!current(scopeKey, generation)) return;
-      if (!result.ok) { setError(result.error.safeMessage); if (result.error.retryable) setRetryMutation(() => () => { void mutate(name, payload, operation, apply); }); return; }
+      if (!result.ok) { if (name === "start" && result.error.code === "TOOL_EXECUTION_CANCELLED") { setError(null); void load(); return; } setError(result.error.safeMessage); if (result.error.retryable) setRetryMutation(() => () => { void mutate(name, payload, operation, apply); }); return; }
       if (typeof result.data === "object" && result.data !== null && "state" in result.data && result.data.state === "unknown") setRetryMutation(() => () => { void mutate(name, payload, operation, apply); });
       apply?.(result.data); void load();
     } catch { if (current(scopeKey, generation)) { setError("操作结果未确认。请刷新实际状态；重试同一操作会沿用原请求，不会自动重放。"); setRetryMutation(() => () => { void mutate(name, payload, operation, apply); }); } }
     finally { if (current(scopeKey, generation)) { mutationPendingRef.current = false; setPending(null); } }
+  }
+
+  function startComputer(): void {
+    autoOpenedRef.current = true; setStartup(null); setWaitingDocker(false);
+    const payload = { sessionId, executorBotId, ...(session ? { expectedVersion: session.version } : {}) };
+    void mutate("start", payload, clientNonce => window.aevorenBot.browser.start({ ...payload, clientNonce }));
+  }
+  const autoOpen = useEffectEvent((): void => {
+    if (!autoOpenedRef.current && !mutationPendingRef.current) startComputer();
+  });
+  useEffect(() => {
+    if (!active || mode !== "computer" || !loaded || session?.state === "running" || autoOpenedRef.current || pending || error || startup && !["ready"].includes(startup.phase)) return;
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) autoOpen(); });
+    return () => { cancelled = true; };
+  }, [active, mode, loaded, session?.state, pending, startup, error]);
+  async function openDocker(): Promise<void> {
+    const generation = generationRef.current; autoOpenedRef.current = true; setError(null);
+    setWaitingDocker(true);
+    try {
+      const result = await window.aevorenBot.computer.openDocker({ sessionId, executorBotId });
+      if (!current(scopeKey, generation)) return;
+      if (!result.ok) { setWaitingDocker(false); setError(result.error.safeMessage); }
+    } catch { if (current(scopeKey, generation)) { setWaitingDocker(false); setError("无法打开 Docker，请手动打开后重试。"); } }
+  }
+  useEffect(() => {
+    if (!active || !waitingDocker) return;
+    const generation = generationRef.current; let cancelled = false, reading = false;
+    const check = async (): Promise<void> => {
+      if (reading || cancelled) return; reading = true;
+      try {
+        const result = await window.aevorenBot.environments.probe();
+        if (!cancelled && current(scopeKey, generation) && result.ok && result.data.available) startAfterDocker();
+      } catch { if (!cancelled && current(scopeKey, generation)) { setWaitingDocker(false); setError("无法确认 Docker 状态，请完成启动后重试。"); } } finally { reading = false; }
+    };
+    const timer = setInterval(() => { void check(); }, 2000);
+    const deadline = setTimeout(() => { if (!cancelled && current(scopeKey, generation)) { setWaitingDocker(false); setNotice("请完成 Docker 启动或安装，再点击重试。"); } }, 60_000);
+    void check();
+    return () => { cancelled = true; clearInterval(timer); clearTimeout(deadline); };
+  }, [active, waitingDocker, current, scopeKey]);
+  const startAfterDocker = useEffectEvent((): void => { startComputer(); });
+  async function cancelStart(): Promise<void> {
+    setWaitingDocker(false); autoOpenedRef.current = true;
+    if (!startup || ["ready", "error", "cancelled"].includes(startup.phase)) return;
+    const generation = generationRef.current;
+    const result = await window.aevorenBot.computer.cancelStartup({ sessionId, executorBotId, attemptId: startup.attemptId });
+    if (!current(scopeKey, generation)) return;
+    if (!result.ok) setError(result.error.safeMessage); else if (result.data) setStartup(result.data);
   }
 
   const readPage = useCallback(async (): Promise<void> => {
@@ -189,7 +246,7 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
       if (disposed || !current(scopeKey, generation) || !vncTarget.current) return;
       rfb = new Client(vncTarget.current, ticket.url); rfbRef.current = rfb;
       rfb.scaleViewport = true; rfb.resizeSession = false; rfb.viewOnly = false; rfb.focusOnClick = true;
-      rfb.addEventListener("connect", () => { if (!disposed && current(scopeKey, generation)) setVncState("connected"); });
+      rfb.addEventListener("connect", () => { if (!disposed && current(scopeKey, generation)) { setVncState("connected"); setNotice(null); } });
       rfb.addEventListener("disconnect", () => { if (!disposed && current(scopeKey, generation)) { setVncState("disconnected"); setNotice("电脑连接已断开，控制权仍由你持有。可重新连接，或明确归还 AI。"); } });
       const failed = (): void => { rfb?.disconnect(); if (!disposed && current(scopeKey, generation)) { setVncState("disconnected"); setError("电脑连接认证失败，控制权仍由你持有。请检查浏览器环境并重新连接。"); } };
       rfb.addEventListener("credentialsrequired", failed); rfb.addEventListener("securityfailure", failed);
@@ -198,17 +255,43 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
     return () => { disposed = true; clearTimeout(expiry); rfb?.disconnect(); if (rfbRef.current === rfb) rfbRef.current = null; };
   }, [active, ticket, viewOwner, viewEpoch, viewSessionId, scopeKey, current]);
 
+  useEffect(() => {
+    if (!expanded || !active) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    mainElement.current?.querySelector<HTMLButtonElement>('button[aria-label="关闭电脑大图"]')?.focus();
+    return () => { if (previous?.isConnected && previous.getClientRects().length) previous.focus(); };
+  }, [expanded, active]);
+  function expandedKeys(event: React.KeyboardEvent<HTMLDivElement>): void {
+    if (!expanded) return;
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setExpanded(false); }
+    if (event.key !== "Tab") return;
+    const elements = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex="0"]')].filter(element => element.getClientRects().length > 0);
+    const first = elements[0], last = elements.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }
+
+  const connectOwnedComputer = useEffectEvent((): void => { if (!autoConnectedRef.current && !mutationPendingRef.current) connectComputer(); });
+  useEffect(() => {
+    if (!active || viewOwner !== "user" || sessionState !== "running" || autoConnectedRef.current || pending) return;
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) connectOwnedComputer(); });
+    return () => { cancelled = true; };
+  }, [active, viewOwner, viewEpoch, sessionState, pending]);
+
   function selectPage(id: string): void { pageRef.current = id; setPageId(id); setObservation(null); setScreenshot(null); observationRequestRef.current += 1; frameRequestRef.current += 1; }
-  function connectComputer(): void {
-    if (!view || view.owner !== "user") return;
-    const payload = { sessionId, executorBotId, expectedEpoch: view.epoch };
-    void mutate("vnc-ticket", payload, clientNonce => window.aevorenBot.computer.vncTicket({ ...payload, clientNonce }), data => { if (data.browserSessionId !== view.browserSessionId || data.epoch !== view.epoch || Date.parse(data.expiresAt) <= Date.now()) { setVncState("disconnected"); setError("电脑连接票据已失效，请重新连接。控制权仍由你持有。"); return; } setTicket(data); setVncState("connecting"); });
+  function connectComputer(target: ComputerView | null = view): void {
+    if (!target || target.owner !== "user") return;
+    autoConnectedRef.current = true;
+    const payload = { sessionId, executorBotId, expectedEpoch: target.epoch };
+    void mutate("vnc-ticket", payload, clientNonce => window.aevorenBot.computer.vncTicket({ ...payload, clientNonce }), data => { if (data.browserSessionId !== target.browserSessionId || data.epoch !== target.epoch || Date.parse(data.expiresAt) <= Date.now()) { setVncState("disconnected"); setError("电脑连接票据已失效，请重新连接。控制权仍由你持有。"); return; } setTicket(data); setVncState("connecting"); });
   }
   function changeOwner(owner: "ai" | "user"): void {
     if (!view) return;
     rfbRef.current?.disconnect(); rfbRef.current = null; setTicket(null); setVncState("disconnected"); setObservation(null); setScreenshot(null); frameRequestRef.current += 1; observationRequestRef.current += 1;
+    const generation = generationRef.current;
     const payload = { sessionId, executorBotId, expectedEpoch: view.epoch, expectedVersion: view.version };
-    void mutate(owner === "user" ? "takeover" : "return", payload, clientNonce => window.aevorenBot.computer[owner === "user" ? "takeover" : "returnControl"]({ ...payload, clientNonce }), data => { setView(data); setNotice(data.owner === "user" ? "你已接管电脑。AI 输入、读取与画面上传已暂停；连接电脑后可操作。" : "控制权已归还 AI。下一次操作必须重新观察页面。"); });
+    void mutate(owner === "user" ? "takeover" : "return", payload, clientNonce => window.aevorenBot.computer[owner === "user" ? "takeover" : "returnControl"]({ ...payload, clientNonce }), data => { setView(data); if (data.owner === "user") queueMicrotask(() => { if (current(scopeKey, generation)) connectComputer(data); }); setNotice(data.owner === "user" ? "正在连接电脑，AI 已暂停。" : "已交给 AI。"); });
   }
   function pageAction(action: "click" | "type" | "key" | "scroll", deltaY = 0): void {
     if (!view || !observation || view.owner !== "user" || observation.pageId !== pageId || observation.controlEpoch !== view.epoch) return;
@@ -222,27 +305,51 @@ export function ComputerPanel({ sessionId, executorBotId, ownerName, active = tr
   const userControl = running && view?.owner === "user";
   const selectedPage = pages.find(page => page.id === pageId);
   const hasProof = userControl && observation?.pageId === pageId && observation.controlEpoch === view?.epoch && observation.documentVersion === selectedPage?.documentVersion;
+  const starting = waitingDocker || pending === "start" || startup !== null && !["ready", "error", "cancelled"].includes(startup.phase);
+  const stopped = startup?.phase === "cancelled" || session?.state === "stopped";
+  const blocked = !starting && !running && (startup?.phase === "error" || Boolean(error));
+  const dockerBlocked = startup?.blocker === "docker-missing" || startup?.blocker === "docker-stopped";
   return <section className="computer-panel" aria-label={mode === "browser" ? "浏览器" : "电脑"}>
-    <div className="computer-heading"><h3>{mode === "browser" ? "浏览器" : "电脑"}</h3><span role="status">{pending === "start" ? "正在准备镜像并启动电脑" : loaded ? session ? stateLabels[session.state] : "尚未创建浏览器" : "状态未确认"}</span></div>
-    <p className="computer-note">{ownerName ? `${ownerName} · ` : ""}浏览器登录数据与电脑按当前聊天和执行成员隔离。私聊、群聊与其他成员分别授权。</p>
-    <div className="computer-actions"><button type="button" className="secondary-button" onClick={() => void load()}>刷新状态</button><button type="button" className="secondary-button" disabled={!loaded || Boolean(pending) || session?.state === "running" || session?.state === "starting"} onClick={() => { const payload = { sessionId, executorBotId, ...(session ? { expectedVersion: session.version } : {}) }; void mutate("start", payload, clientNonce => window.aevorenBot.browser.start({ ...payload, clientNonce })); }}>{pending === "start" ? "正在启动…" : "启动浏览器与电脑"}</button>{running ? <button type="button" className="text-button danger-text-button" disabled={Boolean(pending)} onClick={() => setConfirmStop(true)}>停止浏览器</button> : null}</div>
-    {pending === "start" ? <p className="computer-note" role="status">首次启动需要下载 Chromium 和 Linux 图形组件；准备完成后会自动启动。</p> : null}
+    <div ref={mainElement} className={`computer-main${expanded ? " is-expanded" : ""}`} role={expanded ? "dialog" : undefined} aria-modal={expanded || undefined} aria-label={expanded ? "电脑大图" : undefined} onKeyDown={expandedKeys}>
+      <div className="computer-heading"><h3>{mode === "browser" ? "浏览器" : "电脑"}</h3><span role="status" className={running ? "is-ready" : blocked ? "is-blocked" : "is-preparing"}><StatusDotIcon weight="fill" size={7} aria-hidden />{starting || !loaded ? "准备中" : running ? "运行中" : blocked ? "需要处理" : "已停止"}</span>{expanded ? <button type="button" className="text-button" onClick={() => setExpanded(false)} aria-label="关闭电脑大图"><CloseIcon /></button> : null}</div>
+      {running ? <>
+      <section className="computer-screen" aria-label="当前成员屏幕">
+        <div ref={vncTarget} className="computer-vnc" hidden={!userControl} aria-label="接管电脑屏幕" />
+        {userControl ? <>{vncState !== "connected" ? <div className="computer-empty"><p>{vncState === "connecting" ? "正在连接电脑" : "连接已断开，控制权仍由你持有"}</p><button type="button" className="secondary-button" disabled={Boolean(pending) || vncState === "connecting"} onClick={() => connectComputer()}>重新连接</button></div> : null}</> : screenshot ? <><img src={`data:${screenshot.frame.mimeType};base64,${screenshot.frame.dataBase64}`} width={screenshot.frame.width} height={screenshot.frame.height} alt="当前聊天与成员的真实浏览器屏幕" /><p className="computer-note">画面采集于 {new Date(screenshot.frame.capturedAt).toLocaleTimeString()} · {screenshot.frame.width} × {screenshot.frame.height}</p></> : <div className="computer-empty"><LoadingIcon className="computer-spinner" size={24} /><p>正在读取电脑画面</p></div>}
+      </section>
+
+        <div className="computer-toolbar"><span>{userControl ? "你在操作" : "AI 可操作"}</span><div><button type="button" className="primary-button" disabled={Boolean(pending)} onClick={() => changeOwner(userControl ? "ai" : "user")}>{userControl ? "交给 AI" : "我来操作"}</button><button type="button" className="secondary-button" onClick={() => setExpanded(value => !value)}>{expanded ? "缩小" : "放大"}</button></div></div>
+      </> : <div className="computer-stage" role={blocked ? "alert" : undefined} aria-busy={starting}>
+        {blocked ? <WarningIcon size={32} className="computer-warning" /> : !stopped ? <LoadingIcon size={24} className="computer-spinner" /> : null}
+        <h4>{waitingDocker ? "正在等待 Docker 启动" : starting || !loaded ? "正在准备电脑" : blocked ? startup?.message ?? "电脑暂时无法启动" : "电脑已停止"}</h4>
+        <p>{waitingDocker ? "完成 Docker 启动后，电脑会自动继续准备。" : starting || !loaded ? startup?.message ?? "正在检查电脑" : dockerBlocked ? "打开 Docker 后，电脑会自动继续准备。" : stopped ? "工作文件已保留，启动后可继续使用。" : "请检查连接后重试。"}</p>
+        {starting || !loaded ? <><p className="computer-initial-note">首次使用需要一些时间，完成后会自动打开。</p>{loaded ? <button type="button" className="text-button" onClick={() => void cancelStart()}>取消启动</button> : null}</> : <>
+          <button type="button" className="primary-button" onClick={() => { if (dockerBlocked) void openDocker(); else startComputer(); }}>{startup?.blocker === "docker-missing" ? "安装 Docker" : dockerBlocked ? "打开 Docker" : blocked ? "重试" : "启动电脑"}</button>
+          <details className="computer-error-details"><summary>查看详情</summary><p>{error || startup?.message || "当前电脑尚未启动。"}</p>{dockerBlocked ? <button type="button" className="text-button" onClick={startComputer}>重试</button> : null}</details>
+        </>}
+      </div>}
+      <p className="computer-scope-note">{ownerName ? `${ownerName} · ` : ""}电脑仅用于当前聊天</p>
+    </div>
+    {running && error ? <p className="computer-error" role="alert">{error}</p> : null}{notice ? <p className="computer-note" role="status">{notice}</p> : null}
+    {retryMutation && mode === "browser" ? <button type="button" className="text-button" disabled={Boolean(pending)} onClick={retryMutation}>重试上次操作（沿用原请求）</button> : null}
+    {mode === "browser" ? <details className="computer-advanced" open={mode === "browser" || toolsOpen} onToggle={event => setToolsOpen(event.currentTarget.open)}>
+      <summary>更多工具</summary>
+      <p className="computer-note">浏览器登录数据与电脑按当前聊天和执行成员隔离。私聊、群聊与其他成员分别授权。</p>
+      <div className="computer-actions"><button type="button" className="secondary-button" onClick={() => void load()}>刷新状态</button>{!running ? <button type="button" className="secondary-button" disabled={!loaded || Boolean(pending)} onClick={startComputer}>启动浏览器与电脑</button> : <button type="button" className="text-button danger-text-button" disabled={Boolean(pending)} onClick={() => setConfirmStop(true)}>停止电脑</button>}<button type="button" className="text-button" onClick={() => void readFrame()}>刷新画面</button></div>
     {confirmStop ? <div className="computer-confirm" role="group" aria-label="确认停止浏览器"><p>停止当前成员的浏览器与电脑，会中断页面操作与接管连接；持久登录数据保留。</p><div className="computer-actions"><button type="button" className="secondary-button" disabled={Boolean(pending)} onClick={() => { const payload = { sessionId, executorBotId, expectedVersion: session?.version }; void mutate("stop", payload, clientNonce => window.aevorenBot.browser.stop({ ...payload, clientNonce }), () => setConfirmStop(false)); }}>确认停止</button><button type="button" className="text-button" onClick={() => setConfirmStop(false)}>保留运行</button></div></div> : null}
-    {view && running ? <><p className="computer-control-status" role="status">{view.owner === "user" ? "你持有控制权 · AI 输入、观察与画面上传暂停" : "AI 持有控制权"} · {view.connectionState === "connected" ? "接管连接已连接" : "无接管连接"}</p><div className="computer-actions"><button type="button" className="secondary-button" disabled={Boolean(pending)} onClick={() => changeOwner(view.owner === "user" ? "ai" : "user")}>{view.owner === "user" ? "归还 AI" : "接管电脑"}</button>{view.owner === "user" ? <button type="button" className="secondary-button" disabled={Boolean(pending) || vncState === "connecting" || vncState === "connected"} onClick={connectComputer}>{vncState === "connecting" ? "正在连接…" : vncState === "connected" ? "电脑已连接" : "连接电脑"}</button> : <button type="button" className="text-button" onClick={() => void readFrame()}>刷新画面</button>}</div><p className="computer-note">关闭此面板或断线不会自动归还控制权。请使用“归还 AI”明确交还。</p></> : <p className="computer-note">先在执行环境页启动 Linux 环境，再启动浏览器与电脑。Docker、镜像或 Worker 不可用时会显示实际错误。</p>}
-    {error ? <p className="computer-error" role="alert">{error}</p> : null}{retryMutation ? <button type="button" className="text-button" disabled={Boolean(pending)} onClick={retryMutation}>重试上次操作（沿用原请求）</button> : null}{notice ? <p className="computer-note" role="status">{notice}</p> : null}
+
     <DemonstrationPanel sessionId={sessionId} executorBotId={executorBotId} epoch={view?.epoch} userControl={Boolean(userControl)} connected={vncState === "connected"} active={active} />
     <label className="field"><span>网址</span><input aria-label="浏览器网址" value={draft.url} maxLength={4000} placeholder="https://" onChange={event => updateDraft("url", event.target.value)} /></label>
     <p className="computer-note">网址草稿不会自动打开页面；接管后点击“打开网址”才会执行。</p>
-    {running ? <>
-      <section className="computer-screen" aria-label="当前成员屏幕">
-        <div ref={vncTarget} className="computer-vnc" hidden={!userControl} aria-label="接管电脑屏幕" />
-        {userControl ? <p className="computer-note">{vncState === "connected" ? "已连接到当前成员的真实电脑。" : "点击“连接电脑”查看并操作屏幕。"}</p> : screenshot ? <><img src={`data:${screenshot.frame.mimeType};base64,${screenshot.frame.dataBase64}`} width={screenshot.frame.width} height={screenshot.frame.height} alt="当前聊天与成员的真实浏览器屏幕" /><p className="computer-note">画面采集于 {new Date(screenshot.frame.capturedAt).toLocaleTimeString()} · {screenshot.frame.width} × {screenshot.frame.height}</p></> : <p className="computer-note">真实画面尚未读取。</p>}
-      </section>
+
+      {running ? <>
       <section className="computer-section" aria-label="浏览器页面"><h4>浏览器页面</h4><label className="field"><span>当前页面</span><select aria-label="当前浏览器页面" value={selectedPage?.id ?? ""} onChange={event => selectPage(event.target.value)}><option value="">选择页面…</option>{pages.map(page => <option key={page.id} value={page.id}>{page.title || page.url}</option>)}</select></label>{selectedPage ? <p className="computer-url">{selectedPage.url}</p> : null}<div className="computer-actions"><button type="button" className="secondary-button" disabled={!userControl || Boolean(pending) || !selectedPage || !draft.url.trim()} onClick={() => { if (!view) return; const payload = { sessionId, executorBotId, expectedEpoch: view.epoch, pageId, url: draft.url.trim() }; void mutate("navigate", payload, clientNonce => window.aevorenBot.browser.navigate({ ...payload, clientNonce }), () => setObservation(null)); }}>打开网址</button><button type="button" className="text-button" disabled={!userControl || Boolean(pending)} onClick={() => { if (!view) return; const payload = { sessionId, executorBotId, expectedEpoch: view.epoch, ...(draft.url.trim() ? { url: draft.url.trim() } : {}) }; void mutate("new-tab", payload, clientNonce => window.aevorenBot.browser.newTab({ ...payload, clientNonce }), data => selectPage(data.id)); }}>新建页面</button><button type="button" className="text-button" disabled={!userControl || Boolean(pending) || !selectedPage} onClick={() => { if (!view) return; const payload = { sessionId, executorBotId, expectedEpoch: view.epoch, pageId }; void mutate("close-tab", payload, clientNonce => window.aevorenBot.browser.closeTab({ ...payload, clientNonce }), () => setObservation(null)); }}>关闭页面</button><button type="button" className="text-button" disabled={!userControl || Boolean(pending) || !selectedPage} onClick={() => void readPage()}>读取页面</button></div>{!userControl ? <p className="computer-note">先接管电脑，再使用页面操作。接管期间这些操作由你发起。</p> : null}
         {observation ? <><pre className="computer-page-text">{observation.text}</pre><label className="field"><span>页面元素</span><select aria-label="浏览器页面元素" value={draft.ref} onChange={event => updateDraft("ref", event.target.value)}><option value="">选择已观察到的元素…</option>{observation.elements.map(element => <option key={element.ref} value={element.ref}>{element.role} · {element.name || element.ref}</option>)}</select></label><div className="computer-actions"><button type="button" className="secondary-button" disabled={!hasProof || Boolean(pending) || !observation.elements.some(element => element.ref === draft.ref)} onClick={() => pageAction("click")}>点击元素</button></div><label className="field"><span>输入内容</span><textarea aria-label="浏览器输入内容" rows={3} value={draft.text} maxLength={32_000} onChange={event => updateDraft("text", event.target.value)} /></label><button type="button" className="secondary-button" disabled={!hasProof || Boolean(pending) || !observation.elements.some(element => element.ref === draft.ref)} onClick={() => pageAction("type")}>填写元素</button><label className="field"><span>按键</span><input aria-label="浏览器按键" value={draft.key} maxLength={80} onChange={event => updateDraft("key", event.target.value)} /></label><div className="computer-actions"><button type="button" className="secondary-button" disabled={!hasProof || Boolean(pending) || !draft.key.trim()} onClick={() => pageAction("key")}>发送按键</button><button type="button" className="text-button" disabled={!hasProof || Boolean(pending)} onClick={() => pageAction("scroll", -500)}>向上滚动</button><button type="button" className="text-button" disabled={!hasProof || Boolean(pending)} onClick={() => pageAction("scroll", 500)}>向下滚动</button></div><p className="computer-note">页面变化后请重新读取页面，再执行下一步。</p></> : null}
       </section>
       <section className="computer-section" aria-label="浏览器下载"><h4>下载文件</h4>{downloads.length ? downloads.map(file => <div className="computer-resource-row" key={file.id}><span>{file.name} · {file.size} bytes</span><button type="button" className="text-button" disabled={Boolean(pending)} onClick={() => { if (!view) return; const payload = { sessionId, executorBotId, expectedEpoch: view.epoch, id: file.id }; void mutate("download", payload, clientNonce => window.aevorenBot.browser.download({ ...payload, clientNonce }), data => { if (data) setNotice(`已保存 ${data.name}（${data.size} bytes）。`); }); }}>保存下载文件</button></div>) : <p className="computer-note">暂无可保存的下载文件。</p>}{downloadFailures.map(file => <p className="computer-error" key={file.id}>{file.name || "文件"} · 下载失败（{file.errorCode}）。文件未保存。</p>)}</section>
       <section className="computer-section" aria-label="已打开服务预览"><h4>服务预览</h4>{previews.filter(preview => preview.state !== "closed").map(preview => <div className="computer-resource-row" key={preview.id}><button type="button" className="text-button" onClick={() => selectPage(preview.pageId)}>{preview.url}</button><button type="button" className="text-button" disabled={!userControl || Boolean(pending)} onClick={() => { if (!view) return; const payload = { sessionId, executorBotId, expectedEpoch: view.epoch, id: preview.id }; void mutate("close-preview", payload, clientNonce => window.aevorenBot.preview.close({ ...payload, clientNonce })); }}>关闭预览</button></div>)}<p className="computer-note">在执行环境中登记真实后台服务端口后，可打开服务预览。</p></section>
-    </> : null}
+
+      </> : null}
+    </details> : null}
   </section>;
 }

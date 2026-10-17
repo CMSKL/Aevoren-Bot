@@ -27,6 +27,7 @@ export type ExecutionPreview = z.infer<typeof executionPreviewSchema>;
 
 function failure(error: unknown): AevorenBotError {
   if (error instanceof AevorenBotError) return error;
+  if (error instanceof DockerCommandError && error.code === "DOCKER_TIMEOUT") return new AevorenBotError("ENVIRONMENT_UNAVAILABLE", "准备或连接工作空间超时，请检查 Docker 和网络后重试。");
   if (error instanceof DockerCommandError && /OWNERSHIP|IMAGE_INVALID/.test(error.code)) return new AevorenBotError("ENVIRONMENT_IMAGE_INVALID");
   if (error instanceof ExecutionWorkerError && error.status === 409) return new AevorenBotError("ENVIRONMENT_EXECUTION_CONFLICT");
   if (error instanceof ExecutionWorkerError && error.status === 404) return new AevorenBotError("ENVIRONMENT_EXECUTION_NOT_FOUND");
@@ -104,7 +105,7 @@ export class EnvironmentService {
     if (result.status === "ready") {
       try { image = await this.docker.inspectImage(undefined, signal); } catch { /* No image is advertised until it can be inspected. */ }
     }
-    return { available: result.status === "ready", dockerInstalled: result.status !== "missing", daemonReachable: result.status === "ready",
+    return { dockerStatus: result.status, available: result.status === "ready", dockerInstalled: result.status !== "missing", daemonReachable: result.status === "ready",
       serverVersion: result.version, platform: result.platform, workerImagePresent: image !== null, reason: result.reason };
   }
 

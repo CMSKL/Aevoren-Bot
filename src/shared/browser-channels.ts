@@ -7,3 +7,6 @@ export const COMPUTER_CHANNELS = { view: "computer:view", screenshot: "computer:
   key: "computer:key", scroll: "computer:scroll", takeover: "computer:takeover", returnControl: "computer:returnControl", vncTicket: "computer:vncTicket" } as const;
 export const PREVIEW_CHANNELS = { list: "preview:list", open: "preview:open", close: "preview:close" } as const;
 export const BROWSER_EVENTS = { changed: "browser:changed" } as const;
+
+/** Trusted UI lifecycle controls; these are not model operations. */
+export const COMPUTER_UI_CHANNELS = { startupStatus: "computer:startupStatus", cancelStartup: "computer:cancelStartup", openDocker: "computer:openDocker" } as const;

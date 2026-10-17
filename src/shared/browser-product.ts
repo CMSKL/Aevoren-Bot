@@ -20,7 +20,7 @@ export const BROWSER_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "preview.list": browserEpochSchema.partial(scope), "preview.open": previewOpenSchema.omit({ clientNonce: true }).partial(scope), "preview.close": previewCloseSchema.omit({ clientNonce: true }).partial(scope),
 };
 const descriptions: Record<string, string> = {
-  "browser.get": "读取当前隔离浏览器状态与控制 epoch，不返回登录资料或控制密钥", "browser.start": "启动本会话执行者的隔离浏览器与桌面伴随环境", "browser.stop": "停止当前浏览器伴随环境，保留独立 profile",
+  "browser.get": "读取当前隔离浏览器状态与控制 epoch，不返回登录资料或控制密钥", "browser.start": "自动准备本会话执行者的隔离执行环境、浏览器与电脑；保留已运行环境和后台服务", "browser.stop": "停止当前浏览器伴随环境，保留独立 profile",
   "browser.tabs": "读取当前授权浏览器的真实页面列表", "browser.newTab": "在当前浏览器打开新页面", "browser.closeTab": "关闭指定真实页面", "browser.navigate": "导航指定页面到 HTTP(S) 地址",
   "browser.read": "按范围读取真实页面文本并登记当前观察", "browser.observe": "观察真实页面文本与可操作元素引用", "browser.click": "基于当前 epoch 与新鲜观察点击指定元素",
   "browser.type": "基于当前观察输入文本，元信息不能授权脚本执行", "browser.key": "在当前已观察页面发送按键", "browser.scroll": "滚动当前已观察页面", "browser.downloads": "列出本浏览器已完成的真实下载", "browser.download": "由用户选择位置保存真实下载字节",

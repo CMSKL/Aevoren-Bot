@@ -117,7 +117,7 @@ export async function selectNavigationTab(page: Page, name: "聊天" | "联系�
 }
 
 export async function selectDetailsTab(scope: Page | Locator, name: string): Promise<void> {
-  const label = name === "资料" ? "详情" : name;
+  const label = name === "资料" ? "详情" : name === "浏览器" ? "电脑工具" : name === "执行环境" ? "高级工具" : name;
   const tab = scope.getByRole("tab", { name: label, exact: true });
   if (!await tab.isVisible()) {
     await scope.getByRole("button", { name: "更多详情功能", exact: true }).click();

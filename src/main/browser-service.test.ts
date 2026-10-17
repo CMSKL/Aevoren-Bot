@@ -64,6 +64,7 @@ async function fixture(): Promise<Fixture> {
   const codec = { isAvailable: () => true, encrypt: (value: string) => value, decrypt: (value: string) => value }, driver = new BrowserDockerDriver(), changed = vi.fn();
   vi.spyOn(driver, "inspectBrowser").mockResolvedValue({ id: "fixture-container", name: "fixture", imageId: `sha256:${"c".repeat(64)}`, state: "running", workerPort: address.port, oomKilled: false });
   const environments = new EnvironmentService(repository.environments, codec, root);
+  vi.spyOn(environments, "probe").mockResolvedValue({ available: true, dockerInstalled: true, daemonReachable: true, serverVersion: "fixture", platform: "linux/arm64", workerImagePresent: true, reason: null });
   const service = new BrowserService(repository, codec, root, join(root, "media"), environments, changed, driver);
   const value = { repository, service, environments, driver, scope, browser, page, control, calls, changed, root, server, get inputCount() { return inputCount; }, holdFrame(fn: () => Promise<void>) { holdFrame = fn; }, setFramePage(value: BrowserPage | null) { framePage = value; } };
   fixtures.push(value); return value;
@@ -102,6 +103,7 @@ async function executionTransport(f: Fixture) {
   });
   const codec = { isAvailable: () => true, encrypt: (value: string) => value, decrypt: (value: string) => value };
   const environments = new EnvironmentService(f.repository.environments, codec, f.root, () => undefined, new DockerDriver(runner));
+  vi.spyOn(environments, "probe").mockResolvedValue({ available: true, dockerInstalled: true, daemonReachable: true, serverVersion: "fixture", platform: "linux/arm64", workerImagePresent: true, reason: null });
   const service = new BrowserService(f.repository, codec, f.root, join(f.root, "media"), environments, () => undefined, f.driver);
   return { environments, service, server, listen, runner, token, environmentId: environment.id, get port() { return port; }, holdHealth(fn: () => Promise<void>) { gate = fn; } };
 }
@@ -245,5 +247,78 @@ describe("host browser permission and pixel transport boundaries (controlled HTT
     finally { release(); }
     expect(await pending).toMatchObject({ code: "ENVIRONMENT_UNAVAILABLE" });
     expect(f.repository.environments.getInternal(f.scope)).toMatchObject({ state: "stopped", workerPort: null });
+  });
+});
+
+describe("one-step computer preparation", () => {
+  async function startupFixture() {
+    const f = await fixture();
+    vi.spyOn(f.environments, "probe").mockResolvedValue({ available: true, dockerInstalled: true, daemonReachable: true, serverVersion: "fixture", platform: "linux/arm64", workerImagePresent: false, reason: null });
+    const owner = f.repository.createBot();
+    return { ...f, cold: { sessionId: owner.session.id, executorBotId: owner.bot.id } };
+  }
+  it("prepares a cold computer before starting its environment, without a manual setup call", async () => {
+    const f = await startupFixture(), order: string[] = [];
+    const initialized = vi.spyOn(f.environments, "initialize").mockImplementation(async () => {
+      order.push("prepare"); return { probe: await f.environments.probe(), imageRef: "fixture", imageDigest: `sha256:${"a".repeat(64)}`, workerVersion: "1.2.0" };
+    });
+    vi.spyOn(f.environments, "start").mockImplementation(async () => { order.push("start"); throw new Error("controlled environment startup failure"); });
+    await expect(f.service.start({ ...f.cold, clientNonce: randomUUID() })).rejects.toBeDefined();
+    expect(initialized).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["prepare", "start"]);
+    expect(f.service.startupStatus(f.cold)).toMatchObject({ phase: "error", blocker: "startup-failed" });
+  });
+  it("allows environment lifecycle release during startup without a lock cycle or late launch", async () => {
+    const f = await startupFixture();
+    vi.spyOn(f.environments, "initialize").mockResolvedValue({ probe: await f.environments.probe(), imageRef: "fixture", imageDigest: `sha256:${"a".repeat(64)}`, workerVersion: "1.2.0" });
+    vi.spyOn(f.environments, "start").mockImplementation(async () => {
+      // Environment stop/rebuild owns its lock before releasing the companion.
+      await f.service.release(f.cold);
+      throw new Error("environment lifecycle interrupted startup");
+    });
+    const result = await f.service.start({ ...f.cold, clientNonce: randomUUID() }).catch(error => error);
+    expect(result).toMatchObject({ code: "TOOL_EXECUTION_CANCELLED" });
+    expect(f.repository.browsers.get(f.cold)).toBeNull();
+  });
+  it("reports a stopped Docker engine in place without preparing images or containers", async () => {
+    const f = await startupFixture();
+    vi.spyOn(f.environments, "probe").mockResolvedValue({ available: false, dockerInstalled: true, daemonReachable: false, serverVersion: null, platform: null, workerImagePresent: false, reason: "Docker 未就绪，请启动引擎后重新检测。" });
+    const initialize = vi.spyOn(f.environments, "initialize"), start = vi.spyOn(f.environments, "start");
+    await expect(f.service.start({ ...f.cold, clientNonce: randomUUID() })).rejects.toBeDefined();
+    expect(f.service.startupStatus(f.cold)).toMatchObject({ phase: "error", blocker: "docker-stopped" });
+    expect(initialize).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+  });
+  it("cancels a pending cold start before any late environment creation", async () => {
+    const f = await startupFixture(); let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const initialize = vi.spyOn(f.environments, "initialize").mockImplementation(async () => { await barrier; return { probe: await f.environments.probe(), imageRef: "fixture", imageDigest: `sha256:${"a".repeat(64)}`, workerVersion: "1.2.0" }; });
+    const start = vi.spyOn(f.environments, "start");
+    const pending = f.service.start({ ...f.cold, clientNonce: randomUUID() }).catch(error => error);
+    await vi.waitFor(() => expect(initialize).toHaveBeenCalledTimes(1));
+    const status = f.service.startupStatus(f.cold)!;
+    f.service.cancelStartup({ ...f.cold, attemptId: status.attemptId });
+    expect(await pending).toMatchObject({ code: "TOOL_EXECUTION_CANCELLED" });
+    release(); await barrier; await Promise.resolve();
+    expect(start).not.toHaveBeenCalled(); expect(f.repository.environments.get(f.cold)).toBeNull();
+    expect(f.service.startupStatus(f.cold)).toMatchObject({ phase: "cancelled" });
+  });
+  it("starts six scopes before the first preparation finishes and coalesces repeated opens", async () => {
+    const f = await startupFixture(); let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const initialize = vi.spyOn(f.environments, "initialize").mockImplementation(async () => { await barrier; return { probe: await f.environments.probe(), imageRef: "fixture", imageDigest: `sha256:${"a".repeat(64)}`, workerVersion: "1.2.0" }; });
+    const start = vi.spyOn(f.environments, "start").mockRejectedValue(new Error("controlled environment startup failure"));
+    const owners = Array.from({ length: 6 }, () => f.repository.createBot());
+    const room = f.repository.createRoom({ memberBotIds: owners.map(owner => owner.bot.id) });
+    const inputs = owners.map(owner => ({ sessionId: room.session.id, executorBotId: owner.bot.id, clientNonce: randomUUID() }));
+    const pending = inputs.map(input => f.service.start(input).catch(error => error));
+    const repeated = f.service.start(inputs[0]!).catch(error => error);
+    await vi.waitFor(() => expect(initialize).toHaveBeenCalledTimes(6));
+    f.service.cancelStartup({ sessionId: inputs[0]!.sessionId, executorBotId: inputs[0]!.executorBotId, attemptId: f.service.startupStatus(inputs[0]!)!.attemptId });
+    expect(await pending[0]).toMatchObject({ code: "TOOL_EXECUTION_CANCELLED" });
+    expect(await repeated).toMatchObject({ code: "TOOL_EXECUTION_CANCELLED" });
+    expect(inputs.slice(1).every(input => f.service.startupStatus(input)?.phase === "preparing-environment")).toBe(true);
+    release(); await Promise.all(pending);
+    expect(start).toHaveBeenCalledTimes(5);
+    expect(start.mock.calls.every(([input]) => input.executorBotId !== inputs[0]!.executorBotId)).toBe(true);
   });
 });
