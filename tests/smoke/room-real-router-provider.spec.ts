@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
+import { openInspector } from "./navigation";
 
 const isolatedDatabase = process.env.AEVOREN_BOT_REAL_PROVIDER_DB_PATH;
 
@@ -48,7 +49,9 @@ test("routes one no-mention request through the real selector with at most two P
     const page = await application.firstWindow();
     await page.locator(".bot-row").filter({ hasText: roomName }).click();
     await expect(page.getByRole("heading", { name: roomName })).toBeVisible();
-    await expect(page.getByText("未 @ 时，自动选择最合适的 Bot", { exact: true })).toBeVisible();
+    await openInspector(page);
+    await expect(page.getByLabel("群协调者", { exact: true })).toHaveValue("");
+    await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("automatic");
 
     await page.getByLabel("消息").fill("请分析本季度财务预算、成本结构和费用控制重点，并用一句话回答。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -57,7 +60,7 @@ test("routes one no-mention request through the real selector with at most two P
     const userMessage = page.locator("article.message-user").last();
     await expect(userMessage).toContainText("自动选择");
     await expect(userMessage.locator(".message-route-chip")).toHaveText([`@${financeName}`]);
-    await expect(page.getByTestId("room-batch-state")).toContainText("completed");
+    await expect(page.getByTestId("room-batch-state")).toHaveCount(0);
   } finally {
     await application.close();
   }

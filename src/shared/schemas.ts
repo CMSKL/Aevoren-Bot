@@ -1,8 +1,13 @@
 import { z } from "zod";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "./bot-avatar";
+import { resourceReferencesSchema } from "./library-schemas";
+import { messageMediaReferencesSchema } from "./media-schemas";
 
-const nonEmptyText = z.string().trim().min(1).max(20_000);
 const providerInstanceIdSchema = z.string().trim().min(1).max(120).regex(/^[a-z0-9][a-z0-9._-]*$/i);
 export const workspaceIdSchema = z.string().uuid();
+export const projectIdSchema = z.string().uuid();
+export const projectCreateSchema = z.object({ name: z.string().trim().min(1).max(80) }).strict();
+export const projectContextSchema = z.object({ projectId: projectIdSchema.optional() }).strict();
 export const modelSelectionSchema = z.object({
   providerInstanceId: providerInstanceIdSchema,
   modelId: z.string().trim().max(200),
@@ -18,6 +23,8 @@ export const botUpdateSchema = z.object({
       description: z.string().trim().max(2_000).optional(),
       instructions: z.string().trim().max(20_000).optional(),
       modelSelection: modelSelectionSchema.optional(),
+      avatarShape: z.enum(BOT_AVATAR_SHAPES).optional(),
+      avatarColor: z.enum(BOT_AVATAR_COLORS).optional(),
       mcpServerIds: z.array(z.string().uuid()).max(20).refine((ids) => new Set(ids).size === ids.length, "MCP server ids must be unique").nullable().optional(),
       memoryWorkspaceIds: z.array(workspaceIdSchema).max(20).refine((ids) => new Set(ids).size === ids.length, "Memory workspace ids must be unique").optional(),
     })
@@ -27,7 +34,8 @@ export const botUpdateSchema = z.object({
 export const botIdSchema = z.string().uuid();
 export const capabilitySnapshotInputSchema = z.object({
   botId: botIdSchema.optional(),
-}).strict().optional();
+  sessionId: z.string().uuid().optional(),
+}).strict().refine((input) => !input.sessionId || Boolean(input.botId), "A conversation capability snapshot requires its executing Bot").optional();
 export const conversationBatchDeleteSchema = z.object({
   botIds: z.array(botIdSchema).max(200),
   roomIds: z.array(z.string().uuid()).max(200),
@@ -45,6 +53,8 @@ export const botUnreadSchema = z.object({ id: botIdSchema, unread: z.boolean() }
 export const botHiddenSchema = z.object({ id: botIdSchema, hidden: z.boolean() });
 export const memoryIdSchema = z.string().uuid();
 const memoryContentSchema = z.string().trim().min(1).max(4_000);
+export const memoryKindSchema = z.enum(["fact", "preference", "decision", "procedure"]);
+const memoryExpiresAtSchema = z.string().datetime({ offset: true }).nullable();
 const legacyMemoryListSchema = z.object({
   botId: botIdSchema,
   includeDeleted: z.boolean().optional(),
@@ -52,6 +62,8 @@ const legacyMemoryListSchema = z.object({
 const legacyMemoryCreateSchema = z.object({
   botId: botIdSchema,
   content: memoryContentSchema,
+  kind: memoryKindSchema.optional(),
+  expiresAt: memoryExpiresAtSchema.optional(),
 }).strict();
 export const memoryScopeSelectorSchema = z.discriminatedUnion("scope", [
   z.object({ scope: z.literal("user"), scopeKey: z.literal("user") }).strict(),
@@ -64,18 +76,39 @@ export const memoryListSchema = z.union([
 ]);
 export const memoryCreateSchema = z.union([
   legacyMemoryCreateSchema,
-  memoryScopeSelectorSchema.and(z.object({ content: memoryContentSchema })),
+  memoryScopeSelectorSchema.and(z.object({
+    content: memoryContentSchema,
+    kind: memoryKindSchema.optional(),
+    expiresAt: memoryExpiresAtSchema.optional(),
+  })),
 ]);
 export const memoryUpdateSchema = z.object({
   id: memoryIdSchema,
   expectedVersion: z.number().int().positive(),
   content: memoryContentSchema,
+  kind: memoryKindSchema.optional(),
+  expiresAt: memoryExpiresAtSchema.optional(),
 }).strict();
 export const memoryMutationSchema = z.object({
   id: memoryIdSchema,
   expectedVersion: z.number().int().positive(),
 }).strict();
+export const memoryProposalListSchema = z.object({
+  botId: botIdSchema.optional(),
+  state: z.enum(["pending", "accepted", "rejected"]).optional(),
+}).strict().optional();
+export const memoryProposalAcceptSchema = z.object({
+  id: memoryIdSchema,
+  expectedVersion: z.number().int().positive(),
+  content: memoryContentSchema.optional(),
+  kind: memoryKindSchema.optional(),
+  expiresAt: memoryExpiresAtSchema.optional(),
+}).strict();
 export const sessionIdSchema = z.string().uuid();
+export const conversationPinnedSchema = z.object({ sessionId: sessionIdSchema, pinned: z.boolean() }).strict();
+export const conversationUnreadSchema = z.object({ sessionId: sessionIdSchema, unread: z.boolean() }).strict();
+export const conversationHiddenSchema = z.object({ sessionId: sessionIdSchema, hidden: z.boolean() }).strict();
+export const conversationProjectSchema = z.object({ sessionId: sessionIdSchema, projectId: projectIdSchema.nullable(), expectedVersion: z.number().int().positive() }).strict();
 export const nonceSchema = z.string().uuid();
 export const runIdSchema = z.string().uuid();
 export const toolInvocationIdSchema = z.string().uuid();
@@ -84,11 +117,22 @@ export const workspaceMutationSchema = z.object({
   id: workspaceIdSchema,
   expectedVersion: z.number().int().positive(),
 }).strict();
+export const workspacePermissionsSchema = z.object({
+  id: workspaceIdSchema,
+  expectedVersion: z.number().int().positive(),
+  writeEnabled: z.boolean(),
+  automationEnabled: z.boolean(),
+}).strict();
+export const workspaceRevealSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  path: z.string().min(1).max(1_024),
+}).strict();
 export const workspaceRelativePathSchema = z
   .string()
   .max(1_024)
   .superRefine((value, context) => {
-    if (value.startsWith("/") || value.includes("\\") || value.includes("\0")) {
+    if (value.startsWith("/") || value.startsWith("./") || value.includes("\\") ||
+      [...value].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
       context.addIssue({ code: "custom", message: "Path must be relative and use POSIX separators" });
       return;
     }
@@ -97,37 +141,47 @@ export const workspaceRelativePathSchema = z
     }
   })
   .transform((value) => value.normalize("NFC"));
+const workspaceDirectoryPathSchema = z.preprocess(
+  (value) => value === "." ? "" : value,
+  workspaceRelativePathSchema,
+);
 export const workspaceToolRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("workspace-list"),
     workspaceId: workspaceIdSchema,
-    path: workspaceRelativePathSchema,
-    maxEntries: z.number().int().min(1).max(500),
+    path: workspaceDirectoryPathSchema.default(""),
+    maxEntries: z.number().int().min(1).max(500).default(100),
   }).strict(),
   z.object({
     kind: z.literal("workspace-read"),
     workspaceId: workspaceIdSchema,
     path: workspaceRelativePathSchema,
-    maxBytes: z.number().int().min(1).max(1_048_576),
+    maxBytes: z.number().int().min(1).max(1_048_576).default(1_048_576),
   }).strict(),
   z.object({
     kind: z.literal("workspace-search"),
     workspaceId: workspaceIdSchema,
-    path: workspaceRelativePathSchema,
+    path: workspaceDirectoryPathSchema.default(""),
     query: z.string().trim().min(1).max(500),
-    maxMatches: z.number().int().min(1).max(200),
+    maxMatches: z.number().int().min(1).max(200).default(50),
+  }).strict(),
+  z.object({
+    kind: z.literal("workspace-write"),
+    workspaceId: workspaceIdSchema,
+    path: workspaceRelativePathSchema.refine((value) => value.length > 0 && /\.(?:md|csv)$/iu.test(value), "Only Markdown or CSV files are writable"),
+    content: z.string().min(1).max(262_144),
   }).strict(),
 ]);
 export const networkToolRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("web-search"),
     query: z.string().trim().min(1).max(500),
-    maxResults: z.number().int().min(1).max(10),
+    maxResults: z.number().int().min(1).max(10).default(5),
   }).strict(),
   z.object({
     kind: z.literal("web-fetch"),
     url: z.string().trim().url().max(2_048),
-    maxCharacters: z.number().int().min(1).max(100_000),
+    maxCharacters: z.number().int().min(1).max(100_000).default(50_000),
   }).strict(),
   z.object({
     kind: z.literal("weather-current"),
@@ -153,7 +207,32 @@ export const deviceToolRequestSchema = z.object({
   kind: z.literal("clipboard-read"),
   maxCharacters: z.number().int().min(1).max(20_000),
 }).strict();
-export const toolRequestSchema = z.union([workspaceToolRequestSchema, networkToolRequestSchema, mcpToolRequestSchema, deviceToolRequestSchema]);
+export const computationToolRequestSchema = z.object({
+  kind: z.literal("text-measure"),
+  text: z.string().max(100_000),
+}).strict();
+export const projectToolRequestSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("project-bots") }).strict(),
+  z.object({
+    kind: z.literal("bot-create"),
+    name: z.string().trim().min(1).max(80),
+    label: z.string().trim().max(80).default(""),
+    description: z.string().trim().max(2_000).default(""),
+    instructions: z.string().trim().max(20_000).default(""),
+  }).strict(),
+  z.object({
+    kind: z.literal("room-create"),
+    name: z.string().trim().min(1).max(72),
+    description: z.string().trim().max(2_000).default(""),
+    memberBotIds: z.array(z.string().uuid()).min(2).max(6).refine((ids) => new Set(ids).size === ids.length),
+  }).strict(),
+]);
+export const productToolRequestSchema = z.discriminatedUnion("action", [
+  z.object({ kind: z.literal("product-call"), action: z.literal("catalog"), query: z.string().max(200).optional() }).strict(),
+  z.object({ kind: z.literal("product-call"), action: z.literal("describe"), operation: z.string().min(1).max(100) }).strict(),
+  z.object({ kind: z.literal("product-call"), action: z.literal("execute"), operation: z.string().min(1).max(100), input: z.unknown().optional() }).strict(),
+]);
+export const toolRequestSchema = z.union([productToolRequestSchema, workspaceToolRequestSchema, networkToolRequestSchema, mcpToolRequestSchema, deviceToolRequestSchema, computationToolRequestSchema, projectToolRequestSchema]);
 export const toolInvocationCommandSchema = z.object({
   runtimeRunId: runIdSchema,
   toolCallId: z.string().trim().min(1).max(200),
@@ -169,15 +248,42 @@ export const approvalResolutionSchema = z.object({
 export const toolSessionScopeSchema = z.object({
   sessionId: sessionIdSchema,
 }).strict();
+export const attachmentDraftSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(200),
+  mimeType: z.string().trim().min(1).max(120),
+  size: z.number().int().min(0).max(1_048_576),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  kind: z.literal("text"),
+  content: z.string().max(1_048_576),
+}).strict();
+export const artifactSaveSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  content: z.string().max(2 * 1_048_576),
+}).strict();
+export const artifactRevealSchema = z.string().min(1).max(4_096);
+export const messageAttachmentsSchema = z.array(attachmentDraftSchema).max(6).superRefine((attachments, context) => {
+  const total = attachments.reduce((sum, attachment) => sum + new TextEncoder().encode(attachment.content).byteLength, 0);
+  if (total > 4 * 1_048_576) context.addIssue({ code: "custom", message: "Attachments are too large" });
+});
 export const roomIdSchema = z.string().uuid();
 export const batchIdSchema = z.string().uuid();
 export const turnIdSchema = z.string().uuid();
-
-export const sendCommandSchema = z.object({
-  sessionId: sessionIdSchema,
+export const briefApprovalReadSchema = z.object({ roomId: roomIdSchema, sourceRuntimeRunId: z.string().uuid() }).strict();
+export const briefApprovalCommandSchema = briefApprovalReadSchema.extend({
+  briefInvocationId: z.string().uuid(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   clientNonce: nonceSchema,
-  text: nonEmptyText,
-});
+  candidate: z.enum(["A", "B", "C"]),
+}).strict();
+
+export const messageBodySchema = z.object({
+  text: z.string().trim().max(20_000),
+  attachments: messageAttachmentsSchema.optional(),
+  resourceRefs: resourceReferencesSchema.optional(),
+  mediaRefs: messageMediaReferencesSchema.optional(),
+}).refine(command => Boolean(command.text || command.attachments?.length || command.resourceRefs?.length || command.mediaRefs?.length), "A message needs text or a selected resource");
+export const sendCommandSchema = messageBodySchema.safeExtend({ sessionId: sessionIdSchema, clientNonce: nonceSchema });
 
 const roomMemberIdsSchema = z.array(botIdSchema).min(2).max(6).refine(
   (ids) => new Set(ids).size === ids.length,
@@ -185,6 +291,8 @@ const roomMemberIdsSchema = z.array(botIdSchema).min(2).max(6).refine(
 );
 
 export const roomCreateSchema = z.object({
+  projectId: projectIdSchema.optional(),
+  leadBotId: botIdSchema.nullable().optional(),
   memberBotIds: roomMemberIdsSchema,
   name: z.string().trim().min(1).max(72).optional(),
   description: z.string().trim().max(2_000).optional(),
@@ -196,6 +304,7 @@ export const roomUpdateSchema = z.object({
   patch: z.object({
     name: z.string().trim().min(1).max(72).optional(),
     description: z.string().trim().max(2_000).optional(),
+    leadBotId: botIdSchema.nullable().optional(),
   }).refine((patch) => Object.keys(patch).length > 0, "At least one field is required"),
 });
 
@@ -215,7 +324,7 @@ const uniqueRoomTargets = z.array(botIdSchema).max(6).refine(
   "Room targets must be unique",
 );
 
-export const roomSendCommandSchema = sendCommandSchema.extend({
+export const roomSendCommandSchema = sendCommandSchema.safeExtend({
   roomId: roomIdSchema,
   targetBotIds: uniqueRoomTargets,
   routingMode: z.enum(["automatic", "explicit", "everyone"]),
@@ -334,5 +443,8 @@ export const routineMutationSchema = z.object({ id: routineIdSchema, expectedVer
 
 export const generalSettingsSchema = z.object({
   theme: z.enum(["system", "light", "dark"]).optional(),
+  memoryCaptureEnabled: z.boolean().optional(),
+  autoApprovePublicReadTools: z.boolean().optional(),
+  updateCheckIntervalMinutes: z.union([z.literal(60), z.literal(360), z.literal(720), z.literal(1_440)]).optional(),
   launchAtLogin: z.boolean().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one general setting is required");

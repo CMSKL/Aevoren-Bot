@@ -1,10 +1,26 @@
+import type { BotAvatarColor, BotAvatarShape } from "./bot-avatar";
+
+export const DEFAULT_PROJECT_ID = "10000000-0000-4000-8000-000000000001";
+
+import type { LibraryApi, LibraryContent, ResourceReference } from "./library-contracts";
+import type { MediaApi, MessageMediaReference } from "./media-contracts";
+export type { MessageMediaReference } from "./media-contracts";
+import type { ApprovalReviewInput, ApprovalReviewResult, SkillExecutionApi } from "./skill-execution-contracts";
+import type { NativeOutboundApi } from "./native-outbound-contracts";
+import type { NativeConnectorsApi, ConnectorDraftsApi } from "./native-connector-contracts";
+export type { LibraryResource, LibraryContent, ResourceRevision, ResourceReference, MediaRef } from "./library-contracts";
+
 export type Bot = {
   id: string;
+  /** Legacy origin only. Current chat association and tool access come from ConversationSummary/session scope, never this field. */
+  projectId: string;
   name: string;
   label: string;
   description: string;
   instructions: string;
   modelSelection: ModelSelection;
+  avatarShape: BotAvatarShape;
+  avatarColor: BotAvatarColor;
   mcpServerIds?: string[] | null;
   memoryWorkspaceIds?: string[];
   pinnedAt: string | null;
@@ -15,7 +31,7 @@ export type Bot = {
   updatedAt: string;
 };
 
-export type BotPatch = Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection" | "mcpServerIds" | "memoryWorkspaceIds">>;
+export type BotPatch = Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection" | "avatarShape" | "avatarColor" | "mcpServerIds" | "memoryWorkspaceIds">>;
 
 export type BotDeleteResult = {
   id: string;
@@ -33,7 +49,23 @@ export type ConversationBatchDeleteResult = {
   rooms: RoomDeleteResult[];
 };
 
-export type MemorySource = "manual-user";
+/** A chat is backed by its existing Session; removing it does not remove its contact. */
+export type ConversationSummary = {
+  sessionId: string;
+  botId: string | null;
+  roomId: string | null;
+  projectId: string | null;
+  workspaceIds: string[];
+  pinnedAt: string | null;
+  hiddenAt: string | null;
+  hasUnread: boolean;
+  lastMessage: string | null;
+  lastActivityAt: string;
+  version: number;
+};
+
+export type MemorySource = "manual-user" | "model-captured";
+export type MemoryKind = "fact" | "preference" | "decision" | "procedure";
 export type MemoryScope = "user" | "bot" | "workspace";
 
 export type MemoryScopeSelector = {
@@ -49,9 +81,34 @@ export type MemoryItem = {
   workspaceId?: string | null;
   content: string;
   contentDigest: string;
+  kind: MemoryKind;
   source: MemorySource;
+  sourceEntryId: string | null;
+  expiresAt: string | null;
   version: number;
   deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MemoryProposalState = "pending" | "accepted" | "rejected";
+
+export type MemoryProposal = {
+  id: string;
+  botId: string;
+  scope: MemoryScope;
+  scopeKey: string;
+  workspaceId: string | null;
+  kind: MemoryKind;
+  content: string;
+  contentDigest: string;
+  reason: string;
+  sourceEntryId: string;
+  supersedesMemoryId: string | null;
+  expiresAt: string | null;
+  state: MemoryProposalState;
+  version: number;
+  resolvedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -59,8 +116,20 @@ export type MemoryItem = {
 export type Workspace = {
   id: string;
   name: string;
+  writeEnabled: boolean;
+  automationEnabled: boolean;
   version: number;
   removedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Project = {
+  id: string;
+  name: string;
+  workspaceId: string | null;
+  isDefault: boolean;
+  version: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -68,6 +137,13 @@ export type Workspace = {
 export type WorkspaceRegistrationResult = {
   disposition: "registered" | "duplicate" | "restored";
   workspace: Workspace;
+  project: Project;
+};
+
+export type TeamTemplateCreateResult = {
+  disposition: "created" | "existing";
+  bots: Bot[];
+  room: RoomDetail;
 };
 
 export type Session = {
@@ -96,6 +172,7 @@ export type SendState =
   | "interrupted-unknown";
 
 export type TranscriptEntry = {
+  origin?: DelegationOrigin;
   id: string;
   sessionId: string;
   generation: number;
@@ -103,6 +180,13 @@ export type TranscriptEntry = {
   clientNonce: string | null;
   role: TranscriptRole;
   body: string;
+  attachments?: MessageAttachment[];
+  resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
+  /** Main-only authorized resource snapshot, never returned in Renderer transcripts. */
+  resourceContents?: LibraryContent[];
+  /** Main-only prompt enrichment; never populated in Renderer-facing snapshots. */
+  attachmentContents?: Array<MessageAttachment & { content: string }>;
   status: TranscriptStatus;
   sendState: SendState | null;
   speakerBotId: string | null;
@@ -125,10 +209,38 @@ export type SendJournalEntry = {
   updatedAt: string;
 };
 
+export type MessageAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  sha256: string;
+  kind: "text";
+};
+
+/** Content is transient Renderer state and is validated again in Main. */
+export type AttachmentDraft = MessageAttachment & {
+  content: string;
+};
+
+export type ArtifactSaveInput = {
+  name: string;
+  content: string;
+};
+
+export type ArtifactSaveResult = {
+  name: string;
+  path: string;
+  size: number;
+};
+
 export type SendCommand = {
   sessionId: string;
   clientNonce: string;
   text: string;
+  attachments?: AttachmentDraft[];
+  resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
 };
 
 export type SendResult = {
@@ -157,7 +269,67 @@ export type ModelSelection = {
   modelId: string;
 };
 
+export type DecisionProviderKind = "rules" | "fake" | "jev";
+
+export type DecisionState =
+  | "prepared"
+  | "dispatched"
+  | "completed"
+  | "timeout"
+  | "failed"
+  | "rate-limited"
+  | "fallback"
+  | "cancelled";
+
+export type DecisionAnswer = {
+  value: unknown;
+  confidence?: number;
+  probabilities?: Record<string, number>;
+};
+
+export type DecisionRequest = {
+  policyId: string;
+  policyVersion: number;
+  state: Record<string, unknown>;
+  questions: Record<string, unknown>;
+  model?: string;
+  timeoutMs?: number;
+  idempotencyKey: string;
+};
+
+export type DecisionResult = {
+  provider: DecisionProviderKind;
+  modelVersion: string;
+  answers: Record<string, DecisionAnswer>;
+  latencyMs: number;
+  requestId: string | null;
+};
+
+export type DecisionJournalEntry = {
+  id: string;
+  idempotencyKey: string;
+  policyId: string;
+  policyVersion: number;
+  provider: DecisionProviderKind;
+  modelVersion: string | null;
+  state: DecisionState;
+  inputDigest: string;
+  answers: Record<string, DecisionAnswer>;
+  confidence: Record<string, number>;
+  fallbackReason: string | null;
+  requestId: string | null;
+  latencyMs: number | null;
+  lastErrorCode: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ProviderCapabilities = {
+  /** Verified adapter transport for real tool image bytes; model understanding is separate. */
+  toolImageInput?: boolean;
+  /** When specified, expose only these host tools; legacy adapters keep their existing set. */
+  supportedToolNames?: readonly string[];
   roomOwnerSelection: boolean;
   handoff: boolean;
   workspaceTools: boolean;
@@ -210,8 +382,8 @@ export type SaveCliProviderInput = {
   cliPath: string;
 };
 
-export type RuntimeRoute = "fake" | ProviderDriverKind;
-export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "user" | "assistant";
+export type RuntimeRoute = "fake" | "host-outbound" | "host-mcp" | ProviderDriverKind;
+export type PromptAuthority = "agent-profile" | "runtime-state" | "memory" | "room-context" | "library-resource" | "media-resource" | "user" | "assistant";
 
 export type PromptManifestBlock = {
   authority: PromptAuthority;
@@ -224,7 +396,7 @@ export type PromptManifestBlock = {
 };
 
 export type PromptManifest = {
-  schemaVersion: 1 | 2 | 3 | 4;
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6;
   botId: string;
   profileVersion: number;
   sessionId: string;
@@ -290,6 +462,12 @@ export type WorkspaceToolRequest =
       path: string;
       query: string;
       maxMatches: number;
+    }
+  | {
+      kind: "workspace-write";
+      workspaceId: string;
+      path: string;
+      content: string;
     };
 
 export type NetworkToolRequest =
@@ -325,7 +503,28 @@ export type DeviceToolRequest = {
   maxCharacters: number;
 };
 
-export type ToolRequest = WorkspaceToolRequest | NetworkToolRequest | McpToolRequest | DeviceToolRequest;
+export type ComputationToolRequest = {
+  kind: "text-measure";
+  text: string;
+};
+
+export type ProductToolRequest =
+  | { kind: "product-call"; action: "catalog"; query?: string }
+  | { kind: "product-call"; action: "describe"; operation: string }
+  | { kind: "product-call"; action: "execute"; operation: string; input?: unknown };
+
+export type DelegationOrigin = {
+  ancestorRunIds?: string[];
+  kind: "ai-delegation" | "routine"; routineId?: string; routineRunId?: string; fromBotNameSnapshot?: string; fromBotId: string; fromSessionId: string; fromRuntimeRunId: string; rootClientNonce: string; depth: number;
+};
+
+export type ProjectToolRequest =
+  | ProductToolRequest
+  | { kind: "project-bots" }
+  | { kind: "bot-create"; name: string; label: string; description: string; instructions: string }
+  | { kind: "room-create"; name: string; description: string; memberBotIds: string[] };
+
+export type ToolRequest = WorkspaceToolRequest | NetworkToolRequest | McpToolRequest | DeviceToolRequest | ComputationToolRequest | ProjectToolRequest;
 
 export type McpTransportKind = "stdio" | "streamable-http";
 export type McpServerStatus = "disabled" | "connecting" | "available" | "unavailable" | "needs-auth";
@@ -429,6 +628,65 @@ export type ToolInvocation = {
   finishedAt: string | null;
 };
 
+export type ExecutionEvidenceReceipt = {
+  schemaVersion: 1;
+  id: string;
+  sessionId: string;
+  roomId: string;
+  generation: number;
+  targetTurnId: string;
+  sourceRuntimeRunId: string;
+  sourceTurnId: string | null;
+  sourceAgentId: string;
+  sourceAssistantEntryId: string;
+  sourceCompletedAt: string;
+  taskRequirements: { sourceEntryId: string; text: string };
+  approvedBrief: {
+    candidate: "A" | "B" | "C";
+    approvalEntryId: string;
+    briefInvocationId: string;
+    sha256: string;
+  } | null;
+  tools: Array<{
+    invocationId: string;
+    sourceRuntimeRunId: string;
+    kind: ToolRequest["kind"];
+    workspaceId: string | null;
+    targetPath: string;
+    resultDigest: string;
+    resultMetadata: Record<string, string | number | boolean | null> | null;
+    finishedAt: string;
+  }>;
+  artifacts: Array<{
+    invocationId: string;
+    sourceRuntimeRunId: string;
+    workspaceId: string;
+    path: string;
+    resultDigest: string;
+    sha256: string | null;
+    bytes: number | null;
+    finishedAt: string;
+  }>;
+  digest: string;
+  createdAt: string;
+};
+
+export type BriefApprovalView = {
+  approved: boolean;
+  sourceRuntimeRunId: string;
+  briefInvocationId: string;
+  workspaceId: string;
+  path: string;
+  sha256: string;
+  content: string;
+};
+
+export type BriefApprovalCommand = Pick<BriefApprovalView, "sourceRuntimeRunId" | "briefInvocationId" | "sha256"> & {
+  roomId: string;
+  clientNonce: string;
+  candidate: "A" | "B" | "C";
+};
+
 export type ApprovalState = "pending" | "allowed" | "denied" | "expired" | "cancelled";
 export type ApprovalResolution = "allow-once" | "deny";
 
@@ -468,8 +726,11 @@ export type ToolApprovalResult = {
 
 export type Room = {
   id: string;
+  /** Legacy origin only. Current chat association and tool access come from ConversationSummary/session scope, never this field. */
+  projectId: string;
   name: string;
   description: string;
+  leadBotId?: string | null;
   version: number;
   membershipVersion: number;
   archivedAt: string | null;
@@ -480,7 +741,7 @@ export type Room = {
   updatedAt: string;
 };
 
-export type RoomPatch = Partial<Pick<Room, "name" | "description">>;
+export type RoomPatch = Partial<Pick<Room, "name" | "description" | "leadBotId">>;
 
 export type RoomDeleteResult = {
   id: string;
@@ -516,6 +777,8 @@ export type AgentTurnOutcome = {
 };
 
 export type AgentTurnOrigin = "initial" | "handoff" | "retry";
+export type RoomTurnPurpose = "coordinate" | "work" | "summary";
+export type RoomSummaryState = "not-required" | "pending" | "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted" | "skipped";
 export type HandoffVisibility = "room" | "direct";
 export type HandoffState = "queued" | "dispatching" | "accepted" | "failed" | "cancelled";
 export type RoomRoutingMode = "legacy" | "automatic" | "explicit" | "everyone";
@@ -530,6 +793,12 @@ export type RoomRun = {
   targetDigest: string;
   routingMode: RoomRoutingMode;
   routingReason: string | null;
+  orchestrationEnabled: boolean;
+  leadBotId?: string | null;
+  summaryState?: RoomSummaryState;
+  summaryTurnId?: string | null;
+  summarySkipReason?: string | null;
+  coordinationErrorCode?: string | null;
   state: RoomRunState;
   membershipVersion: number;
   maxTurns: number;
@@ -558,6 +827,8 @@ export type AgentTurn = {
   nonce: string;
   hop: number;
   origin: AgentTurnOrigin;
+  turnPurpose?: RoomTurnPurpose;
+  dependencyLogicalTurnId?: string | null;
   inputGeneration: number;
   inputSeq: number;
   position: number;
@@ -574,6 +845,34 @@ export type AgentTurn = {
 };
 
 export type RoomTurn = AgentTurn;
+
+export type RoomRunSummary = {
+  runId: string;
+  leadBotId: string;
+  request: { entryId: string; text: string };
+  coordinationErrorCode: string | null;
+  results: Array<{
+    turnId: string;
+    logicalTurnId: string;
+    agentId: string;
+    agentName: string;
+    turnPurpose: "coordinate" | "work";
+    state: AgentTurnState;
+    errorCode: string | null;
+    outcome: AgentTurnOutcome | null;
+    body: string;
+    assistantEntryId: string | null;
+    tools?: Array<{ kind: ToolRequest["kind"]; resultDigest: string }>;
+    artifacts: Array<{
+      invocationId: string;
+      sourceRuntimeRunId: string;
+      workspaceId: string;
+      path: string;
+      sha256: string;
+      bytes: number;
+    }>;
+  }>;
+};
 
 export type AgentHandoff = {
   id: string;
@@ -598,7 +897,16 @@ export type RoomHandoff = AgentHandoff;
 export type RoomHandoffView = Pick<
   RoomHandoff,
   "id" | "runId" | "fromTurnId" | "toAgentId" | "targetTurnId" | "task" | "state" | "version" | "createdAt" | "updatedAt" | "finishedAt"
->;
+> & {
+  /** Latest retry delivery, derived from its persisted Turn/Runtime; original delivery remains unchanged. */
+  deliveryAttempt?: {
+    attemptNo: number;
+    turnId: string;
+    state: HandoffState;
+    acceptedAt: string | null;
+    version: number;
+  };
+};
 
 export type RoomHandoffRejectionView = {
   id: string;
@@ -612,13 +920,18 @@ export type RoomHandoffRejectionView = {
 export type InitialAgentTurnInput = {
   agentId: string;
   nonce: string;
+  turnPurpose?: RoomTurnPurpose;
 };
 
 export type CreateRoomRunInput = {
+  origin?: DelegationOrigin;
   roomId: string;
   sessionId: string;
   clientNonce: string;
   text: string;
+  attachments?: AttachmentDraft[];
+  resourceRefs?: ResourceReference[];
+  mediaRefs?: MessageMediaReference[];
   membershipVersion: number;
   maxTurns: number;
   maxHops: number;
@@ -627,6 +940,8 @@ export type CreateRoomRunInput = {
   initialTurns: InitialAgentTurnInput[];
   routingMode?: RoomRoutingMode;
   routingReason?: string | null;
+  orchestrationEnabled?: boolean;
+  leadBotId?: string | null;
 };
 
 export type CreateHandoffInput = {
@@ -705,9 +1020,14 @@ export type SessionRuntimeSnapshot = {
 
 export type AppearanceTheme = "system" | "light" | "dark";
 export type LoginItemStatus = "unsupported" | "not-registered" | "enabled" | "requires-approval" | "not-found";
+export const UPDATE_CHECK_INTERVAL_MINUTES = [60, 360, 720, 1_440] as const;
+export type UpdateCheckIntervalMinutes = (typeof UPDATE_CHECK_INTERVAL_MINUTES)[number];
 
 export type GeneralSettings = {
   theme: AppearanceTheme;
+  memoryCaptureEnabled: boolean;
+  autoApprovePublicReadTools: boolean;
+  updateCheckIntervalMinutes: UpdateCheckIntervalMinutes;
   launchAtLogin: boolean;
   launchAtLoginSupported: boolean;
   launchAtLoginStatus: LoginItemStatus;
@@ -715,6 +1035,9 @@ export type GeneralSettings = {
 
 export type SaveGeneralSettings = {
   theme?: AppearanceTheme;
+  memoryCaptureEnabled?: boolean;
+  autoApprovePublicReadTools?: boolean;
+  updateCheckIntervalMinutes?: UpdateCheckIntervalMinutes;
   launchAtLogin?: boolean;
 };
 
@@ -827,6 +1150,7 @@ export type ErrorDomain =
   | "runtime"
   | "tool"
   | "approval"
+  | "decision"
   | "provider"
   | "storage"
   | "security"
@@ -919,9 +1243,39 @@ export type RoutineRun = {
   finishedAt: string | null;
 };
 
+export type UserProfile = {
+  name: string;
+  avatarUrl: string | null;
+};
+
 export interface AevorenBotApi {
+  mcpWrites: import("./mcp-write-contracts").McpWriteApi;
+  browser: import("./browser-contracts").BrowserApi;
+  computer: import("./browser-contracts").ComputerApi;
+  demonstrations: import("./demonstration-contracts").DemonstrationApi;
+  preview: import("./browser-contracts").PreviewApi;
+  environments: import("./environment-contracts").EnvironmentsApi;
+  execution: import("./environment-contracts").ExecutionApi;
+  processes: import("./environment-contracts").ProcessesApi;
+  library: LibraryApi;
+  media: MediaApi;
+  skillsExecution: SkillExecutionApi;
+  outbound: NativeOutboundApi;
+  connectors: NativeConnectorsApi;
+  drafts: ConnectorDraftsApi;
+  userProfile: {
+    get(): Promise<ApiResult<UserProfile>>;
+    update(input: UserProfile): Promise<ApiResult<UserProfile>>;
+  };
+  attachments: {
+    pick(): Promise<ApiResult<AttachmentDraft[]>>;
+  };
+  artifacts: {
+    save(input: ArtifactSaveInput): Promise<ApiResult<ArtifactSaveResult | null>>;
+    reveal(path: string): Promise<ApiResult<boolean>>;
+  };
   capabilities: {
-    getSnapshot(input?: { botId?: string }): Promise<ApiResult<CapabilitySnapshot>>;
+    getSnapshot(input?: { botId?: string; sessionId?: string }): Promise<ApiResult<CapabilitySnapshot>>;
   };
   mcp: {
     list(): Promise<ApiResult<McpServerInfo[]>>;
@@ -943,11 +1297,20 @@ export interface AevorenBotApi {
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<void>>;
   };
   conversations: {
+    list(): Promise<ApiResult<ConversationSummary[]>>;
+    setPinned(input: { sessionId: string; pinned: boolean }): Promise<ApiResult<ConversationSummary>>;
+    setUnread(input: { sessionId: string; unread: boolean }): Promise<ApiResult<ConversationSummary>>;
+    setHidden(input: { sessionId: string; hidden: boolean }): Promise<ApiResult<ConversationSummary>>;
+    setProject(input: { sessionId: string; projectId: string | null; expectedVersion: number }): Promise<ApiResult<ConversationSummary>>;
+    clear(sessionId: string): Promise<ApiResult<Session>>;
     deleteBatch(input: ConversationBatchDeleteInput): Promise<ApiResult<ConversationBatchDeleteResult>>;
+  };
+  teams: {
+    createContentTeam(input?: { projectId?: string }): Promise<ApiResult<TeamTemplateCreateResult>>;
   };
   bots: {
     list(): Promise<ApiResult<Bot[]>>;
-    create(): Promise<ApiResult<{ bot: Bot; session: Session }>>;
+    create(input?: { projectId?: string }): Promise<ApiResult<{ bot: Bot; session: Session }>>;
     update(input: { id: string; expectedVersion: number; patch: BotPatch }): Promise<ApiResult<Bot>>;
     setPinned(input: { id: string; pinned: boolean }): Promise<ApiResult<Bot>>;
     setUnread(input: { id: string; unread: boolean }): Promise<ApiResult<Bot>>;
@@ -958,20 +1321,30 @@ export interface AevorenBotApi {
   };
   memories: {
     list(input: { botId: string; includeDeleted?: boolean } | (MemoryScopeSelector & { includeDeleted?: boolean })): Promise<ApiResult<MemoryItem[]>>;
-    create(input: { botId: string; content: string } | (MemoryScopeSelector & { content: string })): Promise<ApiResult<MemoryItem>>;
-    update(input: { id: string; expectedVersion: number; content: string }): Promise<ApiResult<MemoryItem>>;
+    create(input: { botId: string; content: string; kind?: MemoryKind; expiresAt?: string | null } | (MemoryScopeSelector & { content: string; kind?: MemoryKind; expiresAt?: string | null })): Promise<ApiResult<MemoryItem>>;
+    update(input: { id: string; expectedVersion: number; content: string; kind?: MemoryKind; expiresAt?: string | null }): Promise<ApiResult<MemoryItem>>;
     delete(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
     restore(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryItem>>;
+    listProposals(input?: { botId?: string; state?: MemoryProposalState }): Promise<ApiResult<MemoryProposal[]>>;
+    acceptProposal(input: { id: string; expectedVersion: number; content?: string; kind?: MemoryKind; expiresAt?: string | null }): Promise<ApiResult<{ proposal: MemoryProposal; memory: MemoryItem }>>;
+    rejectProposal(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryProposal>>;
   };
   workspaces: {
     list(): Promise<ApiResult<Workspace[]>>;
-    add(): Promise<ApiResult<WorkspaceRegistrationResult | null>>;
+    add(input?: { projectId?: string }): Promise<ApiResult<WorkspaceRegistrationResult | null>>;
+    updatePermissions(input: { id: string; expectedVersion: number; writeEnabled: boolean; automationEnabled: boolean }): Promise<ApiResult<Workspace>>;
+    reveal(input: { workspaceId: string; path: string }): Promise<ApiResult<boolean>>;
     remove(input: { id: string; expectedVersion: number }): Promise<ApiResult<Workspace>>;
+  };
+  projects: {
+    list(): Promise<ApiResult<Project[]>>;
+    create(input: { name: string }): Promise<ApiResult<Project>>;
   };
   tools: {
     list(input: { sessionId: string }): Promise<ApiResult<ToolInvocation[]>>;
   };
   approvals: {
+    review(input: ApprovalReviewInput): Promise<ApiResult<ApprovalReviewResult>>;
     listPending(input: { sessionId: string }): Promise<ApiResult<ApprovalRequest[]>>;
     resolve(input: {
       sessionId: string;
@@ -984,8 +1357,10 @@ export interface AevorenBotApi {
     getMain(botId: string): Promise<ApiResult<Session>>;
   };
   rooms: {
+    getBriefApproval(input: { roomId: string; sourceRuntimeRunId: string }): Promise<ApiResult<BriefApprovalView>>;
+    approveBrief(input: BriefApprovalCommand): Promise<ApiResult<RoomSendResult>>;
     list(input?: { includeArchived?: boolean }): Promise<ApiResult<Room[]>>;
-    create(input: { memberBotIds: string[]; name?: string; description?: string }): Promise<ApiResult<RoomDetail>>;
+    create(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string; leadBotId?: string | null }): Promise<ApiResult<RoomDetail>>;
     get(id: string): Promise<ApiResult<RoomDetail>>;
     update(input: { id: string; expectedVersion: number; patch: RoomPatch }): Promise<ApiResult<Room>>;
     archive(input: { id: string; archived: boolean }): Promise<ApiResult<Room>>;
@@ -1012,6 +1387,7 @@ export interface AevorenBotApi {
     retry(runId: string): Promise<ApiResult<SendResult>>;
   };
   roomRuntime: {
+    cancelMember(runId: string): Promise<ApiResult<RuntimeRun>>;
     getSnapshot(roomId: string): Promise<ApiResult<RoomRuntimeSnapshot>>;
     send(command: RoomSendCommand): Promise<ApiResult<RoomSendResult>>;
     cancel(batchId: string): Promise<ApiResult<RoomBatch>>;
@@ -1036,7 +1412,11 @@ export interface AevorenBotApi {
     retry(): Promise<ApiResult<UpdateState>>;
     installAndRestart(): Promise<ApiResult<UpdateState>>;
   };
+  productUI: {
+    respond(id: string, result: import("./product-view").ProductViewResult): Promise<ApiResult<boolean>>;
+  };
   events: {
+    subscribeProductView(listener: (request: import("./product-view").ProductViewRequest) => void): () => void;
     subscribeTranscript(listener: (event: TranscriptEvent) => void): () => void;
     subscribeSendState(listener: (event: SendStateEvent) => void): () => void;
     subscribeRuntime(listener: (event: RuntimeEvent) => void): () => void;

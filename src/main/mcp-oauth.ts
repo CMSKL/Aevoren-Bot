@@ -40,6 +40,14 @@ function safeEqual(left: string, right: string): boolean {
   return leftBytes.byteLength === rightBytes.byteLength && timingSafeEqual(leftBytes, rightBytes);
 }
 
+function boundCredential<T extends { issuer?: string }>(credential: T | undefined): T | undefined {
+  // Pre-1.31 credentials have no authorization-server binding. Retain their
+  // encrypted record, but require explicit sign-in before exposing them to SDK
+  // refresh/discovery. Never guess the issuer from fresh server metadata.
+  if (credential && !credential.issuer?.trim()) throw new AevorenBotError("MCP_AUTH_REQUIRED");
+  return credential;
+}
+
 export function parseMcpOAuthRecord(value: string): McpOAuthRecord {
   let parsed: unknown;
   try {
@@ -102,7 +110,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   clientInformation(): OAuthClientInformationMixed | undefined {
-    return this.options.store.read().clientInformation;
+    return boundCredential(this.options.store.read().clientInformation);
   }
 
   saveClientInformation(clientInformation: OAuthClientInformationMixed): void {
@@ -110,7 +118,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   tokens(): OAuthTokens | undefined {
-    return this.options.store.read().tokens;
+    return boundCredential(this.options.store.read().tokens);
   }
 
   saveTokens(tokens: OAuthTokens): void {

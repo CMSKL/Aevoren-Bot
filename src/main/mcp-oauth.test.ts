@@ -23,12 +23,15 @@ describe("MCP OAuth", () => {
     });
     provider.saveCodeVerifier("verifier-secret");
     expect(provider.codeVerifier()).toBe("verifier-secret");
-    provider.saveClientInformation({ client_id: "client-id", client_secret: "client-secret" });
-    provider.saveTokens({ access_token: "access-secret", refresh_token: "refresh-secret", token_type: "Bearer" });
+    const issuer = "https://auth.example.test";
+    provider.saveClientInformation({ client_id: "client-id", client_secret: "client-secret", issuer });
+    provider.saveTokens({ access_token: "access-secret", refresh_token: "refresh-secret", token_type: "Bearer", issuer });
     expect(parseMcpOAuthRecord(JSON.stringify(record))).toMatchObject({
-      clientInformation: { client_id: "client-id", client_secret: "client-secret" },
-      tokens: { access_token: "access-secret", refresh_token: "refresh-secret", token_type: "Bearer" },
+      clientInformation: { client_id: "client-id", client_secret: "client-secret", issuer },
+      tokens: { access_token: "access-secret", refresh_token: "refresh-secret", token_type: "Bearer", issuer },
     });
+    expect(provider.clientInformation()?.issuer).toBe(issuer);
+    expect(provider.tokens()?.issuer).toBe(issuer);
     await provider.redirectToAuthorization(new URL("http://127.0.0.1:45678/authorize"));
     expect(opened).toHaveBeenCalledOnce();
     const nonInteractive = new McpOAuthProvider({
@@ -77,8 +80,8 @@ describe("MCP OAuth", () => {
   it("refreshes an expired access token without reopening the browser", async () => {
     const authorizationServerUrl = "https://auth.example.test";
     let record: McpOAuthRecord = {
-      clientInformation: { client_id: "client-id" },
-      tokens: { access_token: "expired", refresh_token: "refresh-token", token_type: "Bearer" },
+      clientInformation: { client_id: "client-id", issuer: authorizationServerUrl },
+      tokens: { access_token: "expired", refresh_token: "refresh-token", token_type: "Bearer", issuer: authorizationServerUrl },
       discoveryState: {
         authorizationServerUrl,
         authorizationServerMetadata: {
@@ -111,7 +114,55 @@ describe("MCP OAuth", () => {
       });
     });
     await expect(auth(provider, { serverUrl: "https://mcp.example.test/mcp", fetchFn })).resolves.toBe("AUTHORIZED");
-    expect(record.tokens).toMatchObject({ access_token: "refreshed", refresh_token: "refresh-token" });
+    expect(record.tokens).toMatchObject({ access_token: "refreshed", refresh_token: "refresh-token", issuer: authorizationServerUrl });
     expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("preserves legacy records but never exposes unbound tokens or client secrets", () => {
+    for (const credentials of [
+      { clientInformation: { client_id: "legacy-client", client_secret: "legacy-secret" } },
+      { tokens: { access_token: "legacy-access", refresh_token: "legacy-refresh", token_type: "Bearer" } },
+    ]) {
+      const record = parseMcpOAuthRecord(JSON.stringify(credentials));
+      const write = vi.fn();
+      const provider = new McpOAuthProvider({
+        appVersion: "1.0.0", redirectUrl: new URL("http://127.0.0.1/oauth/callback"), state: "unused",
+        interactive: false, allowLoopbackAuthorization: false,
+        store: { read: () => record, write }, openAuthorization: vi.fn(),
+      });
+      expect(() => record.tokens ? provider.tokens() : provider.clientInformation()).toThrowError(expect.objectContaining({ code: "MCP_AUTH_REQUIRED" }));
+      expect(write).not.toHaveBeenCalled();
+      expect(record).toEqual(credentials);
+    }
+  });
+
+  it("does not send issuer-bound credentials to another authorization server", async () => {
+    const trusted = "https://trusted.example.test";
+    const untrusted = "https://untrusted.example.test";
+    let record: McpOAuthRecord = {
+      clientInformation: { client_id: "trusted-client", client_secret: "trusted-secret", issuer: trusted },
+      tokens: { access_token: "trusted-access", refresh_token: "trusted-refresh", token_type: "Bearer", issuer: trusted },
+      discoveryState: { authorizationServerUrl: untrusted, authorizationServerMetadata: {
+        issuer: untrusted, authorization_endpoint: `${untrusted}/authorize`, token_endpoint: `${untrusted}/token`, response_types_supported: ["code"],
+      } },
+    };
+    const provider = new McpOAuthProvider({
+      appVersion: "1.0.0", redirectUrl: new URL("http://127.0.0.1/oauth/callback"), state: "unused",
+      interactive: false, allowLoopbackAuthorization: false,
+      store: { read: () => record, write: value => { record = value; } }, openAuthorization: vi.fn(),
+    });
+    const fetchFn = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      expect(init?.method ?? "GET").toBe("GET");
+      const url = new URL(input);
+      const metadata = url.hostname === "mcp.example.test"
+        ? { resource: "https://mcp.example.test/mcp", authorization_servers: [untrusted] }
+        : record.discoveryState!.authorizationServerMetadata;
+      return new Response(JSON.stringify(metadata), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    await expect(auth(provider, { serverUrl: "https://mcp.example.test/mcp", fetchFn })).rejects.toThrow();
+    expect(fetchFn).toHaveBeenCalled();
+    expect(fetchFn.mock.calls.every(([, init]) => (init?.method ?? "GET") === "GET")).toBe(true);
+    expect(JSON.stringify(fetchFn.mock.calls)).not.toMatch(/trusted-(?:secret|refresh|access)/u);
+    expect(record.tokens?.issuer).toBe(trusted);
   });
 });

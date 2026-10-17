@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -69,7 +69,10 @@ function logicalV8Hash(database: DatabaseSync): string {
 }
 
 function createRunningRuntime(value: AppRepository) {
-  const created = value.createBot();
+  const directory = mkdtempSync(join(tmpdir(), "aevoren-tool-journal-workspace-"));
+  temporaryDirectories.push(directory);
+  const { workspace, project } = value.registerWorkspaceRoot(realpathSync(directory), "journal-workspace");
+  const created = value.createBot(project.id);
   const clientNonce = crypto.randomUUID();
   value.prepareMessage({ sessionId: created.session.id, clientNonce, text: "需要读取项目资料" });
   const manifest: PromptManifest = {
@@ -85,6 +88,7 @@ function createRunningRuntime(value: AppRepository) {
   const runtime = value.createRuntimeRun(clientNonce, "fake", manifest);
   value.transitionRuntimeRun(runtime.id, "dispatching");
   return {
+    workspace,
     bot: created.bot,
     session: created.session,
     runtime: value.transitionRuntimeRun(runtime.id, "running", { providerRequestId: "tool-provider" }),
@@ -93,6 +97,7 @@ function createRunningRuntime(value: AppRepository) {
 
 function command(
   runtimeRunId: string,
+  workspaceId: string,
   overrides: Partial<ToolInvocationCommand> = {},
 ): ToolInvocationCommand {
   return {
@@ -101,7 +106,7 @@ function command(
     idempotencyKey: crypto.randomUUID(),
     tool: {
       kind: "workspace-read",
-      workspaceId: crypto.randomUUID(),
+      workspaceId,
       path: "docs/spec.md",
       maxBytes: 4096,
     },
@@ -193,7 +198,7 @@ describe("Approval and Tool Journal repository", () => {
   it("creates one invocation and one bound approval atomically and deduplicates retries", () => {
     const value = repository();
     const fixture = createRunningRuntime(value);
-    const input = command(fixture.runtime.id);
+    const input = command(fixture.runtime.id, fixture.workspace.id);
     if (input.tool.kind !== "workspace-read") throw new Error("workspace-read fixture expected");
     const workspaceTool = input.tool;
     const first = value.prepareToolInvocation(input);
@@ -250,14 +255,14 @@ describe("Approval and Tool Journal repository", () => {
     );
     injector.close();
 
-    expect(() => value.prepareToolInvocation(command(fixture.runtime.id))).toThrow();
+    expect(() => value.prepareToolInvocation(command(fixture.runtime.id, fixture.workspace.id))).toThrow();
     expect(value.listToolInvocations(fixture.session.id)).toEqual([]);
   });
 
   it("settles allow-once and deny exactly once with CAS", () => {
     const value = repository();
     const allowedFixture = createRunningRuntime(value);
-    const allowed = value.prepareToolInvocation(command(allowedFixture.runtime.id));
+    const allowed = value.prepareToolInvocation(command(allowedFixture.runtime.id, allowedFixture.workspace.id));
     const allowedResult = value.resolveToolApproval(allowed.approval.id, 1, "allow-once");
     expect(allowedResult.approval).toMatchObject({ state: "allowed", resolution: "allow-once", version: 2 });
     expect(allowedResult.invocation).toMatchObject({ state: "approved", version: 2 });
@@ -270,7 +275,7 @@ describe("Approval and Tool Journal repository", () => {
 
     value.transitionRuntimeRun(allowedFixture.runtime.id, "completed");
     const deniedFixture = createRunningRuntime(value);
-    const denied = value.prepareToolInvocation(command(deniedFixture.runtime.id));
+    const denied = value.prepareToolInvocation(command(deniedFixture.runtime.id, deniedFixture.workspace.id));
     const deniedResult = value.resolveToolApproval(denied.approval.id, 1, "deny");
     expect(deniedResult.approval).toMatchObject({ state: "denied", resolution: "deny", version: 2 });
     expect(deniedResult.invocation).toMatchObject({ state: "denied", version: 2 });
@@ -283,7 +288,7 @@ describe("Approval and Tool Journal repository", () => {
     const value = repository();
     const expiredFixture = createRunningRuntime(value);
     const expired = value.prepareToolInvocation(
-      command(expiredFixture.runtime.id),
+      command(expiredFixture.runtime.id, expiredFixture.workspace.id),
       "2000-01-01T00:00:00.000Z",
     );
     expect(() => value.resolveToolApproval(expired.approval.id, 1, "allow-once")).toThrowError(
@@ -294,7 +299,7 @@ describe("Approval and Tool Journal repository", () => {
 
     value.transitionRuntimeRun(expiredFixture.runtime.id, "completed");
     const approvedFixture = createRunningRuntime(value);
-    const approved = value.prepareToolInvocation(command(approvedFixture.runtime.id));
+    const approved = value.prepareToolInvocation(command(approvedFixture.runtime.id, approvedFixture.workspace.id));
     value.resolveToolApproval(approved.approval.id, 1, "allow-once");
     expect(value.recoverToolInvocations()).toMatchObject({ expired: 1, interrupted: 0 });
     expect(value.getToolInvocation(approved.invocation.id)).toMatchObject({ state: "expired", version: 3 });
@@ -303,7 +308,7 @@ describe("Approval and Tool Journal repository", () => {
   it("guards dispatch and recovers dispatching or running calls as unknown without replay", () => {
     const value = repository();
     const fixture = createRunningRuntime(value);
-    const first = value.prepareToolInvocation(command(fixture.runtime.id));
+    const first = value.prepareToolInvocation(command(fixture.runtime.id, fixture.workspace.id));
     expect(() => value.transitionToolInvocation(first.invocation.id, "dispatching")).toThrowError(
       expect.objectContaining({ code: "TOOL_STATE_INVALID" }),
     );
@@ -313,7 +318,7 @@ describe("Approval and Tool Journal repository", () => {
 
     value.transitionRuntimeRun(fixture.runtime.id, "completed");
     const secondFixture = createRunningRuntime(value);
-    const second = value.prepareToolInvocation(command(secondFixture.runtime.id, { toolCallId: "tool-call-2" }));
+    const second = value.prepareToolInvocation(command(secondFixture.runtime.id, secondFixture.workspace.id, { toolCallId: "tool-call-2" }));
     value.resolveToolApproval(second.approval.id, 1, "allow-once");
     value.transitionToolInvocation(second.invocation.id, "dispatching");
 

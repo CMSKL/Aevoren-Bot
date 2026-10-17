@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -34,8 +34,8 @@ async function preparedInvocation(
   expiresAt?: string,
 ) {
   const service = new WorkspaceService(value);
-  const { workspace } = await service.registerRoot(root);
-  const created = value.createBot();
+  const { workspace, project } = await service.registerRoot(root);
+  const created = value.createBot(project.id);
   const clientNonce = crypto.randomUUID();
   value.prepareMessage({ sessionId: created.session.id, clientNonce, text: "检查工作区" });
   const manifest: PromptManifest = {
@@ -78,6 +78,26 @@ afterEach(() => {
 });
 
 describe("WorkspaceToolExecutor", () => {
+  it("reads real files in the linked folder and rejects another project's folder before approval", async () => {
+    const root = temporaryDirectory("aevoren-scoped-read-");
+    const otherRoot = temporaryDirectory("aevoren-other-scoped-read-");
+    writeFileSync(join(root, "notes.md"), "# 实际文件内容\n", "utf8");
+    const value = repository();
+    const fixture = await approvedInvocation(value, root, { kind: "workspace-read", path: "notes.md", maxBytes: 1024 });
+    const executor = new WorkspaceToolExecutor(value, fixture.service);
+    const read = await executor.execute(fixture.invocation.id);
+    expect(JSON.parse(read.content)).toMatchObject({ text: "# 实际文件内容\n" });
+    expect(read.invocation).toMatchObject({ state: "succeeded", workspaceId: fixture.workspace.id, resultDigest: expect.any(String) });
+    const other = await fixture.service.registerRoot(otherRoot);
+    expect(() => value.prepareToolInvocation({
+      runtimeRunId: fixture.runtime.id,
+      toolCallId: crypto.randomUUID(),
+      idempotencyKey: crypto.randomUUID(),
+      tool: { kind: "workspace-write", workspaceId: other.workspace.id, path: "blocked.md", content: "不可写入" },
+    })).toThrowError(expect.objectContaining({ code: "WORKSPACE_PATH_OUTSIDE_ROOT" }));
+    expect(value.listToolInvocations(fixture.runtime.sessionId)).toHaveLength(1);
+    expect(existsSync(join(otherRoot, "blocked.md"))).toBe(false);
+  });
   it("never resolves a filesystem target before a one-time approval is active", async () => {
     const root = temporaryDirectory("aevoren-tool-approval-guard-");
     writeFileSync(join(root, "safe.txt"), "safe");
@@ -149,7 +169,83 @@ describe("WorkspaceToolExecutor", () => {
 
     expect(parsed).toEqual({ text: "你好，", truncated: true });
     expect(JSON.stringify(value.getToolInvocation(fixture.invocation.id))).not.toContain("你好");
-    expect(result.invocation.resultMetadata).toEqual({ kind: "workspace-read", bytes: 9, truncated: true });
+    expect(result.invocation.resultMetadata).toEqual({
+      kind: "workspace-read",
+      bytes: 9,
+      truncated: true,
+      sha256: createHash("sha256").update("你好，", "utf8").digest("hex"),
+    });
+  });
+
+  it("returns deterministic row counts and numeric sums for a complete CSV read", async () => {
+    const root = temporaryDirectory("aevoren-tool-csv-summary-");
+    const csv = 'id,size_bytes,download_count\n"A,1",100,2\nB,250,3\n';
+    writeFileSync(join(root, "metrics.csv"), csv, "utf8");
+    const value = repository();
+    const fixture = await approvedInvocation(value, root, { kind: "workspace-read", path: "metrics.csv", maxBytes: 4096 });
+
+    const result = await new WorkspaceToolExecutor(value, fixture.service).execute(fixture.invocation.id);
+    const parsed = JSON.parse(result.content) as { csvSummary: { rowCount: number; numericSums: Record<string, number> } };
+    expect(parsed.csvSummary).toEqual({ rowCount: 2, numericSums: { size_bytes: 350, download_count: 5 } });
+    expect(result.invocation.resultMetadata).toMatchObject({
+      csvRowCount: 2,
+      csvNumericSums: JSON.stringify({ size_bytes: 350, download_count: 5 }),
+      truncated: false,
+      sha256: createHash("sha256").update(csv, "utf8").digest("hex"),
+    });
+  });
+
+  it("creates one approved Markdown file only after Workspace write permission and never overwrites it", async () => {
+    const root = temporaryDirectory("aevoren-tool-write-");
+    mkdirSync(join(root, "01-inbox"));
+    const value = repository();
+    await expect(approvedInvocation(value, root, {
+      kind: "workspace-write",
+      path: "01-inbox/leads.md",
+      content: "# 真实线索\n",
+    })).rejects.toMatchObject({
+      code: "WORKSPACE_WRITE_NOT_ENABLED",
+    });
+    expect(existsSync(join(root, "01-inbox", "leads.md"))).toBe(false);
+
+    const current = (await new WorkspaceService(value).registerRoot(root)).workspace;
+    value.updateWorkspacePermissions(current.id, current.version, { writeEnabled: true, automationEnabled: false });
+    const created = await approvedInvocation(value, root, {
+      kind: "workspace-write",
+      path: "01-inbox/leads.md",
+      content: "# 真实线索\n",
+    });
+    const result = await new WorkspaceToolExecutor(value, created.service).execute(created.invocation.id);
+    expect(JSON.parse(result.content)).toMatchObject({ ok: true, path: "01-inbox/leads.md", created: true });
+    expect(readFileSync(join(root, "01-inbox", "leads.md"), "utf8")).toBe("# 真实线索\n");
+    expect(result.invocation).toMatchObject({ state: "succeeded", effectClass: "write-reversible" });
+
+    const conflict = await approvedInvocation(value, root, {
+      kind: "workspace-write",
+      path: "01-inbox/leads.md",
+      content: "替换内容",
+    });
+    await expect(new WorkspaceToolExecutor(value, conflict.service).execute(conflict.invocation.id)).rejects.toMatchObject({
+      code: "WORKSPACE_WRITE_CONFLICT",
+    });
+    expect(readFileSync(join(root, "01-inbox", "leads.md"), "utf8")).toBe("# 真实线索\n");
+  });
+
+  it("blocks likely credentials before creating a shared artifact", async () => {
+    const root = temporaryDirectory("aevoren-tool-write-secret-");
+    const value = repository();
+    const service = new WorkspaceService(value);
+    const registered = await service.registerRoot(root);
+    value.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: false });
+    const fixture = await approvedInvocation(value, root, {
+      kind: "workspace-write",
+      path: "secret.md",
+      content: "api_key = sk-test-secret-value-123456789",
+    });
+    await expect(new WorkspaceToolExecutor(value, fixture.service).execute(fixture.invocation.id)).rejects.toMatchObject({
+      code: "WORKSPACE_WRITE_SECRET_BLOCKED",
+    });
+    expect(existsSync(join(root, "secret.md"))).toBe(false);
   });
 
   it("rejects binary files with a stable terminal failure and no result content", async () => {
@@ -195,7 +291,7 @@ describe("WorkspaceToolExecutor", () => {
     });
   });
 
-  it("searches literal text recursively, skips symlinks and stops at maxMatches", async () => {
+  it.skipIf(process.platform === "win32")("searches literal text recursively, skips symlinks and stops at maxMatches", async () => {
     const root = temporaryDirectory("aevoren-tool-search-");
     const outside = temporaryDirectory("aevoren-tool-search-outside-");
     mkdirSync(join(root, "src"));
@@ -239,9 +335,9 @@ describe("WorkspaceToolExecutor", () => {
       code: "WORKSPACE_NOT_FOUND",
     });
     expect(value.getToolInvocation(fixture.invocation.id)).toMatchObject({
-      state: "failed-before-execution",
-      attemptCount: 1,
-      lastErrorCode: "WORKSPACE_NOT_FOUND",
+      state: "cancelled",
+      attemptCount: 0,
+      resultDigest: null,
     });
   });
 
@@ -287,3 +383,4 @@ describe("WorkspaceToolExecutor", () => {
     expect(value.getApprovalRequest(fixture.approval.id)).toMatchObject({ state: "cancelled" });
   });
 });
+import { createHash } from "node:crypto";

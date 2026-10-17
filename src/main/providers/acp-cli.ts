@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 import type { ProviderModelOption } from "@shared/contracts";
 import type { ChatMessage, ModelEvent, ModelProvider } from "../model";
 import { AevorenBotError } from "../errors";
-import { cliEnvironment, probeCliVersion } from "./cli-utils";
+import { cliEnvironment, cliShellOptions, probeCliVersion } from "./cli-utils";
 
 type JsonObject = Record<string, unknown>;
 
@@ -150,7 +150,12 @@ class AcpClient {
 
   start(): void {
     mkdirSync(this.cwd, { recursive: true, mode: 0o700 });
-    const child = spawn(this.command, this.args, { cwd: this.cwd, env: this.environment, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(this.command, this.args, {
+      cwd: this.cwd,
+      env: this.environment,
+      stdio: ["pipe", "pipe", "pipe"],
+      ...cliShellOptions(this.command),
+    });
     this.child = child;
     child.stderr.resume();
     const lines = createInterface({ input: child.stdout });

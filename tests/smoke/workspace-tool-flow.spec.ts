@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
+import { openToolRecords } from "./tool-ui";
 
 test("approves, denies, and restores one workspace tool flow without exposing journal content", async () => {
   test.setTimeout(60_000);
@@ -14,8 +15,9 @@ test("approves, denies, and restores one workspace tool flow without exposing jo
   const databasePath = join(userDataDir, "aevoren-bot.sqlite");
   writeFileSync(join(workspaceRoot, "brief.txt"), "E2E_WORKSPACE_CONTENT", "utf8");
   const repository = new AppRepository(databasePath);
-  repository.createBot();
-  await new WorkspaceService(repository).registerRoot(workspaceRoot);
+  const registered = await new WorkspaceService(repository).registerRoot(workspaceRoot);
+  repository.createBot(registered.project.id);
+  repository.setSetting("tools.autoApprovePublicRead", "true", false);
   repository.close();
 
   let application: ElectronApplication | undefined;
@@ -38,19 +40,21 @@ test("approves, denies, and restores one workspace tool flow without exposing jo
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     await page.locator('textarea[aria-label="消息"]').fill("请读取工作区摘要");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    const firstTool = page.getByTestId("workspace-tool-activity").last();
-    await expect(firstTool).toContainText("等待你的确认");
+    const firstTool = page.getByTestId("tool-permission-dialog");
+    await expect(firstTool).toContainText("读取文件");
+    await expect(firstTool).toContainText("云端模型");
+    await expect(page.locator(".transcript .message-tools")).toHaveCount(0);
     await firstTool.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(firstTool).toContainText("执行完成");
+    await expect(firstTool).toBeHidden();
     await expect(page.getByText(/E2E_WORKSPACE_CONTENT/).last()).toBeVisible();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
 
     await page.locator('textarea[aria-label="消息"]').fill("这次拒绝读取");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    const secondTool = page.getByTestId("workspace-tool-activity").last();
-    await expect(secondTool).toContainText("等待你的确认");
+    const secondTool = page.getByTestId("tool-permission-dialog");
+    await expect(secondTool).toContainText("读取文件");
     await secondTool.getByRole("button", { name: "拒绝" }).click();
-    await expect(secondTool).toContainText("已拒绝");
+    await expect(secondTool).toBeHidden();
     await expect(page.getByText(/TOOL_DENIED/).last()).toBeVisible();
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2);
     expect(await page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
@@ -61,9 +65,12 @@ test("approves, denies, and restores one workspace tool flow without exposing jo
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 740));
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(390);
+    await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(0);
+    await openToolRecords(page);
     await expect(page.getByTestId("workspace-tool-activity")).toHaveCount(2);
     await expect(page.getByTestId("workspace-tool-activity").first()).toContainText("执行完成");
     await expect(page.getByTestId("workspace-tool-activity").last()).toContainText("已拒绝");
+    await expect(page.getByTestId("workspace-tool-activity").first().locator(".expandable-trace-header")).toHaveAttribute("aria-expanded", "false");
     expect(await page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     expect(consoleErrors).toEqual([]);
     await application.close();

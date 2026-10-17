@@ -1,10 +1,11 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { mkdtempSync } from "node:fs";
+import { closeInspector } from "./navigation";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import type { AevorenBotApi } from "@shared/contracts";
+import type { AevorenBotApi, SessionLiveStateName } from "@shared/contracts";
 
 function environment(userDataDir: string, overrides: Record<string, string> = {}): Record<string, string> {
   const inherited = Object.fromEntries(
@@ -22,19 +23,44 @@ async function launch(
   userDataDir: string,
   overrides: Record<string, string> = {},
 ): Promise<{ application: ElectronApplication; page: Page }> {
+  const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH ?? process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE;
   const application = await electron.launch({
-    args: ["."],
+    ...(executablePath ? { executablePath } : {}),
+    args: executablePath ? [] : ["."],
     cwd: process.cwd(),
     env: environment(userDataDir, overrides),
   });
+  if (executablePath) {
+    const runtime = await application.evaluate(({ app }) => ({ isPackaged: app.isPackaged, version: app.getVersion() }));
+    expect(runtime.isPackaged).toBe(true);
+    expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
+    await test.info().attach("actual-runtime-package", { body: JSON.stringify(runtime), contentType: "application/json" });
+  }
   return { application, page: await application.firstWindow() };
 }
 
 async function createAndSend(page: Page, text: string): Promise<void> {
   await page.getByRole("button", { name: "新建聊天" }).click();
   await page.getByRole("button", { name: "创建新 Bot" }).click();
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+  await closeInspector(page);
   await page.locator('textarea[aria-label="消息"]').fill(text);
   await page.getByRole("button", { name: "发送", exact: true }).click();
+}
+
+async function waitForLiveState(page: Page, state: SessionLiveStateName): Promise<void> {
+  await expect.poll(() => page.evaluate(async () => {
+    const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+    const bots = await api.bots.list();
+    if (!bots.ok || !bots.data[0]) throw new Error("Bot missing");
+    const session = await api.sessions.getMain(bots.data[0].id);
+    if (!session.ok) throw new Error("Session missing");
+    const snapshot = await api.runtime.getSessionSnapshot(session.data.id);
+    if (!snapshot.ok) throw new Error("Snapshot unavailable");
+    return snapshot.data.liveState.state;
+  })).toBe(state);
+  await expect(page.getByRole("button", { name: "停止回复" })).toBeVisible();
+  await expect(page.locator(".composer-wrap .send-state:not(.runtime-stale), .streaming-indicator")).toHaveCount(0);
 }
 
 async function requestWindowClose(application: ElectronApplication, timeoutMs = 3_000): Promise<boolean> {
@@ -57,21 +83,21 @@ async function forceKill(application: ElectronApplication): Promise<void> {
 
 test("reattaches the active runtime after renderer reloads in three phases", async () => {
   test.setTimeout(120_000);
-  const phases: Array<{ name: string; overrides: Record<string, string>; stateText: string }> = [
+  const phases: Array<{ name: string; overrides: Record<string, string>; state: SessionLiveStateName }> = [
     {
       name: "dispatching",
       overrides: { AEVOREN_BOT_FAKE_START_DELAY_MS: "500", AEVOREN_BOT_FAKE_DELAY_MS: "80" },
-      stateText: "正在连接模型",
+      state: "starting",
     },
     {
       name: "running",
       overrides: { AEVOREN_BOT_FAKE_DELAY_MS: "500" },
-      stateText: "模型已接受，正在运行",
+      state: "running",
     },
     {
       name: "streaming",
       overrides: { AEVOREN_BOT_FAKE_DELAY_MS: "250" },
-      stateText: "正在生成回复",
+      state: "composing",
     },
   ];
 
@@ -84,7 +110,7 @@ test("reattaches the active runtime after renderer reloads in three phases", asy
         application = launched.application;
         const page = launched.page;
         await createAndSend(page, `reload ${phase.name} ${attempt}`);
-        await expect(page.getByText(phase.stateText, { exact: true })).toBeVisible();
+        await waitForLiveState(page, phase.state);
         await page.reload();
         await expect(page.getByRole("button", { name: "停止回复" })).toBeVisible({ timeout: 2_000 });
         await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1, {
@@ -122,12 +148,12 @@ test("regenerates a failed accepted run without duplicating its user entry", asy
     application = launched.application;
     const page = launched.page;
     await createAndSend(page, "retry accepted runtime");
-    await expect(page.getByText("回复生成失败，已保留可用的部分内容。")).toBeVisible();
+    await expect(page.getByText("模型回复未完整完成，系统已保留可验证结果。")).toBeVisible();
     await page.waitForTimeout(30_000);
     await expect(page.locator('article.message-assistant[data-status="failed"]')).toHaveCount(1);
-    await expect(page.getByRole("button", { name: "重新生成回复" })).toHaveCount(1);
-    await page.getByRole("button", { name: "重新生成回复" }).click();
-    await expect(page.getByText("正在重新生成", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "重试此步骤" })).toHaveCount(1);
+    await page.getByRole("button", { name: "重试此步骤" }).click();
+    await waitForLiveState(page, "retrying");
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(1);
     await application.close();
     application = undefined;
@@ -154,7 +180,7 @@ test("closes a streaming runtime as interrupted and does not restart it", async 
     let launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_DELAY_MS: "500" });
     application = launched.application;
     await createAndSend(launched.page, "close during streaming");
-    await expect(launched.page.getByText("正在生成回复", { exact: true })).toBeVisible();
+    await waitForLiveState(launched.page, "composing");
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
 
@@ -183,12 +209,12 @@ test("recovers running, streaming and cancel-requested runs after SIGKILL", asyn
   test.setTimeout(45_000);
   const phases: Array<{
     name: string;
-    waitText: string;
+    state: SessionLiveStateName;
     cancelBeforeKill: boolean;
   }> = [
-    { name: "running", waitText: "模型已接受，正在运行", cancelBeforeKill: false },
-    { name: "streaming", waitText: "正在生成回复", cancelBeforeKill: false },
-    { name: "cancel-requested", waitText: "正在取消", cancelBeforeKill: true },
+    { name: "running", state: "running", cancelBeforeKill: false },
+    { name: "streaming", state: "composing", cancelBeforeKill: false },
+    { name: "cancel-requested", state: "cancelling", cancelBeforeKill: true },
   ];
 
   for (const phase of phases) {
@@ -202,10 +228,10 @@ test("recovers running, streaming and cancel-requested runs after SIGKILL", asyn
       application = launched.application;
       await createAndSend(launched.page, `SIGKILL ${phase.name}`);
       if (phase.cancelBeforeKill) {
-        await expect(launched.page.getByText("模型已接受，正在运行", { exact: true })).toBeVisible();
+        await waitForLiveState(launched.page, "running");
         await launched.page.getByRole("button", { name: "停止回复" }).click();
       }
-      await expect(launched.page.getByText(phase.waitText, { exact: true })).toBeVisible();
+      await waitForLiveState(launched.page, phase.state);
       await forceKill(application);
       application = undefined;
 
@@ -238,7 +264,7 @@ test("recovers a Direct pre-start SIGKILL as unknown without offering a safe ret
     let launched = await launch(userDataDir, { AEVOREN_BOT_FAKE_START_DELAY_MS: "20000" });
     application = launched.application;
     await createAndSend(launched.page, "crash after Direct dispatch starts");
-    await expect(launched.page.getByText("正在连接模型", { exact: true })).toBeVisible();
+    await waitForLiveState(launched.page, "starting");
 
     const databasePath = join(userDataDir, "aevoren-bot.sqlite");
     let database = new DatabaseSync(databasePath, { readOnly: true });
@@ -287,7 +313,7 @@ test("shows stale after thirty seconds without provider activity and remains can
     const startedAt = Date.now();
     await createAndSend(launched.page, "stale runtime");
     await expect(launched.page.getByText("连接可能已停滞，仍可停止本次运行", { exact: true })).toBeVisible({
-      timeout: 33_000,
+      timeout: 45_000,
     });
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(28_000);
     expect(Date.now() - startedAt).toBeLessThanOrEqual(33_000);
@@ -336,7 +362,9 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     const launched = await launch(userDataDir);
     application = launched.application;
     expect(await application.evaluate(({ app }) => app.getName())).toBe("Aevoren Bot");
-    expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("use-mock-keychain"))).toBe(true);
+    if (!process.env.AEVOREN_PACKAGED_APP_PATH && !process.env.AEVOREN_BOT_PACKAGED_EXECUTABLE) {
+      expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("use-mock-keychain"))).toBe(true);
+    }
     const result = await launched.page.evaluate(() =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.runtime.cancel("not-a-uuid"),
     );
@@ -356,6 +384,10 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.getSnapshot("not-a-uuid"),
     );
     expect(roomResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    const cancelMemberResult = await launched.page.evaluate(() =>
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime.cancelMember("not-a-uuid"),
+    );
+    expect(cancelMemberResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     const memoryResult = await launched.page.evaluate(() =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.memories.list({ botId: "not-a-uuid" }),
     );
@@ -369,11 +401,108 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "approvals", "bots", "capabilities", "conversations", "events", "mcp", "memories", "messages", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "tools", "transcript", "updates", "workspaces",
+      "app", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "library", "mcp", "mcpWrites", "media", "memories", "messages", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
     ]);
     expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media,
+    ).toSorted())).toEqual(["available", "bind", "delete", "importPath", "list", "metadata", "onChanged", "pickImport", "preview", "read", "restore", "setEnabled", "unbind"]);
+    const mediaResult = await launched.page.evaluate(() =>
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media.metadata({ sessionId: "not-a-uuid", id: "not-a-uuid" }),
+    );
+    expect(mediaResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.connectors,
+    ).toSorted())).toEqual(["authorize", "bind", "bindings", "cancelAuthorization", "configure", "list", "read", "revoke", "search", "unbind"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.drafts,
+    ).toSorted())).toEqual(["create", "delete", "list", "read", "update", "versions"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.outbound,
+    ).toSorted())).toEqual(["cancel", "enableSend", "get", "grantWrite", "list", "prepare", "reconcile", "reject", "requestApproval", "revokeWrite", "writeGrants"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.mcpWrites,
+    ).toSorted())).toEqual(["cancelTool", "closeApp", "grantTool", "listToolIntents", "openApp", "prepareTool", "requestToolApproval", "revokeTool", "toolCatalog", "toolGrants", "toolResult"]);
+    const connectorValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      return Promise.all([api.connectors.bindings({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid" }),
+        api.drafts.read({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", id: "not-a-uuid" }),
+        api.outbound.writeGrants({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid" }),
+        api.outbound.requestApproval({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", id: "not-a-uuid", expectedVersion: 1 })]);
+    });
+    for (const result of connectorValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    const mcpValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      const scope = { sessionId: "not-a-uuid", executorBotId: "not-a-uuid" };
+      return Promise.all([api.mcpWrites.toolGrants(scope), api.mcpWrites.requestToolApproval({ ...scope, id: "not-a-uuid", expectedVersion: 1 }),
+        api.mcpWrites.openApp({ ...scope, id: "not-a-uuid", expectedVersion: 1 }), api.mcpWrites.closeApp({ ...scope, id: "not-a-uuid", expectedEpoch: -1 })]);
+    });
+    for (const result of mcpValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.roomRuntime,
+    ).toSorted())).toEqual(["cancel", "cancelMember", "continue", "getSnapshot", "retryTurn", "send"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.skillsExecution,
+    ).toSorted())).toEqual(["executionGrants", "grantExecution", "onChanged", "revokeExecution", "runScript", "scriptExecution", "scripts"]);
+    const skillsValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      return Promise.all([
+        api.skillsExecution.scripts({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", reference: { resourceId: "not-a-uuid", revisionId: "not-a-uuid", digest: "invalid" } }),
+        api.skillsExecution.executionGrants({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid" }),
+      ]);
+    });
+    for (const result of skillsValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.browser,
+    ).toSorted())).toEqual(["click", "closeTab", "download", "downloads", "get", "key", "navigate", "newTab", "observe", "onChanged", "read", "scroll", "start", "stop", "tabs", "type"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computer,
+    ).toSorted())).toEqual(["click", "key", "onChanged", "returnControl", "screenshot", "scroll", "takeover", "type", "view", "vncTicket"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.preview,
+    ).toSorted())).toEqual(["close", "list", "onChanged", "open"]);
+    expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.demonstrations).toSorted())).toEqual(["deleteDraft", "discard", "drafts", "publish", "readDraft", "start", "status", "stop", "updateDraft"]);
+    const demonstrationValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      return Promise.all([api.demonstrations.drafts({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid" }), api.demonstrations.publish({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", id: "not-a-uuid", expectedVersion: -1, expectedDigest: "invalid" })]);
+    });
+    for (const result of demonstrationValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    const browserValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      const invalidScope = { sessionId: "not-a-uuid", executorBotId: "not-a-uuid" };
+      return Promise.all([api.browser.get(invalidScope), api.computer.view(invalidScope), api.preview.list({ ...invalidScope, expectedEpoch: -1 })]);
+    });
+    for (const result of browserValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.environments,
+    ).toSorted())).toEqual(["get", "initialize", "list", "onChanged", "probe", "rebuild", "start", "stop"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.execution,
+    ).toSorted())).toEqual(["cancel", "downloadFile", "get", "list", "listFiles", "logs", "onChanged", "pickUpload", "readFile", "run", "writeFile"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.processes,
+    ).toSorted())).toEqual(["list", "listPorts", "onChanged", "registerPort", "start", "stop"]);
+    const environmentValidation = await launched.page.evaluate(async () => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      const invalidScope = { sessionId: "not-a-uuid", executorBotId: "not-a-uuid" };
+      return Promise.all([api.environments.get(invalidScope), api.execution.run({ ...invalidScope, command: "printf should-not-run", clientNonce: "not-a-uuid" }), api.processes.listPorts(invalidScope)]);
+    });
+    for (const result of environmentValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library,
+    ).toSorted())).toEqual(["available", "bind", "create", "delete", "export", "importPath", "importText", "list", "onChanged", "pickImport", "read", "readFile", "restore", "restoreVersion", "setEnabled", "unbind", "update", "versions"]);
+    const libraryResult = await launched.page.evaluate(() =>
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library.list({ sessionId: "not-a-uuid" }),
+    );
+    expect(libraryResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
+    expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations,
-    ).toSorted())).toEqual(["deleteBatch"]);
+    ).toSorted())).toEqual(["clear", "deleteBatch", "list", "setHidden", "setPinned", "setProject", "setUnread"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.artifacts,
+    ).toSorted())).toEqual(["reveal", "save"]);
+    expect(await launched.page.evaluate(() => Object.keys(
+      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.workspaces,
+    ).toSorted())).toEqual(["add", "list", "remove", "reveal", "updatePermissions"]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.providers,
     ).toSorted())).toEqual(["list", "refresh", "saveCli", "saveOpenAiCompatible", "scan", "test"]);

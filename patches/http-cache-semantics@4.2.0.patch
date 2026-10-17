@@ -1,0 +1,18 @@
+diff --git a/index.js b/index.js
+index f01e9a16b4781dc24c8f43dc7a4c8e6d1e4ae5eb..386778272c8045746a71270067f7498c9950350c 100644
+--- a/index.js
++++ b/index.js
+@@ -394,6 +394,13 @@ module.exports = class CachePolicy {
+     evaluateRequest(req) {
+         this._assertRequestHasHeaders(req);
+ 
++        // Aevoren backport: max-stale must not override shared-cache privacy (GHSA-ch52-4w7c-c8xp).
++        if (!this.storable() || this._rescc['no-cache'] || this._resHeaders.vary === '*' ||
++            (this._isShared && (this._rescc['proxy-revalidate'] ||
++                (this._resHeaders['set-cookie'] && !this._rescc.public)))) {
++            return this._evaluateRequestMissResult(req);
++        }
++
+         // In all circumstances, a cache MUST NOT ignore the must-revalidate directive
+         if (this._rescc['must-revalidate']) {
+             return this._evaluateRequestMissResult(req);

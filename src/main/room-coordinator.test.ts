@@ -6,6 +6,10 @@ import { RoomCoordinator } from "./room-coordinator";
 import { RuntimeExecutor } from "./runtime-executor";
 import { RuntimeCoordinator } from "./send-worker";
 import type { ProviderResolver } from "./providers/contracts";
+import { DecisionService, FakeDecisionProvider } from "./decision-service";
+import { WorkspaceService } from "./workspace-service";
+import { WorkspaceToolExecutor } from "./workspace-tool-executor";
+import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 
 const repositories: AppRepository[] = [];
 
@@ -49,7 +53,206 @@ function command(detail: ReturnType<AppRepository["createRoom"]>, targetBotIds: 
 }
 
 describe("RoomCoordinator", () => {
-  it("injects each Room executor's own Memory without leaking peer Memory", async () => {
+  it("starts all six everyone members before any reply finishes and waits for the last member", async () => {
+    const started = new Set<string>();
+    const gates = new Map<string, { promise: Promise<void>; release(): void }>();
+    const captured = new Map<string, ChatMessage[]>();
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        const id = context!.executorBotId;
+        captured.set(id, messages);
+        started.add(id);
+        yield { type: "started", requestId: id };
+        await gates.get(id)!.promise;
+        yield { type: "delta", text: `reply-${id}` };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, bots, detail, coordinator, executor } = setup(provider, 6);
+    for (const { bot } of bots) {
+      let release!: () => void;
+      const promise = new Promise<void>((resolve) => { release = resolve; });
+      gates.set(bot.id, { promise, release });
+    }
+    const sent = await coordinator.routeAndSend({ ...command(detail, bots.map(({ bot }) => bot.id)), routingMode: "everyone" });
+    try {
+      await expect.poll(() => started.size).toBe(6);
+      expect(repository.listRoomTurns(sent.batchId).every((turn) => turn.state === "running")).toBe(true);
+      expect(repository.listRuntimeRuns(detail.session.id)).toHaveLength(6);
+      gates.get(bots[5]!.bot.id)!.release();
+      await expect.poll(() => repository.listRoomTurns(sent.batchId).find((turn) => turn.memberBotId === bots[5]!.bot.id)?.state).toBe("completed");
+      expect(repository.getRoomBatch(sent.batchId).state).toBe("running");
+      expect(executor.getLiveState(detail.session.id).state).not.toBe("idle");
+      expect([...captured.values()].every((messages) => messages.every((message) => !message.content.includes("reply-")))).toBe(true);
+    } finally {
+      for (const gate of gates.values()) gate.release();
+      await expect.poll(() => repository.getRoomBatch(sent.batchId).state).toBe("completed");
+    }
+    const turns = repository.listRoomTurns(sent.batchId);
+    const entries = repository.listTranscript(detail.session.id).filter((entry) => entry.role === "assistant");
+    expect(entries).toHaveLength(6);
+    for (const entry of entries) {
+      expect(entry.body).toBe(`reply-${entry.speakerBotId}`);
+      expect(turns.find((turn) => turn.id === entry.sourceTurnId)?.memberBotId).toBe(entry.speakerBotId);
+    }
+    expect(repository.listRuntimeRuns(detail.session.id).every((run) => run.promptCutoffSeq === turns[0]!.inputSeq)).toBe(true);
+  });
+
+  it.each(["failure", "cancel"] as const)("isolates parallel everyone members during %s", async (mode) => {
+    const started = new Map<string, AbortSignal>();
+    const gates = new Map<string, { promise: Promise<void>; release(): void }>();
+    let failureId = "";
+    const provider: ModelProvider = {
+      async *run(_messages, signal, context) {
+        const id = context!.executorBotId;
+        started.set(id, signal);
+        yield { type: "started", requestId: id };
+        await gates.get(id)!.promise;
+        if (mode === "failure" && id === failureId) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
+        yield { type: "delta", text: `result-${id}` };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, bots, detail, coordinator } = setup(provider);
+    failureId = bots[0]!.bot.id;
+    for (const { bot } of bots) {
+      let release!: () => void;
+      const promise = new Promise<void>((resolve) => { release = resolve; });
+      gates.set(bot.id, { promise, release });
+    }
+    const sent = await coordinator.routeAndSend({ ...command(detail, bots.map(({ bot }) => bot.id)), routingMode: "everyone" });
+    try {
+      await expect.poll(() => started.size).toBe(3);
+      if (mode === "failure") {
+        gates.get(failureId)!.release();
+        await expect.poll(() => repository.listRoomTurns(sent.batchId).find((turn) => turn.memberBotId === failureId)?.state).toBe("failed");
+        expect(repository.getRoomBatch(sent.batchId).state).toBe("running");
+        expect([...started.values()].every((signal) => !signal.aborted)).toBe(true);
+      } else {
+        coordinator.cancel(sent.batchId);
+        expect([...started.values()].every((signal) => signal.aborted)).toBe(true);
+      }
+    } finally {
+      for (const gate of gates.values()) gate.release();
+      await expect.poll(() => repository.listRoomTurns(sent.batchId).every((turn) => ["completed", "failed", "cancelled"].includes(turn.state))).toBe(true);
+    }
+    await expect.poll(() => repository.getRoomBatch(sent.batchId).state).toBe(mode === "failure" ? "partial" : "cancelled");
+    const entries = repository.listTranscript(detail.session.id).filter((entry) => entry.role === "assistant");
+    if (mode === "cancel") expect(entries.every((entry) => entry.status === "cancelled" && entry.body === "")).toBe(true);
+    else {
+      const successful = entries.filter((entry) => entry.status === "completed");
+      expect(successful).toHaveLength(2);
+      expect(successful.every((entry) => entry.body === `result-${entry.speakerBotId}`)).toBe(true);
+    }
+  });
+
+  it("does not block an independent member while another member awaits creation approval", async () => {
+    let requesterId = "";
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        yield { type: "started", requestId: context!.executorBotId };
+        if (context!.executorBotId === requesterId && messages.at(-1)?.role !== "tool") {
+          yield { type: "project-tool", toolCallId: "parallel-approval", tool: {
+            kind: "bot-create", name: "待批准成员", label: "", description: "", instructions: "仅完成批准的任务。",
+          } };
+        } else {
+          yield { type: "delta", text: context!.executorBotId === requesterId ? "创建未执行。" : "独立回复已完成。" };
+        }
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const f = setup(provider, 2);
+    requesterId = f.bots[0]!.bot.id;
+    const toolExecutor = new WorkspaceToolExecutor(f.repository, new WorkspaceService(f.repository));
+    const tools = new WorkspaceToolCoordinator(f.repository, toolExecutor, () => {});
+    const executor = new RuntimeExecutor(f.repository, null, { transcript: vi.fn(), runtime: vi.fn() }, false, provider, tools);
+    const coordinator = new RoomCoordinator(f.repository, executor, { transcript: vi.fn(), roomRuntime: vi.fn() });
+    const sent = await coordinator.routeAndSend({ ...command(f.detail, f.bots.map(({ bot }) => bot.id)), routingMode: "everyone" });
+    await expect.poll(() => f.repository.listToolInvocations(f.detail.session.id).at(-1)?.state).toBe("awaiting-approval");
+    await expect.poll(() => f.repository.listRoomTurns(sent.batchId).find((turn) => turn.memberBotId === f.bots[1]!.bot.id)?.state).toBe("completed");
+    expect(f.repository.getRoomBatch(sent.batchId).state).toBe("running");
+    expect(f.repository.listBots()).toHaveLength(2);
+    const invocation = f.repository.listToolInvocations(f.detail.session.id).at(-1)!;
+    expect(invocation.executorBotId).toBe(requesterId);
+    const approval = f.repository.getApprovalRequest(invocation.approvalRequestId);
+    await tools.resolve(f.detail.session.id, approval.id, approval.version, "deny");
+    await expect.poll(() => f.repository.getRoomBatch(sent.batchId).state).toBe("completed");
+    expect(f.repository.getToolInvocation(invocation.id).state).toBe("denied");
+    expect(f.repository.listBots()).toHaveLength(2);
+  });
+
+
+
+  it("records automatic route agreement in Shadow Mode without changing the real owner", async () => {
+    let decisionCalls = 0;
+    let providerCalls = 0;
+    const provider: ModelProvider = {
+      async *run() {
+        providerCalls += 1;
+        yield { type: "started", requestId: `route-shadow-${providerCalls}` };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+      selectRoomOwner: async (_text, roster) => ({ ownerAgentId: roster[1]!.id, reason: "provider owner" }),
+    };
+    const { repository, bots, detail, executor } = setup(provider, 2);
+    const decisionProvider = new FakeDecisionProvider(() => {
+      decisionCalls += 1;
+      return {
+        answers: { ownerAgentId: { value: bots[1]!.bot.id, confidence: 0.93 } },
+        modelVersion: "fake-decision-1",
+        requestId: "shadow-request",
+      };
+    });
+    const decisions = new DecisionService(repository, decisionProvider, true);
+    const coordinator = new RoomCoordinator(repository, executor, { roomRuntime: vi.fn(), transcript: vi.fn() }, decisions);
+    const sent = await coordinator.routeAndSend({
+      ...command(detail, []),
+      routingMode: "automatic",
+      targetBotIds: [],
+    });
+
+    await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
+    await vi.waitFor(() => expect(repository.listDecisionJournals()[0]?.state).toBe("completed"));
+
+    const journal = repository.listDecisionJournals()[0]!;
+    expect(decisionCalls).toBe(1);
+    expect(providerCalls).toBe(1);
+    expect(repository.listRoomTurns(sent.batchId).map((turn) => turn.memberBotId)).toEqual([bots[1]!.bot.id]);
+    expect(journal.answers.existingRoute?.value).toMatchObject({ ownerAgentId: bots[1]!.bot.id });
+    expect(journal.answers.agreement?.value).toBe(true);
+  });
+
+  it("does not call DecisionService for explicit Room targets", async () => {
+    let decisionCalls = 0;
+    const provider: ModelProvider = {
+      async *run() {
+        yield { type: "started", requestId: "explicit-route" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const { repository, bots, detail, executor } = setup(provider, 2);
+    const decisions = new DecisionService(repository, new FakeDecisionProvider(() => {
+      decisionCalls += 1;
+      return { answers: {}, modelVersion: "fake", requestId: null };
+    }), true);
+    const coordinator = new RoomCoordinator(repository, executor, { roomRuntime: vi.fn(), transcript: vi.fn() }, decisions);
+    const sent = await coordinator.routeAndSend({
+      ...command(detail, [bots[0]!.bot.id]),
+      routingMode: "explicit",
+      targetBotIds: [bots[0]!.bot.id],
+    });
+
+    await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
+    expect(decisionCalls).toBe(0);
+    expect(repository.listDecisionJournals()).toHaveLength(0);
+  });
+
+  it("keeps private Bot Memory out of a newly created Room", async () => {
     const captured: ChatMessage[][] = [];
     const provider: ModelProvider = {
       async *run(messages) {
@@ -65,11 +268,13 @@ describe("RoomCoordinator", () => {
 
     const sent = coordinator.send(command(detail, bots.map(({ bot }) => bot.id)));
     await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
-    expect(JSON.stringify(captured[0])).toContain("ROOM_MEMORY_A");
+    expect(JSON.stringify(captured[0])).not.toContain("ROOM_MEMORY_A");
     expect(JSON.stringify(captured[0])).not.toContain("ROOM_MEMORY_B");
-    expect(JSON.stringify(captured[1])).toContain("ROOM_MEMORY_B");
+    expect(JSON.stringify(captured[1])).not.toContain("ROOM_MEMORY_B");
+    expect(repository.listRuntimeMemories(bots[0]!.bot.id).map(memory => memory.content)).toContain("ROOM_MEMORY_A");
+    expect(repository.listRuntimeMemories(bots[1]!.bot.id).map(memory => memory.content)).toContain("ROOM_MEMORY_B");
     expect(JSON.stringify(captured[1])).not.toContain("ROOM_MEMORY_A");
-    expect(repository.listRuntimeRuns(detail.session.id).every((run) => run.promptManifest.schemaVersion === 3)).toBe(true);
+    expect(repository.listRuntimeRuns(detail.session.id).every((run) => run.promptManifest.schemaVersion === 2)).toBe(true);
   });
 
   it("deduplicates the same command and rejects a changed command before another provider call", async () => {
@@ -131,9 +336,10 @@ describe("RoomCoordinator", () => {
     const sent = coordinator.send(command(detail, bots.map(({ bot }) => bot.id)));
     await vi.waitFor(() => expect(repository.getRoomBatch(sent.batchId).state).toBe("completed"));
 
-    expect(captured[1]!.some((message) =>
-      message.content === `[room-speaker id="${bots[0]!.bot.id}" name="Member 1"]\nfirst answer`,
-    )).toBe(true);
+    const quoted = captured[1]!.find((message) => message.content?.startsWith('{"notice":"UNTRUSTED_PEER_MESSAGE'));
+    expect(quoted?.role).toBe("user");
+    expect(JSON.parse(quoted!.content!)).toMatchObject({ originalRole: "assistant", speakerBotId: bots[0]!.bot.id,
+      quote: `[room-speaker id="${bots[0]!.bot.id}" name="Member 1"]\nfirst answer` });
     const assistants = repository.listTranscript(detail.session.id).filter((entry) => entry.role === "assistant");
     expect(assistants).toHaveLength(2);
     expect(assistants.map((entry) => [entry.speakerBotId, entry.speakerNameSnapshot, Boolean(entry.sourceTurnId)])).toEqual([
@@ -148,6 +354,8 @@ describe("RoomCoordinator", () => {
       roomMembershipVersion: 1,
     });
     expect(JSON.stringify(secondRun.promptManifest)).not.toContain("first answer");
+    expect(secondRun.promptManifest.blocks.find((block) => block.sourceEntryId === assistants[0]!.id))
+      .toMatchObject({ authority: "assistant", speakerBotId: bots[0]!.bot.id });
   });
 
   it("removes a leaked attribution envelope before persistence and subsequent Room prompts", async () => {
@@ -173,9 +381,13 @@ describe("RoomCoordinator", () => {
     expect(assistants.map((entry) => entry.body)).toEqual(["intro\nfirst answer", "second answer"]);
     expect(JSON.stringify(transcriptEvents.mock.calls)).not.toContain("room-speaker");
     expect(captured[1]!.some((message) => message.content === leakedMarker)).toBe(false);
-    expect(captured[1]!.some((message) =>
-      message.content === `[room-speaker id="${bots[0]!.bot.id}" name="Member 1"]\nintro\nfirst answer`,
-    )).toBe(true);
+    const quoted = captured[1]!.find((message) => message.content?.startsWith('{"notice":"UNTRUSTED_PEER_MESSAGE'));
+    expect(quoted?.role).toBe("user");
+    expect(JSON.parse(quoted!.content!)).toMatchObject({ originalRole: "assistant", speakerBotId: bots[0]!.bot.id,
+      quote: `[room-speaker id="${bots[0]!.bot.id}" name="Member 1"]\nintro\nfirst answer` });
+    const secondRun = repository.listRuntimeRuns(detail.session.id)[1]!;
+    expect(secondRun.promptManifest.blocks.find((block) => block.sourceEntryId === assistants[0]!.id))
+      .toMatchObject({ authority: "assistant", speakerBotId: bots[0]!.bot.id });
   });
 
   it("continues after a middle member failure and marks the batch partial", async () => {

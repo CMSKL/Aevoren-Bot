@@ -11,7 +11,11 @@ The current repository `CMSKL/Aevoren-Bot` is the sole source, issue tracker, Re
 3. Merge `beta` into `master` and complete stable validation.
 4. Create a version tag on the exact release commit.
 
+Unpublished intermediate versions may be consolidated into one complete Beta. Inspect existing tags, Releases and update metadata before selecting its version; do not overwrite or reuse a tag or Release. Preserve later feature branches outside the selected delivery. Reuse trustworthy evidence for identical code/build inputs, while completing the repository-required checks and final installation/upgrade acceptance.
+
 Beta tags must use `vX.Y.Z-beta.N` and point to a commit contained in `beta`. Stable tags must use `vX.Y.Z` and point to a commit contained in `master`.
+
+The Release display title must exactly match its version tag (for example, `v0.3.0-beta.19`), never a generic `release` title. A Beta release is published after Beta validation; promoting it to `master` is reserved for a separately validated stable release.
 
 ## Before tagging
 
@@ -24,6 +28,14 @@ pnpm licenses:generate
 git diff --exit-code -- THIRD_PARTY_NOTICES.md
 pnpm sbom:generate
 ```
+
+Live UX acceptance additionally requires an installed, authenticated Codex CLI:
+
+```bash
+AEVOREN_BOT_REAL_UX_CLI=1 pnpm exec playwright test tests/smoke/ux-review-fixes.spec.ts
+```
+
+Set `AEVOREN_UX_REAL_HISTORY_DB` to an isolated database snapshot containing genuine failed and successful attempts to verify historical-result replay. Do not point it at a running user's profile. Live CLI and history cases are explicitly skipped when their prerequisites are not supplied; ordinary UI/SQLite checks remain part of CI. A skip is not evidence that the corresponding real-model flow passed.
 
 Also confirm:
 
@@ -40,6 +52,8 @@ The `release` environment requires:
 
 - `CSC_LINK`;
 - `CSC_KEY_PASSWORD`;
+- `WIN_CSC_LINK`;
+- `WIN_CSC_KEY_PASSWORD`;
 - `APPLE_TEAM_ID`;
 - either App Store Connect API key credentials:
   - `APPLE_API_KEY_P8_BASE64`;
@@ -53,12 +67,22 @@ Never store these values in repository variables, workflow files, Issues, Action
 
 ## Workflow output
 
-The tag workflow builds macOS arm64 ZIP and DMG artifacts, signs the app with Developer ID, enables Hardened Runtime, notarizes and staples the app and DMG, creates blockmaps and update metadata, generates SHA-256 checksums and a CycloneDX SBOM, attaches GitHub provenance, verifies the draft assets, and only then publishes the immutable Release.
+The tag workflows build macOS arm64 ZIP and DMG artifacts and Windows x64 NSIS artifacts into one shared draft Release. macOS signs with Developer ID, enables Hardened Runtime, notarizes and staples the app and DMG; Windows signs the executable and installer with the configured Authenticode certificate. Both workflows create blockmaps and update metadata, generate platform-specific SHA-256 checksum files (`SHASUMS256.txt` for macOS and `SHASUMS256-win.txt` for Windows) and a CycloneDX SBOM, attach GitHub provenance, verify draft assets, and the macOS workflow publishes only after the Windows asset set is present.
 
 The update channel is derived from SemVer:
 
 - prerelease → `beta-mac.yml`;
 - stable → `latest-mac.yml`.
+
+The Windows workflow uses the matching `beta.yml` or `latest.yml` manifest and requires `WIN_CSC_LINK` plus `WIN_CSC_KEY_PASSWORD` in the `release` environment. Missing Windows signing credentials fail closed before an installer is published.
+
+Windows publishing is additionally gated by the repository variable `AEVOREN_WINDOWS_RELEASE_ENABLED=1`. Leave it unset while Windows remains an MVP track: the macOS workflow then publishes a complete macOS Release without waiting for Windows. Enable it only after both Windows signing secrets are configured; from that point the macOS workflow requires the Windows asset set before publishing the shared Release.
+
+## Unsigned Windows validation downloads
+
+Normal CI preserves an **unsigned Windows validation installer** only after the Windows source, NSIS installation, installed business and installed close gates pass. Before installation it records the exact version, checkout head, unsigned signature status and SHA-256; after acceptance it requires the same file hash before upload. The artifact includes the NSIS file, checksum and build identity, is named with its precise version/head/attempt, and expires after **30 days**. Select a fully successful CI run before sharing its download link.
+
+These are manual validation downloads from this repository's Actions artifacts. Do not attach them to the signed immutable Release asset set or publish their update manifests. They do not relax signing requirements or prove Windows Docker execution. Include the actual artifact link, version/head, checksum and retention limit when delivering one; see [installation](INSTALLATION.md#unsigned-windows-validation-installer).
 
 ## Rollback and incident handling
 

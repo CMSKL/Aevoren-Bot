@@ -1,24 +1,57 @@
 # Configuration
 
+## Local interface preferences
+
+**Settings → General** offers Dark and Daylight themes. Click the personal avatar in the left navigation to change the displayed nickname and image. Selected PNG/JPEG/WebP images are cropped locally to a centered 256×256 PNG and stored with the local UI preferences. They are not sent to a model or uploaded to an account service. Bot portraits remain stable across the list, message, group and detail views without modifying the saved Bot or conversation identity.
+
 ## Model sources
 
-Aevoren Bot scans common installation locations and `PATH` for supported CLIs:
+Aevoren Bot's first-phase model scope contains exactly three sources:
 
-- Codex CLI;
+- an OpenAI-compatible API configured in the app;
 - Claude Code;
-- Ollama;
-- supported ACP-compatible CLIs.
+- Codex CLI.
 
-Open **Settings → Models & CLI** to rescan, inspect login status, and choose a model. OpenAI-compatible HTTP configuration is available as a fallback.
+Open **Contacts → select or create a Bot → Models & capabilities** to choose its source and model. Expand **Local connection settings** to configure API, rescan installed CLIs, inspect login status, or run a minimal real request. These connection settings are shared on this computer; editing them affects other Bots using the same connection. On Windows, CLI discovery also checks npm/pnpm, Volta, Scoop, Chocolatey, Program Files, and the current user's CLI directories; `.cmd`/`.bat` wrappers are launched through the Windows shell only after the executable path has been resolved.
 
 API keys entered in the application are encrypted by Electron `safeStorage`. Saved secret values are never returned to the Renderer. Do not put production keys in `.env`, command-line arguments, screenshots, Issues, or test fixtures.
+
+Other Provider or CLI adapters are intentionally not exposed in this release line. They can enter a later phase only after discovery, authentication, model selection, real invocation, and error handling have independent acceptance coverage.
+
+### Claude Code host tools
+
+Compatible Claude Code CLIs can discover Aevoren product operations, scoped Workspace and network tools, text measurement, project creation, and reviewed MCP tools. Rescan the CLI after upgrading it. This integration reuses the existing CLI API authentication configuration; it does not require entering the same key in Aevoren.
+
+Each Runtime starts its own authenticated localhost MCP endpoint. Claude runs with `--bare`, `--restricted`, no built-in tools, and only that explicit MCP configuration. The bridge exposes only the host-provided tool catalogue and approved MCP definitions. User/global MCP servers, shell, native file tools and native browser control stay disabled; each model instance retains its actual Handoff capabilities.
+
+CLIs advertising the required isolation flags and reusable API credentials use the per-Runtime host MCP bridge. Other authenticated configurations retain the isolated safe text path: native CLI tools stay disabled and complete structured requests with a per-run marker are parsed into the same scoped host operations. OAuth authentication still requires its actual configured login; native OAuth MCP isolation is not claimed. Product operations are discovered with `product_catalog` and `product_describe`, then executed with `product_execute` under the application approval policy.
+
+Select a folder Workspace and enable create-only writes if the task should save a report. Tool calls go through the same approval, permissions and Tool Journal as API/Codex calls. Approving a local read permits its contents to enter model context and, for a cloud model, leave the computer. Do not approve private credentials. Denial, cancellation and network errors are returned to the model without bypassing approvals.
+
+An explicit live-research request needs successful search and page-fetch records to complete. A requested output path constrains the write; requested readback must match the saved file's SHA-256 and be untruncated. Existing files are never overwritten. Failed or unverified outputs remain distinguishable from successful execution.
+
+## Jev Shadow Mode
+
+Jev is an optional Main-process decision layer. It is currently limited to Shadow Mode for Room routing, tool risk, Handoff, and result-quality observations; it does not replace the chat Provider, execute tools, or change the final route.
+
+Enable it only in an isolated development process:
+
+```text
+AEVOREN_DECISION_SHADOW=1
+AEVOREN_JEV_API_KEY=<process-environment-only>
+AEVOREN_JEV_MODEL=jev-1.13.0
+```
+
+When disabled (the default), no Jev request is made and no decision journal is created. The key is read only by Electron Main, and must not be committed to `.env`, logs, screenshots, Issues, or test fixtures. Shadow records store bounded, redacted metadata and result digests rather than complete private file or clipboard contents.
 
 ## MCP Servers
 
 Open **Settings → MCP** to add a local stdio or remote Streamable HTTP Server.
 
 - New Servers are disabled by default.
+- On Windows, keep MCP stdio commands as a real executable (for example `node.exe`) or explicitly configure `cmd.exe` with its arguments; MCP commands are intentionally launched without an implicit shell.
 - Remote Servers may use OAuth 2.1/PKCE or write-only Header configuration.
+- OAuth credentials are bound to their authorization server. On upgrade, older credentials without that binding remain encrypted but require explicit reauthorization; they are never guessed from new server metadata or sent to another issuer.
 - A Server's `readOnlyHint` is treated only as a claim.
 - You must review and trust exact read-only tool names before they become available.
 - Every actual tool call still requires one-time approval.
@@ -28,15 +61,27 @@ The **Add Web Search** preset creates a disabled Exa Search MCP configuration. A
 
 ## Workspace access
 
-Workspace access is opt-in and read-only. Aevoren Bot can list, search, and read bounded UTF-8 files only under roots selected by the user. It does not gain write, delete, shell, or unrestricted filesystem access.
+File scope belongs to the conversation, not to an Agent's original project. Bind a folder through **chat details → Current chat workspace**. The same Agent can participate in multiple project groups without gaining their combined permissions. New ordinary chats and copies start without folder grants; project-specific creation grants that selected project's folder. Existing chats retain their previous folder snapshot. Changing scope invalidates old approval and handoff authority, even if the chat later switches back to the original folder.
+
+Workspace access is opt-in. By default Aevoren Bot can only list, search, and read bounded UTF-8 files under roots selected by the user. Per Workspace, the user may additionally enable create-only UTF-8 Markdown/CSV artifacts and may persist automatic approval for those bounded Workspace tools. Writes reject traversal, symlink parents, secrets, oversized content, unsupported extensions, existing targets, overwrite, delete, rename, shell, and unrestricted filesystem access. Every attempt remains in the Tool Journal.
+
+**Settings → General → Automatically approve public read-only tools** separately covers only bounded public web search/fetch, weather, and time. It does not authorize Workspace, clipboard, MCP, external writes, or computer control.
+
+The public-query approval dialog can enable that same setting only after the user clicks **Allow public queries and remember**. Defaults remain unchanged. It then resolves only the current approval; it does not sweep or resume already-waiting operations in other tasks. The setting applies to subsequent requests until the user disables it. Tool execution records remain available on demand in the conversation's existing task-details panel.
+
+## Message attachments
+
+The composer can attach up to six bounded text, code, CSV, JSON, YAML, or Markdown files. Main reads the selected files and stores only validated content and metadata linked to the message; arbitrary local paths are never exposed to the Renderer or the model. Binary and unsupported files are rejected in the current release line.
 
 ## Memory
 
-Long-term Memory is explicit and can be scoped to the user, one Bot, or an authorized Workspace. The model cannot silently create or change Memory items.
+Bot-scoped entries also have an explicit conversation audience. Automatic entries are visible only in their source chat; manual Bot entries default to its private chat. Migration preserves existing visibility without sharing entries with new groups or newly added members. Clearing chat history retains accepted Memory and its audience. A correction proposed in one chat does not replace a legacy entry in other chats. User Memory remains explicitly global, while Workspace Memory requires both the Bot's subscription and the current chat's file authorization.
+
+Long-term Memory can be scoped to the user, one Bot, or an authorized Workspace. After a completed turn, Aevoren may use the selected model to extract up to three durable candidates from the current human message only. Candidates remain pending until the user accepts or edits them in **Settings → Long-term Memory**; rejected, pending, deleted, or expired items never enter a prompt. Manual entries remain immediately active. **Background Memory candidates** can be disabled in the same panel; disabling it prevents the secondary extraction request without changing existing Memory.
 
 ## Routines and login item
 
-Routines support one-time, interval, and five-field cron schedules. Enabling a Routine allows the app to remain active after its window is closed. Signed macOS builds can optionally register a login item so enabled Routines resume after login.
+Routines support one-time, interval, and five-field cron schedules. Enabling a Routine allows the app to remain active after its window is closed. Signed macOS builds can optionally register a login item so enabled Routines resume after login. Windows startup-task integration is intentionally disabled until its packaged ARM/Windows behavior is validated. Development builds never register a system startup item.
 
 Routine execution still follows Provider, tool, approval, network, and account availability limits.
 

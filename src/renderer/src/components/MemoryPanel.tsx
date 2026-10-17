@@ -283,7 +283,7 @@ export const MemoryPanel = forwardRef<MemoryPanelHandle, MemoryPanelProps>(funct
       </div>
 
       <p className="memory-panel-note">
-        仅保存你明确提供的参考事实；不会自动写入，当前消息可更正已有 Memory。
+        这里保存已批准或你明确添加的长期参考；后台候选需在设置中确认，当前消息可更正已有 Memory。
       </p>
 
       <label className="field memory-compose">

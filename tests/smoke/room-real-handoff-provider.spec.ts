@@ -45,14 +45,12 @@ test("runs one real-provider A-to-B handoff from ordinary Chinese Room profiles"
     await page.locator(".bot-row").filter({ hasText: roomName }).click();
     await expect(page.getByRole("heading", { name: roomName })).toBeVisible();
     const input = page.getByLabel("消息");
-    await input.fill(`@${firstName}`);
-    await expect(page.getByRole("listbox", { name: "提及 Bot" })).toBeVisible();
-    await input.press("Enter");
-    await input.fill(`请先发出一条简短 ASSIGN，然后立即交给${secondName}完成复核；本轮不需要等待我确认。`);
+    await input.fill(`请由${firstName}先给出一句简短 ASSIGN，然后让${secondName}完成复核；本轮不需要等待我确认。`);
     await page.getByRole("button", { name: "发送", exact: true }).click();
 
     await expect(page.locator('article.message-assistant[data-status="completed"]')).toHaveCount(2, { timeout: 180_000 });
     await expect(page.locator(".speaker-link").last()).toHaveText(secondName);
+    await expect(page.locator("article.message-user").last()).toContainText("自动选择");
     await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveText([`@${firstName}`]);
     await expect(page.getByTestId("room-handoff-list")).toHaveCount(1);
     await expect(page.getByTestId("room-handoff-list")).toContainText("已接收");

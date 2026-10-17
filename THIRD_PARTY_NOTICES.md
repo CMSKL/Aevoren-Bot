@@ -3,11 +3,14 @@
 Aevoren Bot includes the following production dependencies. This inventory is generated from the locked dependency graph with `pnpm licenses list --prod --long --json`.
 
 The license identifiers below are informational; the corresponding license texts distributed inside dependency packages remain controlling.
+JSZip 3.10.2 declares MIT OR GPL-3.0-or-later. Aevoren selects the offered MIT alternative; its complete, hash-checked upstream license text is also retained in `media-parser/licenses/jszip-LICENSE.markdown`. This exact selection does not permit GPL-only dependencies or change the GPL rejection policy.
 
 | Package | Version | License | Project |
 | --- | --- | --- | --- |
 | @hono/node-server | 2.1.1 | MIT | [link](https://github.com/honojs/node-server) |
-| @modelcontextprotocol/sdk | 1.30.0 | MIT | [link](https://modelcontextprotocol.io) |
+| @modelcontextprotocol/sdk | 1.31.0 | MIT | [link](https://modelcontextprotocol.io) |
+| @novnc/novnc | 1.7.0 | MPL-2.0 | [link](https://github.com/novnc/noVNC) |
+| @phosphor-icons/react | 2.1.10 | MIT | [link](https://phosphoricons.com) |
 | @types/debug | 4.1.13 | MIT | [link](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/debug) |
 | @types/estree | 1.0.9 | MIT | [link](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree) |
 | @types/estree-jsx | 1.0.5 | MIT | [link](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree-jsx) |
@@ -18,11 +21,15 @@ The license identifiers below are informational; the corresponding license texts
 | @types/unist | 2.0.11 | MIT | [link](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/unist) |
 | @types/unist | 3.0.3 | MIT | [link](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/unist) |
 | @ungap/structured-clone | 1.4.0 | ISC | [link](https://github.com/ungap/structured-clone#readme) |
+| @xmldom/xmldom | 0.8.15 | MIT | [link](https://github.com/xmldom/xmldom) |
+| @zip.js/zip.js | 2.23.0 | BSD-3-Clause | [link](https://gildas-lormeau.github.io/zip.js) |
 | accepts | 2.0.0 | MIT | [link](https://github.com/jshttp/accepts#readme) |
 | ajv | 8.20.0 | MIT | [link](https://ajv.js.org) |
 | ajv-formats | 3.0.1 | MIT | [link](https://github.com/ajv-validator/ajv-formats#readme) |
+| argparse | 1.0.10 | MIT | [link](https://github.com/nodeca/argparse#readme) |
 | argparse | 2.0.1 | Python-2.0 | [link](https://github.com/nodeca/argparse#readme) |
 | bail | 2.0.2 | MIT | [link](https://github.com/wooorm/bail#readme) |
+| base64-js | 1.5.1 | MIT | [link](https://github.com/beatgammit/base64-js) |
 | body-parser | 2.3.0 | MIT | [link](https://github.com/expressjs/body-parser#readme) |
 | builder-util-runtime | 9.7.0 | MIT | [link](https://github.com/electron-userland/electron-builder) |
 | bytes | 3.1.2 | MIT | [link](https://github.com/visionmedia/bytes.js#readme) |
@@ -39,6 +46,7 @@ The license identifiers below are informational; the corresponding license texts
 | content-type | 2.1.0 | MIT | [link](https://github.com/jshttp/content-type#readme) |
 | cookie | 0.7.2 | MIT | [link](https://github.com/jshttp/cookie#readme) |
 | cookie-signature | 1.2.2 | MIT | [link](https://github.com/visionmedia/node-cookie-signature#readme) |
+| core-util-is | 1.0.3 | MIT | [link](https://github.com/isaacs/core-util-is#readme) |
 | cors | 2.8.6 | MIT | [link](https://github.com/expressjs/cors#readme) |
 | croner | 10.0.1 | MIT | [link](https://croner.56k.guru) |
 | cross-spawn | 7.0.6 | MIT | [link](https://github.com/moxystudio/node-cross-spawn) |
@@ -48,6 +56,8 @@ The license identifiers below are informational; the corresponding license texts
 | depd | 2.0.0 | MIT | [link](https://github.com/dougwilson/nodejs-depd#readme) |
 | dequal | 2.0.3 | MIT | [link](https://github.com/lukeed/dequal#readme) |
 | devlop | 1.1.0 | MIT | [link](https://github.com/wooorm/devlop#readme) |
+| dingbat-to-unicode | 1.0.2 | BSD-2-Clause | [link](https://github.com/mwilliamson/dingbat-to-unicode#readme) |
+| duck | 0.1.12 | BSD | [link](https://github.com/mwilliamson/duck.js#readme) |
 | dunder-proto | 1.0.1 | MIT | [link](https://github.com/es-shims/dunder-proto#readme) |
 | ee-first | 1.1.1 | MIT | [link](https://github.com/jonathanong/ee-first#readme) |
 | electron-updater | 6.8.9 | MIT | [link](https://github.com/electron-userland/electron-builder) |
@@ -84,6 +94,7 @@ The license identifiers below are informational; the corresponding license texts
 | html-url-attributes | 3.0.1 | MIT | [link](https://github.com/rehypejs/rehype-minify/tree/main#readme) |
 | http-errors | 2.0.1 | MIT | [link](https://github.com/jshttp/http-errors#readme) |
 | iconv-lite | 0.7.3 | MIT | [link](https://github.com/pillarjs/iconv-lite) |
+| immediate | 3.0.6 | MIT | [link](https://github.com/calvinmetcalf/immediate#readme) |
 | inherits | 2.0.4 | ISC | [link](https://github.com/isaacs/inherits#readme) |
 | inline-style-parser | 0.2.7 | MIT | [link](https://github.com/remarkablemark/inline-style-parser#readme) |
 | ip-address | 10.7.2 | MIT | [link](https://github.com/beaugunderson/ip-address#readme) |
@@ -94,16 +105,21 @@ The license identifiers below are informational; the corresponding license texts
 | is-hexadecimal | 2.0.1 | MIT | [link](https://github.com/wooorm/is-hexadecimal#readme) |
 | is-plain-obj | 4.1.0 | MIT | [link](https://github.com/sindresorhus/is-plain-obj#readme) |
 | is-promise | 4.0.0 | MIT | [link](https://github.com/then/is-promise#readme) |
+| isarray | 1.0.0 | MIT | [link](https://github.com/juliangruber/isarray) |
 | isexe | 2.0.0 | ISC | [link](https://github.com/isaacs/isexe#readme) |
 | jose | 6.2.12 | MIT | [link](https://github.com/panva/jose) |
 | js-yaml | 4.3.2 | MIT | [link](https://github.com/nodeca/js-yaml#readme) |
 | json-schema-traverse | 1.0.0 | MIT | [link](https://github.com/epoberezkin/json-schema-traverse#readme) |
 | json-schema-typed | 8.0.2 | BSD-2-Clause | [link](https://github.com/RemyRylan/json-schema-typed/tree/main/dist/node) |
 | jsonfile | 6.2.1 | MIT | [link](https://github.com/jprichardson/node-jsonfile#readme) |
+| jszip | 3.10.2 | MIT | [link](https://github.com/Stuk/jszip#readme) |
 | lazy-val | 1.0.5 | MIT | [link](https://github.com/develar/lazy-val) |
+| lie | 3.3.0 | MIT | [link](https://github.com/calvinmetcalf/lie#readme) |
 | lodash.escaperegexp | 4.1.2 | MIT | [link](https://lodash.com/) |
 | lodash.isequal | 4.5.0 | MIT | [link](https://lodash.com/) |
 | longest-streak | 3.1.0 | MIT | [link](https://github.com/wooorm/longest-streak#readme) |
+| lop | 0.4.2 | BSD-2-Clause | [link](https://github.com/mwilliamson/lop#readme) |
+| mammoth | 1.13.0 | BSD-2-Clause | [link](https://github.com/mwilliamson/mammoth.js#readme) |
 | markdown-table | 3.0.4 | MIT | [link](https://github.com/wooorm/markdown-table#readme) |
 | math-intrinsics | 1.1.0 | MIT | [link](https://github.com/es-shims/math-intrinsics#readme) |
 | mdast-util-find-and-replace | 3.0.2 | MIT | [link](https://github.com/syntax-tree/mdast-util-find-and-replace#readme) |
@@ -159,11 +175,15 @@ The license identifiers below are informational; the corresponding license texts
 | object-inspect | 1.13.4 | MIT | [link](https://github.com/inspect-js/object-inspect) |
 | on-finished | 2.4.1 | MIT | [link](https://github.com/jshttp/on-finished#readme) |
 | once | 1.4.0 | ISC | [link](https://github.com/isaacs/once#readme) |
+| option | 0.2.4 | BSD-2-Clause | [link](https://github.com/mwilliamson/node-options#readme) |
+| pako | 1.0.11 | (MIT AND Zlib) | [link](https://github.com/nodeca/pako) |
 | parse-entities | 4.0.2 | MIT | [link](https://github.com/wooorm/parse-entities#readme) |
 | parseurl | 1.3.3 | MIT | [link](https://github.com/pillarjs/parseurl#readme) |
 | path-key | 3.1.1 | MIT | [link](https://github.com/sindresorhus/path-key#readme) |
 | path-to-regexp | 8.4.2 | MIT | [link](https://github.com/pillarjs/path-to-regexp#readme) |
+| pdfjs-dist | 6.4.299 | Apache-2.0 | [link](https://mozilla.github.io/pdf.js/) |
 | pkce-challenge | 5.0.1 | MIT | [link](https://github.com/crouchcd/pkce-challenge#readme) |
+| process-nextick-args | 2.0.1 | MIT | [link](https://github.com/calvinmetcalf/process-nextick-args) |
 | property-information | 7.2.0 | MIT | [link](https://github.com/wooorm/property-information#readme) |
 | proxy-addr | 2.0.8 | MIT | [link](https://github.com/jshttp/proxy-addr#readme) |
 | qs | 6.16.0 | BSD-3-Clause | [link](https://github.com/ljharb/qs) |
@@ -172,12 +192,14 @@ The license identifiers below are informational; the corresponding license texts
 | react | 19.3.0 | MIT | [link](https://react.dev/) |
 | react-dom | 19.3.0 | MIT | [link](https://react.dev/) |
 | react-markdown | 10.1.0 | MIT | [link](https://github.com/remarkjs/react-markdown#readme) |
+| readable-stream | 2.3.8 | MIT | [link](https://github.com/nodejs/readable-stream#readme) |
 | remark-gfm | 4.0.1 | MIT | [link](https://github.com/remarkjs/remark-gfm#readme) |
 | remark-parse | 11.0.0 | MIT | [link](https://remark.js.org) |
 | remark-rehype | 11.1.2 | MIT | [link](https://github.com/remarkjs/remark-rehype#readme) |
 | remark-stringify | 11.0.0 | MIT | [link](https://remark.js.org) |
 | require-from-string | 2.0.2 | MIT | [link](https://github.com/floatdrop/require-from-string#readme) |
 | router | 2.2.0 | MIT | [link](https://github.com/pillarjs/router#readme) |
+| safe-buffer | 5.1.2 | MIT | [link](https://github.com/feross/safe-buffer) |
 | safer-buffer | 2.1.2 | MIT | [link](https://github.com/ChALkeR/safer-buffer#readme) |
 | sax | 1.6.1 | BlueOak-1.0.0 | [link](https://github.com/isaacs/sax-js#readme) |
 | scheduler | 0.28.0 | MIT | [link](https://react.dev/) |
@@ -185,6 +207,7 @@ The license identifiers below are informational; the corresponding license texts
 | semver | 7.7.4 | ISC | [link](https://github.com/npm/node-semver#readme) |
 | send | 1.2.1 | MIT | [link](https://github.com/pillarjs/send#readme) |
 | serve-static | 2.2.1 | MIT | [link](https://github.com/expressjs/serve-static#readme) |
+| setimmediate | 1.0.5 | MIT | [link](https://github.com/YuzuJS/setImmediate#readme) |
 | setprototypeof | 1.2.0 | ISC | [link](https://github.com/wesleytodd/setprototypeof) |
 | shebang-command | 2.0.0 | MIT | [link](https://github.com/kevva/shebang-command#readme) |
 | shebang-regex | 3.0.0 | MIT | [link](https://github.com/sindresorhus/shebang-regex#readme) |
@@ -193,7 +216,9 @@ The license identifiers below are informational; the corresponding license texts
 | side-channel-map | 1.0.1 | MIT | [link](https://github.com/ljharb/side-channel-map#readme) |
 | side-channel-weakmap | 1.0.2 | MIT | [link](https://github.com/ljharb/side-channel-weakmap#readme) |
 | space-separated-tokens | 2.0.2 | MIT | [link](https://github.com/wooorm/space-separated-tokens#readme) |
+| sprintf-js | 1.0.3 | BSD-3-Clause | [link](https://github.com/alexei/sprintf.js#readme) |
 | statuses | 2.0.2 | MIT | [link](https://github.com/jshttp/statuses#readme) |
+| string_decoder | 1.1.1 | MIT | [link](https://github.com/nodejs/string_decoder) |
 | stringify-entities | 4.0.4 | MIT | [link](https://github.com/wooorm/stringify-entities#readme) |
 | style-to-js | 1.1.21 | MIT | [link](https://github.com/remarkablemark/style-to-js#readme) |
 | style-to-object | 1.0.14 | MIT | [link](https://github.com/remarkablemark/style-to-object#readme) |
@@ -203,6 +228,7 @@ The license identifiers below are informational; the corresponding license texts
 | trim-lines | 3.0.1 | MIT | [link](https://github.com/wooorm/trim-lines#readme) |
 | trough | 2.2.0 | MIT | [link](https://github.com/wooorm/trough#readme) |
 | type-is | 2.1.0 | MIT | [link](https://github.com/jshttp/type-is#readme) |
+| underscore | 1.13.8 | MIT | [link](https://underscorejs.org) |
 | undici | 7.29.1 | MIT | [link](https://undici.nodejs.org) |
 | unified | 11.0.5 | MIT | [link](https://unifiedjs.com) |
 | unist-util-is | 6.0.1 | MIT | [link](https://github.com/syntax-tree/unist-util-is#readme) |
@@ -212,11 +238,34 @@ The license identifiers below are informational; the corresponding license texts
 | unist-util-visit-parents | 6.0.2 | MIT | [link](https://github.com/syntax-tree/unist-util-visit-parents#readme) |
 | universalify | 2.0.1 | MIT | [link](https://github.com/RyanZim/universalify#readme) |
 | unpipe | 1.0.0 | MIT | [link](https://github.com/stream-utils/unpipe#readme) |
+| util-deprecate | 1.0.2 | MIT | [link](https://github.com/TooTallNate/util-deprecate) |
 | vary | 1.1.2 | MIT | [link](https://github.com/jshttp/vary#readme) |
 | vfile | 6.0.3 | MIT | [link](https://github.com/vfile/vfile#readme) |
 | vfile-message | 4.0.3 | MIT | [link](https://github.com/vfile/vfile-message#readme) |
 | which | 2.0.2 | ISC | [link](https://github.com/isaacs/node-which#readme) |
 | wrappy | 1.0.2 | ISC | [link](https://github.com/npm/wrappy) |
+| ws | 8.22.0 | MIT | [link](https://github.com/websockets/ws) |
+| xmlbuilder | 10.1.1 | MIT | [link](http://github.com/oozcitak/xmlbuilder-js) |
+| yaml | 2.9.1 | ISC | [link](https://eemeli.org/yaml/) |
 | zod | 4.6.1 | MIT | [link](https://zod.dev) |
 | zod-to-json-schema | 3.25.2 | ISC | [link](https://github.com/StefanTerdell/zod-to-json-schema#readme) |
 | zwitch | 2.0.4 | MIT | [link](https://github.com/wooorm/zwitch#readme) |
+
+## Bundled media parser assets
+
+The browser parser bundles the following independently licensed assets in addition to the npm code above. Complete source licenses, the unmodified Liberation Fonts provenance and the deterministic asset hash manifest are distributed under `media-parser/licenses` and `media-parser/manifest.json`. The four GPL-licensed Liberation Sans 1.07.4 files from pdfjs-dist are excluded; the same filenames contain the verified, unmodified OFL 1.1 version 2.1.5 fonts instead. PDF scripting sandbox and QuickJS assets are excluded.
+
+| Asset | Version | License | Source |
+| --- | --- | --- | --- |
+| PDF.js Adobe CMaps | 6.4.299 | BSD-3-Clause | [source](https://github.com/mozilla/pdf.js) |
+| PDF.js Foxit standard fonts | 6.4.299 | BSD-3-Clause | [source](https://github.com/mozilla/pdf.js) |
+| Liberation Sans | 2.1.5 | OFL-1.1 | [source](https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz) |
+| PDF.js ICC profile | 6.4.299 | CC0-1.0 | [source](https://github.com/mozilla/pdf.js) |
+| PDF.js OpenJPEG | 6.4.299 | BSD-2-Clause | [source](https://github.com/mozilla/pdf.js) |
+| PDF.js JBIG2 | 6.4.299 | BSD-3-Clause AND Apache-2.0 | [source](https://github.com/mozilla/pdf.js) |
+| PDF.js QCMS | 6.4.299 | MIT | [source](https://github.com/mozilla/pdf.js) |
+
+## Separately built execution image
+
+The optional local Docker execution image includes independently licensed Linux tools outside this npm inventory. See [execution image versions, base digest and license notices](docs/EXECUTION_ENVIRONMENT.md#images-and-third-party-licenses). Docker is user-provided; the app does not bundle its distribution.
+The separately built browser companion also includes Chromium, Playwright, Xvfb, Openbox, x11vnc, xdotool and FFmpeg. See [browser image versions and isolation](docs/BROWSER_COMPUTER.md#isolation-and-lifecycle); these distributions retain their own notices in the image.

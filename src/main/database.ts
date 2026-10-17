@@ -1,31 +1,48 @@
-import { createHash, randomUUID } from "node:crypto";
+import { McpWriteRepository, MCP_WRITE_MIGRATION } from "./mcp-write-repository";
+import { normalizeProductRequest } from "./product-request";
+import { productOperation } from "@shared/product-operations";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { DEFAULT_PROJECT_ID } from "@shared/contracts";
 import type {
   AgentTurn,
   AgentTurnOutcome,
   AgentTurnOrigin,
   ApprovalRequest,
   ApprovalResolution,
+  AttachmentDraft,
+  MessageAttachment,
   Bot,
   BotDeleteResult,
   BotPatch,
   CapabilityEffectClass,
   ConversationBatchDeleteInput,
   ConversationBatchDeleteResult,
+  ConversationSummary,
   CreateHandoffInput,
   CreateRoomRunInput,
+  DecisionAnswer,
+  DecisionJournalEntry,
+  DecisionProviderKind,
+  DecisionState,
+  ExecutionEvidenceReceipt,
   HandoffState,
   HandoffVisibility,
   MemoryItem,
+  MemoryKind,
+  MemoryProposal,
+  MemoryProposalState,
   MemoryScope,
   MemoryScopeSelector,
+  MemorySource,
   McpServerStatus,
   McpTransportKind,
   ModelSelection,
   PromptManifest,
   ProviderDriverKind,
+  Project,
   Room,
   RoomBatch,
   RoomBatchState,
@@ -35,8 +52,10 @@ import type {
   RoomPatch,
   RoomSendCommand,
   RoomHandoff,
+  RoomHandoffView,
   RoomHandoffRejectionView,
   RoomRun,
+  RoomRunSummary,
   RoomRoutingMode,
   RoomTurn,
   RoomTurnState,
@@ -59,11 +78,29 @@ import type {
   ToolInvocationState,
   ToolPrepareResult,
   ToolRequest,
+  TeamTemplateCreateResult,
   Workspace,
   WorkspaceRegistrationResult,
 } from "@shared/contracts";
-import { toolInvocationCommandSchema } from "@shared/schemas";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "@shared/bot-avatar";
+import { normalizeBotAvatarColor, normalizeBotAvatarShape } from "@shared/bot-avatar";
+import { messageAttachmentsSchema, toolInvocationCommandSchema } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
+import { LibraryRepository, RESOURCE_LIBRARY_MIGRATION } from "./library-repository";
+import { MediaRepository, MEDIA_MIGRATION } from "./media-repository";
+import { messageMediaReferencesSchema } from "@shared/media-schemas";
+import type { MessageMediaReference } from "@shared/media-contracts";
+import { EnvironmentRepository, ENVIRONMENT_MIGRATION } from "./environment-repository";
+import { BrowserRepository, BROWSER_MIGRATION } from "./browser-repository";
+import { DemonstrationRepository, DEMONSTRATION_MIGRATION } from "./demonstration-repository";
+import { SkillExecutionRepository, SKILL_EXECUTION_MIGRATION, approvalReviewDigest } from "./skill-execution-repository";
+import type { ApprovalReviewInput, ApprovalReviewResult, ApprovalReviewSnapshot } from "@shared/skill-execution-contracts";
+import { approvalReviewInputSchema, approvalReviewSnapshotSchema } from "@shared/skill-execution-schemas";
+import { resourceReferencesSchema } from "@shared/library-schemas";
+import type { ResourceReference } from "@shared/library-contracts";
+import { containsLikelySecret } from "./memory-safety";
+import { NativeOutboundRepository, NATIVE_OUTBOUND_MIGRATION } from "./native-outbound-repository";
+import { NativeConnectorRepository, NATIVE_CONNECTOR_MIGRATION } from "./native-connector-repository";
 
 const ACTIVE_RUNTIME_STATES: readonly RuntimeState[] = [
   "created",
@@ -140,7 +177,7 @@ const HANDOFF_TRANSITIONS: Record<HandoffState, readonly HandoffState[]> = {
 const OUTCOMES_BY_TERMINAL_TURN_STATE: Partial<Record<RoomTurnState, readonly AgentTurnOutcome["kind"][]>> = {
   completed: ["sent", "pass", "skipped"],
   failed: ["timeout", "error"],
-  cancelled: ["cancelled"],
+  cancelled: ["cancelled", "skipped"],
   interrupted: ["timeout", "error"],
 };
 
@@ -153,6 +190,7 @@ const MAX_HANDOFF_CONTEXT_REFS = 64;
 const MAX_HANDOFF_CONTEXT_REF_LENGTH = 200;
 const MAX_ACTIVE_MEMORIES_PER_BOT = 100;
 const MAX_ACTIVE_MEMORY_CHARACTERS = 20_000;
+export const MAX_RUNTIME_MEMORY_BYTES = 24_000;
 
 export const MIGRATIONS = [
   {
@@ -1315,7 +1353,7 @@ export const MIGRATIONS = [
         executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
         action_kind TEXT NOT NULL CHECK (action_kind IN (
           'workspace-list', 'workspace-read', 'workspace-search',
-          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read'
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure'
         )),
         effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote')),
         workspace_id TEXT,
@@ -1343,7 +1381,7 @@ export const MIGRATIONS = [
         command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
         tool_kind TEXT NOT NULL CHECK (tool_kind IN (
           'workspace-list', 'workspace-read', 'workspace-search',
-          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read'
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure'
         )),
         effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote')),
         workspace_id TEXT,
@@ -1383,16 +1421,701 @@ export const MIGRATIONS = [
         ON approval_requests(state, expires_at, created_at, id);
     `,
   },
+  {
+    version: 20,
+    sql: `
+      ALTER TABLE transcript_entries ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]';
+      CREATE TABLE message_attachments (
+        id TEXT PRIMARY KEY,
+        transcript_entry_id TEXT NOT NULL REFERENCES transcript_entries(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
+        mime_type TEXT NOT NULL CHECK (length(mime_type) BETWEEN 1 AND 120),
+        size INTEGER NOT NULL CHECK (size >= 0 AND size <= 1048576),
+        sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+        kind TEXT NOT NULL CHECK (kind = 'text'),
+        content TEXT NOT NULL CHECK (length(content) <= 1048576),
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX message_attachments_by_entry
+        ON message_attachments(transcript_entry_id, created_at, id);
+      CREATE INDEX message_attachments_by_nonce
+        ON message_attachments(client_nonce, created_at, id);
+    `,
+  },
+  {
+    version: 21,
+    sql: `
+      CREATE TABLE decision_journal (
+        id TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 200),
+        policy_id TEXT NOT NULL CHECK (length(policy_id) BETWEEN 1 AND 120),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        provider TEXT NOT NULL CHECK (provider IN ('rules', 'fake', 'jev')),
+        model_version TEXT,
+        state TEXT NOT NULL CHECK (state IN (
+          'prepared', 'dispatched', 'completed', 'timeout', 'failed',
+          'rate-limited', 'fallback', 'cancelled'
+        )),
+        input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+        answers_json TEXT NOT NULL CHECK (json_valid(answers_json) AND json_type(answers_json) = 'object'),
+        confidence_json TEXT NOT NULL CHECK (json_valid(confidence_json) AND json_type(confidence_json) = 'object'),
+        fallback_reason TEXT,
+        request_id TEXT,
+        latency_ms INTEGER CHECK (latency_ms IS NULL OR latency_ms >= 0),
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX decision_journal_by_policy
+        ON decision_journal(policy_id, created_at DESC, id DESC);
+      CREATE INDEX decision_journal_by_state
+        ON decision_journal(state, updated_at DESC, id DESC);
+    `,
+  },
+  {
+    version: 22,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE memory_items_v22 (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL CHECK (scope IN ('user', 'bot', 'workspace')),
+        scope_key TEXT NOT NULL,
+        bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE,
+        workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+        content TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 4000),
+        content_digest TEXT NOT NULL CHECK (length(content_digest) = 64),
+        kind TEXT NOT NULL CHECK (kind IN ('fact', 'preference', 'decision', 'procedure')),
+        source TEXT NOT NULL CHECK (source IN ('manual-user', 'model-captured')),
+        source_entry_id TEXT,
+        expires_at TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        deleted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (
+          (scope = 'user' AND scope_key = 'user' AND bot_id IS NULL AND workspace_id IS NULL) OR
+          (scope = 'bot' AND scope_key = bot_id AND bot_id IS NOT NULL AND workspace_id IS NULL) OR
+          (scope = 'workspace' AND scope_key = workspace_id AND workspace_id IS NOT NULL AND bot_id IS NULL)
+        )
+      );
+      INSERT INTO memory_items_v22(
+        id, scope, scope_key, bot_id, workspace_id, content, content_digest,
+        kind, source, source_entry_id, expires_at, version, deleted_at, created_at, updated_at
+      )
+      SELECT id, scope, scope_key, bot_id, workspace_id, content, content_digest,
+             'fact', source, NULL, NULL, version, deleted_at, created_at, updated_at
+      FROM memory_items;
+      DROP TABLE memory_items;
+      ALTER TABLE memory_items_v22 RENAME TO memory_items;
+      CREATE UNIQUE INDEX memory_one_active_content_per_scope
+        ON memory_items(scope, scope_key, content_digest) WHERE deleted_at IS NULL;
+      CREATE INDEX memory_items_by_scope
+        ON memory_items(scope, scope_key, deleted_at, created_at, id);
+      CREATE INDEX memory_items_by_bot
+        ON memory_items(bot_id, deleted_at, created_at, id);
+      CREATE INDEX memory_items_by_expiry
+        ON memory_items(expires_at, deleted_at, updated_at);
+
+      CREATE TABLE memory_proposals (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        scope TEXT NOT NULL CHECK (scope IN ('user', 'bot', 'workspace')),
+        scope_key TEXT NOT NULL,
+        workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('fact', 'preference', 'decision', 'procedure')),
+        content TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 4000),
+        content_digest TEXT NOT NULL CHECK (length(content_digest) = 64),
+        reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 1000),
+        source_entry_id TEXT NOT NULL,
+        supersedes_memory_id TEXT REFERENCES memory_items(id) ON DELETE SET NULL,
+        expires_at TEXT,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'accepted', 'rejected')),
+        version INTEGER NOT NULL CHECK (version > 0),
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX memory_pending_digest_per_scope
+        ON memory_proposals(scope, scope_key, content_digest) WHERE state = 'pending';
+      CREATE INDEX memory_proposals_by_state
+        ON memory_proposals(state, created_at DESC, id DESC);
+      CREATE INDEX memory_proposals_by_bot
+        ON memory_proposals(bot_id, state, created_at DESC, id DESC);
+    `,
+  },
+  {
+    version: 23,
+    foreignKeysOff: true,
+    sql: `
+      ALTER TABLE workspaces ADD COLUMN write_enabled INTEGER NOT NULL DEFAULT 0 CHECK (write_enabled IN (0, 1));
+      ALTER TABLE workspaces ADD COLUMN automation_enabled INTEGER NOT NULL DEFAULT 0 CHECK (automation_enabled IN (0, 1));
+
+      CREATE TABLE approval_requests_v23 (
+        id TEXT PRIMARY KEY,
+        tool_invocation_id TEXT NOT NULL UNIQUE
+          REFERENCES tool_invocations_v23(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        action_kind TEXT NOT NULL CHECK (action_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        target_digest TEXT NOT NULL CHECK (length(target_digest) = 64),
+        arguments_digest TEXT NOT NULL CHECK (length(arguments_digest) = 64),
+        requested_scope TEXT NOT NULL CHECK (requested_scope = 'once'),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'allowed', 'denied', 'expired', 'cancelled')),
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('allow-once', 'deny')),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE tool_invocations_v23 (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 600000),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded', 'failed',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests_v23(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      INSERT INTO approval_requests_v23 SELECT * FROM approval_requests;
+      INSERT INTO tool_invocations_v23 SELECT * FROM tool_invocations;
+      DROP TABLE tool_invocations;
+      DROP TABLE approval_requests;
+      ALTER TABLE approval_requests_v23 RENAME TO approval_requests;
+      ALTER TABLE tool_invocations_v23 RENAME TO tool_invocations;
+      CREATE INDEX tool_invocations_by_session ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime ON tool_invocations(runtime_run_id, created_at, id);
+      CREATE INDEX approval_requests_pending ON approval_requests(state, expires_at, created_at, id);
+    `,
+  },
+  {
+    version: 24,
+    sql: `
+      ALTER TABLE room_turns ADD COLUMN execution_receipt_json TEXT
+        CHECK (execution_receipt_json IS NULL OR json_valid(execution_receipt_json));
+      ALTER TABLE room_batches ADD COLUMN orchestration_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (orchestration_enabled IN (0, 1));
+      UPDATE room_batches SET orchestration_enabled = 1 WHERE routing_mode = 'automatic';
+    `,
+  },
+  {
+    version: 25,
+    sql: `
+      ALTER TABLE bots ADD COLUMN avatar_shape TEXT NOT NULL DEFAULT 'rounded';
+      ALTER TABLE bots ADD COLUMN avatar_color TEXT NOT NULL DEFAULT 'cobalt';
+    `,
+  },
+  {
+    version: 26,
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 80),
+        is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX projects_single_default
+        ON projects(is_default) WHERE is_default = 1;
+      CREATE UNIQUE INDEX projects_unique_name ON projects(name COLLATE NOCASE);
+
+      INSERT INTO projects(id, name, is_default, version, created_at, updated_at)
+      VALUES (
+        '${DEFAULT_PROJECT_ID}',
+        '默认项目',
+        1,
+        1,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+
+      ALTER TABLE bots ADD COLUMN project_id TEXT NOT NULL DEFAULT '${DEFAULT_PROJECT_ID}'
+        REFERENCES projects(id) ON DELETE RESTRICT;
+      ALTER TABLE rooms ADD COLUMN project_id TEXT NOT NULL DEFAULT '${DEFAULT_PROJECT_ID}'
+        REFERENCES projects(id) ON DELETE RESTRICT;
+
+      CREATE INDEX bots_by_project ON bots(project_id, deleted_at, hidden_at, pinned_at, created_at);
+      CREATE INDEX rooms_by_project ON rooms(project_id, archived_at, hidden_at, pinned_at, created_at);
+    `,
+  },
+  {
+    version: 27,
+    sql: `
+      ALTER TABLE projects ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE RESTRICT;
+      DROP INDEX projects_unique_name;
+      CREATE UNIQUE INDEX projects_unique_unbound_name ON projects(name COLLATE NOCASE) WHERE workspace_id IS NULL;
+      CREATE UNIQUE INDEX projects_unique_workspace ON projects(workspace_id) WHERE workspace_id IS NOT NULL;
+      INSERT INTO projects(id, name, is_default, workspace_id, version, created_at, updated_at)
+      SELECT id, substr(name, 1, 80), 0, id, 1, created_at, updated_at
+      FROM workspaces WHERE removed_at IS NULL;
+    `,
+  },
+  {
+    version: 28,
+    foreignKeysOff: true,
+    sql: `
+
+      CREATE TABLE approval_requests_v28 (
+        id TEXT PRIMARY KEY,
+        tool_invocation_id TEXT NOT NULL UNIQUE
+          REFERENCES tool_invocations_v28(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        action_kind TEXT NOT NULL CHECK (action_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure', 'project-bots', 'bot-create', 'room-create'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        target_digest TEXT NOT NULL CHECK (length(target_digest) = 64),
+        arguments_digest TEXT NOT NULL CHECK (length(arguments_digest) = 64),
+        requested_scope TEXT NOT NULL CHECK (requested_scope = 'once'),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'allowed', 'denied', 'expired', 'cancelled')),
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('allow-once', 'deny')),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE tool_invocations_v28 (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure', 'project-bots', 'bot-create', 'room-create'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 600000),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded', 'failed',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests_v28(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      INSERT INTO approval_requests_v28 SELECT * FROM approval_requests;
+      INSERT INTO tool_invocations_v28 SELECT * FROM tool_invocations;
+      DROP TABLE tool_invocations;
+      DROP TABLE approval_requests;
+      ALTER TABLE approval_requests_v28 RENAME TO approval_requests;
+      ALTER TABLE tool_invocations_v28 RENAME TO tool_invocations;
+      CREATE INDEX tool_invocations_by_session ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime ON tool_invocations(runtime_run_id, created_at, id);
+      CREATE INDEX approval_requests_pending ON approval_requests(state, expires_at, created_at, id);
+    `,
+  },
+  {
+    version: 29,
+    sql: `
+      CREATE TABLE conversation_metadata (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
+        pinned_at TEXT,
+        hidden_at TEXT,
+        has_unread INTEGER NOT NULL DEFAULT 0 CHECK (has_unread IN (0, 1)),
+        last_activity_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)
+      );
+      CREATE INDEX conversations_by_sidebar
+        ON conversation_metadata(project_id, hidden_at, pinned_at, last_activity_at);
+
+      INSERT INTO conversation_metadata(
+        session_id, project_id, pinned_at, hidden_at, has_unread, last_activity_at
+      )
+      SELECT sessions.id, COALESCE(bots.project_id, rooms.project_id),
+             COALESCE(bots.pinned_at, rooms.pinned_at), COALESCE(bots.hidden_at, rooms.hidden_at),
+             COALESCE(bots.has_unread, rooms.has_unread, 0),
+             COALESCE((SELECT updated_at FROM transcript_entries
+                       WHERE session_id = sessions.id AND generation = sessions.generation
+                         AND (length(trim(body)) > 0 OR attachments_json <> '[]')
+                       ORDER BY seq DESC LIMIT 1), sessions.created_at)
+      FROM sessions
+      LEFT JOIN bots ON bots.id = sessions.bot_id
+      LEFT JOIN rooms ON rooms.id = sessions.room_id;
+
+      CREATE TRIGGER initialize_conversation AFTER INSERT ON sessions
+      BEGIN
+        INSERT INTO conversation_metadata(session_id, project_id, pinned_at, hidden_at, has_unread, last_activity_at)
+        VALUES (NEW.id, COALESCE((SELECT project_id FROM bots WHERE id = NEW.bot_id),
+                                (SELECT project_id FROM rooms WHERE id = NEW.room_id)),
+                COALESCE((SELECT pinned_at FROM bots WHERE id = NEW.bot_id), (SELECT pinned_at FROM rooms WHERE id = NEW.room_id)),
+                COALESCE((SELECT hidden_at FROM bots WHERE id = NEW.bot_id), (SELECT hidden_at FROM rooms WHERE id = NEW.room_id)),
+                COALESCE((SELECT has_unread FROM bots WHERE id = NEW.bot_id), (SELECT has_unread FROM rooms WHERE id = NEW.room_id), 0),
+                NEW.created_at);
+      END;
+
+      CREATE TRIGGER conversation_message_inserted AFTER INSERT ON transcript_entries
+      WHEN NEW.generation = (SELECT generation FROM sessions WHERE id = NEW.session_id)
+        AND (NEW.role = 'user' OR length(trim(NEW.body)) > 0)
+      BEGIN
+        UPDATE conversation_metadata
+        SET hidden_at = NULL, last_activity_at = NEW.created_at, version = version + 1
+        WHERE session_id = NEW.session_id;
+      END;
+
+      CREATE TRIGGER conversation_message_updated AFTER UPDATE OF body ON transcript_entries
+      WHEN NEW.body <> OLD.body AND length(trim(NEW.body)) > 0
+        AND NEW.generation = (SELECT generation FROM sessions WHERE id = NEW.session_id)
+        AND NEW.seq = (SELECT MAX(seq) FROM transcript_entries
+                       WHERE session_id = NEW.session_id AND generation = NEW.generation)
+      BEGIN
+        UPDATE conversation_metadata
+        SET hidden_at = NULL, last_activity_at = NEW.updated_at, version = version + 1
+        WHERE session_id = NEW.session_id;
+      END;
+
+      -- Retain nonce tombstones when clearing history so old commands cannot replay.
+      CREATE TABLE retired_conversation_sends (
+        client_nonce TEXT PRIMARY KEY REFERENCES send_journal(client_nonce) ON DELETE CASCADE,
+        retired_at TEXT NOT NULL
+      );
+      CREATE TABLE retired_conversation_tools (
+        idempotency_key TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
+      );
+    `,
+  },
+  {
+    version: 30,
+    sql: `
+      CREATE TABLE session_workspace_grants (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        PRIMARY KEY (session_id, workspace_id)
+      );
+      INSERT INTO session_workspace_grants(session_id, workspace_id)
+      SELECT conversation_metadata.session_id, workspaces.id FROM conversation_metadata
+      JOIN projects ON projects.id = conversation_metadata.project_id
+      JOIN workspaces ON workspaces.removed_at IS NULL
+        AND (projects.workspace_id IS NULL OR projects.workspace_id = workspaces.id);
+
+      CREATE TABLE memory_session_visibility (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        memory_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
+        PRIMARY KEY (session_id, executor_bot_id, memory_id)
+      );
+      CREATE INDEX memory_visibility_by_item ON memory_session_visibility(memory_id, session_id);
+      INSERT INTO memory_session_visibility(session_id, executor_bot_id, memory_id)
+      SELECT sessions.id, memory_items.bot_id, memory_items.id FROM memory_items JOIN sessions
+        ON sessions.bot_id = memory_items.bot_id OR EXISTS (
+          SELECT 1 FROM room_members WHERE room_members.room_id = sessions.room_id
+            AND room_members.bot_id = memory_items.bot_id
+        )
+      WHERE memory_items.scope = 'bot';
+
+      -- Legacy contacts without a MAIN session need the same finite migration
+      -- snapshot when first opened, never the set of folders/memories at that later time.
+      CREATE TABLE legacy_session_scopes (
+        owner_kind TEXT NOT NULL CHECK (owner_kind IN ('bot', 'room')),
+        owner_id TEXT NOT NULL,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+        workspace_ids_json TEXT NOT NULL CHECK (json_valid(workspace_ids_json)),
+        memory_visibility_json TEXT NOT NULL CHECK (json_valid(memory_visibility_json)),
+        PRIMARY KEY (owner_kind, owner_id)
+      );
+      INSERT INTO legacy_session_scopes
+      SELECT 'bot', bots.id, bots.project_id,
+        (SELECT json_group_array(workspaces.id) FROM workspaces JOIN projects ON projects.id = bots.project_id
+         WHERE workspaces.removed_at IS NULL AND (projects.workspace_id IS NULL OR projects.workspace_id = workspaces.id)),
+        (SELECT json_group_array(json_object('executorBotId', bots.id, 'memoryId', memory_items.id))
+         FROM memory_items WHERE memory_items.scope = 'bot' AND memory_items.bot_id = bots.id)
+      FROM bots WHERE bots.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.bot_id = bots.id);
+      INSERT INTO legacy_session_scopes
+      SELECT 'room', rooms.id, rooms.project_id,
+        (SELECT json_group_array(workspaces.id) FROM workspaces JOIN projects ON projects.id = rooms.project_id
+         WHERE workspaces.removed_at IS NULL AND (projects.workspace_id IS NULL OR projects.workspace_id = workspaces.id)),
+        (SELECT json_group_array(json_object('executorBotId', memory_items.bot_id, 'memoryId', memory_items.id))
+         FROM memory_items JOIN room_members ON room_members.bot_id = memory_items.bot_id
+         WHERE memory_items.scope = 'bot' AND room_members.room_id = rooms.id)
+      FROM rooms WHERE rooms.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.room_id = rooms.id);
+
+      CREATE TABLE conversation_scope_versions (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)
+      );
+      INSERT INTO conversation_scope_versions(session_id) SELECT id FROM sessions;
+      CREATE TABLE runtime_session_scopes (
+        runtime_run_id TEXT PRIMARY KEY REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        scope_version INTEGER NOT NULL CHECK (scope_version > 0)
+      );
+      INSERT INTO runtime_session_scopes SELECT id, 1 FROM runtime_runs;
+      CREATE TRIGGER initialize_runtime_scope AFTER INSERT ON runtime_runs
+      BEGIN
+        INSERT INTO runtime_session_scopes(runtime_run_id, scope_version)
+        SELECT NEW.id, version FROM conversation_scope_versions WHERE session_id = NEW.session_id;
+      END;
+
+      DROP TRIGGER initialize_conversation;
+      CREATE TRIGGER initialize_conversation AFTER INSERT ON sessions
+      BEGIN
+        INSERT INTO conversation_metadata(session_id, project_id, pinned_at, hidden_at, has_unread, last_activity_at)
+        VALUES (NEW.id, (SELECT project_id FROM legacy_session_scopes
+                        WHERE owner_kind = CASE WHEN NEW.bot_id IS NULL THEN 'room' ELSE 'bot' END
+                          AND owner_id = COALESCE(NEW.bot_id, NEW.room_id)),
+                COALESCE((SELECT pinned_at FROM bots WHERE id = NEW.bot_id), (SELECT pinned_at FROM rooms WHERE id = NEW.room_id)),
+                COALESCE((SELECT hidden_at FROM bots WHERE id = NEW.bot_id), (SELECT hidden_at FROM rooms WHERE id = NEW.room_id)),
+                COALESCE((SELECT has_unread FROM bots WHERE id = NEW.bot_id), (SELECT has_unread FROM rooms WHERE id = NEW.room_id), 0),
+                NEW.created_at);
+        INSERT INTO conversation_scope_versions(session_id) VALUES (NEW.id);
+        INSERT INTO session_workspace_grants(session_id, workspace_id)
+        SELECT NEW.id, workspaces.id FROM legacy_session_scopes, json_each(workspace_ids_json)
+        JOIN workspaces ON workspaces.id = json_each.value AND workspaces.removed_at IS NULL
+        WHERE owner_kind = CASE WHEN NEW.bot_id IS NULL THEN 'room' ELSE 'bot' END
+          AND owner_id = COALESCE(NEW.bot_id, NEW.room_id);
+        INSERT INTO memory_session_visibility(session_id, executor_bot_id, memory_id)
+        SELECT NEW.id, memory_items.bot_id, memory_items.id FROM legacy_session_scopes, json_each(memory_visibility_json)
+        JOIN memory_items ON memory_items.id = json_extract(json_each.value, '$.memoryId')
+          AND memory_items.bot_id = json_extract(json_each.value, '$.executorBotId')
+        WHERE owner_kind = CASE WHEN NEW.bot_id IS NULL THEN 'room' ELSE 'bot' END
+          AND owner_id = COALESCE(NEW.bot_id, NEW.room_id);
+        DELETE FROM legacy_session_scopes
+        WHERE owner_kind = CASE WHEN NEW.bot_id IS NULL THEN 'room' ELSE 'bot' END
+          AND owner_id = COALESCE(NEW.bot_id, NEW.room_id);
+      END;
+
+      DROP INDEX memory_one_active_content_per_scope;
+      CREATE UNIQUE INDEX memory_one_active_content_per_scope
+        ON memory_items(scope, scope_key, content_digest) WHERE deleted_at IS NULL AND scope <> 'bot';
+      DROP INDEX memory_pending_digest_per_scope;
+      CREATE UNIQUE INDEX memory_pending_digest_per_scope
+        ON memory_proposals(scope, scope_key, content_digest) WHERE state = 'pending' AND scope <> 'bot';
+
+      CREATE TRIGGER conversation_reply_inserted AFTER INSERT ON transcript_entries
+      WHEN NEW.role = 'assistant' AND NEW.status IN ('completed', 'failed', 'cancelled')
+        AND (length(trim(NEW.body)) > 0 OR NEW.status = 'failed')
+        AND NEW.generation = (SELECT generation FROM sessions WHERE id = NEW.session_id)
+      BEGIN
+        UPDATE conversation_metadata SET has_unread = 1, version = version + 1
+        WHERE session_id = NEW.session_id;
+      END;
+
+      CREATE TRIGGER conversation_reply_finished AFTER UPDATE OF status ON transcript_entries
+      WHEN NEW.role = 'assistant' AND OLD.status NOT IN ('completed', 'failed', 'cancelled')
+        AND NEW.status IN ('completed', 'failed', 'cancelled')
+        AND (length(trim(NEW.body)) > 0 OR NEW.status = 'failed')
+        AND NEW.generation = (SELECT generation FROM sessions WHERE id = NEW.session_id)
+      BEGIN
+        UPDATE conversation_metadata SET has_unread = 1, version = version + 1
+        WHERE session_id = NEW.session_id;
+      END;
+    `,
+  },
+  {
+    version: 31,
+    sql: `
+      ALTER TABLE rooms ADD COLUMN lead_bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL;
+      ALTER TABLE room_batches ADD COLUMN lead_bot_id TEXT;
+      ALTER TABLE room_batches ADD COLUMN summary_state TEXT NOT NULL DEFAULT 'not-required'
+        CHECK (summary_state IN ('not-required', 'pending', 'queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted', 'skipped'));
+      ALTER TABLE room_batches ADD COLUMN summary_turn_id TEXT;
+      ALTER TABLE room_batches ADD COLUMN summary_skip_reason TEXT;
+      ALTER TABLE room_batches ADD COLUMN coordination_error_code TEXT;
+      ALTER TABLE room_turns ADD COLUMN turn_purpose TEXT NOT NULL DEFAULT 'work'
+        CHECK (turn_purpose IN ('coordinate', 'work', 'summary'));
+      ALTER TABLE room_turns ADD COLUMN dependency_logical_turn_id TEXT;
+      ALTER TABLE room_turns ADD COLUMN lead_assignments_json TEXT CHECK (lead_assignments_json IS NULL OR json_valid(lead_assignments_json));
+    `,
+  },
+  {
+    version: 32,
+    foreignKeysOff: true,
+    sql: `
+
+      CREATE TABLE approval_requests_v32 (
+        id TEXT PRIMARY KEY,
+        tool_invocation_id TEXT NOT NULL UNIQUE
+          REFERENCES tool_invocations_v32(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        action_kind TEXT NOT NULL CHECK (action_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure', 'project-bots', 'bot-create', 'room-create', 'product-call'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible', 'write-external', 'irreversible', 'computer-control')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        target_digest TEXT NOT NULL CHECK (length(target_digest) = 64),
+        arguments_digest TEXT NOT NULL CHECK (length(arguments_digest) = 64),
+        requested_scope TEXT NOT NULL CHECK (requested_scope = 'once'),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'allowed', 'denied', 'expired', 'cancelled')),
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('allow-once', 'deny')),
+        policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+        version INTEGER NOT NULL CHECK (version > 0),
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE tool_invocations_v32 (
+        id TEXT PRIMARY KEY,
+        runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        executor_bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL CHECK (length(tool_call_id) BETWEEN 1 AND 200),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+        tool_kind TEXT NOT NULL CHECK (tool_kind IN (
+          'workspace-list', 'workspace-read', 'workspace-search', 'workspace-write',
+          'web-search', 'web-fetch', 'weather-current', 'time-now', 'mcp-call', 'clipboard-read', 'text-measure', 'project-bots', 'bot-create', 'room-create', 'product-call'
+        )),
+        effect_class TEXT NOT NULL CHECK (effect_class IN ('pure', 'read-local', 'read-remote', 'write-reversible', 'write-external', 'irreversible', 'computer-control')),
+        workspace_id TEXT,
+        target_path TEXT NOT NULL CHECK (length(target_path) <= 2048),
+        arguments_json TEXT NOT NULL CHECK (length(arguments_json) BETWEEN 2 AND 600000),
+        state TEXT NOT NULL CHECK (
+          state IN (
+            'prepared', 'awaiting-approval', 'approved', 'dispatching', 'running', 'succeeded', 'failed',
+            'denied', 'expired', 'cancelled', 'failed-before-execution', 'interrupted-unknown'
+          )
+        ),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        approval_request_id TEXT NOT NULL UNIQUE
+          REFERENCES approval_requests_v32(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+        result_metadata_json TEXT,
+        last_error_code TEXT,
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(runtime_run_id, tool_call_id)
+      );
+
+      INSERT INTO approval_requests_v32 SELECT * FROM approval_requests;
+      INSERT INTO tool_invocations_v32 SELECT * FROM tool_invocations;
+      DROP TABLE tool_invocations;
+      DROP TABLE approval_requests;
+      ALTER TABLE approval_requests_v32 RENAME TO approval_requests;
+      ALTER TABLE tool_invocations_v32 RENAME TO tool_invocations;
+      CREATE INDEX tool_invocations_by_session ON tool_invocations(session_id, state, created_at, id);
+      CREATE INDEX tool_invocations_by_runtime ON tool_invocations(runtime_run_id, created_at, id);
+      CREATE INDEX approval_requests_pending ON approval_requests(state, expires_at, created_at, id);
+      ALTER TABLE tool_invocations ADD COLUMN product_result_content TEXT CHECK (product_result_content IS NULL OR length(product_result_content) <= 600000);
+      ALTER TABLE transcript_entries ADD COLUMN origin_json TEXT CHECK (origin_json IS NULL OR json_valid(origin_json));
+    `,
+  },
+  {
+    version: 33,
+    sql: `
+      DROP INDEX runtime_one_active_per_session;
+      CREATE UNIQUE INDEX runtime_one_active_per_executor
+        ON runtime_runs(session_id, executor_bot_id)
+        WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested');
+    `,
+  },
+  RESOURCE_LIBRARY_MIGRATION,
+  ENVIRONMENT_MIGRATION,
+  BROWSER_MIGRATION,
+  SKILL_EXECUTION_MIGRATION,
+  NATIVE_CONNECTOR_MIGRATION,
+  NATIVE_OUTBOUND_MIGRATION,
+  DEMONSTRATION_MIGRATION,
+  MCP_WRITE_MIGRATION,
+  MEDIA_MIGRATION,
 ] as const;
 
-type BotRow = {
+type ConversationSidebarRow = {
+  conversation_session_id?: string | null;
+  conversation_pinned_at?: string | null;
+  conversation_hidden_at?: string | null;
+  conversation_has_unread?: number | null;
+};
+
+type ConversationRow = {
+  session_id: string;
+  bot_id: string | null;
+  room_id: string | null;
+  project_id: string | null;
+  workspace_ids_json: string;
+  pinned_at: string | null;
+  hidden_at: string | null;
+  has_unread: number;
+  last_message: string | null;
+  last_activity_at: string;
+  version: number;
+};
+
+type BotRow = ConversationSidebarRow & {
   id: string;
+  project_id: string;
   name: string;
   label: string;
   description: string;
   instructions: string;
   provider_instance_id: string;
   model_id: string;
+  avatar_shape: string;
+  avatar_color: string;
   mcp_server_ids_json: string | null;
   memory_workspace_ids_json: string;
   pinned_at: string | null;
@@ -1410,6 +2133,26 @@ type ProviderInstanceRow = {
   display_name: string;
   config_json: string;
   enabled: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type DecisionJournalRow = {
+  id: string;
+  idempotency_key: string;
+  policy_id: string;
+  policy_version: number;
+  provider: DecisionProviderKind;
+  model_version: string | null;
+  state: DecisionState;
+  input_digest: string;
+  answers_json: string;
+  confidence_json: string;
+  fallback_reason: string | null;
+  request_id: string | null;
+  latency_ms: number | null;
+  last_error_code: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -1434,9 +2177,32 @@ type MemoryRow = {
   workspace_id: string | null;
   content: string;
   content_digest: string;
-  source: "manual-user";
+  kind: MemoryKind;
+  source: MemorySource;
+  source_entry_id: string | null;
+  expires_at: string | null;
   version: number;
   deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type MemoryProposalRow = {
+  id: string;
+  bot_id: string;
+  scope: MemoryScope;
+  scope_key: string;
+  workspace_id: string | null;
+  kind: MemoryKind;
+  content: string;
+  content_digest: string;
+  reason: string;
+  source_entry_id: string;
+  supersedes_memory_id: string | null;
+  expires_at: string | null;
+  state: MemoryProposalState;
+  version: number;
+  resolved_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1460,6 +2226,10 @@ type TranscriptRow = {
   client_nonce: string | null;
   role: TranscriptRole;
   body: string;
+  attachments_json?: string;
+  resource_references_json?: string;
+  media_references_json?: string;
+  origin_json?: string | null;
   status: TranscriptStatus;
   send_state?: SendState | null;
   speaker_bot_id: string | null;
@@ -1469,6 +2239,8 @@ type TranscriptRow = {
   created_at: string;
   updated_at: string;
 };
+
+type PromptAttachment = MessageAttachment & { content: string };
 
 type SendRow = {
   client_nonce: string;
@@ -1480,6 +2252,7 @@ type SendRow = {
   last_error_code: string | null;
   created_at: string;
   updated_at: string;
+  retired_at: string | null;
 };
 
 type RuntimeRow = {
@@ -1561,8 +2334,20 @@ type WorkspaceRow = {
   name: string;
   canonical_root: string;
   canonical_root_digest: string;
+  write_enabled: number;
+  automation_enabled: number;
   version: number;
   removed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ProjectRow = {
+  id: string;
+  name: string;
+  workspace_id: string | null;
+  is_default: number;
+  version: number;
   created_at: string;
   updated_at: string;
 };
@@ -1627,8 +2412,10 @@ export type McpServerConfig = {
   updatedAt: string;
 };
 
-type RoomRow = {
+type RoomRow = ConversationSidebarRow & {
   id: string;
+  lead_bot_id: string | null;
+  project_id: string;
   name: string;
   description: string;
   version: number;
@@ -1645,6 +2432,7 @@ type RoomMemberRow = {
   room_id: string;
   bot_id: string;
   position: number;
+  project_id: string;
   id: string;
   name: string;
   label: string;
@@ -1652,6 +2440,8 @@ type RoomMemberRow = {
   instructions: string;
   provider_instance_id: string;
   model_id: string;
+  avatar_shape: string;
+  avatar_color: string;
   mcp_server_ids_json: string | null;
   memory_workspace_ids_json: string;
   pinned_at: string | null;
@@ -1665,6 +2455,11 @@ type RoomMemberRow = {
 
 type RoomBatchRow = {
   id: string;
+  lead_bot_id: string | null;
+  summary_state: NonNullable<RoomRun["summaryState"]>;
+  summary_turn_id: string | null;
+  summary_skip_reason: string | null;
+  coordination_error_code: string | null;
   room_id: string;
   session_id: string;
   client_nonce: string;
@@ -1672,6 +2467,7 @@ type RoomBatchRow = {
   target_digest: string;
   routing_mode: RoomRoutingMode;
   routing_reason: string | null;
+  orchestration_enabled: number;
   state: RoomBatchState;
   membership_version: number;
   max_turns: number;
@@ -1688,6 +2484,8 @@ type RoomBatchRow = {
 
 type RoomTurnRow = {
   id: string;
+  turn_purpose: NonNullable<AgentTurn["turnPurpose"]>;
+  dependency_logical_turn_id: string | null;
   batch_id: string;
   member_bot_id: string;
   member_name_snapshot: string;
@@ -1709,6 +2507,7 @@ type RoomTurnRow = {
   created_at: string;
   updated_at: string;
   finished_at: string | null;
+  execution_receipt_json: string | null;
 };
 
 type HandoffRow = {
@@ -1745,6 +2544,35 @@ function now(): string {
   return new Date().toISOString();
 }
 
+function randomBotAvatar(): { shape: typeof BOT_AVATAR_SHAPES[number]; color: typeof BOT_AVATAR_COLORS[number] } {
+  return {
+    shape: BOT_AVATAR_SHAPES[randomInt(BOT_AVATAR_SHAPES.length)]!,
+    color: BOT_AVATAR_COLORS[randomInt(BOT_AVATAR_COLORS.length)]!,
+  };
+}
+
+function conversationSidebar(row: (BotRow | RoomRow)): Pick<Bot, "pinnedAt" | "hiddenAt" | "hasUnread"> {
+  return row.conversation_session_id
+    ? { pinnedAt: row.conversation_pinned_at ?? null, hiddenAt: row.conversation_hidden_at ?? null, hasUnread: row.conversation_has_unread === 1 }
+    : { pinnedAt: row.pinned_at, hiddenAt: row.hidden_at, hasUnread: row.has_unread === 1 };
+}
+
+function toConversation(row: ConversationRow): ConversationSummary {
+  return {
+    sessionId: row.session_id,
+    botId: row.bot_id,
+    roomId: row.room_id,
+    projectId: row.project_id,
+    workspaceIds: (JSON.parse(row.workspace_ids_json) as string[]).sort(),
+    pinnedAt: row.pinned_at,
+    hiddenAt: row.hidden_at,
+    hasUnread: row.has_unread === 1,
+    lastMessage: row.last_message,
+    lastActivityAt: row.last_activity_at,
+    version: row.version,
+  };
+}
+
 function toBot(row: BotRow): Bot {
   const mcpServerIds = row.mcp_server_ids_json === null
     ? null
@@ -1753,6 +2581,7 @@ function toBot(row: BotRow): Bot {
     .filter((value): value is string => typeof value === "string");
   return {
     id: row.id,
+    projectId: row.project_id,
     name: row.name,
     label: row.label,
     description: row.description,
@@ -1761,11 +2590,11 @@ function toBot(row: BotRow): Bot {
       providerInstanceId: row.provider_instance_id,
       modelId: row.model_id,
     },
+    avatarShape: normalizeBotAvatarShape(row.avatar_shape),
+    avatarColor: normalizeBotAvatarColor(row.avatar_color),
     mcpServerIds,
     memoryWorkspaceIds,
-    pinnedAt: row.pinned_at,
-    hiddenAt: row.hidden_at,
-    hasUnread: row.has_unread === 1,
+    ...conversationSidebar(row),
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1801,9 +2630,34 @@ function toMemory(row: MemoryRow): MemoryItem {
     workspaceId: row.workspace_id,
     content: row.content,
     contentDigest: row.content_digest,
+    kind: row.kind,
     source: row.source,
+    sourceEntryId: row.source_entry_id,
+    expiresAt: row.expires_at,
     version: Number(row.version),
     deletedAt: row.deleted_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toMemoryProposal(row: MemoryProposalRow): MemoryProposal {
+  return {
+    id: row.id,
+    botId: row.bot_id,
+    scope: row.scope,
+    scopeKey: row.scope_key,
+    workspaceId: row.workspace_id,
+    kind: row.kind,
+    content: row.content,
+    contentDigest: row.content_digest,
+    reason: row.reason,
+    sourceEntryId: row.source_entry_id,
+    supersedesMemoryId: row.supersedes_memory_id,
+    expiresAt: row.expires_at,
+    state: row.state,
+    version: Number(row.version),
+    resolvedAt: row.resolved_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1823,6 +2677,11 @@ function toSession(row: SessionRow): Session {
 
 function toTranscript(row: TranscriptRow): TranscriptEntry {
   return {
+    ...(row.media_references_json && row.media_references_json !== "[]"
+      ? { mediaRefs: messageMediaReferencesSchema.parse(JSON.parse(row.media_references_json)) } : {}),
+    ...(row.resource_references_json && row.resource_references_json !== "[]"
+      ? { resourceRefs: resourceReferencesSchema.parse(JSON.parse(row.resource_references_json)) } : {}),
+    ...(row.origin_json ? { origin: JSON.parse(row.origin_json) as import("@shared/contracts").DelegationOrigin } : {}),
     id: row.id,
     sessionId: row.session_id,
     generation: row.generation,
@@ -1830,6 +2689,7 @@ function toTranscript(row: TranscriptRow): TranscriptEntry {
     clientNonce: row.client_nonce,
     role: row.role,
     body: row.body,
+    attachments: parseAttachmentMetadata(row.attachments_json),
     status: row.status,
     sendState: row.send_state ?? null,
     speakerBotId: row.speaker_bot_id,
@@ -1850,6 +2710,39 @@ function toSend(row: SendRow): SendJournalEntry {
     attemptCount: row.attempt_count,
     providerRequestId: row.provider_request_id,
     lastErrorCode: row.last_error_code,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toDecisionJournal(row: DecisionJournalRow): DecisionJournalEntry {
+  let answers: Record<string, DecisionAnswer>;
+  let confidence: Record<string, number>;
+  try {
+    answers = JSON.parse(row.answers_json) as Record<string, DecisionAnswer>;
+    confidence = JSON.parse(row.confidence_json) as Record<string, number>;
+  } catch {
+    throw new AevorenBotError("INTERNAL_ERROR");
+  }
+  if (!answers || typeof answers !== "object" || Array.isArray(answers) || !confidence || typeof confidence !== "object" || Array.isArray(confidence)) {
+    throw new AevorenBotError("INTERNAL_ERROR");
+  }
+  return {
+    id: row.id,
+    idempotencyKey: row.idempotency_key,
+    policyId: row.policy_id,
+    policyVersion: row.policy_version,
+    provider: row.provider,
+    modelVersion: row.model_version,
+    state: row.state,
+    inputDigest: row.input_digest,
+    answers,
+    confidence,
+    fallbackReason: row.fallback_reason,
+    requestId: row.request_id,
+    latencyMs: row.latency_ms,
+    lastErrorCode: row.last_error_code,
+    version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1914,8 +2807,22 @@ function toWorkspace(row: WorkspaceRow): Workspace {
   return {
     id: row.id,
     name: row.name,
+    writeEnabled: row.write_enabled === 1,
+    automationEnabled: row.automation_enabled === 1,
     version: Number(row.version),
     removedAt: row.removed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toProject(row: ProjectRow): Project {
+  return {
+    id: row.id,
+    name: row.name,
+    workspaceId: row.workspace_id,
+    isDefault: row.is_default === 1,
+    version: Number(row.version),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1976,14 +2883,14 @@ function toRoutineRun(row: RoutineRunRow): RoutineRun {
 function toRoom(row: RoomRow): Room {
   return {
     id: row.id,
+    leadBotId: row.lead_bot_id,
+    projectId: row.project_id,
     name: row.name,
     description: row.description,
     version: row.version,
     membershipVersion: row.membership_version,
     archivedAt: row.archived_at,
-    pinnedAt: row.pinned_at,
-    hiddenAt: row.hidden_at,
-    hasUnread: row.has_unread === 1,
+    ...conversationSidebar(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1992,6 +2899,11 @@ function toRoom(row: RoomRow): Room {
 function toRoomBatch(row: RoomBatchRow): RoomBatch {
   return {
     id: row.id,
+    leadBotId: row.lead_bot_id,
+    summaryState: row.summary_state,
+    summaryTurnId: row.summary_turn_id,
+    summarySkipReason: row.summary_skip_reason,
+    coordinationErrorCode: row.coordination_error_code,
     roomId: row.room_id,
     sessionId: row.session_id,
     clientNonce: row.client_nonce,
@@ -1999,6 +2911,7 @@ function toRoomBatch(row: RoomBatchRow): RoomBatch {
     targetDigest: row.target_digest,
     routingMode: row.routing_mode,
     routingReason: row.routing_reason,
+    orchestrationEnabled: row.orchestration_enabled === 1,
     state: row.state,
     membershipVersion: row.membership_version,
     maxTurns: Number(row.max_turns),
@@ -2031,6 +2944,8 @@ function toRoomTurn(row: RoomTurnRow): RoomTurn {
     memberBotId: row.member_bot_id,
     memberNameSnapshot: row.member_name_snapshot,
     logicalTurnId: row.logical_turn_id,
+    turnPurpose: row.turn_purpose,
+    dependencyLogicalTurnId: row.dependency_logical_turn_id,
     parentTurnId: row.parent_turn_id,
     nonce: row.nonce,
     hop: Number(row.hop),
@@ -2125,8 +3040,65 @@ function toRuntime(row: RuntimeRow): RuntimeRun {
   };
 }
 
-export function digestMessage(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex");
+export function digestMessage(text: string, attachments: readonly MessageAttachment[] = [], resourceRefs: readonly ResourceReference[] = [], mediaRefs: readonly MessageMediaReference[] = []): string {
+  if (attachments.length === 0 && resourceRefs.length === 0 && mediaRefs.length === 0) return createHash("sha256").update(text, "utf8").digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify({
+      text,
+      attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
+      ...(resourceRefs.length ? { resourceRefs } : {}),
+      ...(mediaRefs.length ? { mediaRefs } : {}),
+    }), "utf8")
+    .digest("hex");
+}
+
+function parseAttachmentMetadata(value: string | undefined): MessageAttachment[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const candidate = item as Record<string, unknown>;
+      if (
+        typeof candidate.id !== "string" || typeof candidate.name !== "string" ||
+        typeof candidate.mimeType !== "string" || typeof candidate.size !== "number" ||
+        typeof candidate.sha256 !== "string" || candidate.kind !== "text"
+      ) return [];
+      return [{
+        id: candidate.id,
+        name: candidate.name,
+        mimeType: candidate.mimeType,
+        size: candidate.size,
+        sha256: candidate.sha256,
+        kind: "text" as const,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function normalizeAttachmentDrafts(input: readonly AttachmentDraft[] | undefined): PromptAttachment[] {
+  if (!input || input.length === 0) return [];
+  let parsed: AttachmentDraft[];
+  try {
+    parsed = messageAttachmentsSchema.parse(input) as AttachmentDraft[];
+  } catch {
+    throw new AevorenBotError("ATTACHMENT_INVALID");
+  }
+  const seen = new Set<string>();
+  const result: PromptAttachment[] = [];
+  for (const attachment of parsed) {
+    if (seen.has(attachment.id)) throw new AevorenBotError("ATTACHMENT_INVALID");
+    seen.add(attachment.id);
+    const bytes = Buffer.from(attachment.content, "utf8");
+    if (bytes.length !== attachment.size || createHash("sha256").update(bytes).digest("hex") !== attachment.sha256) {
+      throw new AevorenBotError("ATTACHMENT_INVALID");
+    }
+    result.push({ ...attachment });
+  }
+  return result;
 }
 
 function normalizeMemoryContent(content: string): string {
@@ -2146,7 +3118,9 @@ function canonicalToolCommand(input: ToolInvocationCommand): string {
 }
 
 function toolEffectClass(tool: ToolRequest): CapabilityEffectClass {
-  if (tool.kind === "time-now") return "pure";
+  if (tool.kind === "product-call") return tool.action === "execute" ? productOperation(tool.operation)?.effectClass ?? "irreversible" : "pure";
+  if (tool.kind === "time-now" || tool.kind === "text-measure") return "pure";
+  if (tool.kind === "workspace-write" || tool.kind === "bot-create" || tool.kind === "room-create") return "write-reversible";
   if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "mcp-call") return "read-remote";
   return "read-local";
 }
@@ -2156,6 +3130,7 @@ function toolWorkspaceId(tool: ToolRequest): string | null {
     case "workspace-list":
     case "workspace-read":
     case "workspace-search":
+    case "workspace-write":
       return tool.workspaceId;
     default:
       return null;
@@ -2164,9 +3139,11 @@ function toolWorkspaceId(tool: ToolRequest): string | null {
 
 function toolTargetPath(tool: ToolRequest): string {
   switch (tool.kind) {
+    case "product-call": return tool.action === "catalog" ? "产品功能目录" : tool.operation;
     case "workspace-list":
     case "workspace-read":
     case "workspace-search":
+    case "workspace-write":
       return tool.path;
     case "web-search":
       return tool.query;
@@ -2180,6 +3157,13 @@ function toolTargetPath(tool: ToolRequest): string {
       return `${tool.serverId}:${tool.toolName}`;
     case "clipboard-read":
       return "clipboard";
+    case "text-measure":
+      return "text";
+    case "project-bots":
+      return "当前项目成员";
+    case "bot-create":
+    case "room-create":
+      return tool.name;
   }
 }
 
@@ -2197,9 +3181,22 @@ export function digestRoomCommand(
   text: string,
   targetBotIds: string[],
   routingMode: RoomRoutingMode = "legacy",
+  attachments: readonly MessageAttachment[] = [],
+  resourceRefs: readonly ResourceReference[] = [],
+  mediaRefs: readonly MessageMediaReference[] = [],
 ): string {
-  const command = { roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() };
-  return digestMessage(JSON.stringify(routingMode === "legacy" ? command : { ...command, routingMode }));
+  const command = attachments.length === 0
+    ? { roomId, sessionId, text, targetBotIds: targetBotIds.toSorted() }
+    : {
+        roomId,
+        sessionId,
+        text,
+        targetBotIds: targetBotIds.toSorted(),
+        attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
+      };
+  const resources = resourceRefs.length ? { ...command, resourceRefs } : command;
+  const scopedCommand = mediaRefs.length ? { ...resources, mediaRefs } : resources;
+  return digestMessage(JSON.stringify(routingMode === "legacy" ? scopedCommand : { ...scopedCommand, routingMode }));
 }
 
 export function digestHandoff(task: string, contextRefs: string[]): string {
@@ -2235,8 +3232,39 @@ const ROOM_RUN_SELECT = `SELECT room_batches.*,
    WHERE room_turns.batch_id = room_batches.id) AS used_turns
   FROM room_batches`;
 
+const CONVERSATION_SELECT = `SELECT conversation_metadata.*, sessions.bot_id, sessions.room_id,
+  (SELECT substr(CASE WHEN length(trim(body)) > 0 THEN body WHEN media_references_json <> '[]' THEN '[媒体]' ELSE '[附件]' END, 1, 500)
+   FROM transcript_entries WHERE session_id = sessions.id AND generation = sessions.generation
+     AND (length(trim(body)) > 0 OR attachments_json <> '[]' OR media_references_json <> '[]')
+   ORDER BY seq DESC LIMIT 1) AS last_message,
+  (SELECT json_group_array(session_workspace_grants.workspace_id)
+   FROM session_workspace_grants JOIN workspaces ON workspaces.id = session_workspace_grants.workspace_id
+   WHERE session_workspace_grants.session_id = sessions.id AND workspaces.removed_at IS NULL) AS workspace_ids_json
+  FROM conversation_metadata INNER JOIN sessions ON sessions.id = conversation_metadata.session_id`;
+
+const CONVERSATION_SIDEBAR_COLUMNS = `conversation_metadata.session_id AS conversation_session_id,
+  conversation_metadata.pinned_at AS conversation_pinned_at,
+  conversation_metadata.hidden_at AS conversation_hidden_at,
+  conversation_metadata.has_unread AS conversation_has_unread`;
+const BOT_SELECT = `SELECT bots.*, ${CONVERSATION_SIDEBAR_COLUMNS} FROM bots
+  LEFT JOIN sessions ON sessions.bot_id = bots.id AND sessions.kind = 'MAIN'
+  LEFT JOIN conversation_metadata ON conversation_metadata.session_id = sessions.id`;
+const ROOM_SELECT = `SELECT rooms.*, ${CONVERSATION_SIDEBAR_COLUMNS} FROM rooms
+  LEFT JOIN sessions ON sessions.room_id = rooms.id AND sessions.kind = 'MAIN'
+  LEFT JOIN conversation_metadata ON conversation_metadata.session_id = sessions.id`;
+
 export class AppRepository {
   private readonly database: DatabaseSync;
+  readonly library: LibraryRepository;
+  readonly media: MediaRepository;
+  readonly environments: EnvironmentRepository;
+  readonly browsers: BrowserRepository;
+  readonly demonstrations: DemonstrationRepository;
+  demonstrationsTransaction<T>(work: () => T): T { return this.transaction(work); }
+  readonly skillExecutions: SkillExecutionRepository;
+  readonly connectors: NativeConnectorRepository;
+  readonly outbound: NativeOutboundRepository;
+  readonly mcpWrites: McpWriteRepository;
 
   constructor(private readonly filename: string, private readonly options: AppRepositoryOptions = {}) {
     this.database = new DatabaseSync(filename);
@@ -2244,6 +3272,27 @@ export class AppRepository {
       this.database.exec("PRAGMA foreign_keys = ON;");
       if (filename !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL;");
       this.migrate();
+      this.library = new LibraryRepository(this.database, (sessionId, executorBotId) => {
+        const session = this.getSession(sessionId);
+        if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
+        else if (session.botId) this.getBot(session.botId);
+        else if (session.roomId) this.getRoom(session.roomId);
+      });
+      this.media = new MediaRepository(this.database, (sessionId, executorBotId) => {
+        const session = this.getSession(sessionId);
+        if (session.roomId && this.getRoom(session.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
+        if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
+        else if (session.botId) this.getBot(session.botId);
+        else if (session.roomId) this.getRoom(session.roomId);
+      });
+      this.environments = new EnvironmentRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.demonstrations = new DemonstrationRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.browsers = new BrowserRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.connectors = new NativeConnectorRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.mcpWrites = new McpWriteRepository(this.database, scope => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.outbound = new NativeOutboundRepository(this.database, this.connectors, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.skillExecutions = new SkillExecutionRepository(this.database, (scope) => this.assertSessionExecutor(scope.sessionId, scope.executorBotId),
+        (scope, reference) => this.library.resolveReferences(scope.sessionId, [reference], scope.executorBotId)[0]!);
     } catch (error) {
       this.database.close();
       throw error;
@@ -2342,16 +3391,21 @@ export class AppRepository {
     return row?.value || null;
   }
 
+  private transactionDepth = 0;
+
   private transaction<T>(operation: () => T): T {
-    this.database.exec("BEGIN IMMEDIATE;");
+    const depth = this.transactionDepth;
+    const savepoint = `aevoren_${depth}`;
+    this.database.exec(depth === 0 ? "BEGIN IMMEDIATE;" : `SAVEPOINT ${savepoint};`);
+    this.transactionDepth += 1;
     try {
       const result = operation();
-      this.database.exec("COMMIT;");
+      this.database.exec(depth === 0 ? "COMMIT;" : `RELEASE SAVEPOINT ${savepoint};`);
       return result;
     } catch (error) {
-      this.database.exec("ROLLBACK;");
+      this.database.exec(depth === 0 ? "ROLLBACK;" : `ROLLBACK TO SAVEPOINT ${savepoint}; RELEASE SAVEPOINT ${savepoint};`);
       throw error;
-    }
+    } finally { this.transactionDepth -= 1; }
   }
 
   private nextTranscriptUpdateSeq(sessionId: string): number {
@@ -2382,7 +3436,7 @@ export class AppRepository {
   }
 
   listBots(): Bot[] {
-    return (this.database.prepare("SELECT * FROM bots WHERE deleted_at IS NULL ORDER BY created_at ASC").all() as BotRow[]).map(toBot);
+    return (this.database.prepare(`${BOT_SELECT} WHERE bots.deleted_at IS NULL ORDER BY bots.created_at ASC`).all() as BotRow[]).map(toBot);
   }
 
   listProviderInstanceConfigs(): ProviderInstanceConfig[] {
@@ -2455,6 +3509,14 @@ export class AppRepository {
       .get(providerInstanceId));
   }
 
+  hasActiveTasks(): boolean {
+    const row = this.database.prepare(`SELECT
+      EXISTS(SELECT 1 FROM runtime_runs WHERE state IN ('created', 'dispatching', 'running', 'streaming', 'cancel-requested'))
+      OR EXISTS(SELECT 1 FROM room_batches WHERE state IN ('queued', 'running'))
+      OR EXISTS(SELECT 1 FROM routine_runs WHERE state = 'running') AS active`).get() as { active: number };
+    return Boolean(row.active);
+  }
+
   applyDefaultSelectionToUnconfiguredBots(selection: ModelSelection): number {
     this.getProviderInstanceConfig(selection.providerInstanceId);
     const result = this.database
@@ -2467,43 +3529,69 @@ export class AppRepository {
     return Number(result.changes);
   }
 
+  applyDefaultSelectionToUnsupportedBots(
+    supportedProviderInstanceIds: readonly string[],
+    selection: ModelSelection,
+  ): number {
+    if (supportedProviderInstanceIds.length === 0) throw new AevorenBotError("INVALID_REQUEST");
+    this.getProviderInstanceConfig(selection.providerInstanceId);
+    const placeholders = supportedProviderInstanceIds.map(() => "?").join(",");
+    const result = this.database
+      .prepare(
+        `UPDATE bots
+         SET provider_instance_id = ?, model_id = ?, version = version + 1, updated_at = ?
+         WHERE deleted_at IS NULL AND provider_instance_id NOT IN (${placeholders})`,
+      )
+      .run(selection.providerInstanceId, selection.modelId, now(), ...supportedProviderInstanceIds);
+    return Number(result.changes);
+  }
+
   getBot(id: string): Bot {
-    const row = this.database.prepare("SELECT * FROM bots WHERE id = ? AND deleted_at IS NULL").get(id) as BotRow | undefined;
+    const row = this.database.prepare(`${BOT_SELECT} WHERE bots.id = ? AND bots.deleted_at IS NULL`).get(id) as BotRow | undefined;
     if (!row) throw new AevorenBotError("BOT_NOT_FOUND");
     return toBot(row);
   }
 
-  createBot(): { bot: Bot; session: Session } {
+  createBot(projectId?: string): { bot: Bot; session: Session } {
+    return this.transaction(() => this.insertBot(projectId ?? null));
+  }
+
+  private insertBot(projectId: string | null, profile: Partial<Pick<Bot, "name" | "label" | "description" | "instructions" | "modelSelection" | "mcpServerIds">> = {}, grantWorkspace = true): { bot: Bot; session: Session } {
+    this.getProject(projectId ?? DEFAULT_PROJECT_ID);
     const timestamp = now();
     const botId = randomUUID();
     const sessionId = randomUUID();
-    const modelSelection = this.getDefaultModelSelection();
-    this.transaction(() => {
-      this.database
-        .prepare(
-          `INSERT INTO bots(
-             id, name, label, description, instructions, provider_instance_id, model_id,
-             version, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-        )
-        .run(
-          botId,
-          "新建 Bot",
-          "",
-          "",
-          "",
-          modelSelection.providerInstanceId,
-          modelSelection.modelId,
-          timestamp,
-          timestamp,
-        );
-      this.database
-        .prepare(
-          `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
-           VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
-        )
-        .run(sessionId, botId, timestamp, timestamp);
-    });
+    const modelSelection = profile.modelSelection ?? this.getDefaultModelSelection();
+    const avatar = randomBotAvatar();
+    this.database
+      .prepare(
+        `INSERT INTO bots(
+           id, project_id, name, label, description, instructions, provider_instance_id, model_id,
+           avatar_shape, avatar_color, mcp_server_ids_json, version, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      )
+      .run(
+        botId,
+        projectId ?? DEFAULT_PROJECT_ID,
+        profile.name ?? "新建 Bot",
+        profile.label ?? "",
+        profile.description ?? "",
+        profile.instructions ?? "",
+        modelSelection.providerInstanceId,
+        modelSelection.modelId,
+        avatar.shape,
+        avatar.color,
+        profile.mcpServerIds == null ? null : JSON.stringify(profile.mcpServerIds),
+        timestamp,
+        timestamp,
+      );
+    this.database
+      .prepare(
+        `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+         VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
+      )
+      .run(sessionId, botId, timestamp, timestamp);
+    this.configureSessionProject(sessionId, projectId, grantWorkspace);
     return { bot: this.getBot(botId), session: this.getMainSession(botId) };
   }
 
@@ -2513,10 +3601,12 @@ export class AppRepository {
       label: "label",
       description: "description",
       instructions: "instructions",
+      avatarShape: "avatar_shape",
+      avatarColor: "avatar_color",
     };
     const assignments: string[] = [];
     const values: Array<string | number | null> = [];
-    for (const field of ["name", "label", "description", "instructions"] as const) {
+    for (const field of ["name", "label", "description", "instructions", "avatarShape", "avatarColor"] as const) {
       const value = patch[field];
       if (value === undefined) continue;
       assignments.push(`${columns[field]} = ?`);
@@ -2567,20 +3657,50 @@ export class AppRepository {
     return rows.map(toMemory);
   }
 
-  listRuntimeMemories(botId: string): MemoryItem[] {
+  getMemoryCaptureScopes(botId: string, sessionId: string): MemoryScopeSelector[] {
     const bot = this.getBot(botId);
+    const workspaces = this.listSessionWorkspaces(sessionId, botId);
     return [
-      ...this.listScopedMemories({ scope: "user", scopeKey: "user" }),
-      ...(bot.memoryWorkspaceIds ?? []).flatMap((workspaceId) => {
-        try {
-          return this.listScopedMemories({ scope: "workspace", scopeKey: workspaceId });
-        } catch (error) {
-          if (error instanceof AevorenBotError && error.code === "WORKSPACE_NOT_FOUND") return [];
-          throw error;
-        }
-      }),
-      ...this.listScopedMemories({ scope: "bot", scopeKey: botId }),
-    ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+      { scope: "user", scopeKey: "user" },
+      ...workspaces.filter((workspace) => (bot.memoryWorkspaceIds ?? []).includes(workspace.id))
+        .map((workspace): MemoryScopeSelector => ({ scope: "workspace", scopeKey: workspace.id })),
+      { scope: "bot", scopeKey: botId },
+    ];
+  }
+
+  listRuntimeMemories(botId: string, sessionId = this.getMainSession(botId).id): MemoryItem[] {
+    const scopes = this.getMemoryCaptureScopes(botId, sessionId);
+    const timestamp = now();
+    const candidates = [
+      ...scopes.filter((scope) => scope.scope !== "bot").flatMap((scope) => this.listScopedMemories(scope)),
+      ...(this.database.prepare(
+        `SELECT memory_items.* FROM memory_items JOIN memory_session_visibility ON memory_session_visibility.memory_id = memory_items.id
+         WHERE memory_session_visibility.session_id = ? AND memory_session_visibility.executor_bot_id = ?`,
+      ).all(sessionId, botId) as MemoryRow[]).map(toMemory),
+    ].filter((memory) => memory.deletedAt === null && (!memory.expiresAt || memory.expiresAt > timestamp));
+    const groups = new Map<string, MemoryItem[]>();
+    for (const memory of candidates) {
+      const key = `${memory.scope}:${memory.scopeKey}`;
+      const group = groups.get(key) ?? [];
+      group.push(memory);
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      group.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
+    }
+    const selected: MemoryItem[] = [];
+    let bytes = 0;
+    while ([...groups.values()].some((group) => group.length > 0)) {
+      for (const group of groups.values()) {
+        const memory = group.shift();
+        if (!memory) continue;
+        const itemBytes = Buffer.byteLength(memory.content, "utf8");
+        if (bytes + itemBytes > MAX_RUNTIME_MEMORY_BYTES) continue;
+        selected.push(memory);
+        bytes += itemBytes;
+      }
+    }
+    return selected.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   }
 
   getMemory(id: string): MemoryItem {
@@ -2589,16 +3709,37 @@ export class AppRepository {
     return toMemory(row);
   }
 
-  createMemory(botId: string, content: string): MemoryItem {
-    return this.createScopedMemory({ scope: "bot", scopeKey: botId }, content);
+  createMemory(
+    botId: string,
+    content: string,
+    options: { kind?: MemoryKind; expiresAt?: string | null; source?: MemorySource; sourceEntryId?: string | null } = {},
+  ): MemoryItem {
+    return this.createScopedMemory({ scope: "bot", scopeKey: botId }, content, options);
   }
 
-  createScopedMemory(selector: MemoryScopeSelector, content: string): MemoryItem {
+  createScopedMemory(
+    selector: MemoryScopeSelector,
+    content: string,
+    options: { kind?: MemoryKind; expiresAt?: string | null; source?: MemorySource; sourceEntryId?: string | null } = {},
+  ): MemoryItem {
+    return this.transaction(() => this.insertScopedMemory(selector, content, options));
+  }
+
+  private insertScopedMemory(
+    selector: MemoryScopeSelector,
+    content: string,
+    options: { kind?: MemoryKind; expiresAt?: string | null; source?: MemorySource; sourceEntryId?: string | null },
+  ): MemoryItem {
     this.assertMemoryScope(selector);
     const normalized = normalizeMemoryContent(content);
     const contentDigest = digestMemoryContent(normalized);
+    const kind = options.kind ?? "fact";
+    const source = options.source ?? "manual-user";
+    const expiresAt = this.normalizeMemoryExpiresAt(options.expiresAt);
+    this.assertMemoryKind(kind);
     this.assertMemoryContent(normalized);
-    this.assertNoActiveMemoryDuplicate(selector, contentDigest);
+    const sessionId = selector.scope === "bot" ? this.memorySourceSession(selector.scopeKey, options.sourceEntryId).id : null;
+    this.assertNoActiveMemoryDuplicate(selector, contentDigest, undefined, sessionId ?? undefined);
     this.assertMemoryCapacity(selector, normalized.length, 1);
     const id = randomUUID();
     const timestamp = now();
@@ -2608,14 +3749,44 @@ export class AppRepository {
       .prepare(
         `INSERT INTO memory_items(
            id, scope, scope_key, bot_id, workspace_id, content, content_digest,
-           source, version, deleted_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'manual-user', 1, NULL, ?, ?)`,
+           kind, source, source_entry_id, expires_at, version, deleted_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)`,
       )
-      .run(id, selector.scope, selector.scopeKey, botId, workspaceId, normalized, contentDigest, timestamp, timestamp);
+      .run(
+        id, selector.scope, selector.scopeKey, botId, workspaceId, normalized, contentDigest,
+        kind, source, options.sourceEntryId ?? null, expiresAt, timestamp, timestamp,
+      );
+    if (sessionId && botId) {
+      this.database.prepare("INSERT INTO memory_session_visibility(session_id, executor_bot_id, memory_id) VALUES (?, ?, ?)")
+        .run(sessionId, botId, id);
+    }
     return this.getMemory(id);
   }
 
-  updateMemory(id: string, expectedVersion: number, content: string): MemoryItem {
+  private memorySourceSession(botId: string, sourceEntryId?: string | null): Session {
+    if (!sourceEntryId) return this.getMainSession(botId);
+    const source = this.getTranscriptEntry(sourceEntryId);
+    const session = this.getSession(source.sessionId);
+    this.assertSessionExecutor(session.id, botId);
+    if (source.generation !== session.generation) throw new AevorenBotError("INVALID_REQUEST");
+    return session;
+  }
+
+  private memoryVisibleInSession(memory: MemoryItem, botId: string, sessionId: string): boolean {
+    if (memory.scope === "bot") {
+      return memory.botId === botId && Boolean(this.database.prepare(
+        "SELECT 1 FROM memory_session_visibility WHERE session_id = ? AND executor_bot_id = ? AND memory_id = ?",
+      ).get(sessionId, botId, memory.id));
+    }
+    return this.getMemoryCaptureScopes(botId, sessionId).some((scope) => scope.scope === memory.scope && scope.scopeKey === memory.scopeKey);
+  }
+
+  updateMemory(
+    id: string,
+    expectedVersion: number,
+    content: string,
+    options: { kind?: MemoryKind; expiresAt?: string | null } = {},
+  ): MemoryItem {
     const current = this.getMemory(id);
     if (current.deletedAt) throw new AevorenBotError("MEMORY_DELETED");
     if (current.version !== expectedVersion) {
@@ -2623,6 +3794,9 @@ export class AppRepository {
     }
     const normalized = normalizeMemoryContent(content);
     const contentDigest = digestMemoryContent(normalized);
+    const kind = options.kind ?? current.kind;
+    const expiresAt = options.expiresAt === undefined ? current.expiresAt : this.normalizeMemoryExpiresAt(options.expiresAt);
+    this.assertMemoryKind(kind);
     this.assertMemoryContent(normalized);
     const selector = { scope: current.scope!, scopeKey: current.scopeKey! };
     this.assertNoActiveMemoryDuplicate(selector, contentDigest, id);
@@ -2630,10 +3804,10 @@ export class AppRepository {
     const result = this.database
       .prepare(
         `UPDATE memory_items
-         SET content = ?, content_digest = ?, version = version + 1, updated_at = ?
+         SET content = ?, content_digest = ?, kind = ?, expires_at = ?, version = version + 1, updated_at = ?
          WHERE id = ? AND version = ? AND deleted_at IS NULL`,
       )
-      .run(normalized, contentDigest, now(), id, expectedVersion);
+      .run(normalized, contentDigest, kind, expiresAt, now(), id, expectedVersion);
     if (Number(result.changes) === 0) this.throwMemoryConflict(id);
     return this.getMemory(id);
   }
@@ -2677,8 +3851,172 @@ export class AppRepository {
     return this.getMemory(id);
   }
 
+  listMemoryProposals(filter: { botId?: string; state?: MemoryProposalState } = {}): MemoryProposal[] {
+    const clauses: string[] = [];
+    const values: string[] = [];
+    if (filter.botId) {
+      this.getBot(filter.botId);
+      clauses.push("bot_id = ?");
+      values.push(filter.botId);
+    }
+    if (filter.state) {
+      clauses.push("state = ?");
+      values.push(filter.state);
+    }
+    const rows = this.database.prepare(
+      `SELECT * FROM memory_proposals ${clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""}
+       ORDER BY created_at DESC, id DESC`,
+    ).all(...values) as MemoryProposalRow[];
+    return rows.map(toMemoryProposal);
+  }
+
+  getMemoryProposal(id: string): MemoryProposal {
+    const row = this.database.prepare("SELECT * FROM memory_proposals WHERE id = ?").get(id) as MemoryProposalRow | undefined;
+    if (!row) throw new AevorenBotError("MEMORY_PROPOSAL_NOT_FOUND");
+    return toMemoryProposal(row);
+  }
+
+  createMemoryProposal(input: {
+    botId: string;
+    scope: MemoryScope;
+    scopeKey: string;
+    kind: MemoryKind;
+    content: string;
+    reason: string;
+    sourceEntryId: string;
+    supersedesMemoryId?: string | null;
+    expiresAt?: string | null;
+  }): MemoryProposal | null {
+    this.getBot(input.botId);
+    const source = this.getTranscriptEntry(input.sourceEntryId);
+    if (source.role !== "user") throw new AevorenBotError("INVALID_REQUEST");
+    const sourceSession = this.memorySourceSession(input.botId, source.id);
+    const selector = { scope: input.scope, scopeKey: input.scopeKey } as MemoryScopeSelector;
+    this.assertMemoryScope(selector);
+    if (!this.getMemoryCaptureScopes(input.botId, sourceSession.id).some((scope) => scope.scope === input.scope && scope.scopeKey === input.scopeKey)) {
+      throw new AevorenBotError("INVALID_REQUEST");
+    }
+    const content = normalizeMemoryContent(input.content);
+    const contentDigest = digestMemoryContent(content);
+    const reason = input.reason.trim().slice(0, 1_000);
+    this.assertMemoryContent(content);
+    this.assertMemoryKind(input.kind);
+    if (!reason) throw new AevorenBotError("INVALID_REQUEST");
+    if (input.supersedesMemoryId) {
+      const replaced = this.getMemory(input.supersedesMemoryId);
+      if (replaced.deletedAt || replaced.scope !== input.scope || replaced.scopeKey !== input.scopeKey ||
+          !this.memoryVisibleInSession(replaced, input.botId, sourceSession.id)) throw new AevorenBotError("INVALID_REQUEST");
+    }
+    const existing = this.database.prepare(
+      `SELECT 1 FROM memory_items WHERE scope = ? AND scope_key = ? AND content_digest = ? AND deleted_at IS NULL
+       AND (scope <> 'bot' OR EXISTS (SELECT 1 FROM memory_session_visibility
+         WHERE memory_id = memory_items.id AND session_id = ? AND executor_bot_id = ?))`,
+    ).get(input.scope, input.scopeKey, contentDigest, sourceSession.id, input.botId);
+    if (existing) return null;
+    const pending = this.database.prepare(
+      `SELECT * FROM memory_proposals WHERE scope = ? AND scope_key = ? AND content_digest = ? AND state = 'pending'
+       AND (scope <> 'bot' OR source_entry_id IN (SELECT id FROM transcript_entries WHERE session_id = ?))`,
+    ).get(input.scope, input.scopeKey, contentDigest, sourceSession.id) as MemoryProposalRow | undefined;
+    if (pending) {
+      const pendingSource = this.getTranscriptEntry(pending.source_entry_id);
+      return pendingSource.sessionId === sourceSession.id ? toMemoryProposal(pending) : null;
+    }
+    const id = randomUUID();
+    const timestamp = now();
+    const workspaceId = input.scope === "workspace" ? input.scopeKey : null;
+    this.database.prepare(
+      `INSERT INTO memory_proposals(
+        id, bot_id, scope, scope_key, workspace_id, kind, content, content_digest, reason,
+        source_entry_id, supersedes_memory_id, expires_at, state, version, resolved_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, NULL, ?, ?)`,
+    ).run(
+      id, input.botId, input.scope, input.scopeKey, workspaceId, input.kind, content, contentDigest, reason,
+      input.sourceEntryId, input.supersedesMemoryId ?? null, this.normalizeMemoryExpiresAt(input.expiresAt), timestamp, timestamp,
+    );
+    return this.getMemoryProposal(id);
+  }
+
+  acceptMemoryProposal(
+    id: string,
+    expectedVersion: number,
+    edit: { content?: string; kind?: MemoryKind; expiresAt?: string | null } = {},
+  ): { proposal: MemoryProposal; memory: MemoryItem } {
+    return this.transaction(() => {
+      const proposal = this.getMemoryProposal(id);
+      if (proposal.version !== expectedVersion) {
+        throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: proposal.version });
+      }
+      if (proposal.state !== "pending") throw new AevorenBotError("MEMORY_PROPOSAL_RESOLVED");
+      const sourceSession = this.memorySourceSession(proposal.botId, proposal.sourceEntryId);
+      if (!this.getMemoryCaptureScopes(proposal.botId, sourceSession.id).some((scope) => scope.scope === proposal.scope && scope.scopeKey === proposal.scopeKey)) {
+        throw new AevorenBotError("INVALID_REQUEST");
+      }
+      const content = edit.content ?? proposal.content;
+      const kind = edit.kind ?? proposal.kind;
+      const expiresAt = edit.expiresAt === undefined ? proposal.expiresAt : edit.expiresAt;
+      if (proposal.supersedesMemoryId) {
+        const replaced = this.getMemory(proposal.supersedesMemoryId);
+        if (replaced.deletedAt || replaced.scope !== proposal.scope || replaced.scopeKey !== proposal.scopeKey ||
+            !this.memoryVisibleInSession(replaced, proposal.botId, sourceSession.id)) throw new AevorenBotError("INVALID_REQUEST");
+        const shared = replaced.scope === "bot" && this.database.prepare(
+          "SELECT 1 FROM memory_session_visibility WHERE memory_id = ? AND session_id <> ? LIMIT 1",
+        ).get(replaced.id, sourceSession.id);
+        if (shared) {
+          this.database.prepare("DELETE FROM memory_session_visibility WHERE memory_id = ? AND session_id = ? AND executor_bot_id = ?")
+            .run(replaced.id, sourceSession.id, proposal.botId);
+        } else {
+          this.deleteMemory(replaced.id, replaced.version);
+        }
+      }
+      const memory = this.insertScopedMemory(
+        { scope: proposal.scope, scopeKey: proposal.scopeKey },
+        content,
+        { kind, expiresAt, source: "model-captured", sourceEntryId: proposal.sourceEntryId },
+      );
+      const timestamp = now();
+      const result = this.database.prepare(
+        `UPDATE memory_proposals
+         SET content = ?, content_digest = ?, kind = ?, expires_at = ?, state = 'accepted',
+             version = version + 1, resolved_at = ?, updated_at = ?
+         WHERE id = ? AND version = ? AND state = 'pending'`,
+      ).run(
+        memory.content, memory.contentDigest, memory.kind, memory.expiresAt,
+        timestamp, timestamp, id, expectedVersion,
+      );
+      if (Number(result.changes) !== 1) throw new AevorenBotError("MEMORY_VERSION_CONFLICT");
+      return { proposal: this.getMemoryProposal(id), memory };
+    });
+  }
+
+  rejectMemoryProposal(id: string, expectedVersion: number): MemoryProposal {
+    const timestamp = now();
+    const result = this.database.prepare(
+      `UPDATE memory_proposals
+       SET state = 'rejected', version = version + 1, resolved_at = ?, updated_at = ?
+       WHERE id = ? AND version = ? AND state = 'pending'`,
+    ).run(timestamp, timestamp, id, expectedVersion);
+    if (Number(result.changes) !== 1) {
+      const current = this.getMemoryProposal(id);
+      if (current.state !== "pending") throw new AevorenBotError("MEMORY_PROPOSAL_RESOLVED");
+      throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+    }
+    return this.getMemoryProposal(id);
+  }
+
   private assertMemoryContent(content: string): void {
     if (content.length === 0 || content.length > 4_000) throw new AevorenBotError("INVALID_REQUEST");
+    if (containsLikelySecret(content)) throw new AevorenBotError("MEMORY_SENSITIVE_CONTENT");
+  }
+
+  private assertMemoryKind(kind: MemoryKind): void {
+    if (!["fact", "preference", "decision", "procedure"].includes(kind)) throw new AevorenBotError("INVALID_REQUEST");
+  }
+
+  private normalizeMemoryExpiresAt(value: string | null | undefined): string | null {
+    if (value === undefined || value === null || value === "") return null;
+    const timestamp = new Date(value);
+    if (!Number.isFinite(timestamp.getTime())) throw new AevorenBotError("INVALID_REQUEST");
+    return timestamp.toISOString();
   }
 
   private assertMemoryScope(selector: MemoryScopeSelector): void {
@@ -2693,16 +4031,21 @@ export class AppRepository {
     this.getWorkspace(selector.scopeKey);
   }
 
-  private assertNoActiveMemoryDuplicate(selector: MemoryScopeSelector, contentDigest: string, excludedId?: string): void {
+  private assertNoActiveMemoryDuplicate(selector: MemoryScopeSelector, contentDigest: string, excludedId?: string, sessionId?: string): void {
     const duplicate = this.database
       .prepare(
         `SELECT 1 FROM memory_items
-         WHERE scope = ? AND scope_key = ? AND content_digest = ? AND deleted_at IS NULL ${excludedId ? "AND id <> ?" : ""}
+         WHERE scope = ? AND scope_key = ? AND content_digest = ? AND deleted_at IS NULL AND id <> ?
+           AND (scope <> 'bot' OR EXISTS (
+             SELECT 1 FROM memory_session_visibility AS visible WHERE visible.memory_id = memory_items.id
+               AND visible.executor_bot_id = ? AND (visible.session_id = ? OR EXISTS (
+                 SELECT 1 FROM memory_session_visibility AS edited WHERE edited.memory_id = ?
+                   AND edited.session_id = visible.session_id AND edited.executor_bot_id = visible.executor_bot_id
+               ))
+           ))
          LIMIT 1`,
       )
-      .get(...(excludedId
-        ? [selector.scope, selector.scopeKey, contentDigest, excludedId]
-        : [selector.scope, selector.scopeKey, contentDigest]));
+      .get(selector.scope, selector.scopeKey, contentDigest, excludedId ?? "", selector.scopeKey, sessionId ?? "", excludedId ?? "");
     if (duplicate) throw new AevorenBotError("MEMORY_DUPLICATE");
   }
 
@@ -2726,7 +4069,54 @@ export class AppRepository {
     throw new AevorenBotError("MEMORY_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
   }
 
-  registerWorkspaceRoot(canonicalRoot: string, name: string): WorkspaceRegistrationResult {
+  registerWorkspaceRoot(canonicalRoot: string, name: string, projectId?: string): WorkspaceRegistrationResult {
+    return this.transaction(() => {
+      const project = projectId ? this.getProject(projectId) : null;
+      const result = this.registerWorkspaceFolder(canonicalRoot, name);
+      let linkedRow = this.database.prepare("SELECT * FROM projects WHERE workspace_id = ?")
+        .get(result.workspace.id) as ProjectRow | undefined;
+      if (project?.workspaceId && project.workspaceId !== result.workspace.id) {
+        throw new AevorenBotError("WORKSPACE_PROJECT_CONFLICT");
+      }
+      if (project && linkedRow && linkedRow.id !== project.id) {
+        const hasConversations = this.database.prepare(
+          `SELECT 1 FROM bots WHERE project_id = ? UNION ALL SELECT 1 FROM rooms WHERE project_id = ?
+           UNION ALL SELECT 1 FROM conversation_metadata WHERE project_id = ?
+           UNION ALL SELECT 1 FROM legacy_session_scopes WHERE project_id = ? LIMIT 1`,
+        ).get(linkedRow.id, linkedRow.id, linkedRow.id, linkedRow.id);
+        if (linkedRow.is_default || hasConversations) throw new AevorenBotError("WORKSPACE_PROJECT_CONFLICT");
+        // Merge an empty folder node when the user explicitly links their existing conversations.
+        this.database.prepare("DELETE FROM projects WHERE id = ?").run(linkedRow.id);
+        linkedRow = undefined;
+      }
+      if (project && !project.workspaceId) {
+        this.database.prepare(
+          "UPDATE projects SET workspace_id = ?, name = ?, version = version + 1, updated_at = ? WHERE id = ?",
+        ).run(result.workspace.id, result.workspace.name.slice(0, 80), now(), project.id);
+      } else if (!linkedRow) {
+        const timestamp = now();
+        this.database.prepare(
+          "INSERT INTO projects(id, name, workspace_id, is_default, version, created_at, updated_at) VALUES (?, ?, ?, 0, 1, ?, ?)",
+        ).run(randomUUID(), result.workspace.name.slice(0, 80), result.workspace.id, timestamp, timestamp);
+      }
+      const linked = this.database.prepare("SELECT * FROM projects WHERE workspace_id = ?").get(result.workspace.id) as ProjectRow;
+      if (project) {
+        const sessions = this.database.prepare("SELECT session_id FROM conversation_metadata WHERE project_id = ?")
+          .all(project.id) as Array<{ session_id: string }>;
+        for (const { session_id: sessionId } of sessions) {
+          this.assertConversationIdle(sessionId);
+          this.configureSessionProject(sessionId, project.id);
+          this.database.prepare("UPDATE conversation_metadata SET version = version + 1 WHERE session_id = ?").run(sessionId);
+          this.database.prepare("UPDATE conversation_scope_versions SET version = version + 1 WHERE session_id = ?").run(sessionId);
+        }
+        this.database.prepare("UPDATE legacy_session_scopes SET workspace_ids_json = ? WHERE project_id = ?")
+          .run(JSON.stringify([result.workspace.id]), project.id);
+      }
+      return { ...result, project: toProject(linked) };
+    });
+  }
+
+  private registerWorkspaceFolder(canonicalRoot: string, name: string): Omit<WorkspaceRegistrationResult, "project"> {
     const normalizedName = name.trim().slice(0, 120);
     if (!canonicalRoot || !normalizedName) throw new AevorenBotError("WORKSPACE_INVALID_ROOT");
     const existing = this.database
@@ -2767,6 +4157,114 @@ export class AppRepository {
     ).map(toWorkspace);
   }
 
+  listProjects(): Project[] {
+    return (
+      this.database
+        .prepare("SELECT * FROM projects ORDER BY is_default DESC, created_at ASC, id ASC")
+        .all() as ProjectRow[]
+    ).map(toProject);
+  }
+
+  listBotWorkspaces(botId: string): Workspace[] {
+    return this.listSessionWorkspaces(this.getMainSession(botId).id, botId);
+  }
+
+  assertBotWorkspaceAccess(botId: string, workspaceId: string): void {
+    this.assertSessionWorkspaceAccess(this.getMainSession(botId).id, botId, workspaceId);
+  }
+
+  getSessionProjectId(sessionId: string): string | null {
+    return this.getConversation(sessionId).projectId;
+  }
+
+  assertSessionExecutor(sessionId: string, executorBotId: string): void {
+    const session = this.getSession(sessionId);
+    this.getBot(executorBotId);
+    if (session.botId === executorBotId) return;
+    if (session.roomId && this.database.prepare("SELECT 1 FROM room_members WHERE room_id = ? AND bot_id = ?")
+      .get(session.roomId, executorBotId)) return;
+    throw new AevorenBotError("INVALID_REQUEST");
+  }
+
+  listSessionWorkspaces(sessionId: string, executorBotId: string): Workspace[] {
+    this.assertSessionExecutor(sessionId, executorBotId);
+    return (this.database.prepare(
+      `SELECT workspaces.* FROM workspaces JOIN session_workspace_grants ON session_workspace_grants.workspace_id = workspaces.id
+       WHERE session_workspace_grants.session_id = ? AND workspaces.removed_at IS NULL ORDER BY workspaces.created_at, workspaces.id`,
+    ).all(sessionId) as WorkspaceRow[]).map(toWorkspace);
+  }
+
+  assertSessionWorkspaceAccess(sessionId: string, executorBotId: string, workspaceId: string, operation?: string): void {
+    this.assertSessionExecutor(sessionId, executorBotId);
+    const workspace = this.getWorkspace(workspaceId);
+    if (!this.database.prepare("SELECT 1 FROM session_workspace_grants WHERE session_id = ? AND workspace_id = ?").get(sessionId, workspaceId)) {
+      throw new AevorenBotError("WORKSPACE_PATH_OUTSIDE_ROOT");
+    }
+    if ((operation === "workspace-write" || operation === "write") && !workspace.writeEnabled) {
+      throw new AevorenBotError("WORKSPACE_WRITE_NOT_ENABLED");
+    }
+    if (operation === "automation" && !workspace.automationEnabled) throw new AevorenBotError("WORKSPACE_PATH_OUTSIDE_ROOT");
+  }
+
+  setConversationProject(sessionId: string, projectId: string | null, expectedVersion: number): ConversationSummary {
+    return this.transaction(() => {
+      const current = this.getConversation(sessionId);
+      if (current.version !== expectedVersion) {
+        throw new AevorenBotError("CONVERSATION_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+      }
+      this.assertConversationIdle(sessionId);
+      this.configureSessionProject(sessionId, projectId);
+      this.database.prepare("UPDATE conversation_metadata SET version = version + 1 WHERE session_id = ?").run(sessionId);
+      this.database.prepare("UPDATE conversation_scope_versions SET version = version + 1 WHERE session_id = ?").run(sessionId);
+      return this.getConversation(sessionId);
+    });
+  }
+
+  private configureSessionProject(sessionId: string, projectId: string | null, grantWorkspace = true): void {
+    const project = projectId ? this.getProject(projectId) : null;
+    this.database.prepare("UPDATE conversation_metadata SET project_id = ? WHERE session_id = ?").run(projectId, sessionId);
+    this.database.prepare("DELETE FROM session_workspace_grants WHERE session_id = ?").run(sessionId);
+    if (grantWorkspace && project?.workspaceId) {
+      this.getWorkspace(project.workspaceId);
+      this.database.prepare("INSERT INTO session_workspace_grants(session_id, workspace_id) VALUES (?, ?)").run(sessionId, project.workspaceId);
+    }
+  }
+
+  private assertRuntimeSessionScope(runtimeRunId: string): void {
+    const scope = this.database.prepare(
+      `SELECT runtime_session_scopes.scope_version, conversation_scope_versions.version
+       FROM runtime_runs JOIN runtime_session_scopes ON runtime_session_scopes.runtime_run_id = runtime_runs.id
+       JOIN conversation_scope_versions ON conversation_scope_versions.session_id = runtime_runs.session_id WHERE runtime_runs.id = ?`,
+    ).get(runtimeRunId) as { scope_version: number; version: number } | undefined;
+    if (!scope || scope.scope_version !== scope.version) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+  }
+
+  private assertToolSessionScope(invocation: Pick<ToolInvocation, "sessionId" | "executorBotId" | "runtimeRunId" | "workspaceId" | "toolKind">): void {
+    this.assertSessionExecutor(invocation.sessionId, invocation.executorBotId);
+    this.assertRuntimeSessionScope(invocation.runtimeRunId);
+    if (invocation.workspaceId) {
+      this.assertSessionWorkspaceAccess(invocation.sessionId, invocation.executorBotId, invocation.workspaceId, invocation.toolKind);
+    }
+  }
+
+  createProject(name: string): Project {
+    const normalizedName = name.trim();
+    const duplicate = this.database.prepare("SELECT id FROM projects WHERE name = ? COLLATE NOCASE").get(normalizedName);
+    if (duplicate) throw new AevorenBotError("PROJECT_NAME_TAKEN");
+    const id = randomUUID();
+    const timestamp = now();
+    this.database.prepare(
+      "INSERT INTO projects(id, name, is_default, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)",
+    ).run(id, normalizedName, timestamp, timestamp);
+    return toProject(this.database.prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow);
+  }
+
+  private getProject(id: string): Project {
+    const row = this.database.prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow | undefined;
+    if (!row) throw new AevorenBotError("PROJECT_NOT_FOUND");
+    return toProject(row);
+  }
+
   getWorkspace(id: string, includeRemoved = false): Workspace {
     const row = this.database.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as WorkspaceRow | undefined;
     if (!row || row.removed_at && !includeRemoved) throw new AevorenBotError("WORKSPACE_NOT_FOUND");
@@ -2779,6 +4277,25 @@ export class AppRepository {
       | undefined;
     if (!row) throw new AevorenBotError("WORKSPACE_NOT_FOUND");
     return { workspace: toWorkspace(row), rootPath: row.canonical_root };
+  }
+
+  updateWorkspacePermissions(
+    id: string,
+    expectedVersion: number,
+    permissions: { writeEnabled: boolean; automationEnabled: boolean },
+  ): Workspace {
+    const result = this.database
+      .prepare(
+        `UPDATE workspaces
+         SET write_enabled = ?, automation_enabled = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND version = ? AND removed_at IS NULL`,
+      )
+      .run(permissions.writeEnabled ? 1 : 0, permissions.automationEnabled ? 1 : 0, now(), id, expectedVersion);
+    if (Number(result.changes) !== 1) {
+      const current = this.getWorkspace(id, true);
+      throw new AevorenBotError("WORKSPACE_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+    }
+    return this.getWorkspace(id);
   }
 
   removeWorkspace(id: string, expectedVersion: number): Workspace {
@@ -2799,18 +4316,97 @@ export class AppRepository {
     return this.getWorkspace(id, true);
   }
 
+  commitProductMutation<T>(id: string, operation: () => T, receipt: (result: T) => { content: string; metadata: Record<string, string | number | boolean | null> }): T {
+    return this.transaction(() => {
+      const result = operation();
+      const recorded = receipt(result);
+      this.completeProductToolInvocation(id, digestMessage(recorded.content), recorded.content, recorded.metadata);
+      return result;
+    });
+  }
+
+  productResourceCount(rootClientNonce: string): number {
+    const row = this.database.prepare(`SELECT coalesce(sum(CASE WHEN tool_invocations.tool_kind IN ('bot-create', 'room-create') THEN CASE WHEN json_extract(result_metadata_json, '$.reused') = 1 THEN 0 ELSE 1 END ELSE coalesce(json_extract(result_metadata_json, '$.resourceCount'), 0) END), 0) AS count FROM tool_invocations JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id JOIN transcript_entries ON transcript_entries.client_nonce = runtime_runs.client_nonce AND transcript_entries.role = 'user' WHERE tool_invocations.state = 'succeeded' AND (runtime_runs.client_nonce = ? OR json_extract(transcript_entries.origin_json, '$.rootClientNonce') = ?)`).get(rootClientNonce, rootClientNonce) as { count: number };
+    return row.count;
+  }
+
+  assertProductReplaySafe(clientNonce: string, tool: import("@shared/contracts").ProductToolRequest, executorBotId?: string): void {
+    if (this.database.prepare(`SELECT 1 FROM tool_invocations JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id WHERE runtime_runs.client_nonce = ? AND arguments_json = ? AND (? IS NULL OR tool_invocations.executor_bot_id = ?) AND tool_invocations.state = 'interrupted-unknown'`).get(clientNonce, JSON.stringify(normalizeProductRequest(tool)), executorBotId ?? null, executorBotId ?? null)) {
+      throw new AevorenBotError("TOOL_STATE_INVALID", "上次执行中断，结果尚未确认；请先查询实际状态，不能自动重发。");
+    }
+  }
+
+  completeProductToolInvocation(id: string, resultDigest: string, content: string, metadata: Record<string, string | number | boolean | null>): ToolInvocation {
+    if (content.length > 600_000) throw new AevorenBotError("INVALID_REQUEST", "结果过大，请缩小查询范围。");
+    return this.transaction(() => {
+      const invocation = this.completeToolInvocation(id, resultDigest, metadata);
+      this.database.prepare("UPDATE tool_invocations SET product_result_content = ? WHERE id = ?").run(content, id);
+      return invocation;
+    });
+  }
+
+  findProductOperationResult(clientNonce: string, tool: import("@shared/contracts").ProductToolRequest, executorBotId?: string): string | null {
+    const rows = this.database.prepare(`SELECT product_result_content FROM tool_invocations JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id WHERE runtime_runs.client_nonce = ? AND tool_kind = 'product-call' AND arguments_json = ? AND (? IS NULL OR tool_invocations.executor_bot_id = ?) AND tool_invocations.state = 'succeeded'`).all(clientNonce, JSON.stringify(normalizeProductRequest(tool)), executorBotId ?? null, executorBotId ?? null) as Array<{ product_result_content: string | null }>;
+    for (const row of rows) {
+      const content = row.product_result_content;
+      if (typeof content === "string") return content;
+    }
+    return null;
+  }
+
   prepareToolInvocation(
     input: ToolInvocationCommand,
     expiresAt = defaultApprovalExpiry(),
+    displayTarget?: string,
+    reviewSnapshot?: ApprovalReviewSnapshot,
   ): ToolPrepareResult {
     const parsed = toolInvocationCommandSchema.parse(input) as ToolInvocationCommand;
+    if (parsed.tool.kind === "product-call") parsed.tool = normalizeProductRequest(parsed.tool);
     if (!Number.isFinite(Date.parse(expiresAt))) throw new AevorenBotError("INVALID_REQUEST");
     const runtime = this.getRuntimeRun(parsed.runtimeRunId);
     if (runtime.state !== "running" && runtime.state !== "streaming") {
       throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: runtime.state });
     }
     const session = this.getSession(runtime.sessionId);
+    const review = reviewSnapshot === undefined ? undefined : approvalReviewSnapshotSchema.parse(reviewSnapshot);
+    if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "skills.runScript") {
+      if (review?.kind !== "skill-script") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      const value = parsed.tool.input as { grantId: string; expectedGrantVersion: number; args: string[]; cwd: string; timeoutMs: number };
+      const { grant, content } = this.skillExecutions.assertGranted({ sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, value.grantId, value.expectedGrantVersion);
+      if (review.target.grantId !== grant.id || review.target.grantVersion !== grant.version || review.target.environmentId !== grant.environmentId ||
+          review.target.imageDigest !== grant.imageDigest || review.target.workerVersion !== grant.workerVersion ||
+          JSON.stringify(review.target.reference) !== JSON.stringify(grant.reference) || review.target.entryPath !== grant.entryPath ||
+          review.target.entrySha256 !== grant.entrySha256 || review.target.interpreter !== grant.interpreter ||
+          JSON.stringify(review.target.args) !== JSON.stringify(value.args) || review.target.cwd !== value.cwd || review.target.timeoutMs !== value.timeoutMs ||
+          review.resourceName !== content.revision.name || review.revisionNumber !== content.revision.number) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "demonstrations.publish") {
+      if (review?.kind !== "demonstration-skill") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      const input = { ...(parsed.tool.input as object), sessionId: runtime.sessionId, executorBotId: runtime.executorBotId } as import("@shared/demonstration-contracts").DemonstrationPublishInput;
+      const snapshot = this.demonstrations.approvalReview(input);
+      if (approvalReviewDigest(snapshot) !== approvalReviewDigest(review)) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "mcp.executeTool") {
+      const value = parsed.tool.input as { id: string; expectedVersion: number };
+      const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, intent = this.mcpWrites.current(scope, value.id);
+      if (intent.state === "prepared") {
+        if (review?.kind !== "mcp-write") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+        this.mcpWrites.assertReview(scope, review);
+        if (value.id !== intent.id || value.expectedVersion !== review.expectedIntentVersion || intent.version !== value.expectedVersion) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      } else if (review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if (parsed.tool.kind === "product-call" && parsed.tool.action === "execute" && parsed.tool.operation === "outbound.send") {
+      const value = parsed.tool.input as { id: string; expectedVersion: number };
+      const scope = { sessionId: runtime.sessionId, executorBotId: runtime.executorBotId }, intent = this.outbound.current(scope, value.id);
+      if (intent.state === "prepared") {
+        if (!review || review.kind !== "external-draft") throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+        this.outbound.assertReview(scope, review);
+        if (value.id !== intent.id || value.expectedVersion !== review.expectedIntentVersion || intent.version !== value.expectedVersion) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      } else if (review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    } else if (review) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+    this.assertToolSessionScope({ sessionId: session.id, executorBotId: runtime.executorBotId,
+      runtimeRunId: runtime.id, workspaceId: toolWorkspaceId(parsed.tool), toolKind: parsed.tool.kind });
     const commandDigest = digestMessage(canonicalToolCommand(parsed));
+    if (this.database.prepare("SELECT 1 FROM retired_conversation_tools WHERE idempotency_key = ?").get(parsed.idempotencyKey)) {
+      throw new AevorenBotError("TOOL_IDEMPOTENCY_CONFLICT");
+    }
     const existingByKey = this.database
       .prepare("SELECT * FROM tool_invocations WHERE idempotency_key = ?")
       .get(parsed.idempotencyKey) as ToolInvocationRow | undefined;
@@ -2835,10 +4431,10 @@ export class AppRepository {
     const approvalId = randomUUID();
     const timestamp = now();
     const argumentsJson = JSON.stringify(parsed.tool);
-    const targetDigest = toolTargetDigest(parsed.tool);
+    const targetDigest = review ? approvalReviewDigest(review) : toolTargetDigest(parsed.tool);
     const effectClass = toolEffectClass(parsed.tool);
     const workspaceId = toolWorkspaceId(parsed.tool);
-    const targetPath = toolTargetPath(parsed.tool);
+    const targetPath = displayTarget?.slice(0, 2_048) ?? toolTargetPath(parsed.tool);
     this.transaction(() => {
       this.database
         .prepare(
@@ -2892,12 +4488,34 @@ export class AppRepository {
           timestamp,
           timestamp,
         );
+      if (review) this.database.prepare("UPDATE approval_requests SET review_snapshot_json=? WHERE id=?").run(JSON.stringify(review), approvalId);
     });
     return {
       disposition: "prepared",
       invocation: this.getToolInvocation(invocationId),
       approval: this.getApprovalRequest(approvalId),
     };
+  }
+
+  getApprovalReview(input: ApprovalReviewInput): ApprovalReviewResult {
+    const parsed = approvalReviewInputSchema.parse(input);
+    this.assertSessionExecutor(parsed.sessionId, parsed.executorBotId);
+    const approval = this.getApprovalRequest(parsed.id);
+    if (approval.sessionId !== parsed.sessionId || approval.executorBotId !== parsed.executorBotId) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+    if (approval.version !== parsed.expectedVersion) throw new AevorenBotError("APPROVAL_VERSION_CONFLICT", undefined, undefined, { currentVersion: approval.version });
+    const row = this.database.prepare("SELECT review_snapshot_json FROM approval_requests WHERE id=?").get(approval.id) as { review_snapshot_json: string | null };
+    let snapshot: ApprovalReviewSnapshot | null = null;
+    try {
+      if (row.review_snapshot_json !== null) {
+        snapshot = approvalReviewSnapshotSchema.parse(JSON.parse(row.review_snapshot_json));
+        if (approvalReviewDigest(snapshot) !== approval.targetDigest) throw new AevorenBotError("APPROVAL_REVIEW_INVALID");
+      }
+    } catch { throw new AevorenBotError("APPROVAL_REVIEW_INVALID"); }
+    const invocation = this.getToolInvocation(approval.toolInvocationId), runtime = this.getRuntimeRun(approval.runtimeRunId);
+    const reason = approval.state !== "pending" || invocation.state !== "awaiting-approval" ? "这项审批已经处理。"
+      : Date.parse(approval.expiresAt) <= Date.now() ? "这项审批已经过期。"
+      : !["running", "streaming"].includes(runtime.state) ? "原任务已经结束，不能再批准执行。" : undefined;
+    return { snapshot, executable: !reason, ...(reason ? { reason } : {}) };
   }
 
   getToolInvocation(id: string): ToolInvocation {
@@ -2987,6 +4605,8 @@ export class AppRepository {
         return;
       }
 
+      if (resolution === "allow-once") this.assertToolSessionScope(invocation);
+
       const approvalState = resolution === "allow-once" ? "allowed" : "denied";
       const invocationState = resolution === "allow-once" ? "approved" : "denied";
       const approvalUpdate = this.database
@@ -3023,6 +4643,7 @@ export class AppRepository {
       throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: current.state });
     }
     if (state === "dispatching") {
+      this.assertToolSessionScope(current);
       const approval = this.getApprovalRequest(current.approvalRequestId);
       if (
         approval.state !== "allowed" ||
@@ -3092,6 +4713,69 @@ export class AppRepository {
     return this.getToolInvocation(id);
   }
 
+  projectBotCatalog(executorBotId: string, sessionId = this.getMainSession(executorBotId).id): { projectId: string | null; bots: Array<Pick<Bot, "id" | "name" | "label" | "description">> } {
+    this.assertSessionExecutor(sessionId, executorBotId);
+    const projectId = this.getSessionProjectId(sessionId);
+    return {
+      projectId,
+      bots: this.listBots()
+        .map(({ id, name, label, description }) => ({ id, name, label, description })),
+    };
+  }
+
+  projectCreationResult(id: string): { content: string; metadata: Record<string, string | number | boolean | null> } {
+    const invocation = this.getToolInvocation(id);
+    const resourceId = invocation.resultMetadata?.resourceId;
+    if (invocation.state !== "succeeded" || typeof resourceId !== "string") throw new AevorenBotError("TOOL_STATE_INVALID");
+    this.assertToolSessionScope(invocation);
+    const projectId = this.getSessionProjectId(invocation.sessionId);
+    const resource = invocation.toolKind === "bot-create" ? this.getBot(resourceId) : this.getRoom(resourceId);
+    const resourceSession = invocation.toolKind === "bot-create" ? this.getMainSession(resourceId) : this.getRoomMainSession(resourceId);
+    if (this.getSessionProjectId(resourceSession.id) !== projectId) throw new AevorenBotError("ROOM_PROJECT_MISMATCH");
+    const metadata = { kind: invocation.toolKind, resourceId, projectId, name: resource.name, reused: true };
+    const content = JSON.stringify({ ok: true, disposition: "existing", kind: invocation.toolKind, resource: { id: resource.id, name: resource.name, projectId } });
+    return { content, metadata };
+  }
+
+  executeProjectCreation(id: string): { invocation: ToolInvocation; content: string } {
+    return this.transaction(() => {
+      const invocation = this.getToolInvocation(id);
+      if (invocation.state !== "running" || !["bot-create", "room-create"].includes(invocation.toolKind)) throw new AevorenBotError("TOOL_STATE_INVALID");
+      const approval = this.getApprovalRequest(invocation.approvalRequestId);
+      if (approval.state !== "allowed" || approval.argumentsDigest !== invocation.commandDigest) throw new AevorenBotError("APPROVAL_SCOPE_INVALID");
+      const owner = this.getBot(invocation.executorBotId);
+      this.assertToolSessionScope(invocation);
+      const projectId = this.getSessionProjectId(invocation.sessionId);
+      const runtime = this.getRuntimeRun(invocation.runtimeRunId);
+      if (!["running", "streaming"].includes(runtime.state)) throw new AevorenBotError("TOOL_STATE_INVALID");
+      const previous = this.database.prepare(
+        `SELECT invocation.id FROM tool_invocations AS invocation
+         JOIN runtime_runs AS runtime ON runtime.id = invocation.runtime_run_id
+         WHERE runtime.client_nonce = ? AND invocation.executor_bot_id = ? AND invocation.arguments_json = ?
+           AND invocation.state = 'succeeded' AND invocation.tool_kind = ? LIMIT 1`,
+      ).get(runtime.clientNonce, owner.id, JSON.stringify(invocation.arguments), invocation.toolKind) as { id: string } | undefined;
+      if (previous) {
+        const result = this.projectCreationResult(previous.id);
+        return { invocation: this.completeToolInvocation(id, digestMessage(result.content), result.metadata), content: result.content };
+      }
+      const rootNonce = this.getUserMessage(runtime.clientNonce).origin?.rootClientNonce ?? runtime.clientNonce;
+      if (this.productResourceCount(rootNonce) >= 8) throw new AevorenBotError("PROJECT_CREATION_LIMIT");
+      const tool = invocation.arguments;
+      let resource: Bot | Room;
+      if (tool.kind === "bot-create") {
+        if (containsLikelySecret(JSON.stringify(tool))) throw new AevorenBotError("PROJECT_PROFILE_SENSITIVE");
+        resource = this.insertBot(projectId, { ...tool, modelSelection: owner.modelSelection, mcpServerIds: owner.mcpServerIds }, false).bot;
+      } else if (tool.kind === "room-create") {
+        resource = this.insertRoom({ ...tool, projectId: projectId ?? undefined }).room;
+      } else {
+        throw new AevorenBotError("INVALID_REQUEST");
+      }
+      const metadata = { kind: tool.kind, resourceId: resource.id, projectId, name: resource.name, reused: false };
+      const content = JSON.stringify({ ok: true, disposition: "created", kind: tool.kind, resource: { id: resource.id, name: resource.name, projectId } });
+      return { invocation: this.completeToolInvocation(id, digestMessage(content), metadata), content };
+    });
+  }
+
   failToolInvocation(id: string, errorCode: string): ToolInvocation {
     const current = this.getToolInvocation(id);
     const state: ToolInvocationState = current.state === "dispatching"
@@ -3117,6 +4801,13 @@ export class AppRepository {
     return this.getToolInvocation(id);
   }
 
+  interruptProductToolInvocation(id: string, content: string): ToolInvocation {
+    const value=this.getToolInvocation(id);if(value.state==="interrupted-unknown")return value;
+    if(value.state!=="running"&&value.state!=="dispatching")throw new AevorenBotError("TOOL_STATE_INVALID");
+    const at=now();this.database.prepare(`UPDATE tool_invocations SET state='interrupted-unknown',version=version+1,last_error_code='APP_INTERRUPTED',result_digest=?,result_metadata_json=?,finished_at=?,updated_at=? WHERE id=?`)
+      .run(digestMessage(content),JSON.stringify({nativeOutboundUnknown:true}),at,at,id);
+    return this.getToolInvocation(id);
+  }
   cancelToolInvocation(id: string): ToolInvocation {
     return this.transaction(() => {
       const current = this.getToolInvocation(id);
@@ -3234,26 +4925,20 @@ export class AppRepository {
   }
 
   setBotPinned(id: string, pinned: boolean): Bot {
-    const result = this.database
-      .prepare("UPDATE bots SET pinned_at = ?, hidden_at = CASE WHEN ? = 1 THEN NULL ELSE hidden_at END WHERE id = ? AND deleted_at IS NULL")
-      .run(pinned ? now() : null, pinned ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("BOT_NOT_FOUND");
+    this.getBot(id);
+    this.setConversationPinned(this.getMainSession(id).id, pinned);
     return this.getBot(id);
   }
 
   setBotUnread(id: string, unread: boolean): Bot {
-    const result = this.database
-      .prepare("UPDATE bots SET has_unread = ? WHERE id = ? AND deleted_at IS NULL")
-      .run(unread ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("BOT_NOT_FOUND");
+    this.getBot(id);
+    this.setConversationUnread(this.getMainSession(id).id, unread);
     return this.getBot(id);
   }
 
   setBotHidden(id: string, hidden: boolean): Bot {
-    const result = this.database
-      .prepare("UPDATE bots SET hidden_at = ?, pinned_at = CASE WHEN ? = 1 THEN NULL ELSE pinned_at END WHERE id = ? AND deleted_at IS NULL")
-      .run(hidden ? now() : null, hidden ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("BOT_NOT_FOUND");
+    this.getBot(id);
+    this.setConversationHidden(this.getMainSession(id).id, hidden);
     return this.getBot(id);
   }
 
@@ -3264,22 +4949,26 @@ export class AppRepository {
     const sessionId = randomUUID();
     const suffix = " 副本";
     const name = `${source.name.slice(0, 80 - suffix.length)}${suffix}`;
+    const avatar = randomBotAvatar();
     this.transaction(() => {
       this.database
         .prepare(
           `INSERT INTO bots(
-             id, name, label, description, instructions, provider_instance_id, model_id, mcp_server_ids_json, memory_workspace_ids_json,
+             id, project_id, name, label, description, instructions, provider_instance_id, model_id, avatar_shape, avatar_color, mcp_server_ids_json, memory_workspace_ids_json,
              version, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .run(
           botId,
+          source.projectId,
           name,
           source.label,
           source.description,
           source.instructions,
           source.modelSelection.providerInstanceId,
           source.modelSelection.modelId,
+          avatar.shape,
+          avatar.color,
           source.mcpServerIds == null ? null : JSON.stringify(source.mcpServerIds),
           JSON.stringify(source.memoryWorkspaceIds ?? []),
           timestamp,
@@ -3300,7 +4989,7 @@ export class AppRepository {
     return this.transaction(() => this.deleteBotRecord(id));
   }
 
-  private assertBotDeletable(id: string): void {
+  assertBotDeletable(id: string): void {
     this.getBot(id);
     const activeRuntime = this.database
       .prepare(
@@ -3329,8 +5018,11 @@ export class AppRepository {
     const archivedRoomIds: string[] = [];
 
     this.database.prepare("DELETE FROM memory_items WHERE bot_id = ?").run(id);
+    this.database.prepare("DELETE FROM session_resource_bindings WHERE session_id IN (SELECT id FROM sessions WHERE bot_id = ?)").run(id);
+    this.environments.deleteExecutor(id);
     this.database.prepare("DELETE FROM sessions WHERE bot_id = ?").run(id);
     this.database.prepare("DELETE FROM room_members WHERE bot_id = ?").run(id);
+    this.database.prepare("UPDATE rooms SET lead_bot_id = NULL WHERE lead_bot_id = ?").run(id);
 
     for (const roomId of affectedRoomIds) {
       const members = this.database
@@ -3367,13 +5059,13 @@ export class AppRepository {
 
   listRooms(includeArchived = false): Room[] {
     const rows = this.database
-      .prepare(`SELECT * FROM rooms ${includeArchived ? "" : "WHERE archived_at IS NULL"} ORDER BY created_at ASC`)
+      .prepare(`${ROOM_SELECT} ${includeArchived ? "" : "WHERE rooms.archived_at IS NULL"} ORDER BY rooms.created_at ASC`)
       .all() as RoomRow[];
     return rows.map(toRoom);
   }
 
   getRoom(id: string): Room {
-    const row = this.database.prepare("SELECT * FROM rooms WHERE id = ?").get(id) as RoomRow | undefined;
+    const row = this.database.prepare(`${ROOM_SELECT} WHERE rooms.id = ?`).get(id) as RoomRow | undefined;
     if (!row) throw new AevorenBotError("ROOM_NOT_FOUND");
     return toRoom(row);
   }
@@ -3386,50 +5078,166 @@ export class AppRepository {
     this.getRoom(roomId);
     const rows = this.database
       .prepare(
-        `SELECT room_members.room_id, room_members.bot_id, room_members.position, bots.*
+        `SELECT room_members.room_id, room_members.bot_id, room_members.position, bots.*, ${CONVERSATION_SIDEBAR_COLUMNS}
          FROM room_members INNER JOIN bots ON bots.id = room_members.bot_id
+         LEFT JOIN sessions ON sessions.bot_id = bots.id AND sessions.kind = 'MAIN'
+         LEFT JOIN conversation_metadata ON conversation_metadata.session_id = sessions.id
          WHERE room_members.room_id = ? ORDER BY room_members.position ASC`,
       )
       .all(roomId) as RoomMemberRow[];
     return rows.map((row) => ({ roomId: row.room_id, botId: row.bot_id, position: row.position, bot: toBot(row) }));
   }
 
-  createRoom(input: { memberBotIds: string[]; name?: string; description?: string }): RoomDetail {
+  createContentTeamTemplate(projectId?: string): TeamTemplateCreateResult {
+    const identityProjectId = projectId ?? DEFAULT_PROJECT_ID;
+    this.getProject(identityProjectId);
+    const settingKey = identityProjectId === DEFAULT_PROJECT_ID
+      ? "template.content-team.roomId"
+      : `template.content-team.roomId.${identityProjectId}`;
+    const existingRoomId = this.getSetting(settingKey)?.value;
+    if (existingRoomId) {
+      try {
+        const room = this.getRoomDetail(existingRoomId);
+        return { disposition: "existing", bots: room.members.map((member) => member.bot), room };
+      } catch {
+        // The prior template was deleted; create a fresh atomic instance below.
+      }
+    }
+    const roles = [
+      {
+        name: "情报侦察员",
+        label: "一手信息研究",
+        description: "检索并核验一手来源，形成可追溯线索。",
+        instructions: "你负责一手信息研究。必须通过真实 web_search/web_fetch 获取来源；没有成功工具记录不得声称已抓取或核验。将验收通过的线索使用 workspace_write 新建到 01-inbox，包含来源 URL、抓取时间、事实/观点/假设、缺口与风险；不得覆盖已有文件。每次任务只创建用户指定的一个正式线索文件，成功后不得再创建 v2、确认、索引或审计文件。完成后使用结构化 handoff 交给选题策划师。",
+      },
+      {
+        name: "选题策划师",
+        label: "选题评估与 Brief",
+        description: "基于真实线索和账号风格产出互斥选题 Brief。",
+        instructions: "你负责选题策划。先通过真实 workspace_read 读取上游线索与 voice.md，再产出 3 个互斥候选；没有成功读取不得生成或声称已读。使用 workspace_write 新建用户指定的唯一 Brief 到 02-briefs；第一次写入成功后立即停止写文件，不得创建 v2、清单、索引、README、审计或确认文件。等待用户批准后才能结构化 handoff 给内容主笔。",
+      },
+      {
+        name: "内容主笔",
+        label: "多平台内容写作",
+        description: "根据批准的 Brief 和风格材料生成候选稿。",
+        instructions: "你负责内容写作。只有收到批准后的结构化 handoff 才启动；先真实读取 Brief 与 voice.md。用 text_measure 记录初稿长度，不得估算；主笔阶段最多修订测量 6 次，然后写入当前最佳草稿并交给事实编辑，由事实编辑负责最终长度收敛。只创建用户指定的一个正式草稿文件；workspace_write 成功后不得创建副本或确认文件，随后结构化 handoff 给事实编辑。",
+      },
+      {
+        name: "事实编辑",
+        label: "事实核验与风格审校",
+        description: "复核事实、来源、数字、引语、上下文和长度。",
+        instructions: "你负责事实与风格审校。必须真实读取 Brief、草稿、voice.md，并对需要复核的公开来源使用真实 web_fetch。必须使用 text_measure 计算长度。若任务要求短帖与展开版而草稿只含一种，你必须派生两个独立版本并分别测量，禁止反复测量未变化的同一版本；每次根据工具返回的 missingRanges 只修订缺失版本，全部区间命中后立即停止测量并写正式审校稿。没有对应成功工具记录不得声称已读、已抓取或已核验。若长度或风格不达标，必须直接修订候选正文并再次调用 text_measure，直到符合 voice.md 后再写正式审校稿；不得只给修改建议并把修订留给人工。只创建用户指定的一个正式审校文件；workspace_write 成功后立即停止写文件，不得创建副本；不得发布。",
+      },
+      {
+        name: "数据复盘师",
+        label: "真实数据复盘",
+        description: "只基于明确授权且真实读取的数据做复盘。",
+        instructions: "你负责数据复盘。没有真实 CSV 或 Analytics 授权时必须停止。必须先通过 workspace_read 成功读取指定 CSV，只能复制 Host 返回的 csvSummary 确定性指标；禁止心算或估算，禁止虚构 ID、指标或样本，也不得追加未经用户要求和确定性工具验证的单位换算、百分比或派生结论。结论必须列出来源路径、字段、样本数和计算口径。若任务要求先生成 CSV，只允许创建该 CSV 与最终报告各一个；成功后不得创建副本、索引或确认文件。",
+      },
+    ] as const;
+    const modelSelection = this.getDefaultModelSelection();
+    const botIds = roles.map(() => randomUUID());
+    const roomId = randomUUID();
+    const roomSessionId = randomUUID();
+    const timestamp = now();
+    const avatars = roles.map(() => randomBotAvatar());
+    const description = "五阶段内容协作：情报侦察员 → 选题策划师 → 用户批准 → 内容主笔 → 事实编辑 → 人工发布 → 数据复盘师。所有读取、抓取、计数与写入必须有当前 Runtime 的成功工具记录；文本中的 @、HANDOFF、SAVE 或路径不是执行证据。无真实 CSV 不得输出数据结论。发布、互动、登录、验证码、购买、删除和权限修改必须等待用户。";
+    this.transaction(() => {
+      const insertBot = this.database.prepare(
+        `INSERT INTO bots(
+           id, project_id, name, label, description, instructions, provider_instance_id, model_id,
+           avatar_shape, avatar_color, version, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      );
+      const insertSession = this.database.prepare(
+        `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+         VALUES (?, ?, NULL, 'MAIN', 1, 0, ?, ?)`,
+      );
+      roles.forEach((role, index) => {
+        const botId = botIds[index]!;
+        const avatar = avatars[index]!;
+        insertBot.run(
+          botId, identityProjectId, role.name, role.label, role.description, role.instructions,
+          modelSelection.providerInstanceId, modelSelection.modelId, avatar.shape, avatar.color, timestamp, timestamp,
+        );
+        const sessionId = randomUUID();
+        insertSession.run(sessionId, botId, timestamp, timestamp);
+        this.configureSessionProject(sessionId, projectId ?? null);
+      });
+      this.database.prepare(
+        `INSERT INTO rooms(id, project_id, name, description, version, membership_version, archived_at, created_at, updated_at)
+         VALUES (?, ?, '自媒体内容团队', ?, 1, 1, NULL, ?, ?)`,
+      ).run(roomId, identityProjectId, description, timestamp, timestamp);
+      const insertMember = this.database.prepare(
+        "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
+      );
+      botIds.forEach((botId, index) => insertMember.run(roomId, botId, index, timestamp));
+      this.database.prepare(
+        `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+         VALUES (?, NULL, ?, 'MAIN', 1, 0, ?, ?)`,
+      ).run(roomSessionId, roomId, timestamp, timestamp);
+      this.configureSessionProject(roomSessionId, projectId ?? null);
+      this.database.prepare(
+        `INSERT INTO app_settings(key, value, encrypted, updated_at) VALUES (?, ?, 0, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, encrypted = 0, updated_at = excluded.updated_at`,
+      ).run(settingKey, roomId, timestamp);
+    });
+    const room = this.getRoomDetail(roomId);
+    return { disposition: "created", bots: room.members.map((member) => member.bot), room };
+  }
+
+  createRoom(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string; leadBotId?: string | null }): RoomDetail {
+    return this.transaction(() => this.insertRoom(input));
+  }
+
+  private insertRoom(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string; leadBotId?: string | null }): RoomDetail {
     if (input.memberBotIds.length < 2 || input.memberBotIds.length > 6 || new Set(input.memberBotIds).size !== input.memberBotIds.length) {
       throw new AevorenBotError("ROOM_MEMBER_INVALID");
     }
     const roomId = randomUUID();
     const sessionId = randomUUID();
     const timestamp = now();
-    this.transaction(() => {
-      const bots = input.memberBotIds.map((id) => this.getBot(id));
-      const generatedName = bots.map((bot) => bot.name).join("、").replace(/\s+/g, " ").trim().slice(0, 72);
-      this.database
-        .prepare(
-          `INSERT INTO rooms(id, name, description, version, membership_version, archived_at, created_at, updated_at)
-           VALUES (?, ?, ?, 1, 1, NULL, ?, ?)`,
-        )
-        .run(roomId, input.name?.trim() || generatedName || "新群聊", input.description?.trim() ?? "", timestamp, timestamp);
-      const insertMember = this.database.prepare(
-        "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
-      );
-      input.memberBotIds.forEach((botId, position) => insertMember.run(roomId, botId, position, timestamp));
-      this.database
-        .prepare(
-          `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
-           VALUES (?, NULL, ?, 'MAIN', 1, 0, ?, ?)`,
-        )
-        .run(sessionId, roomId, timestamp, timestamp);
-    });
+    const bots = input.memberBotIds.map((id) => this.getBot(id));
+    if (input.leadBotId != null && !input.memberBotIds.includes(input.leadBotId)) {
+      throw new AevorenBotError("ROOM_MEMBER_INVALID");
+    }
+    const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
+    this.getProject(projectId);
+    const generatedName = bots.map((bot) => bot.name).join("、").replace(/\s+/g, " ").trim().slice(0, 72);
+    this.database
+      .prepare(
+        `INSERT INTO rooms(id, project_id, name, description, version, membership_version, archived_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, 1, NULL, ?, ?)`,
+      )
+      .run(roomId, projectId, input.name?.trim() || generatedName || "新群聊", input.description?.trim() ?? "", timestamp, timestamp);
+    const insertMember = this.database.prepare(
+      "INSERT INTO room_members(room_id, bot_id, position, created_at) VALUES (?, ?, ?, ?)",
+    );
+    input.memberBotIds.forEach((botId, position) => insertMember.run(roomId, botId, position, timestamp));
+    this.database.prepare("UPDATE rooms SET lead_bot_id = ? WHERE id = ?").run(input.leadBotId ?? null, roomId);
+    this.database
+      .prepare(
+        `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+         VALUES (?, NULL, ?, 'MAIN', 1, 0, ?, ?)`,
+      )
+      .run(sessionId, roomId, timestamp, timestamp);
+    this.configureSessionProject(sessionId, input.projectId ?? null);
     return this.getRoomDetail(roomId);
   }
 
   updateRoom(id: string, expectedVersion: number, patch: RoomPatch): Room {
+    const room = this.getRoom(id);
+    if (patch.leadBotId !== undefined && patch.leadBotId !== room.leadBotId) {
+      this.assertConversationIdle(this.getRoomMainSession(id).id, "ROOM_BUSY");
+      if (patch.leadBotId !== null && !this.listRoomMembers(id).some((member) => member.botId === patch.leadBotId)) {
+        throw new AevorenBotError("ROOM_MEMBER_INVALID");
+      }
+    }
     const fields = (Object.keys(patch) as Array<keyof RoomPatch>)
       .filter((field) => patch[field] !== undefined)
-      .map((field) => [field, patch[field] as string] as const);
+      .map((field) => [field, patch[field] as string | null] as const);
     if (fields.length === 0) return this.getRoom(id);
-    const columns: Record<keyof RoomPatch, string> = { name: "name", description: "description" };
+    const columns: Record<keyof RoomPatch, string> = { name: "name", description: "description", leadBotId: "lead_bot_id" };
     const result = this.database
       .prepare(
         `UPDATE rooms SET ${fields.map(([field]) => `${columns[field]} = ?`).join(", ")},
@@ -3457,30 +5265,19 @@ export class AppRepository {
 
   setRoomPinned(id: string, pinned: boolean): Room {
     this.getRoom(id);
-    const timestamp = now();
-    const result = this.database
-      .prepare("UPDATE rooms SET pinned_at = ?, updated_at = ? WHERE id = ?")
-      .run(pinned ? timestamp : null, timestamp, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
+    this.setConversationPinned(this.getRoomMainSession(id).id, pinned);
     return this.getRoom(id);
   }
 
   setRoomUnread(id: string, unread: boolean): Room {
     this.getRoom(id);
-    const result = this.database
-      .prepare("UPDATE rooms SET has_unread = ? WHERE id = ?")
-      .run(unread ? 1 : 0, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
+    this.setConversationUnread(this.getRoomMainSession(id).id, unread);
     return this.getRoom(id);
   }
 
   setRoomHidden(id: string, hidden: boolean): Room {
     this.getRoom(id);
-    const timestamp = now();
-    const result = this.database
-      .prepare("UPDATE rooms SET hidden_at = ?, pinned_at = CASE WHEN ? = 1 THEN NULL ELSE pinned_at END, updated_at = ? WHERE id = ?")
-      .run(hidden ? timestamp : null, hidden ? 1 : 0, timestamp, id);
-    if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
+    this.setConversationHidden(this.getRoomMainSession(id).id, hidden);
     return this.getRoom(id);
   }
 
@@ -3490,6 +5287,14 @@ export class AppRepository {
   }
 
   deleteConversations(input: ConversationBatchDeleteInput): ConversationBatchDeleteResult {
+    this.assertConversationsDeletable(input);
+    return this.transaction(() => ({
+      rooms: input.roomIds.map((id) => this.deleteRoomRecord(id)),
+      bots: input.botIds.map((id) => this.deleteBotRecord(id)),
+    }));
+  }
+
+  assertConversationsDeletable(input: ConversationBatchDeleteInput): void {
     const count = input.botIds.length + input.roomIds.length;
     if (
       count < 2 || count > 200 ||
@@ -3500,13 +5305,9 @@ export class AppRepository {
     }
     input.roomIds.forEach((id) => this.assertRoomDeletable(id));
     input.botIds.forEach((id) => this.assertBotDeletable(id));
-    return this.transaction(() => ({
-      rooms: input.roomIds.map((id) => this.deleteRoomRecord(id)),
-      bots: input.botIds.map((id) => this.deleteBotRecord(id)),
-    }));
   }
 
-  private assertRoomDeletable(id: string): void {
+  assertRoomDeletable(id: string): void {
     const room = this.getRoom(id);
     const sessionId = this.getRoomMainSession(room.id).id;
     if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) {
@@ -3515,6 +5316,7 @@ export class AppRepository {
   }
 
   private deleteRoomRecord(id: string): RoomDeleteResult {
+    this.environments.deleteSession(this.getRoomMainSession(id).id);
     this.database
       .prepare(
         `UPDATE room_turns
@@ -3523,6 +5325,7 @@ export class AppRepository {
            AND parent_turn_id IS NOT NULL`,
       )
       .run(id);
+    this.database.prepare("DELETE FROM session_resource_bindings WHERE session_id IN (SELECT id FROM sessions WHERE room_id = ?)").run(id);
     const result = this.database.prepare("DELETE FROM rooms WHERE id = ?").run(id);
     if (Number(result.changes) === 0) throw new AevorenBotError("ROOM_NOT_FOUND");
     return { id };
@@ -3532,7 +5335,7 @@ export class AppRepository {
     this.transaction(() => {
       const room = this.getRoom(roomId);
       const sessionId = this.getRoomMainSession(roomId).id;
-      if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new AevorenBotError("ROOM_BUSY");
+      this.assertConversationIdle(sessionId, "ROOM_BUSY");
       this.getBot(botId);
       if (room.membershipVersion !== expectedMembershipVersion) {
         throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
@@ -3549,16 +5352,14 @@ export class AppRepository {
 
   removeRoomMember(roomId: string, botId: string, expectedMembershipVersion: number): RoomDetail {
     this.transaction(() => {
-      const room = this.getRoom(roomId);
+      this.assertRoomMemberRemovable(roomId, botId, expectedMembershipVersion);
       const sessionId = this.getRoomMainSession(roomId).id;
-      if (this.getActiveRoomBatch(sessionId) || this.getActiveRuntimeRun(sessionId)) throw new AevorenBotError("ROOM_BUSY");
-      if (room.membershipVersion !== expectedMembershipVersion) {
-        throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
-      }
-      const members = this.listRoomMembers(roomId);
-      if (members.length <= 2) throw new AevorenBotError("ROOM_MEMBER_INVALID");
-      if (!members.some((member) => member.botId === botId)) throw new AevorenBotError("ROOM_MEMBER_NOT_FOUND");
+      this.environments.deleteScope({ sessionId, executorBotId: botId });
+      this.media.revokeExecutor(sessionId, botId);
       this.database.prepare("DELETE FROM room_members WHERE room_id = ? AND bot_id = ?").run(roomId, botId);
+      this.database.prepare(
+        "UPDATE rooms SET lead_bot_id = NULL, version = version + 1 WHERE id = ? AND lead_bot_id = ?",
+      ).run(roomId, botId);
       const remaining = this.database
         .prepare("SELECT bot_id FROM room_members WHERE room_id = ? ORDER BY position ASC")
         .all(roomId) as Array<{ bot_id: string }>;
@@ -3567,6 +5368,15 @@ export class AppRepository {
       this.bumpMembership(roomId, expectedMembershipVersion);
     });
     return this.getRoomDetail(roomId);
+  }
+
+  assertRoomMemberRemovable(roomId: string, botId: string, expectedMembershipVersion: number): void {
+    const room = this.getRoom(roomId), sessionId = this.getRoomMainSession(roomId).id;
+    this.assertConversationIdle(sessionId, "ROOM_BUSY");
+    if (room.membershipVersion !== expectedMembershipVersion) throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
+    const members = this.listRoomMembers(roomId);
+    if (members.length <= 2) throw new AevorenBotError("ROOM_MEMBER_INVALID");
+    if (!members.some(member => member.botId === botId)) throw new AevorenBotError("ROOM_MEMBER_NOT_FOUND");
   }
 
   private bumpMembership(roomId: string, expectedVersion: number): void {
@@ -3586,7 +5396,10 @@ export class AppRepository {
     const row = this.database
       .prepare("SELECT * FROM sessions WHERE bot_id = ? AND kind = 'MAIN'")
       .get(botId) as SessionRow | undefined;
-    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND", "没有找到该 Bot 的主会话。");
+    if (!row) {
+      this.getBot(botId);
+      return this.initializeMainSession(botId, null);
+    }
     return toSession(row);
   }
 
@@ -3594,14 +5407,150 @@ export class AppRepository {
     const row = this.database
       .prepare("SELECT * FROM sessions WHERE room_id = ? AND kind = 'MAIN'")
       .get(roomId) as SessionRow | undefined;
-    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND", "没有找到该群聊的主会话。");
+    if (!row) {
+      this.getRoom(roomId);
+      return this.initializeMainSession(null, roomId);
+    }
     return toSession(row);
+  }
+
+  private initializeMainSession(botId: string | null, roomId: string | null): Session {
+    const timestamp = now();
+    // A single SQLite statement and its trigger atomically create the session
+    // and metadata, including when the caller already owns a transaction.
+    this.database.prepare(
+      `INSERT INTO sessions(id, bot_id, room_id, kind, generation, transcript_cursor, created_at, updated_at)
+       VALUES (?, ?, ?, 'MAIN', 1, 0, ?, ?) ON CONFLICT DO NOTHING`,
+    ).run(randomUUID(), botId, roomId, timestamp, timestamp);
+    return botId ? this.getMainSession(botId) : this.getRoomMainSession(roomId!);
   }
 
   getSession(sessionId: string): Session {
     const row = this.database.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as SessionRow | undefined;
     if (!row) throw new AevorenBotError("SESSION_NOT_FOUND");
     return toSession(row);
+  }
+
+  listConversations(): ConversationSummary[] {
+    return (this.database.prepare(
+      `${CONVERSATION_SELECT} ORDER BY conversation_metadata.pinned_at DESC,
+       conversation_metadata.last_activity_at DESC, conversation_metadata.session_id ASC`,
+    ).all() as ConversationRow[]).map(toConversation);
+  }
+
+  getConversation(sessionId: string): ConversationSummary {
+    const row = this.database.prepare(`${CONVERSATION_SELECT} WHERE conversation_metadata.session_id = ?`)
+      .get(sessionId) as ConversationRow | undefined;
+    if (!row) throw new AevorenBotError("SESSION_NOT_FOUND");
+    return toConversation(row);
+  }
+
+  setConversationPinned(sessionId: string, pinned: boolean): ConversationSummary {
+    this.database.prepare(
+      `UPDATE conversation_metadata
+       SET pinned_at = ?, hidden_at = CASE WHEN ? = 1 THEN NULL ELSE hidden_at END, version = version + 1
+       WHERE session_id = ?`,
+    ).run(pinned ? now() : null, pinned ? 1 : 0, sessionId);
+    return this.getConversation(sessionId);
+  }
+
+  setConversationUnread(sessionId: string, unread: boolean): ConversationSummary {
+    this.database.prepare(
+      "UPDATE conversation_metadata SET has_unread = ?, version = version + 1 WHERE session_id = ?",
+    ).run(unread ? 1 : 0, sessionId);
+    return this.getConversation(sessionId);
+  }
+
+  setConversationHidden(sessionId: string, hidden: boolean): ConversationSummary {
+    this.database.prepare(
+      `UPDATE conversation_metadata
+       SET hidden_at = ?, pinned_at = CASE WHEN ? = 1 THEN NULL ELSE pinned_at END, version = version + 1
+       WHERE session_id = ?`,
+    ).run(hidden ? now() : null, hidden ? 1 : 0, sessionId);
+    return this.getConversation(sessionId);
+  }
+
+  private assertConversationIdle(sessionId: string, errorCode: "CONVERSATION_BUSY" | "ROOM_BUSY" = "CONVERSATION_BUSY"): void {
+    const session = this.getSession(sessionId);
+    const activeApproval = this.database.prepare(
+        "SELECT 1 FROM approval_requests WHERE session_id = ? AND state = 'pending' LIMIT 1",
+      ).get(sessionId);
+      const activeTool = this.database.prepare(
+        `SELECT 1 FROM tool_invocations WHERE session_id = ?
+         AND state IN ('prepared', 'awaiting-approval', 'approved', 'dispatching', 'running') LIMIT 1`,
+      ).get(sessionId);
+      const activeTurn = this.database.prepare(
+        `SELECT 1 FROM room_turns INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+         WHERE room_batches.session_id = ? AND room_turns.state = 'running' LIMIT 1`,
+      ).get(sessionId);
+      const activeHandoff = this.database.prepare(
+        `SELECT 1 FROM agent_handoffs INNER JOIN room_batches ON room_batches.id = agent_handoffs.run_id
+         WHERE room_batches.session_id = ? AND agent_handoffs.state = 'dispatching' LIMIT 1`,
+      ).get(sessionId);
+      const activeRoutine = session.botId && this.database.prepare(
+        "SELECT 1 FROM routine_runs WHERE bot_id = ? AND state IN ('queued', 'waiting', 'running') LIMIT 1",
+      ).get(session.botId);
+      const pendingSend = this.database.prepare(
+        `SELECT 1 FROM send_journal WHERE session_id = ?
+         AND NOT EXISTS (SELECT 1 FROM retired_conversation_sends WHERE client_nonce = send_journal.client_nonce)
+         AND state IN ('prepared', 'queued', 'dispatching', 'accepted-awaiting-echo')
+         AND NOT EXISTS (SELECT 1 FROM runtime_runs WHERE client_nonce = send_journal.client_nonce)
+         AND NOT EXISTS (SELECT 1 FROM room_batches WHERE client_nonce = send_journal.client_nonce)
+         LIMIT 1`,
+      ).get(sessionId);
+    if (this.getActiveRuntimeRun(sessionId) || this.getActiveRoomBatch(sessionId) || activeApproval || activeTool || activeTurn || activeHandoff || activeRoutine || pendingSend) {
+      throw new AevorenBotError(errorCode);
+    }
+  }
+
+  clearConversation(sessionId: string): Session {
+    return this.transaction(() => {
+      this.assertConversationIdle(sessionId);
+      const timestamp = now();
+      // These journals have no FK, so remove only exact keys owned by this session.
+      this.database.prepare(
+        `DELETE FROM decision_journal
+         WHERE idempotency_key IN (SELECT 'room-route-shadow:' || client_nonce FROM send_journal WHERE session_id = ?)
+            OR idempotency_key IN (SELECT 'room-handoff-shadow:' || id FROM runtime_runs WHERE session_id = ?)
+            OR idempotency_key IN (SELECT 'tool-risk-shadow:' || id FROM tool_invocations WHERE session_id = ?)
+            OR idempotency_key IN (SELECT 'tool-result-quality-shadow:' || id FROM tool_invocations WHERE session_id = ?)`,
+      ).run(sessionId, sessionId, sessionId, sessionId);
+      this.database.prepare(
+        `UPDATE memory_items SET source_entry_id = NULL, version = version + 1, updated_at = ?
+         WHERE source_entry_id IN (SELECT id FROM transcript_entries WHERE session_id = ?)`,
+      ).run(timestamp, sessionId);
+      this.database.prepare(
+        "DELETE FROM memory_proposals WHERE source_entry_id IN (SELECT id FROM transcript_entries WHERE session_id = ?)",
+      ).run(sessionId);
+      // Parent turns and batch trigger messages use RESTRICT; release them before
+      // deleting batches, runtimes and transcript. Cascades remove tool/approval,
+      // handoff and attachment copies, and never touch underlying workspace files.
+      this.database.prepare(
+        `UPDATE room_turns SET parent_turn_id = NULL
+         WHERE batch_id IN (SELECT id FROM room_batches WHERE session_id = ?)`,
+      ).run(sessionId);
+      this.database.prepare("DELETE FROM room_batches WHERE session_id = ?").run(sessionId);
+      this.database.prepare(
+        `INSERT OR IGNORE INTO retired_conversation_tools(idempotency_key, session_id)
+         SELECT idempotency_key, session_id FROM tool_invocations WHERE session_id = ?`,
+      ).run(sessionId);
+      this.database.prepare("DELETE FROM runtime_runs WHERE session_id = ?").run(sessionId);
+      this.database.prepare("DELETE FROM transcript_entries WHERE session_id = ?").run(sessionId);
+      this.database.prepare(
+        `INSERT OR IGNORE INTO retired_conversation_sends(client_nonce, retired_at)
+         SELECT client_nonce, ? FROM send_journal WHERE session_id = ?`,
+      ).run(timestamp, sessionId);
+      this.database.prepare(
+        "UPDATE send_journal SET state = 'cancelled', updated_at = ? WHERE session_id = ?",
+      ).run(timestamp, sessionId);
+      this.database.prepare(
+        "UPDATE sessions SET generation = generation + 1, transcript_cursor = transcript_cursor + 1, updated_at = ? WHERE id = ?",
+      ).run(timestamp, sessionId);
+      this.database.prepare(
+        "UPDATE conversation_metadata SET has_unread = 0, last_activity_at = ?, version = version + 1 WHERE session_id = ?",
+      ).run(timestamp, sessionId);
+      return this.getSession(sessionId);
+    });
   }
 
   getTranscriptCursor(sessionId: string): number {
@@ -3623,8 +5572,9 @@ export class AppRepository {
   getBotForSession(sessionId: string): Bot {
     const row = this.database
       .prepare(
-        `SELECT bots.* FROM bots
+        `SELECT bots.*, ${CONVERSATION_SIDEBAR_COLUMNS} FROM bots
          INNER JOIN sessions ON sessions.bot_id = bots.id
+         LEFT JOIN conversation_metadata ON conversation_metadata.session_id = sessions.id
          WHERE sessions.id = ?`,
       )
       .get(sessionId) as BotRow | undefined;
@@ -3654,8 +5604,34 @@ export class AppRepository {
         entry.seq <= inputSeq &&
         entry.status !== "failed" &&
         entry.status !== "cancelled" &&
-        entry.body.trim().length > 0,
-    );
+        (entry.body.trim().length > 0 || Boolean(entry.attachments?.length) || Boolean(entry.resourceRefs?.length) || Boolean(entry.mediaRefs?.length)),
+    ).map((entry) => {
+      const rows = this.database.prepare(
+        `SELECT id, name, mime_type, size, sha256, kind, content
+         FROM message_attachments WHERE transcript_entry_id = ? ORDER BY created_at ASC, id ASC`,
+      ).all(entry.id) as Array<{
+        id: string;
+        name: string;
+        mime_type: string;
+        size: number;
+        sha256: string;
+        kind: "text";
+        content: string;
+      }>;
+      if (rows.length === 0) return entry;
+      return {
+        ...entry,
+        attachmentContents: rows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          mimeType: row.mime_type,
+          size: row.size,
+          sha256: row.sha256,
+          kind: row.kind,
+          content: row.content,
+        })),
+      } as TranscriptEntry & { attachmentContents: PromptAttachment[] };
+    });
   }
 
   private nextSequence(sessionId: string, generation: number): number {
@@ -3665,17 +5641,92 @@ export class AppRepository {
     return Number(row.current) + 1;
   }
 
-  prepareMessage(command: SendCommand): { disposition: "prepared" | "duplicate"; journal: SendJournalEntry } {
-    const digest = digestMessage(command.text);
+  private insertMessageAttachments(entryId: string, clientNonce: string, attachments: readonly PromptAttachment[]): string {
+    const metadata = attachments.map(({ content: _content, ...attachment }) => attachment);
+    const insert = this.database.prepare(
+      `INSERT INTO message_attachments(
+         id, transcript_entry_id, client_nonce, name, mime_type, size, sha256, kind, content, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const timestamp = now();
+    for (const attachment of attachments) {
+      insert.run(
+        attachment.id,
+        entryId,
+        clientNonce,
+        attachment.name,
+        attachment.mimeType,
+        attachment.size,
+        attachment.sha256,
+        attachment.kind,
+        attachment.content,
+        timestamp,
+      );
+    }
+    return JSON.stringify(metadata);
+  }
+
+  listDelegatedRuntimeRuns(parentRunId: string): RuntimeRun[] {
+    const rows = this.database.prepare(`SELECT runtime_runs.* FROM runtime_runs JOIN transcript_entries ON transcript_entries.client_nonce = runtime_runs.client_nonce AND transcript_entries.role = 'user' WHERE (json_extract(transcript_entries.origin_json, '$.fromRuntimeRunId') = ? OR EXISTS (SELECT 1 FROM json_each(json_extract(transcript_entries.origin_json, '$.ancestorRunIds')) WHERE value = ?)) AND json_extract(transcript_entries.origin_json, '$.kind') = 'ai-delegation'`).all(parentRunId, parentRunId) as RuntimeRow[];
+    return rows.map(toRuntime);
+  }
+
+  listDelegatedRoomBatches(parentRunId: string): RoomBatch[] {
+    const rows = this.database.prepare(`SELECT room_batches.id FROM room_batches JOIN transcript_entries ON transcript_entries.id = room_batches.trigger_message_id WHERE (json_extract(transcript_entries.origin_json, '$.fromRuntimeRunId') = ? OR EXISTS (SELECT 1 FROM json_each(json_extract(transcript_entries.origin_json, '$.ancestorRunIds')) WHERE value = ?)) AND json_extract(transcript_entries.origin_json, '$.kind') = 'ai-delegation'`).all(parentRunId, parentRunId) as Array<{ id: string }>;
+    return rows.map((row) => this.getRoomBatch(row.id));
+  }
+
+  private recordDelegationOrigin(clientNonce: string, origin: import("@shared/contracts").DelegationOrigin): void {
+    if (origin.kind === "routine") {
+      if (!origin.routineRunId) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      const run = this.getRoutineRun(origin.routineRunId);
+      const message = this.getUserMessage(clientNonce);
+      if (run.clientNonce !== clientNonce || origin.rootClientNonce !== clientNonce || run.routineId !== origin.routineId ||
+          run.botId !== origin.fromBotId || message.sessionId !== this.getMainSession(run.botId).id || origin.depth !== 0 ||
+          message.body !== `[Routine: ${run.routineName}]\n${run.promptSnapshot}`) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      this.database.prepare("UPDATE transcript_entries SET origin_json = ? WHERE client_nonce = ? AND role = 'user' AND origin_json IS NULL").run(JSON.stringify(origin), clientNonce);
+      return;
+    }
+    const parent = this.getRuntimeRun(origin.fromRuntimeRunId);
+    if (!["running", "streaming"].includes(parent.state)) throw new AevorenBotError("TOOL_EXECUTION_CANCELLED");
+    const source = this.getUserMessage(parent.clientNonce);
+    const rootNonce = source.origin?.rootClientNonce ?? parent.clientNonce;
+    if (parent.executorBotId !== origin.fromBotId || parent.sessionId !== origin.fromSessionId ||
+        rootNonce !== origin.rootClientNonce || origin.depth !== (source.origin?.depth ?? 0) + 1 || origin.depth > 3 ||
+        this.getUserMessage(rootNonce).origin?.kind === "ai-delegation") throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const count = this.database.prepare("SELECT count(*) AS count FROM transcript_entries WHERE json_extract(origin_json, '$.rootClientNonce') = ?").get(rootNonce) as { count: number };
+    if (count.count >= 8) throw new AevorenBotError("TOOL_ROUND_LIMIT_EXCEEDED");
+    this.database.prepare("UPDATE transcript_entries SET origin_json = ? WHERE client_nonce = ? AND role = 'user' AND origin_json IS NULL")
+      .run(JSON.stringify({ ...origin, ancestorRunIds: [...(source.origin?.ancestorRunIds ?? []), parent.id] }), clientNonce);
+  }
+
+  prepareHostOutboundMessage(command: SendCommand, executorBotId: string): ReturnType<AppRepository["prepareMessage"]> {
+    this.assertSessionExecutor(command.sessionId,executorBotId);
+    return this.prepareMessageInternal(command,undefined,executorBotId);
+  }
+  prepareMessage(command: SendCommand, origin?: import("@shared/contracts").DelegationOrigin): { disposition: "prepared" | "duplicate"; journal: SendJournalEntry } {
+    return this.prepareMessageInternal(command,origin);
+  }
+  private prepareMessageInternal(command: SendCommand, origin?: import("@shared/contracts").DelegationOrigin, hostExecutorBotId?: string): { disposition: "prepared" | "duplicate"; journal: SendJournalEntry } {
+    const attachments = normalizeAttachmentDrafts(command.attachments);
+    const attachmentMetadata = attachments.map(({ content: _content, ...attachment }) => attachment);
+    const resourceRefs = resourceReferencesSchema.parse(command.resourceRefs ?? []);
+    const mediaRefs = messageMediaReferencesSchema.parse(command.mediaRefs ?? []);
+    const digest = digestMessage(command.text, attachmentMetadata, resourceRefs, mediaRefs);
     const existing = this.getSend(command.clientNonce);
     if (existing) {
       if (existing.bodyDigest !== digest) throw new AevorenBotError("MESSAGE_NONCE_CONFLICT");
       return { disposition: "duplicate", journal: existing };
     }
-    if (this.getActiveRuntimeRun(command.sessionId)) throw new AevorenBotError("SESSION_BUSY");
+    const active=(this.database.prepare("SELECT * FROM runtime_runs WHERE session_id=? AND state IN ('created','dispatching','running','streaming','cancel-requested')").all(command.sessionId) as RuntimeRow[]).map(toRuntime);
+    const independentHost=hostExecutorBotId!==undefined&&Boolean(this.getSession(command.sessionId).roomId)&&active.every(run=>["host-outbound","host-mcp"].includes(run.route)&&run.executorBotId!==hostExecutorBotId);
+    if(active.length&&!independentHost)throw new AevorenBotError("SESSION_BUSY");
     const session = this.getSession(command.sessionId);
+    this.library.assertReferences(session.id, resourceRefs, session.botId ?? undefined);
     const timestamp = now();
+    const userEntryId = randomUUID();
     this.transaction(() => {
+      const capturedMedia = this.media.captureSendReferences(session.id, mediaRefs, session.botId ?? undefined);
       const sequence = this.nextSequence(session.id, session.generation);
       const updatedSeq = this.nextTranscriptUpdateSeq(session.id);
       this.database
@@ -3689,10 +5740,17 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO transcript_entries(
-             id, session_id, generation, seq, client_nonce, role, body, status, updated_seq, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, 'user', ?, 'pending', ?, ?, ?)`,
+             id, session_id, generation, seq, client_nonce, role, body, attachments_json, status, updated_seq, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, 'user', ?, ?, 'pending', ?, ?, ?)`,
         )
-        .run(randomUUID(), session.id, session.generation, sequence, command.clientNonce, command.text, updatedSeq, timestamp, timestamp);
+        .run(userEntryId, session.id, session.generation, sequence, command.clientNonce, command.text, JSON.stringify(attachmentMetadata), updatedSeq, timestamp, timestamp);
+      this.insertMessageAttachments(userEntryId, command.clientNonce, attachments);
+      if (resourceRefs.length) this.database.prepare("UPDATE transcript_entries SET resource_references_json = ? WHERE id = ?").run(JSON.stringify(resourceRefs), userEntryId);
+      if (mediaRefs.length) {
+        this.database.prepare("UPDATE transcript_entries SET media_references_json = ? WHERE id = ?").run(JSON.stringify(mediaRefs), userEntryId);
+        this.media.storeSendAdmissions(userEntryId, capturedMedia);
+      }
+      if (origin) this.recordDelegationOrigin(command.clientNonce, origin);
     });
     return { disposition: "prepared", journal: this.getSendOrThrow(command.clientNonce) };
   }
@@ -3710,6 +5768,7 @@ export class AppRepository {
       comparePolicyOnDuplicate: false,
       routingMode: "legacy",
       routingReason: null,
+      orchestrationEnabled: false,
     });
     return {
       disposition: prepared.disposition === "created" ? "prepared" : "duplicate",
@@ -3726,28 +5785,92 @@ export class AppRepository {
     return this.prepareRoomRun({ ...input, windingDown: false, comparePolicyOnDuplicate: true });
   }
 
+  /** Approval, its user entry, initial turn, and evidence are committed together. */
+  createApprovedBriefRun(input: CreateRoomRunInput, approval: {
+    sourceRuntimeRunId: string;
+    briefInvocationId: string;
+    sha256: string;
+    candidate: "A" | "B" | "C";
+  }): ReturnType<AppRepository["createRoomRunWithInitialTurns"]> {
+    if (input.initialTurns.length !== 1 || !["A", "B", "C"].includes(approval.candidate)) {
+      throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    }
+    const source = this.getCompletedWorkspaceArtifact(input.sessionId, approval.briefInvocationId, approval.sourceRuntimeRunId);
+    if (!source || !source.invocation.targetPath.startsWith("02-briefs/") || source.invocation.resultMetadata?.sha256 !== approval.sha256) {
+      throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    }
+    const previous = this.database.prepare(
+      `SELECT room_batches.client_nonce FROM room_turns
+       INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+       WHERE json_extract(room_turns.execution_receipt_json, '$.approvedBrief.briefInvocationId') = ?
+         AND room_turns.parent_turn_id IS NULL LIMIT 1`,
+    ).get(approval.briefInvocationId) as { client_nonce: string } | undefined;
+    if (previous && previous.client_nonce !== input.clientNonce) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const attachReceipt = (prepared: ReturnType<AppRepository["createRoomRunWithInitialTurns"]>): void => {
+      if (prepared.disposition === "created") {
+        const latest = this.findLatestCompletedWorkspaceArtifact(input.sessionId, "02-briefs/");
+        if (latest?.invocation.id !== approval.briefInvocationId) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      }
+      const previousApproval = this.database.prepare(
+        `SELECT batch_id FROM room_turns WHERE parent_turn_id IS NULL
+         AND json_extract(execution_receipt_json, '$.approvedBrief.briefInvocationId') = ? LIMIT 1`,
+      ).get(approval.briefInvocationId) as { batch_id: string } | undefined;
+      if (previousApproval && previousApproval.batch_id !== prepared.run.id) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      this.createExecutionEvidenceReceipt(prepared.turns[0]!.id, approval.sourceRuntimeRunId, {
+        candidate: approval.candidate,
+        approvalEntryId: prepared.run.triggerMessageId,
+        briefInvocationId: approval.briefInvocationId,
+        sha256: approval.sha256,
+      });
+    };
+    // A transport retry repeats the human decision, not the wall-clock deadline calculation.
+    const existingRun = this.getRoomBatchByNonce(input.clientNonce);
+    const prepared = this.prepareRoomRun({
+      ...input,
+      deadlineAt: existingRun?.deadlineAt ?? input.deadlineAt,
+      windingDown: false,
+      comparePolicyOnDuplicate: true,
+    }, attachReceipt);
+    if (prepared.disposition === "duplicate") attachReceipt(prepared);
+    return prepared;
+  }
+
   private prepareRoomRun(input: Omit<CreateRoomRunInput, "membershipVersion"> & {
     membershipVersion?: number;
     windingDown: boolean;
     comparePolicyOnDuplicate: boolean;
-  }): {
+  }, afterCreate?: (prepared: ReturnType<AppRepository["createRoomRunWithInitialTurns"]>) => void): {
     disposition: "created" | "duplicate";
     run: RoomRun;
     turns: AgentTurn[];
   } {
+    const attachments = normalizeAttachmentDrafts(input.attachments);
+    const attachmentMetadata = attachments.map(({ content: _content, ...attachment }) => attachment);
     const canonicalTargetIds = input.initialTurns.map((turn) => turn.agentId).toSorted();
     const routingMode = input.routingMode ?? "legacy";
+    const priorRun = this.getRoomBatchByNonce(input.clientNonce);
+    const leadBotId = routingMode === "automatic"
+      ? input.leadBotId === undefined
+        ? (priorRun ? priorRun.leadBotId : this.getRoom(input.roomId).leadBotId) ?? null
+        : input.leadBotId
+      : null;
+    const turnPurpose = (turn: CreateRoomRunInput["initialTurns"][number]): NonNullable<AgentTurn["turnPurpose"]> =>
+      turn.turnPurpose ?? (leadBotId ? "coordinate" : "work");
     const routingReason = input.routingReason?.trim() || null;
+    const orchestrationEnabled = input.orchestrationEnabled ?? routingMode !== "legacy";
     const commandTargetIds = routingMode === "automatic" ? [] : canonicalTargetIds;
     if (
       input.initialTurns.length === 0 ||
       input.initialTurns.length > 6 ||
       input.clientNonce.trim().length === 0 ||
-      input.text.trim().length === 0 ||
+      (input.text.trim().length === 0 && attachments.length === 0 && !input.resourceRefs?.length && !input.mediaRefs?.length) ||
       new Set(input.initialTurns.map((turn) => turn.agentId)).size !== input.initialTurns.length ||
       input.initialTurns.some((turn) => turn.nonce.trim().length === 0) ||
       !Number.isInteger(input.maxTurns) ||
       input.maxTurns < input.initialTurns.length ||
+      (leadBotId !== null && input.maxTurns < 2) ||
+      input.initialTurns.some((turn) => turnPurpose(turn) === "summary" ||
+        (turnPurpose(turn) === "coordinate" && (!leadBotId || turn.agentId !== leadBotId))) ||
       !Number.isInteger(input.maxHops) ||
       input.maxHops < 0 ||
       !Number.isInteger(input.maxTargetsPerTurn) ||
@@ -3759,7 +5882,9 @@ export class AppRepository {
     ) {
       throw new AevorenBotError("INVALID_REQUEST");
     }
-    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode);
+    const resourceRefs = resourceReferencesSchema.parse(input.resourceRefs ?? []);
+    const mediaRefs = messageMediaReferencesSchema.parse(input.mediaRefs ?? []);
+    const bodyDigest = digestRoomCommand(input.roomId, input.sessionId, input.text, commandTargetIds, routingMode, attachmentMetadata, resourceRefs, mediaRefs);
     const targetDigest = digestMessage(JSON.stringify(canonicalTargetIds));
     const existingJournal = this.getSend(input.clientNonce);
     if (existingJournal) {
@@ -3768,9 +5893,9 @@ export class AppRepository {
       if (!existing) throw new AevorenBotError("ROOM_BATCH_NOT_FOUND");
       const turns = this.listRoomTurns(existing.id).filter((turn) => turn.origin === "initial");
       const expectedTurns = input.initialTurns
-        .map((turn) => `${turn.agentId}:${turn.nonce}`)
+        .map((turn) => `${turn.agentId}:${turn.nonce}:${turnPurpose(turn)}`)
         .toSorted();
-      const actualTurns = turns.map((turn) => `${turn.agentId}:${turn.nonce}`).toSorted();
+      const actualTurns = turns.map((turn) => `${turn.agentId}:${turn.nonce}:${turn.turnPurpose}`).toSorted();
       if (input.comparePolicyOnDuplicate && (
         existing.roomId !== input.roomId ||
         existing.sessionId !== input.sessionId ||
@@ -3778,6 +5903,8 @@ export class AppRepository {
         existing.targetDigest !== targetDigest ||
         existing.routingMode !== routingMode ||
         existing.routingReason !== routingReason ||
+        existing.orchestrationEnabled !== orchestrationEnabled ||
+        existing.leadBotId !== leadBotId ||
         existing.maxTurns !== input.maxTurns ||
         existing.maxHops !== input.maxHops ||
         existing.maxTargetsPerTurn !== input.maxTargetsPerTurn ||
@@ -3795,12 +5922,13 @@ export class AppRepository {
     if (room.archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     const session = this.getSession(input.sessionId);
     if (session.roomId !== room.id) throw new AevorenBotError("SESSION_NOT_FOUND");
+    this.library.assertReferences(session.id, resourceRefs);
     if (input.membershipVersion !== undefined && room.membershipVersion !== input.membershipVersion) {
       throw new AevorenBotError("ROOM_MEMBERSHIP_CONFLICT", undefined, undefined, { currentVersion: room.membershipVersion });
     }
     const members = this.listRoomMembers(room.id);
     const memberById = new Map(members.map((member) => [member.botId, member]));
-    if (input.initialTurns.some((turn) => !memberById.has(turn.agentId))) {
+    if (input.initialTurns.some((turn) => !memberById.has(turn.agentId)) || (leadBotId && !memberById.has(leadBotId))) {
       throw new AevorenBotError("ROOM_MEMBER_INVALID");
     }
     if (this.getActiveRoomBatch(session.id)) throw new AevorenBotError("ROOM_BATCH_BUSY");
@@ -3810,6 +5938,7 @@ export class AppRepository {
     const triggerMessageId = randomUUID();
     const timestamp = now();
     this.transaction(() => {
+      const capturedMedia = this.media.captureSendReferences(session.id, mediaRefs);
       const sequence = this.nextSequence(session.id, session.generation);
       const updatedSeq = this.nextTranscriptUpdateSeq(session.id);
       this.database
@@ -3823,9 +5952,9 @@ export class AppRepository {
       this.database
         .prepare(
           `INSERT INTO transcript_entries(
-             id, session_id, generation, seq, client_nonce, role, body, status, updated_seq,
+             id, session_id, generation, seq, client_nonce, role, body, attachments_json, status, updated_seq,
              speaker_bot_id, speaker_name_snapshot, source_turn_id, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, 'user', ?, 'completed', ?, NULL, NULL, NULL, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, 'user', ?, ?, 'completed', ?, NULL, NULL, NULL, ?, ?)`,
         )
         .run(
           triggerMessageId,
@@ -3834,17 +5963,25 @@ export class AppRepository {
           sequence,
           input.clientNonce,
           input.text,
+          JSON.stringify(attachmentMetadata),
           updatedSeq,
           timestamp,
           timestamp,
         );
+      this.insertMessageAttachments(triggerMessageId, input.clientNonce, attachments);
+      if (resourceRefs.length) this.database.prepare("UPDATE transcript_entries SET resource_references_json = ? WHERE id = ?").run(JSON.stringify(resourceRefs), triggerMessageId);
+      if (mediaRefs.length) {
+        this.database.prepare("UPDATE transcript_entries SET media_references_json = ? WHERE id = ?").run(JSON.stringify(mediaRefs), triggerMessageId);
+        this.media.storeSendAdmissions(triggerMessageId, capturedMedia);
+      }
+      if (input.origin) this.recordDelegationOrigin(input.clientNonce, input.origin);
       this.database
         .prepare(
           `INSERT INTO room_batches(
-             id, room_id, session_id, client_nonce, trigger_message_id, target_digest, routing_mode, routing_reason, state, membership_version,
+             id, room_id, session_id, client_nonce, trigger_message_id, target_digest, routing_mode, routing_reason, orchestration_enabled, state, membership_version,
              max_turns, max_hops, max_targets_per_turn, deadline_at, is_winding_down,
              version, created_at, updated_at, finished_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)`,
         )
         .run(
           runId,
@@ -3855,6 +5992,7 @@ export class AppRepository {
           targetDigest,
           routingMode,
           routingReason,
+          orchestrationEnabled ? 1 : 0,
           input.membershipVersion ?? room.membershipVersion,
           input.maxTurns,
           input.maxHops,
@@ -3887,7 +6025,11 @@ export class AppRepository {
           timestamp,
           timestamp,
         );
+        this.database.prepare("UPDATE room_turns SET turn_purpose = ? WHERE id = ?").run(turnPurpose(turn), turnId);
       }
+      this.database.prepare("UPDATE room_batches SET lead_bot_id = ?, summary_state = ? WHERE id = ?")
+        .run(leadBotId, leadBotId ? "pending" : "not-required", runId);
+      afterCreate?.({ disposition: "created", run: this.getRoomRun(runId), turns: this.listAgentTurns(runId) });
     });
     return { disposition: "created", run: this.getRoomRun(runId), turns: this.listAgentTurns(runId) };
   }
@@ -3897,6 +6039,10 @@ export class AppRepository {
     handoff: RoomHandoff;
     targetTurn: AgentTurn;
   } {
+    return this.transaction(() => this.insertHandoff(input));
+  }
+
+  private insertHandoff(input: CreateHandoffInput, queuedPlanSource = false): ReturnType<AppRepository["createHandoff"]> {
     if (
       typeof input.task !== "string" ||
       !Array.isArray(input.contextRefs) ||
@@ -3921,6 +6067,9 @@ export class AppRepository {
     const run = this.getRoomRun(input.runId);
     const source = this.getRoomTurn(input.fromTurnId);
     if (source.runId !== run.id) throw new AevorenBotError("AGENT_TURN_CONFLICT");
+    if (source.turnPurpose === "summary" || (run.leadBotId && input.toAgentId === run.leadBotId)) {
+      throw new AevorenBotError("HANDOFF_TARGET_CONFLICT");
+    }
     const target = this.getBot(input.toAgentId);
     const digest = digestHandoff(task, contextRefs);
     const existing = this.getHandoffBySemanticKey(run.id, source.logicalTurnId, target.id, digest, input.visibility);
@@ -3952,7 +6101,7 @@ export class AppRepository {
       throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
     }
     this.assertHandoffContextRefs(run, contextRefs, input.inputGeneration, input.inputSeq);
-    if (run.state !== "running" || source.state !== "running") {
+    if (run.state !== "running" || (source.state !== "running" && !(queuedPlanSource && source.state === "queued"))) {
       throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: source.state });
     }
     if (source.agentId === target.id) throw new AevorenBotError("HANDOFF_CYCLE");
@@ -3975,7 +6124,7 @@ export class AppRepository {
     const targetTurnId = randomUUID();
     const handoffId = randomUUID();
     const timestamp = now();
-    this.transaction(() => {
+    {
       this.database
         .prepare(
           `INSERT INTO room_turns(
@@ -4020,7 +6169,7 @@ export class AppRepository {
           timestamp,
           timestamp,
         );
-    });
+    }
     return {
       disposition: "created",
       handoff: this.getHandoff(handoffId),
@@ -4028,8 +6177,254 @@ export class AppRepository {
     };
   }
 
+  createLeadAssignments(runId: string, fromTurnId: string, assignments: Array<{
+    toAgentId: string;
+    task: string;
+    dependsOnPrevious: boolean;
+  }>): RoomTurn[] {
+    return this.transaction(() => {
+      const run = this.getRoomRun(runId);
+      const source = this.getRoomTurn(fromTurnId);
+      if (!run.leadBotId || run.routingMode !== "automatic" || source.runId !== runId ||
+        source.agentId !== run.leadBotId || source.turnPurpose !== "coordinate") {
+        throw new AevorenBotError("AGENT_TURN_CONFLICT");
+      }
+      const latestTurns = this.latestRoomTurns(runId);
+      if (run.state !== "running" || source.state !== "running" ||
+        latestTurns.find((turn) => turn.logicalTurnId === source.logicalTurnId)?.id !== source.id) {
+        throw new AevorenBotError("RUNTIME_STATE_INVALID");
+      }
+      this.assertRoomRunHardStopAllowsWork(run);
+      if (!Array.isArray(assignments) || assignments.length > this.listRoomMembers(run.roomId).length - 1 ||
+        assignments.some((assignment, index) => typeof assignment.task !== "string" ||
+          typeof assignment.toAgentId !== "string" || typeof assignment.dependsOnPrevious !== "boolean" ||
+          (index === 0 && assignment.dependsOnPrevious)) ||
+        new Set(assignments.map((assignment) => assignment.toAgentId)).size !== assignments.length) {
+        throw new AevorenBotError("INVALID_REQUEST");
+      }
+      const plan = JSON.stringify(assignments.map((assignment) => ({
+        toAgentId: assignment.toAgentId, task: assignment.task.trim(), dependsOnPrevious: assignment.dependsOnPrevious,
+      })));
+      const prior = this.database.prepare(
+        "SELECT lead_assignments_json FROM room_turns WHERE batch_id = ? AND logical_turn_id = ? AND lead_assignments_json IS NOT NULL LIMIT 1",
+      ).get(runId, source.logicalTurnId) as { lead_assignments_json: string } | undefined;
+      if (prior) {
+        if (prior.lead_assignments_json !== plan) throw new AevorenBotError("AGENT_TURN_CONFLICT");
+        if (assignments.length === 0 && run.state === "running" && source.state === "running") {
+          this.markLeadSummaryNotRequired(runId);
+        }
+        return assignments.map((assignment, index) => {
+          const turn = this.getAgentTurnByNonce(runId, assignment.toAgentId, `lead-plan:${source.logicalTurnId}:${index}`);
+          if (!turn) throw new AevorenBotError("AGENT_TURN_CONFLICT");
+          const latest = latestTurns.find((candidate) => candidate.logicalTurnId === turn.logicalTurnId)!;
+          if (!latest.runtimeRunId && ["cancelled", "interrupted"].includes(latest.state)) {
+            const retryId = randomUUID();
+            const timestamp = now();
+            this.database.prepare(
+              `INSERT INTO room_turns(
+                id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+                hop, origin, input_generation, input_seq, position, attempt_no, version, state,
+                prompt_cutoff_seq, created_at, updated_at
+              ) SELECT ?, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, ?,
+                hop, 'retry', input_generation, input_seq, position, attempt_no + 1, 1, 'queued',
+                prompt_cutoff_seq, ?, ? FROM room_turns WHERE id = ?`,
+            ).run(retryId, randomUUID(), timestamp, timestamp, latest.id);
+            this.copyRoomTurnRetryContext(latest, retryId);
+            return this.getRoomTurn(retryId);
+          }
+          return latest;
+        });
+      }
+      const created: RoomTurn[] = [];
+      for (const [index, assignment] of assignments.entries()) {
+        const planSource = created.at(-1) ?? source;
+        const result = this.insertHandoff({
+          runId, fromTurnId: planSource.id, toAgentId: assignment.toAgentId, task: assignment.task,
+          contextRefs: [], visibility: "room", targetTurnNonce: `lead-plan:${source.logicalTurnId}:${index}`,
+          inputGeneration: source.inputGeneration, inputSeq: source.inputSeq,
+        }, index > 0);
+        if (result.targetTurn.nonce !== `lead-plan:${source.logicalTurnId}:${index}`) {
+          throw new AevorenBotError("AGENT_TURN_CONFLICT");
+        }
+        const dependency = assignment.dependsOnPrevious ? created[index - 1]!.logicalTurnId : null;
+        this.database.prepare("UPDATE room_turns SET dependency_logical_turn_id = ? WHERE id = ?")
+          .run(dependency, result.targetTurn.id);
+        created.push(this.getRoomTurn(result.targetTurn.id));
+      }
+      this.database.prepare("UPDATE room_turns SET lead_assignments_json = ? WHERE id = ?").run(plan, source.id);
+      if (assignments.length === 0) this.markLeadSummaryNotRequired(runId);
+      return created;
+    });
+  }
+
+  markRoomCoordinationFailed(runId: string, errorCode: string): RoomRun {
+    const run = this.getRoomRun(runId);
+    if (!run.leadBotId || !errorCode.trim()) throw new AevorenBotError("INVALID_REQUEST");
+    this.database.prepare(
+      "UPDATE room_batches SET coordination_error_code = ?, version = version + 1, updated_at = ? WHERE id = ?",
+    ).run(errorCode, now(), runId);
+    return this.getRoomRun(runId);
+  }
+
+  setRoomTaskRequirementsMet(runId: string, met: boolean): RoomRun {
+    this.getRoomRun(runId);
+    this.database.prepare(
+      `UPDATE room_batches SET coordination_error_code = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND ${met ? "coordination_error_code = 'TASK_REQUIREMENTS_UNMET'" : "coordination_error_code IS NULL"}`,
+    ).run(met ? null : "TASK_REQUIREMENTS_UNMET", now(), runId);
+    return this.getRoomRun(runId);
+  }
+
+  private latestRoomTurns(runId: string): RoomTurn[] {
+    const latest = new Map<string, RoomTurn>();
+    for (const turn of this.listRoomTurns(runId)) {
+      const previous = latest.get(turn.logicalTurnId);
+      if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.logicalTurnId, turn);
+    }
+    return [...latest.values()];
+  }
+
+  private markLeadSummaryNotRequired(runId: string): void {
+    this.database.prepare(
+      `UPDATE room_batches SET summary_state = 'not-required', summary_skip_reason = NULL,
+       version = version + 1, updated_at = ? WHERE id = ? AND summary_state = 'pending'`,
+    ).run(now(), runId);
+  }
+
+  private isLeadDirectAnswer(run: RoomRun, turns: RoomTurn[]): boolean {
+    if (!run.leadBotId || run.summaryState !== "not-required" || turns.length !== 1) return false;
+    const turn = turns[0]!;
+    if (turn.turnPurpose !== "coordinate" || turn.state !== "completed" || turn.agentId !== run.leadBotId) return false;
+    return Boolean(this.database.prepare("SELECT 1 FROM room_turns WHERE id = ? AND lead_assignments_json = '[]'").get(turn.id));
+  }
+
+  private skipLeadSummary(runId: string, reason: string): void {
+    this.database.prepare(
+      `UPDATE room_batches SET summary_state = 'skipped', summary_skip_reason = ?,
+       version = version + 1, updated_at = ? WHERE id = ? AND lead_bot_id IS NOT NULL AND summary_state = 'pending'`,
+    ).run(reason, now(), runId);
+  }
+
+  ensureLeadSummaryTurn(runId: string): RoomTurn | null {
+    return this.transaction(() => {
+      const run = this.getRoomRun(runId);
+      if (!run.leadBotId || run.routingMode !== "automatic") return null;
+      const skipReason = run.windingDown ? "winding-down"
+        : Date.parse(run.deadlineAt) <= Date.now() ? "deadline"
+          : run.state === "cancelled" ? "cancelled" : run.state === "interrupted" ? "interrupted" : null;
+      if (skipReason) {
+        this.skipLeadSummary(runId, skipReason);
+        return null;
+      }
+      if (run.state !== "running") return null;
+      if (run.summaryTurnId && run.summaryState !== "pending") return this.getRoomTurn(run.summaryTurnId);
+      if (run.summaryState !== "pending") return null;
+      const turns = this.latestRoomTurns(runId);
+      if (turns.some((turn) => turn.state === "queued" || turn.state === "running")) return null;
+      if (turns.some((turn) => turn.turnPurpose === "coordinate" && turn.state !== "completed")) {
+        this.skipLeadSummary(runId, "coordination-failed");
+        return null;
+      }
+      const pending = this.database.prepare(
+        "SELECT 1 FROM agent_handoffs WHERE run_id = ? AND state IN ('queued', 'dispatching') LIMIT 1",
+      ).get(runId);
+      if (pending) return null;
+      if (!run.summaryTurnId && run.usedTurns >= run.maxTurns) {
+        this.skipLeadSummary(runId, "max-turns");
+        return null;
+      }
+      this.assertSessionExecutor(run.sessionId, run.leadBotId);
+      const request = this.getTranscriptEntry(run.triggerMessageId);
+      const session = this.getSession(run.sessionId);
+      if (request.sessionId !== run.sessionId || request.generation !== session.generation) {
+        throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      }
+      const id = randomUUID();
+      const timestamp = now();
+      const previousSummary = run.summaryTurnId ? this.getRoomTurn(run.summaryTurnId) : null;
+      this.database.prepare(
+        `INSERT INTO room_turns(
+          id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+          hop, origin, input_generation, input_seq, position, attempt_no, version, state,
+          prompt_cutoff_seq, created_at, updated_at, turn_purpose
+        ) VALUES (?, ?, ?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, ?, 1, 'queued', ?, ?, ?, 'summary')`,
+      ).run(id, runId, run.leadBotId, this.getBot(run.leadBotId).name, previousSummary?.logicalTurnId ?? id,
+        previousSummary ? randomUUID() : `summary:${runId}`, previousSummary ? "retry" : "handoff",
+        session.generation, request.seq, previousSummary?.position ?? this.nextRoomTurnPosition(runId),
+        (previousSummary?.attemptNo ?? 0) + 1, this.getTranscriptHighWater(run.sessionId), timestamp, timestamp);
+      this.database.prepare(
+        "UPDATE room_batches SET summary_state = 'queued', summary_turn_id = ?, version = version + 1, updated_at = ? WHERE id = ?",
+      ).run(id, timestamp, runId);
+      return this.getRoomTurn(id);
+    });
+  }
+
+  getRoomRunSummary(runId: string): RoomRunSummary {
+    const run = this.getRoomRun(runId);
+    if (!run.leadBotId) throw new AevorenBotError("INVALID_REQUEST");
+    this.assertSessionExecutor(run.sessionId, run.leadBotId);
+    const request = this.getTranscriptEntry(run.triggerMessageId);
+    const session = this.getSession(run.sessionId);
+    if (request.sessionId !== run.sessionId || request.generation !== session.generation ||
+      request.role !== "user" || request.status !== "completed") throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const invocations = this.listToolInvocations(run.sessionId);
+    return {
+      runId, leadBotId: run.leadBotId, request: { entryId: request.id, text: request.body },
+      coordinationErrorCode: run.coordinationErrorCode ?? null,
+      results: this.latestRoomTurns(runId).filter((turn) => turn.turnPurpose !== "summary").map((turn) => {
+        let body = "";
+        let assistantEntryId: string | null = null;
+        const artifacts: RoomRunSummary["results"][number]["artifacts"] = [];
+        const tools: NonNullable<RoomRunSummary["results"][number]["tools"]> = [];
+        if (turn.runtimeRunId) {
+          try {
+            const runtime = this.getRuntimeRun(turn.runtimeRunId);
+            this.assertSessionExecutor(run.sessionId, turn.agentId);
+            this.assertRuntimeSessionScope(runtime.id);
+            if (runtime.sessionId !== run.sessionId || runtime.inputGeneration !== session.generation ||
+              runtime.executorBotId !== turn.agentId || runtime.executionKey !== `${runId}:${turn.logicalTurnId}`) {
+              throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+            }
+            const succeeded = invocations.filter((invocation) => invocation.runtimeRunId === turn.runtimeRunId &&
+              invocation.state === "succeeded" && invocation.resultDigest && invocation.finishedAt);
+            for (const invocation of succeeded) {
+              if (invocation.workspaceId) this.assertSessionWorkspaceAccess(run.sessionId, run.leadBotId!, invocation.workspaceId);
+            }
+            if (turn.state === "completed" && runtime.state === "completed") {
+              const source = this.completedReceiptSource(runtime.id, run.sessionId, session.generation);
+              if (source.sourceTurn.id !== turn.id) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+              body = source.assistant.body;
+              assistantEntryId = source.assistant.id;
+            }
+            tools.push(...succeeded.map((invocation) => ({ kind: invocation.toolKind, resultDigest: invocation.resultDigest! })));
+            for (const invocation of invocations) {
+              if (invocation.runtimeRunId !== turn.runtimeRunId || invocation.toolKind !== "workspace-write" || invocation.state !== "succeeded") continue;
+              try {
+                const artifact = this.receiptArtifact(invocation);
+                this.assertSessionWorkspaceAccess(run.sessionId, run.leadBotId!, artifact.workspaceId);
+                artifacts.push({
+                  invocationId: artifact.invocationId, sourceRuntimeRunId: artifact.sourceRuntimeRunId,
+                  workspaceId: artifact.workspaceId, path: artifact.path, sha256: artifact.sha256!, bytes: artifact.bytes!,
+                });
+              } catch { /* Revoked or unverifiable artifacts cannot enter summary context. */ }
+            }
+          } catch { /* A foreign or stale runtime cannot supply summary evidence. */ }
+        }
+        return {
+          turnId: turn.id, logicalTurnId: turn.logicalTurnId, agentId: turn.agentId, agentName: turn.memberNameSnapshot,
+          turnPurpose: turn.turnPurpose === "coordinate" ? "coordinate" : "work", state: turn.state,
+          errorCode: turn.lastErrorCode, outcome: turn.outcome, body, assistantEntryId, artifacts, tools,
+        };
+      }),
+    };
+  }
+
   getSend(clientNonce: string): SendJournalEntry | null {
-    const row = this.database.prepare("SELECT * FROM send_journal WHERE client_nonce = ?").get(clientNonce) as SendRow | undefined;
+    const row = this.database.prepare(
+      `SELECT send_journal.*, retired_conversation_sends.retired_at FROM send_journal
+       LEFT JOIN retired_conversation_sends USING (client_nonce) WHERE send_journal.client_nonce = ?`,
+    ).get(clientNonce) as SendRow | undefined;
+    if (row?.retired_at) throw new AevorenBotError("MESSAGE_RETRY_UNSAFE");
     return row ? toSend(row) : null;
   }
 
@@ -4083,6 +6478,255 @@ export class AppRepository {
     const row = this.database.prepare("SELECT * FROM room_turns WHERE id = ?").get(id) as RoomTurnRow | undefined;
     if (!row) throw new AevorenBotError("ROOM_TURN_NOT_FOUND");
     return toRoomTurn(row);
+  }
+
+  findLatestCompletedWorkspaceArtifact(sessionId: string, pathPrefix: string): {
+    invocation: ToolInvocation;
+    run: RuntimeRun;
+    sourceTurnId: string | null;
+  } | null {
+    const session = this.getSession(sessionId);
+    const prefix = pathPrefix.trim();
+    if (!prefix || prefix.length > 1_024) throw new AevorenBotError("INVALID_REQUEST");
+    // A newer incomplete/failed write must not silently resurrect an older Brief.
+    const invocation = (this.database.prepare(
+      `SELECT tool_invocations.* FROM tool_invocations
+       INNER JOIN runtime_runs ON runtime_runs.id = tool_invocations.runtime_run_id
+       WHERE tool_invocations.session_id = ? AND runtime_runs.input_generation = ?
+         AND tool_invocations.tool_kind = 'workspace-write'
+       ORDER BY tool_invocations.created_at DESC, tool_invocations.rowid DESC`,
+    ).all(sessionId, session.generation) as ToolInvocationRow[])
+      .map(toToolInvocation).find((candidate) => candidate.targetPath.startsWith(prefix));
+    return invocation ? this.getCompletedWorkspaceArtifact(sessionId, invocation.id) : null;
+  }
+
+  getCompletedWorkspaceArtifact(sessionId: string, invocationId: string, runtimeRunId?: string): {
+    invocation: ToolInvocation;
+    run: RuntimeRun;
+    sourceTurnId: string;
+  } | null {
+    const session = this.getSession(sessionId);
+    const invocation = this.getToolInvocation(invocationId);
+    if (
+      invocation.sessionId !== sessionId || (runtimeRunId && invocation.runtimeRunId !== runtimeRunId) ||
+      invocation.toolKind !== "workspace-write" || invocation.state !== "succeeded" ||
+      !invocation.workspaceId || !invocation.resultDigest || !invocation.finishedAt
+    ) return null;
+    try {
+      const { source, sourceTurn } = this.completedReceiptSource(invocation.runtimeRunId, sessionId, session.generation);
+      this.receiptArtifact(invocation);
+      return { invocation, run: source, sourceTurnId: sourceTurn.id };
+    } catch {
+      return null;
+    }
+  }
+
+  private completedReceiptSource(sourceRuntimeRunId: string, sessionId: string, generation: number): {
+    source: RuntimeRun;
+    sourceTurn: RoomTurn;
+    assistant: TranscriptEntry;
+  } {
+    const source = this.getRuntimeRun(sourceRuntimeRunId);
+    this.assertSessionExecutor(sessionId, source.executorBotId);
+    this.assertRuntimeSessionScope(source.id);
+    const sourceTurnRow = this.database.prepare("SELECT id FROM room_turns WHERE runtime_run_id = ? LIMIT 1")
+      .get(source.id) as { id: string } | undefined;
+    if (
+      source.sessionId !== sessionId || source.inputGeneration !== generation || source.state !== "completed" ||
+      !source.assistantEntryId || !source.finishedAt || !sourceTurnRow
+    ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const sourceTurn = this.getRoomTurn(sourceTurnRow.id);
+    const assistant = this.getTranscriptEntry(source.assistantEntryId);
+    const sourceBatch = this.getRoomRun(sourceTurn.runId);
+    if (
+      sourceTurn.state !== "completed" || sourceTurn.inputGeneration !== generation || sourceTurn.agentId !== source.executorBotId ||
+      sourceBatch.sessionId !== sessionId || assistant.sessionId !== sessionId || assistant.generation !== generation ||
+      assistant.status !== "completed" || assistant.role !== "assistant" || assistant.sourceTurnId !== sourceTurn.id ||
+      assistant.speakerBotId !== source.executorBotId
+    ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    return { source, sourceTurn, assistant };
+  }
+
+  private receiptArtifact(invocation: ToolInvocation): ExecutionEvidenceReceipt["artifacts"][number] {
+    const sha256 = invocation.resultMetadata?.sha256;
+    const bytes = invocation.resultMetadata?.bytes;
+    if (
+      invocation.toolKind !== "workspace-write" || invocation.arguments.kind !== "workspace-write" ||
+      invocation.state !== "succeeded" || !invocation.workspaceId || !invocation.resultDigest || !invocation.finishedAt ||
+      typeof sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(sha256) ||
+      typeof bytes !== "number" || !Number.isSafeInteger(bytes) || bytes < 1 ||
+      bytes !== Buffer.byteLength(invocation.arguments.content, "utf8") ||
+      sha256 !== createHash("sha256").update(invocation.arguments.content, "utf8").digest("hex")
+    ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    this.assertSessionWorkspaceAccess(invocation.sessionId, invocation.executorBotId, invocation.workspaceId);
+    return {
+      invocationId: invocation.id,
+      sourceRuntimeRunId: invocation.runtimeRunId,
+      workspaceId: invocation.workspaceId,
+      path: invocation.targetPath,
+      resultDigest: invocation.resultDigest,
+      sha256,
+      bytes,
+      finishedAt: invocation.finishedAt,
+    };
+  }
+
+  createExecutionEvidenceReceipt(
+    targetTurnId: string,
+    sourceRuntimeRunId: string,
+    approval?: NonNullable<ExecutionEvidenceReceipt["approvedBrief"]>,
+  ): ExecutionEvidenceReceipt {
+    const target = this.getRoomTurn(targetTurnId);
+    const existing = this.getExecutionEvidenceReceipt(targetTurnId);
+    if (existing) {
+      if (
+        existing.sourceRuntimeRunId !== sourceRuntimeRunId ||
+        (approval && (
+          existing.approvedBrief?.candidate !== approval.candidate ||
+          existing.approvedBrief.approvalEntryId !== approval.approvalEntryId ||
+          existing.approvedBrief.briefInvocationId !== approval.briefInvocationId ||
+          existing.approvedBrief.sha256 !== approval.sha256
+        ))
+      ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      return existing;
+    }
+    if (target.state !== "queued") throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: target.state });
+    const evidence = this.collectExecutionEvidence(target, sourceRuntimeRunId, approval, new Set([target.id]));
+    const unsigned = {
+      schemaVersion: 1 as const,
+      id: randomUUID(),
+      targetTurnId: target.id,
+      ...evidence,
+      createdAt: now(),
+    };
+    const receipt: ExecutionEvidenceReceipt = {
+      ...unsigned,
+      digest: createHash("sha256").update(JSON.stringify(unsigned), "utf8").digest("hex"),
+    };
+    const updated = this.database.prepare(
+      `UPDATE room_turns SET execution_receipt_json = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND state = 'queued' AND execution_receipt_json IS NULL`,
+    ).run(JSON.stringify(receipt), now(), target.id);
+    if (Number(updated.changes) !== 1) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    return this.getExecutionEvidenceReceipt(target.id)!;
+  }
+
+  private collectExecutionEvidence(
+    target: RoomTurn,
+    sourceRuntimeRunId: string,
+    approval: ExecutionEvidenceReceipt["approvedBrief"] | undefined,
+    seen: Set<string>,
+  ): Omit<ExecutionEvidenceReceipt, "schemaVersion" | "id" | "targetTurnId" | "createdAt" | "digest"> {
+    const batch = this.getRoomRun(target.runId);
+    const session = this.getSession(batch.sessionId);
+    this.assertSessionExecutor(session.id, target.agentId);
+    if (session.roomId !== batch.roomId || target.inputGeneration !== session.generation) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const { source, sourceTurn, assistant } = this.completedReceiptSource(sourceRuntimeRunId, session.id, session.generation);
+    const sourceBatch = this.getRoomRun(sourceTurn.runId);
+    if (sourceBatch.roomId !== batch.roomId || sourceTurn.id === target.id) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const inherited = this.readExecutionEvidenceReceipt(sourceTurn.id, seen);
+    let approvedBrief = inherited?.approvedBrief ?? null;
+    if (target.parentTurnId) {
+      if (target.parentTurnId !== sourceTurn.id || sourceTurn.runId !== target.runId || approval) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      const incoming = this.getIncomingHandoff(target.id);
+      if (!incoming || incoming.fromTurnId !== sourceTurn.id || incoming.toAgentId !== target.agentId) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    } else {
+      if (!approval || !["A", "B", "C"].includes(approval.candidate)) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      const approvalEntry = this.getTranscriptEntry(approval.approvalEntryId);
+      const brief = this.getCompletedWorkspaceArtifact(session.id, approval.briefInvocationId, source.id);
+      if (
+        approvalEntry.id !== batch.triggerMessageId || approvalEntry.clientNonce !== batch.clientNonce ||
+        approvalEntry.sessionId !== session.id || approvalEntry.generation !== session.generation ||
+        approvalEntry.origin || approvalEntry.role !== "user" || approvalEntry.status !== "completed" || approvalEntry.seq <= assistant.seq ||
+        !brief || !brief.invocation.targetPath.startsWith("02-briefs/") || brief.invocation.resultMetadata?.sha256 !== approval.sha256
+      ) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+      approvedBrief = approval;
+    }
+    const succeeded = this.listToolInvocations(batch.sessionId).filter((invocation) => (
+      invocation.runtimeRunId === source.id &&
+      invocation.state === "succeeded" &&
+      invocation.resultDigest !== null &&
+      invocation.finishedAt !== null
+    ));
+    for (const invocation of succeeded) {
+      if (invocation.workspaceId) this.assertSessionWorkspaceAccess(session.id, target.agentId, invocation.workspaceId);
+    }
+    const tools = succeeded.map((invocation) => ({
+      invocationId: invocation.id,
+      sourceRuntimeRunId: invocation.runtimeRunId,
+      kind: invocation.toolKind,
+      workspaceId: invocation.workspaceId,
+      targetPath: invocation.targetPath,
+      resultDigest: invocation.resultDigest!,
+      resultMetadata: invocation.resultMetadata,
+      finishedAt: invocation.finishedAt!,
+    }));
+    const artifacts = succeeded.filter((invocation) => invocation.toolKind === "workspace-write")
+      .map((invocation) => this.receiptArtifact(invocation));
+    const request = this.getTranscriptEntry(sourceBatch.triggerMessageId);
+    if (request.sessionId !== session.id || request.generation !== session.generation || request.role !== "user" || request.status !== "completed") {
+      throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    }
+    return {
+      roomId: batch.roomId,
+      sessionId: batch.sessionId,
+      generation: session.generation,
+      sourceRuntimeRunId: source.id,
+      sourceTurnId: sourceTurn.id,
+      sourceAgentId: source.executorBotId,
+      sourceAssistantEntryId: source.assistantEntryId!,
+      sourceCompletedAt: source.finishedAt!,
+      taskRequirements: inherited?.taskRequirements ?? { sourceEntryId: request.id, text: request.body },
+      approvedBrief,
+      tools: [...new Map([...(inherited?.tools ?? []), ...tools].map((tool) => [tool.invocationId, tool])).values()],
+      artifacts: [...new Map([...(inherited?.artifacts ?? []), ...artifacts].map((artifact) => [artifact.invocationId, artifact])).values()],
+    };
+  }
+
+  getExecutionEvidenceReceipt(turnId: string): ExecutionEvidenceReceipt | null {
+    return this.readExecutionEvidenceReceipt(turnId, new Set());
+  }
+
+  isBriefApproved(sessionId: string, briefInvocationId: string, sha256: string): boolean {
+    this.getSession(sessionId);
+    const rows = this.database.prepare(
+      `SELECT room_turns.id FROM room_turns INNER JOIN room_batches ON room_batches.id = room_turns.batch_id
+       WHERE room_batches.session_id = ? AND room_turns.parent_turn_id IS NULL
+         AND json_extract(room_turns.execution_receipt_json, '$.approvedBrief.briefInvocationId') = ?
+         AND json_extract(room_turns.execution_receipt_json, '$.approvedBrief.sha256') = ?`,
+    ).all(sessionId, briefInvocationId, sha256) as Array<{ id: string }>;
+    return rows.some((row) => this.getExecutionEvidenceReceipt(row.id)?.approvedBrief?.briefInvocationId === briefInvocationId);
+  }
+
+  private readExecutionEvidenceReceipt(turnId: string, seen: Set<string>): ExecutionEvidenceReceipt | null {
+    if (seen.has(turnId) || seen.size > 64) throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    const ancestors = new Set(seen).add(turnId);
+    const turn = this.getRoomTurn(turnId);
+    const row = this.database.prepare(
+      `SELECT id, execution_receipt_json FROM room_turns
+       WHERE batch_id = ? AND logical_turn_id = ? AND execution_receipt_json IS NOT NULL
+       ORDER BY attempt_no ASC LIMIT 1`,
+    ).get(turn.batchId, turn.logicalTurnId) as { id: string; execution_receipt_json: string } | undefined;
+    if (!row) return null;
+    try {
+      const receipt = JSON.parse(row.execution_receipt_json) as ExecutionEvidenceReceipt;
+      const { digest, ...unsigned } = receipt;
+      const actual = createHash("sha256").update(JSON.stringify(unsigned), "utf8").digest("hex");
+      if (
+        receipt.schemaVersion !== 1 ||
+        receipt.targetTurnId !== row.id ||
+        digest !== actual
+      ) throw new Error("invalid receipt");
+      const original = this.getRoomTurn(row.id);
+      if (original.agentId !== turn.agentId || original.inputGeneration !== turn.inputGeneration) throw new Error("invalid retry scope");
+      const evidence = this.collectExecutionEvidence(original, receipt.sourceRuntimeRunId,
+        original.parentTurnId ? undefined : receipt.approvedBrief, ancestors);
+      const expected = { schemaVersion: 1, id: receipt.id, targetTurnId: original.id, ...evidence, createdAt: receipt.createdAt };
+      if (JSON.stringify(unsigned) !== JSON.stringify(expected)) throw new Error("receipt evidence changed");
+      return receipt;
+    } catch {
+      throw new AevorenBotError("HANDOFF_CONTEXT_INVALID");
+    }
   }
 
   listRoomTurns(batchId: string): RoomTurn[] {
@@ -4176,12 +6820,30 @@ export class AppRepository {
     return row ? toRoomHandoff(row) : null;
   }
 
+  getHandoffDeliveryAttempt(id: string): RoomHandoffView["deliveryAttempt"] {
+    const handoff = this.getHandoff(id);
+    const original = this.getRoomTurn(handoff.targetTurnId);
+    const row = this.database.prepare(
+      "SELECT * FROM room_turns WHERE batch_id = ? AND logical_turn_id = ? ORDER BY attempt_no DESC LIMIT 1",
+    ).get(original.batchId, original.logicalTurnId) as RoomTurnRow;
+    const latest = toRoomTurn(row);
+    if (latest.attemptNo <= original.attemptNo) return undefined;
+    const batch = this.getRoomRun(handoff.runId);
+    const runtime = latest.runtimeRunId ? this.getRuntimeRun(latest.runtimeRunId) : null;
+    const matchingRuntime = runtime && runtime.sessionId === batch.sessionId && runtime.clientNonce === batch.clientNonce &&
+      runtime.executorBotId === latest.agentId && runtime.executionKey === `${batch.id}:${latest.logicalTurnId}` &&
+      runtime.inputGeneration === latest.inputGeneration && runtime.promptManifest.sourceTurnId === latest.id;
+    const acceptedAt = matchingRuntime ? runtime.acceptedAt : null;
+    const state: HandoffState = acceptedAt ? "accepted"
+      : latest.state === "queued" ? "queued"
+        : latest.state === "cancelled" ? "cancelled"
+          : ["failed", "interrupted", "completed"].includes(latest.state) ? "failed" : "dispatching";
+    return { attemptNo: latest.attemptNo, turnId: latest.id, state, acceptedAt,
+      version: latest.version + (runtime?.version ?? 0) };
+  }
+
   isCoordinatedRoomRun(runId: string): boolean {
-    const run = this.getRoomRun(runId);
-    return run.maxTurns !== EXISTING_ROOM_RUN_MAX_TURNS
-      || run.maxHops !== EXISTING_ROOM_RUN_MAX_TURNS
-      || run.maxTargetsPerTurn !== EXISTING_ROOM_RUN_MAX_TURNS
-      || run.deadlineAt !== EXISTING_ROOM_RUN_DEADLINE;
+    return this.getRoomRun(runId).orchestrationEnabled;
   }
 
   cancelOpenHandoffs(runId: string): RoomHandoff[] {
@@ -4309,6 +6971,12 @@ export class AppRepository {
     }
     if (this.getRoom(run.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
     this.assertRoomTurnMembershipAllowsRetry(run, turn);
+    if (turn.dependencyLogicalTurnId) {
+      const dependency = this.latestRoomTurns(run.id).find((candidate) => candidate.logicalTurnId === turn.dependencyLogicalTurnId);
+      if (!dependency || dependency.state !== "completed" || dependency.outcome?.kind === "skipped") {
+        throw new AevorenBotError("ROOM_DEPENDENCY_FAILED");
+      }
+    }
     return turn;
   }
 
@@ -4323,7 +6991,7 @@ export class AppRepository {
     const count = this.database
       .prepare("SELECT COUNT(DISTINCT logical_turn_id) AS value FROM room_turns WHERE batch_id = ?")
       .get(run.id) as { value: number };
-    if (Number(count.value) >= run.maxTurns) {
+    if (Number(count.value) >= run.maxTurns - (run.leadBotId && !run.summaryTurnId ? 1 : 0)) {
       throw new AevorenBotError("ROOM_RUN_LIMIT_EXCEEDED", undefined, undefined, { reason: "max-turns" });
     }
     if (parent) {
@@ -4360,6 +7028,7 @@ export class AppRepository {
       const latest = this.getRoomBatch(id);
       throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
     }
+    if (state === "cancelled" || state === "interrupted") this.skipLeadSummary(id, state);
     return this.getRoomBatch(id);
   }
 
@@ -4437,6 +7106,11 @@ export class AppRepository {
     if (Number(result.changes) === 0) {
       const latest = this.getRoomTurn(id);
       throw new AevorenBotError("RUNTIME_STATE_INVALID", undefined, undefined, { currentState: latest.state });
+    }
+    if (current.turnPurpose === "summary") {
+      this.database.prepare(
+        "UPDATE room_batches SET summary_state = ?, summary_turn_id = ?, version = version + 1, updated_at = ? WHERE id = ?",
+      ).run(state, id, timestamp, current.runId);
     }
     return this.getRoomTurn(id);
   }
@@ -4586,9 +7260,60 @@ export class AppRepository {
           timestamp,
           timestamp,
         );
+      this.copyRoomTurnRetryContext(previous, id);
+      if (batch.leadBotId && batch.routingMode === "automatic" && batch.state === "partial" && previous.turnPurpose === "work") {
+        this.retryUnstartedLeadDependents(batch, previous);
+      }
       this.transitionRoomBatch(previous.batchId, "running");
     });
     return this.getRoomTurn(id);
+  }
+
+  private retryUnstartedLeadDependents(batch: RoomBatch, source: RoomTurn): void {
+    const allTurns = this.listRoomTurns(batch.id);
+    const executed = new Set(allTurns.filter((turn) => turn.runtimeRunId !== null || turn.promptCutoffSeq !== null)
+      .map((turn) => turn.logicalTurnId));
+    const resumed = new Set([source.logicalTurnId]);
+    // A failed prerequisite never dispatched these nodes. Preserve their old
+    // attempts and recover only the original dependency chain, not user stops.
+    for (const previous of this.latestRoomTurns(batch.id)) {
+      if (!previous.dependencyLogicalTurnId || !resumed.has(previous.dependencyLogicalTurnId) ||
+          previous.turnPurpose !== "work" || previous.state !== "cancelled" ||
+          previous.lastErrorCode !== "ROOM_DEPENDENCY_FAILED" || previous.outcome?.kind !== "skipped" ||
+          executed.has(previous.logicalTurnId)) continue;
+      this.assertRoomTurnMembershipAllowsRetry(batch, previous);
+      const id = randomUUID();
+      const timestamp = now();
+      this.database.prepare(
+        `INSERT INTO room_turns(
+          id, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, nonce,
+          hop, origin, input_generation, input_seq, position, attempt_no, version, state,
+          prompt_cutoff_seq, created_at, updated_at
+        ) SELECT ?, batch_id, member_bot_id, member_name_snapshot, logical_turn_id, parent_turn_id, ?,
+          hop, 'retry', input_generation, input_seq, position, attempt_no + 1, 1, 'queued',
+          NULL, ?, ? FROM room_turns WHERE id = ?`,
+      ).run(id, randomUUID(), timestamp, timestamp, previous.id);
+      this.copyRoomTurnRetryContext(previous, id);
+      resumed.add(previous.logicalTurnId);
+    }
+  }
+
+  private copyRoomTurnRetryContext(previous: RoomTurn, id: string): void {
+    this.database.prepare(
+      `UPDATE room_turns SET turn_purpose = ?, dependency_logical_turn_id = ?,
+       lead_assignments_json = (SELECT lead_assignments_json FROM room_turns WHERE id = ?) WHERE id = ?`,
+    ).run(previous.turnPurpose ?? "work", previous.dependencyLogicalTurnId ?? null, previous.id, id);
+    if (previous.turnPurpose === "summary") {
+      this.database.prepare(
+        "UPDATE room_batches SET summary_state = 'queued', summary_turn_id = ?, summary_skip_reason = NULL WHERE id = ?",
+      ).run(id, previous.runId);
+    } else {
+      this.database.prepare(
+        `UPDATE room_batches SET summary_state = 'pending', summary_skip_reason = NULL,
+         coordination_error_code = CASE WHEN ? = 'coordinate' THEN NULL ELSE coordination_error_code END
+         WHERE id = ? AND lead_bot_id IS NOT NULL`,
+      ).run(previous.turnPurpose ?? "work", previous.runId);
+    }
   }
 
   continueInterruptedRoomBatch(batchId: string): RoomTurn[] {
@@ -4649,6 +7374,7 @@ export class AppRepository {
           timestamp,
           timestamp,
         );
+        this.copyRoomTurnRetryContext(turn, id);
       }
       this.transitionRoomBatch(batchId, "running");
     });
@@ -4656,20 +7382,27 @@ export class AppRepository {
   }
 
   finishRoomBatchFromTurns(batchId: string): RoomBatch {
-    const turns = this.listRoomTurns(batchId);
-    const latest = new Map<string, RoomTurn>();
-    for (const turn of turns) {
-      const previous = latest.get(turn.logicalTurnId);
-      if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.logicalTurnId, turn);
-    }
-    const states = [...latest.values()].map((turn) => turn.state);
+    const latest = this.latestRoomTurns(batchId);
+    const states = latest.map((turn) => turn.state);
     if (states.some((state) => state === "queued" || state === "running")) return this.getRoomBatch(batchId);
-    const next: RoomBatchState = states.every((state) => state === "completed")
+    let current = this.getRoomBatch(batchId);
+    if (current.state === "cancelled") return current;
+    if (current.leadBotId && current.summaryState === "pending") {
+      const reason = current.windingDown ? "winding-down"
+        : Date.parse(current.deadlineAt) <= Date.now() ? "deadline"
+          : latest.some((turn) => turn.turnPurpose === "coordinate" && turn.state !== "completed") ? "coordination-failed" : null;
+      if (!reason) return current;
+      this.skipLeadSummary(batchId, reason);
+      current = this.getRoomBatch(batchId);
+    }
+    if (current.leadBotId && ["queued", "running"].includes(current.summaryState ?? "")) return current;
+    const leadIncomplete = current.leadBotId && ((current.summaryState !== "completed" && !this.isLeadDirectAnswer(current, latest)) ||
+      current.coordinationErrorCode || latest.some((turn) => turn.outcome?.kind === "skipped"));
+    const next: RoomBatchState = states.every((state) => state === "completed") && !leadIncomplete
       ? "completed"
       : states.every((state) => state === "cancelled")
         ? "cancelled"
         : "partial";
-    const current = this.getRoomBatch(batchId);
     if (current.state === next) return current;
     return this.transitionRoomBatch(batchId, next);
   }
@@ -4796,6 +7529,41 @@ export class AppRepository {
     return this.getTranscriptEntry(id);
   }
 
+  private assertIndependentEveryoneRuntime(
+    batch: RoomBatch,
+    input: TranscriptEntry,
+    runtime: Pick<RuntimeRun, "clientNonce" | "sessionId" | "executorBotId" | "executionKey" | "inputGeneration" | "inputSeq" | "promptCutoffSeq" | "promptManifest">,
+    boundRuntimeId?: string,
+  ): void {
+    const manifest = runtime.promptManifest;
+    if (!manifest.sourceTurnId) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+    const turn = this.getRoomTurn(manifest.sourceTurnId);
+    const latest = this.listRoomTurns(batch.id).filter((candidate) => candidate.logicalTurnId === turn.logicalTurnId)
+      .sort((left, right) => right.attemptNo - left.attemptNo)[0];
+    const session = this.getSession(batch.sessionId);
+    if (
+      batch.state !== "running" || batch.routingMode !== "everyone" || batch.orchestrationEnabled ||
+      batch.triggerMessageId !== input.id || batch.clientNonce !== runtime.clientNonce ||
+      batch.sessionId !== runtime.sessionId || session.roomId !== batch.roomId ||
+      turn.batchId !== batch.id || turn.state !== "running" || turn.runtimeRunId !== (boundRuntimeId ?? null) ||
+      latest?.id !== turn.id || turn.parentTurnId !== null || turn.dependencyLogicalTurnId || turn.hop !== 0 ||
+      !["initial", "retry"].includes(turn.origin) || turn.turnPurpose !== "work" || this.getIncomingHandoff(turn.id) ||
+      runtime.executorBotId !== turn.memberBotId || runtime.executionKey !== `${batch.id}:${turn.logicalTurnId}` ||
+      turn.inputGeneration !== input.generation || turn.inputGeneration !== session.generation ||
+      runtime.inputGeneration !== turn.inputGeneration || turn.inputSeq !== input.seq || runtime.inputSeq !== turn.inputSeq ||
+      turn.promptCutoffSeq !== turn.inputSeq || runtime.promptCutoffSeq !== turn.inputSeq ||
+      manifest.schemaVersion === 1 || manifest.sessionId !== batch.sessionId || manifest.roomId !== batch.roomId ||
+      manifest.roomMembershipVersion !== batch.membershipVersion || manifest.botId !== turn.memberBotId ||
+      manifest.executorBotId !== turn.memberBotId || manifest.generation !== turn.inputGeneration ||
+      manifest.inputSeq !== turn.inputSeq || manifest.promptCutoffSeq !== turn.inputSeq || manifest.handoff
+    ) {
+      throw new AevorenBotError("RUNTIME_STATE_INVALID");
+    }
+    this.assertRoomRunHardStopAllowsWork(batch);
+    if (this.getRoom(batch.roomId).archivedAt) throw new AevorenBotError("ROOM_ARCHIVED");
+    this.assertRoomTurnMembershipAllowsRetry(batch, turn);
+  }
+
   createRuntimeRun(
     clientNonce: string,
     route: RuntimeRoute,
@@ -4811,12 +7579,36 @@ export class AppRepository {
   ): RuntimeRun {
     const journal = this.getSendOrThrow(clientNonce);
     const input = this.getUserMessage(clientNonce);
-    if (this.getActiveRuntimeRun(journal.sessionId)) throw new AevorenBotError("SESSION_BUSY");
     const executorBotId = options.executorBotId ?? this.getBotForSession(journal.sessionId).id;
+    this.assertSessionExecutor(journal.sessionId, executorBotId);
     const executorBot = this.getBot(executorBotId);
-    const providerInstanceId = options.providerInstanceId ?? (route === "fake" ? "fake" : executorBot.modelSelection.providerInstanceId);
-    const providerModelId = options.providerModelId ?? (route === "fake" ? "" : executorBot.modelSelection.modelId);
+    const providerInstanceId = options.providerInstanceId ?? (["host-outbound", "host-mcp"].includes(route) ? route : route === "fake" ? "fake" : executorBot.modelSelection.providerInstanceId);
+    const providerModelId = options.providerModelId ?? (["fake", "host-outbound", "host-mcp"].includes(route) ? "" : executorBot.modelSelection.modelId);
     const executionKey = options.executionKey ?? clientNonce;
+    const batch = this.getRoomBatchByNonce(clientNonce);
+    const everyone = batch?.routingMode === "everyone" && !batch.orchestrationEnabled ? batch : null;
+    const placeholders = ACTIVE_RUNTIME_STATES.map(() => "?").join(",");
+    const activeRuns = (this.database
+      .prepare(`SELECT * FROM runtime_runs WHERE session_id = ? AND state IN (${placeholders})`)
+      .all(journal.sessionId, ...ACTIVE_RUNTIME_STATES) as RuntimeRow[]).map(toRuntime);
+    const independentHost = ["host-outbound", "host-mcp"].includes(route) && Boolean(this.getSession(journal.sessionId).roomId) && activeRuns.every(runtime => ["host-outbound", "host-mcp"].includes(runtime.route));
+    if (activeRuns.some((runtime) => (!everyone && !independentHost) || runtime.executorBotId === executorBotId || runtime.executionKey === executionKey)) {
+      throw new AevorenBotError("SESSION_BUSY");
+    }
+    if (everyone) {
+      this.assertIndependentEveryoneRuntime(everyone, input, {
+        clientNonce, sessionId: journal.sessionId, executorBotId, executionKey,
+        inputGeneration: input.generation, inputSeq: options.inputSeq ?? input.seq,
+        promptCutoffSeq: options.promptCutoffSeq ?? input.seq, promptManifest,
+      });
+      for (const active of activeRuns) {
+        try {
+          this.assertIndependentEveryoneRuntime(everyone, input, active, active.id);
+        } catch {
+          throw new AevorenBotError("SESSION_BUSY");
+        }
+      }
+    }
     const attempt = this.database
       .prepare("SELECT COALESCE(MAX(attempt_no), 0) AS current FROM runtime_runs WHERE execution_key = ?")
       .get(executionKey) as { current: number };
@@ -5089,8 +7881,13 @@ export class AppRepository {
           errorCode = "APP_INTERRUPTED";
         }
         updateTurn.run(nextState, errorCode, timestamp, timestamp, turn.id);
+        if (this.getRoomTurn(turn.id).turnPurpose === "summary") {
+          this.database.prepare("UPDATE room_batches SET summary_state = ?, summary_turn_id = ? WHERE id = ?")
+            .run(nextState, turn.id, turn.batch_id);
+        }
       }
       for (const batchId of batchIds) {
+        this.skipLeadSummary(batchId, "interrupted");
         const batch = this.getRoomBatch(batchId);
         if (!["queued", "running"].includes(batch.state)) continue;
         const latest = new Map<string, RoomTurn>();
@@ -5099,7 +7896,9 @@ export class AppRepository {
           if (!previous || previous.attemptNo < turn.attemptNo) latest.set(turn.logicalTurnId, turn);
         }
         const states = [...latest.values()].map((turn) => turn.state);
-        const batchState: RoomBatchState = states.every((state) => state === "completed")
+        const leadIncomplete = batch.leadBotId && ((batch.summaryState !== "completed" && !this.isLeadDirectAnswer(batch, [...latest.values()])) ||
+          batch.coordinationErrorCode || [...latest.values()].some((turn) => turn.outcome?.kind === "skipped"));
+        const batchState: RoomBatchState = states.every((state) => state === "completed") && !leadIncomplete
           ? "completed"
           : states.every((state) => state === "cancelled")
             ? "cancelled"
@@ -5317,6 +8116,117 @@ export class AppRepository {
   private throwMcpVersionConflict(id: string): never {
     const current = this.getMcpServerConfig(id);
     throw new AevorenBotError("MCP_SERVER_VERSION_CONFLICT", undefined, undefined, { currentVersion: current.version });
+  }
+
+  prepareDecisionJournal(input: {
+    idempotencyKey: string;
+    policyId: string;
+    policyVersion: number;
+    provider: DecisionProviderKind;
+    inputDigest: string;
+  }): { disposition: "prepared" | "duplicate"; journal: DecisionJournalEntry } {
+    const existing = this.database
+      .prepare("SELECT * FROM decision_journal WHERE idempotency_key = ?")
+      .get(input.idempotencyKey) as DecisionJournalRow | undefined;
+    if (existing) {
+      if (
+        existing.policy_id !== input.policyId ||
+        existing.policy_version !== input.policyVersion ||
+        existing.provider !== input.provider ||
+        existing.input_digest !== input.inputDigest
+      ) throw new AevorenBotError("DECISION_IDEMPOTENCY_CONFLICT");
+      return { disposition: "duplicate", journal: toDecisionJournal(existing) };
+    }
+    const id = randomUUID();
+    const timestamp = now();
+    this.database.prepare(
+      `INSERT INTO decision_journal(
+        id, idempotency_key, policy_id, policy_version, provider, model_version, state,
+        input_digest, answers_json, confidence_json, fallback_reason, request_id,
+        latency_ms, last_error_code, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, NULL, 'prepared', ?, '{}', '{}', NULL, NULL, NULL, NULL, 1, ?, ?)`,
+    ).run(
+      id,
+      input.idempotencyKey,
+      input.policyId,
+      input.policyVersion,
+      input.provider,
+      input.inputDigest,
+      timestamp,
+      timestamp,
+    );
+    return { disposition: "prepared", journal: this.getDecisionJournal(id) };
+  }
+
+  getDecisionJournal(id: string): DecisionJournalEntry {
+    const row = this.database.prepare("SELECT * FROM decision_journal WHERE id = ?").get(id) as DecisionJournalRow | undefined;
+    if (!row) throw new AevorenBotError("DECISION_NOT_FOUND");
+    return toDecisionJournal(row);
+  }
+
+  getDecisionJournalByIdempotencyKey(idempotencyKey: string): DecisionJournalEntry | null {
+    const row = this.database.prepare("SELECT * FROM decision_journal WHERE idempotency_key = ?").get(idempotencyKey) as DecisionJournalRow | undefined;
+    return row ? toDecisionJournal(row) : null;
+  }
+
+  updateDecisionJournal(id: string, patch: {
+    state?: DecisionState;
+    modelVersion?: string | null;
+    answers?: Record<string, DecisionAnswer>;
+    confidence?: Record<string, number>;
+    fallbackReason?: string | null;
+    requestId?: string | null;
+    latencyMs?: number | null;
+    lastErrorCode?: string | null;
+  }): DecisionJournalEntry {
+    const current = this.getDecisionJournal(id);
+    const assignments: string[] = ["version = version + 1", "updated_at = ?"];
+    const values: Array<string | number | null> = [now()];
+    if (patch.state !== undefined) {
+      assignments.push("state = ?");
+      values.push(patch.state);
+    }
+    if (patch.modelVersion !== undefined) {
+      assignments.push("model_version = ?");
+      values.push(patch.modelVersion);
+    }
+    if (patch.answers !== undefined) {
+      assignments.push("answers_json = ?");
+      values.push(JSON.stringify(patch.answers));
+    }
+    if (patch.confidence !== undefined) {
+      assignments.push("confidence_json = ?");
+      values.push(JSON.stringify(patch.confidence));
+    }
+    if (patch.fallbackReason !== undefined) {
+      assignments.push("fallback_reason = ?");
+      values.push(patch.fallbackReason);
+    }
+    if (patch.requestId !== undefined) {
+      assignments.push("request_id = ?");
+      values.push(patch.requestId);
+    }
+    if (patch.latencyMs !== undefined) {
+      assignments.push("latency_ms = ?");
+      values.push(patch.latencyMs);
+    }
+    if (patch.lastErrorCode !== undefined) {
+      assignments.push("last_error_code = ?");
+      values.push(patch.lastErrorCode);
+    }
+    values.push(id, current.version);
+    const updated = this.database.prepare(
+      `UPDATE decision_journal SET ${assignments.join(", ")} WHERE id = ? AND version = ?`,
+    ).run(...values);
+    if (Number(updated.changes) !== 1) throw new AevorenBotError("DECISION_IDEMPOTENCY_CONFLICT");
+    return this.getDecisionJournal(id);
+  }
+
+  listDecisionJournals(limit = 100): DecisionJournalEntry[] {
+    const boundedLimit = Math.max(1, Math.min(1_000, Math.trunc(limit)));
+    return (this.database.prepare(
+      "SELECT * FROM decision_journal ORDER BY created_at DESC, id DESC LIMIT ?",
+    ).all(boundedLimit) as DecisionJournalRow[]).map(toDecisionJournal);
   }
 
   getSetting(key: string): { value: string; encrypted: boolean } | null {

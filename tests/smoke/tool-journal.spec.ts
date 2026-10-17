@@ -1,14 +1,15 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication } from "@playwright/test";
 import type { AevorenBotApi, PromptManifest } from "@shared/contracts";
 import { AppRepository } from "../../src/main/database";
+import { WorkspaceService } from "../../src/main/workspace-service";
 
-function createRunningRuntime(repository: AppRepository, name: string) {
-  const created = repository.createBot();
+function createRunningRuntime(repository: AppRepository, name: string, projectId?: string) {
+  const created = repository.createBot(projectId);
   const bot = repository.updateBot(created.bot.id, created.bot.version, { name });
   const clientNonce = crypto.randomUUID();
   repository.prepareMessage({ sessionId: created.session.id, clientNonce, text: "审批安全测试" });
@@ -35,7 +36,10 @@ test("scopes Approval IPC and blocks detached allow after a process boundary", a
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-tool-ipc-"));
   const databasePath = join(userDataDir, "aevoren-bot.sqlite");
   const repository = new AppRepository(databasePath);
-  const first = createRunningRuntime(repository, "审批 Bot A");
+  const workspaceRoot = join(userDataDir, "审批夹具");
+  mkdirSync(join(workspaceRoot, "docs"), { recursive: true });
+  const registered = await new WorkspaceService(repository).registerRoot(workspaceRoot);
+  const first = createRunningRuntime(repository, "审批 Bot A", registered.project.id);
   const second = createRunningRuntime(repository, "审批 Bot B");
   const prepared = repository.prepareToolInvocation({
     runtimeRunId: first.runtime.id,
@@ -43,7 +47,7 @@ test("scopes Approval IPC and blocks detached allow after a process boundary", a
     idempotencyKey: crypto.randomUUID(),
     tool: {
       kind: "workspace-list",
-      workspaceId: crypto.randomUUID(),
+      workspaceId: registered.workspace.id,
       path: "docs",
       maxEntries: 20,
     },

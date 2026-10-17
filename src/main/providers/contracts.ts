@@ -20,6 +20,7 @@ export interface RuntimeProviderInstance {
 }
 
 export interface ProviderResolver {
+  getCached?(instanceId: string): ProviderInstanceInfo | null;
   getRoute(selection: ModelSelection): RuntimeRoute;
   createProvider(selection: ModelSelection): ModelProvider;
   getCapabilities(selection: ModelSelection): ProviderCapabilities;

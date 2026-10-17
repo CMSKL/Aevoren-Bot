@@ -23,4 +23,4 @@ These are operating targets for the pre-release project, not guaranteed service-
 
 ## Scope
 
-The supported desktop target is macOS 13 or newer on Apple silicon. Windows, Linux, Intel macOS, mobile platforms, third-party Provider outages, and arbitrary MCP Server behavior are not currently covered by the supported release matrix.
+The supported release target is macOS 13 or newer on Apple silicon. Windows 10/11 x64 is covered by the source-build and CI MVP matrix, but signed public Windows installers are pending certificate setup. Linux, Intel macOS, mobile platforms, third-party Provider outages, and arbitrary MCP Server behavior are not currently covered by the supported release matrix.

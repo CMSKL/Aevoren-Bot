@@ -50,6 +50,17 @@ describe("GitHub release provider", () => {
   it("rejects an invalid release version before packaging", () => {
     expect(() => provider.resolveReleaseChannel("next")).toThrow("Invalid release version");
   });
+
+  it("restricts macOS locale trimming without stripping Windows native language packs", () => {
+    const configuration = require("../../build/electron-builder.config.cjs") as {
+      electronLanguages?: string[];
+      mac: { electronLanguages?: string[] };
+      win: { electronLanguages?: string[] };
+    };
+    expect(configuration.electronLanguages).toBeUndefined();
+    expect(configuration.win.electronLanguages).toBeUndefined();
+    expect(configuration.mac.electronLanguages).toEqual(["en", "zh_CN"]);
+  });
 });
 
 describe("release version policy", () => {

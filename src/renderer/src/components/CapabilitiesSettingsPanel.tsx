@@ -25,6 +25,20 @@ const availabilityLabels: Record<CapabilityAvailability, string> = {
   "not-supported": "尚未支持",
 };
 
+const toolLabels: Record<string, string> = {
+  product_catalog: "产品功能目录", product_describe: "产品操作说明", product_execute: "产品功能执行",
+  workspace_list: "查看已授权文件夹",
+  workspace_read: "读取已授权文件夹文件",
+  workspace_search: "搜索已授权文件夹文件",
+  workspace_write: "在授权文件夹中新建文件",
+  web_search: "联网搜索",
+  web_fetch: "读取公开网页",
+  weather_current: "查询天气",
+  time_now: "查询时间",
+  clipboard_read: "读取剪贴板",
+  text_measure: "精确计算文本长度",
+};
+
 export function CapabilitiesSettingsPanel({ active, botId }: CapabilitiesSettingsPanelProps): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<CapabilitySnapshot | null>(null);
   const [error, setError] = useState<AppError | null>(null);
@@ -64,7 +78,7 @@ export function CapabilitiesSettingsPanel({ active, botId }: CapabilitiesSetting
       <div className="settings-section-heading capability-heading">
         <span>
           <h2>能力与权限</h2>
-          <p>由 Main 进程实时生成。Bot 只能使用这里显示为可用、且已经获得授权的能力。</p>
+          <p>由本机运行时实时生成。Bot 只能使用这里显示为可用、且已经获得授权的能力。</p>
         </span>
         <button className="secondary-button" type="button" disabled={loading} onClick={() => void load()}>
           <RefreshIcon />{loading ? "刷新中…" : "刷新状态"}
@@ -73,9 +87,9 @@ export function CapabilitiesSettingsPanel({ active, botId }: CapabilitiesSetting
 
       {snapshot ? <>
         <h3>当前运行状态</h3>
-        <div className="settings-card capability-runtime-card">
+        <div className="settings-card settings-form-group capability-runtime-card">
           <div className="settings-row">
-            <span><strong>应用环境</strong><small>{snapshot.app.platform} · {snapshot.app.architecture} · {snapshot.backgroundMode === "foreground-only" ? "仅前台运行" : snapshot.backgroundMode}</small></span>
+            <span><strong>应用环境</strong><small>本地桌面应用 · {snapshot.backgroundMode === "foreground-only" ? "仅前台运行" : "支持后台运行"}</small></span>
             <span className="settings-value">v{snapshot.app.version}</span>
           </div>
           <div className="settings-row">
@@ -87,13 +101,13 @@ export function CapabilitiesSettingsPanel({ active, botId }: CapabilitiesSetting
             <span className="settings-value">{new Date(snapshot.generatedAt).toLocaleString("zh-CN")}</span>
           </div>
           <div className="settings-row">
-            <span><strong>当前可调用工具</strong><small>{snapshot.workspaceCount} 个 Workspace · {snapshot.connections.filter((item) => item.status === "available").length}/{snapshot.connections.length} 个模型来源可用</small></span>
-            <span className="settings-value">{snapshot.availableTools.length > 0 ? snapshot.availableTools.join("、") : "无"}</span>
+            <span><strong>当前可调用工具</strong><small>{snapshot.workspaceCount} 个文件夹 · {snapshot.connections.filter((item) => item.status === "available").length}/{snapshot.connections.length} 个模型来源可用</small></span>
+            <span className="settings-value">{snapshot.availableTools.length > 0 ? snapshot.availableTools.map((tool) => toolLabels[tool] ?? "外部工具").join("、") : "无"}</span>
           </div>
         </div>
 
         <h3 className="capability-section-title">权限</h3>
-        <div className="settings-card">
+        <div className="settings-card settings-form-group">
           {snapshot.permissions.map((permission) => (
             <div className="settings-row" key={permission.id}>
               <span><strong>{permission.name}</strong><small>{permission.scopeSummary} · {permission.revocable ? "可撤销" : "不可撤销"}</small></span>
@@ -108,15 +122,20 @@ export function CapabilitiesSettingsPanel({ active, botId }: CapabilitiesSetting
               <h3 id={`capability-${group.category}`}>{group.label}</h3>
               <span>{group.items.filter((item) => item.availability === "available").length}/{group.items.length} 可用</span>
             </div>
-            <div className="capability-grid">
+            <div className="capability-grid settings-list">
               {group.items.map((capability) => (
-                <article className="settings-card capability-card" key={capability.id} data-capability={capability.id} data-availability={capability.availability}>
+                <article className="settings-card capability-card settings-list-row" key={capability.id} data-capability={capability.id} data-availability={capability.availability}>
                   <header>
                     <strong>{capability.name}</strong>
                     <span className={`capability-state capability-state-${capability.availability}`}>{capability.availability === "available" ? <CheckIcon /> : null}{availabilityLabels[capability.availability]}</span>
                   </header>
                   <p>{capability.description}</p>
-                  <small>{capability.reason ?? `${capability.adapterKind} · ${capability.effectClass}`}</small>
+                  {capability.reason ? <small>{capability.reason}</small> : (
+                    <details className="capability-technical-details">
+                      <summary>技术详情</summary>
+                      <code>{capability.adapterKind} · {capability.effectClass}</code>
+                    </details>
+                  )}
                 </article>
               ))}
             </div>

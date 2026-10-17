@@ -1,8 +1,225 @@
+import { MCP_WRITE_CHANNELS } from "@shared/mcp-write-channels";
+import { NATIVE_OUTBOUND_CHANNELS, NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "@shared/native-outbound-channels";
 import { contextBridge, ipcRenderer } from "electron";
+import { DEMONSTRATION_CHANNELS } from "@shared/demonstration-channels";
 import { IPC } from "@shared/channels";
+import { LIBRARY_CHANNELS } from "@shared/library-channels";
+import { MEDIA_CHANNELS, MEDIA_CHANGED_CHANNEL } from "@shared/media-channels";
+import type { MediaChangedEvent } from "@shared/media-contracts";
+import { ENVIRONMENT_CHANNELS, EXECUTION_CHANNELS, PROCESS_CHANNELS, ENVIRONMENT_EVENTS } from "@shared/environment-channels";
+import { BROWSER_CHANNELS, COMPUTER_CHANNELS, PREVIEW_CHANNELS, BROWSER_EVENTS } from "@shared/browser-channels";
+import { SKILL_EXECUTION_CHANNELS, SKILL_EXECUTION_EVENTS } from "@shared/skill-execution-channels";
+import { NATIVE_CONNECTOR_CHANNELS, CONNECTOR_DRAFT_CHANNELS } from "@shared/native-connector-channels";
+import type { SkillExecutionChangedEvent } from "@shared/skill-execution-contracts";
+import type { BrowserChangedEvent } from "@shared/browser-contracts";
+import type { EnvironmentChangedEvent } from "@shared/environment-contracts";
+import type { LibraryChangedEvent } from "@shared/library-contracts";
 import type { AevorenBotApi, RoomRuntimeEvent, RuntimeEvent, SendStateEvent, ToolEvent, TranscriptEvent, UpdateEvent } from "@shared/contracts";
 
+function onEnvironmentChanged(listener: (event: EnvironmentChangedEvent) => void): () => void {
+  const handler = (_event: Electron.IpcRendererEvent, data: EnvironmentChangedEvent): void => listener(data);
+  ipcRenderer.on(ENVIRONMENT_EVENTS.changed, handler);
+  return () => ipcRenderer.removeListener(ENVIRONMENT_EVENTS.changed, handler);
+}
+
+function onBrowserChanged(listener: (event: BrowserChangedEvent) => void): () => void {
+  const handler = (_event: Electron.IpcRendererEvent, data: BrowserChangedEvent): void => listener(data);
+  ipcRenderer.on(BROWSER_EVENTS.changed, handler);
+  return () => ipcRenderer.removeListener(BROWSER_EVENTS.changed, handler);
+}
+
 const api: AevorenBotApi = {
+  mcpWrites: {
+    toolCatalog: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.toolCatalog, input),
+    toolGrants: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.toolGrants, input),
+    grantTool: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.grantTool, input),
+    revokeTool: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.revokeTool, input),
+    prepareTool: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.prepareTool, input),
+    toolResult: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.toolResult, input),
+    listToolIntents: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.listToolIntents, input),
+    cancelTool: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.cancelTool, input),
+    requestToolApproval: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.requestToolApproval, input),
+    openApp: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.openApp, input),
+    closeApp: input => ipcRenderer.invoke(MCP_WRITE_CHANNELS.closeApp, input),
+  },
+  demonstrations: {
+    status: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.status, input),
+    start: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.start, input),
+    stop: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.stop, input),
+    discard: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.discard, input),
+    drafts: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.drafts, input),
+    readDraft: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.readDraft, input),
+    deleteDraft: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.deleteDraft, input),
+    updateDraft: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.updateDraft, input),
+    publish: input => ipcRenderer.invoke(DEMONSTRATION_CHANNELS.publish, input),
+  },
+  outbound: {
+    writeGrants: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.writeGrants,input),
+    grantWrite: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.grantWrite,input),
+    revokeWrite: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.revokeWrite,input),
+    enableSend: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.enableSend,input),
+    prepare: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.prepare,input),
+    get: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.get,input),
+    list: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.list,input),
+    requestApproval: input => ipcRenderer.invoke(NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL,input),
+    reconcile: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.reconcile,input),
+    cancel: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.cancel,input),
+    reject: input => ipcRenderer.invoke(NATIVE_OUTBOUND_CHANNELS.reject,input),
+  },
+  connectors: {
+    list: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.list, input),
+    configure: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.configure, input),
+    authorize: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.authorize, input),
+    cancelAuthorization: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.cancelAuthorization, input),
+    revoke: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.revoke, input),
+    bindings: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.bindings, input),
+    bind: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.bind, input),
+    unbind: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.unbind, input),
+    search: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.search, input),
+    read: input => ipcRenderer.invoke(NATIVE_CONNECTOR_CHANNELS.read, input),
+  },
+  drafts: {
+    list: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.list, input),
+    create: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.create, input),
+    update: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.update, input),
+    read: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.read, input),
+    versions: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.versions, input),
+    delete: input => ipcRenderer.invoke(CONNECTOR_DRAFT_CHANNELS.delete, input),
+  },
+  skillsExecution: {
+    scripts: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.scripts, input),
+    executionGrants: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.executionGrants, input),
+    grantExecution: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.grantExecution, input),
+    revokeExecution: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.revokeExecution, input),
+    runScript: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.runScript, input),
+    scriptExecution: input => ipcRenderer.invoke(SKILL_EXECUTION_CHANNELS.scriptExecution, input),
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, value: SkillExecutionChangedEvent): void => listener(value);
+      ipcRenderer.on(SKILL_EXECUTION_EVENTS.changed, handler);
+      return () => ipcRenderer.removeListener(SKILL_EXECUTION_EVENTS.changed, handler);
+    },
+  },
+  browser: {
+    get: input => ipcRenderer.invoke(BROWSER_CHANNELS.get, input),
+    start: input => ipcRenderer.invoke(BROWSER_CHANNELS.start, input),
+    stop: input => ipcRenderer.invoke(BROWSER_CHANNELS.stop, input),
+    tabs: input => ipcRenderer.invoke(BROWSER_CHANNELS.tabs, input),
+    newTab: input => ipcRenderer.invoke(BROWSER_CHANNELS.newTab, input),
+    closeTab: input => ipcRenderer.invoke(BROWSER_CHANNELS.closeTab, input),
+    navigate: input => ipcRenderer.invoke(BROWSER_CHANNELS.navigate, input),
+    read: input => ipcRenderer.invoke(BROWSER_CHANNELS.read, input),
+    observe: input => ipcRenderer.invoke(BROWSER_CHANNELS.observe, input),
+    click: input => ipcRenderer.invoke(BROWSER_CHANNELS.click, input),
+    type: input => ipcRenderer.invoke(BROWSER_CHANNELS.type, input),
+    key: input => ipcRenderer.invoke(BROWSER_CHANNELS.key, input),
+    scroll: input => ipcRenderer.invoke(BROWSER_CHANNELS.scroll, input),
+    downloads: input => ipcRenderer.invoke(BROWSER_CHANNELS.downloads, input),
+    download: input => ipcRenderer.invoke(BROWSER_CHANNELS.download, input),
+    onChanged: onBrowserChanged,
+  },
+  computer: {
+    view: input => ipcRenderer.invoke(COMPUTER_CHANNELS.view, input),
+    screenshot: input => ipcRenderer.invoke(COMPUTER_CHANNELS.screenshot, input),
+    click: input => ipcRenderer.invoke(COMPUTER_CHANNELS.click, input),
+    type: input => ipcRenderer.invoke(COMPUTER_CHANNELS.type, input),
+    key: input => ipcRenderer.invoke(COMPUTER_CHANNELS.key, input),
+    scroll: input => ipcRenderer.invoke(COMPUTER_CHANNELS.scroll, input),
+    takeover: input => ipcRenderer.invoke(COMPUTER_CHANNELS.takeover, input),
+    returnControl: input => ipcRenderer.invoke(COMPUTER_CHANNELS.returnControl, input),
+    vncTicket: input => ipcRenderer.invoke(COMPUTER_CHANNELS.vncTicket, input),
+    onChanged: onBrowserChanged,
+  },
+  preview: {
+    list: input => ipcRenderer.invoke(PREVIEW_CHANNELS.list, input),
+    open: input => ipcRenderer.invoke(PREVIEW_CHANNELS.open, input),
+    close: input => ipcRenderer.invoke(PREVIEW_CHANNELS.close, input),
+    onChanged: onBrowserChanged,
+  },
+  environments: {
+    probe: () => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.probe),
+    initialize: () => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.initialize),
+    list: (input) => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.list, input),
+    get: (input) => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.get, input),
+    start: (input) => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.start, input),
+    stop: (input) => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.stop, input),
+    rebuild: (input) => ipcRenderer.invoke(ENVIRONMENT_CHANNELS.rebuild, input),
+    onChanged: onEnvironmentChanged,
+  },
+  execution: {
+    list: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.list, input),
+    get: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.get, input),
+    run: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.run, input),
+    cancel: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.cancel, input),
+    logs: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.logs, input),
+    listFiles: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.listFiles, input),
+    readFile: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.readFile, input),
+    writeFile: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.writeFile, input),
+    pickUpload: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.pickUpload, input),
+    downloadFile: (input) => ipcRenderer.invoke(EXECUTION_CHANNELS.downloadFile, input),
+    onChanged: onEnvironmentChanged,
+  },
+  processes: {
+    list: (input) => ipcRenderer.invoke(PROCESS_CHANNELS.list, input),
+    start: (input) => ipcRenderer.invoke(PROCESS_CHANNELS.start, input),
+    stop: (input) => ipcRenderer.invoke(PROCESS_CHANNELS.stop, input),
+    registerPort: (input) => ipcRenderer.invoke(PROCESS_CHANNELS.registerPort, input),
+    listPorts: (input) => ipcRenderer.invoke(PROCESS_CHANNELS.listPorts, input),
+    onChanged: onEnvironmentChanged,
+  },
+  library: {
+    readFile: input => ipcRenderer.invoke(LIBRARY_CHANNELS.readFile, input),
+    list: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.list, input),
+    available: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.available, input),
+    read: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.read, input),
+    create: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.create, input),
+    importText: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.importText, input),
+    update: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.update, input),
+    setEnabled: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.setEnabled, input),
+    delete: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.delete, input),
+    restore: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.restore, input),
+    versions: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.versions, input),
+    restoreVersion: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.restoreVersion, input),
+    bind: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.bind, input),
+    unbind: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.unbind, input),
+    pickImport: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.pickImport, input),
+    importPath: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.importPath, input),
+    export: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.export, input),
+    onChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: LibraryChangedEvent): void => listener(value);
+      ipcRenderer.on(IPC.libraryEvent, handler);
+      return () => ipcRenderer.removeListener(IPC.libraryEvent, handler);
+    },
+  },
+  media: {
+    list: input => ipcRenderer.invoke(MEDIA_CHANNELS.list, input),
+    available: input => ipcRenderer.invoke(MEDIA_CHANNELS.available, input),
+    metadata: input => ipcRenderer.invoke(MEDIA_CHANNELS.metadata, input),
+    read: input => ipcRenderer.invoke(MEDIA_CHANNELS.read, input),
+    preview: input => ipcRenderer.invoke(MEDIA_CHANNELS.preview, input),
+    pickImport: input => ipcRenderer.invoke(MEDIA_CHANNELS.pickImport, input),
+    importPath: input => ipcRenderer.invoke(MEDIA_CHANNELS.importPath, input),
+    bind: input => ipcRenderer.invoke(MEDIA_CHANNELS.bind, input),
+    unbind: input => ipcRenderer.invoke(MEDIA_CHANNELS.unbind, input),
+    setEnabled: input => ipcRenderer.invoke(MEDIA_CHANNELS.setEnabled, input),
+    delete: input => ipcRenderer.invoke(MEDIA_CHANNELS.delete, input),
+    restore: input => ipcRenderer.invoke(MEDIA_CHANNELS.restore, input),
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, value: MediaChangedEvent): void => listener(value);
+      ipcRenderer.on(MEDIA_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(MEDIA_CHANGED_CHANNEL, handler);
+    },
+  },
+  userProfile: {
+    get: () => ipcRenderer.invoke(IPC.userProfileGet),
+    update: (input) => ipcRenderer.invoke(IPC.userProfileUpdate, input),
+  },
+  attachments: {
+    pick: () => ipcRenderer.invoke(IPC.attachmentsPick),
+  },
+  artifacts: {
+    save: (input) => ipcRenderer.invoke(IPC.artifactsSave, input),
+    reveal: (path) => ipcRenderer.invoke(IPC.artifactsReveal, path),
+  },
   capabilities: {
     getSnapshot: (input) => ipcRenderer.invoke(IPC.capabilitiesGetSnapshot, input),
   },
@@ -26,11 +243,22 @@ const api: AevorenBotApi = {
     delete: (input) => ipcRenderer.invoke(IPC.routinesDelete, input),
   },
   conversations: {
+    list: () => ipcRenderer.invoke(IPC.conversationsList),
+    setPinned: (input) => ipcRenderer.invoke(IPC.conversationsSetPinned, input),
+    setUnread: (input) => ipcRenderer.invoke(IPC.conversationsSetUnread, input),
+    setHidden: (input) => ipcRenderer.invoke(IPC.conversationsSetHidden, input),
+    clear: (sessionId) => ipcRenderer.invoke(IPC.conversationsClear, sessionId),
+    setProject: (input) => ipcRenderer.invoke(IPC.conversationsSetProject, input),
     deleteBatch: (input) => ipcRenderer.invoke(IPC.conversationsDeleteBatch, input),
+  },
+  teams: {
+    createContentTeam: (input) => input
+      ? ipcRenderer.invoke(IPC.teamsCreateContentTeam, input)
+      : ipcRenderer.invoke(IPC.teamsCreateContentTeam),
   },
   bots: {
     list: () => ipcRenderer.invoke(IPC.botsList),
-    create: () => ipcRenderer.invoke(IPC.botsCreate),
+    create: (input) => input ? ipcRenderer.invoke(IPC.botsCreate, input) : ipcRenderer.invoke(IPC.botsCreate),
     update: (input) => ipcRenderer.invoke(IPC.botsUpdate, input),
     setPinned: (input) => ipcRenderer.invoke(IPC.botsSetPinned, input),
     setUnread: (input) => ipcRenderer.invoke(IPC.botsSetUnread, input),
@@ -45,20 +273,32 @@ const api: AevorenBotApi = {
     update: (input) => ipcRenderer.invoke(IPC.memoriesUpdate, input),
     delete: (input) => ipcRenderer.invoke(IPC.memoriesDelete, input),
     restore: (input) => ipcRenderer.invoke(IPC.memoriesRestore, input),
+    listProposals: (input) => ipcRenderer.invoke(IPC.memoriesListProposals, input),
+    acceptProposal: (input) => ipcRenderer.invoke(IPC.memoriesAcceptProposal, input),
+    rejectProposal: (input) => ipcRenderer.invoke(IPC.memoriesRejectProposal, input),
   },
   workspaces: {
     list: () => ipcRenderer.invoke(IPC.workspacesList),
-    add: () => ipcRenderer.invoke(IPC.workspacesAdd),
+    add: (input) => ipcRenderer.invoke(IPC.workspacesAdd, input),
+    updatePermissions: (input) => ipcRenderer.invoke(IPC.workspacesUpdatePermissions, input),
+    reveal: (input) => ipcRenderer.invoke(IPC.workspacesReveal, input),
     remove: (input) => ipcRenderer.invoke(IPC.workspacesRemove, input),
+  },
+  projects: {
+    list: () => ipcRenderer.invoke(IPC.projectsList),
+    create: (input) => ipcRenderer.invoke(IPC.projectsCreate, input),
   },
   tools: {
     list: (input) => ipcRenderer.invoke(IPC.toolsList, input),
   },
   approvals: {
+    review: input => ipcRenderer.invoke(IPC.approvalsReview, input),
     listPending: (input) => ipcRenderer.invoke(IPC.approvalsListPending, input),
     resolve: (input) => ipcRenderer.invoke(IPC.approvalsResolve, input),
   },
   rooms: {
+    getBriefApproval: (input) => ipcRenderer.invoke(IPC.roomsGetBriefApproval, input),
+    approveBrief: (input) => ipcRenderer.invoke(IPC.roomsApproveBrief, input),
     list: (input) => ipcRenderer.invoke(IPC.roomsList, input),
     create: (input) => ipcRenderer.invoke(IPC.roomsCreate, input),
     get: (id) => ipcRenderer.invoke(IPC.roomsGet, id),
@@ -90,6 +330,7 @@ const api: AevorenBotApi = {
     retry: (runId) => ipcRenderer.invoke(IPC.runtimeRetry, runId),
   },
   roomRuntime: {
+    cancelMember: runId => ipcRenderer.invoke(IPC.roomRuntimeCancelMember, runId),
     getSnapshot: (roomId) => ipcRenderer.invoke(IPC.roomRuntimeSnapshot, roomId),
     send: (command) => ipcRenderer.invoke(IPC.roomRuntimeSend, command),
     cancel: (batchId) => ipcRenderer.invoke(IPC.roomRuntimeCancel, batchId),
@@ -114,7 +355,13 @@ const api: AevorenBotApi = {
     retry: () => ipcRenderer.invoke(IPC.updatesRetry),
     installAndRestart: () => ipcRenderer.invoke(IPC.updatesInstallAndRestart),
   },
+  productUI: { respond: (id, result) => ipcRenderer.invoke(IPC.productViewReply, id, result) },
   events: {
+    subscribeProductView: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, request: import("@shared/product-view").ProductViewRequest) => listener(request);
+      ipcRenderer.on(IPC.productViewEvent, handler);
+      return () => ipcRenderer.removeListener(IPC.productViewEvent, handler);
+    },
     subscribeTranscript(listener) {
       const wrapped = (_event: Electron.IpcRendererEvent, value: TranscriptEvent): void => listener(value);
       ipcRenderer.on(IPC.transcriptEvent, wrapped);

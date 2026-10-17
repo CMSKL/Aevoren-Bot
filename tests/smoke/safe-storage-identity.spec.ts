@@ -23,9 +23,13 @@ test("decrypts ciphertext from the established Aevoren Bot safeStorage identity 
   );
   let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
   const server = createServer((request, response) => {
-    if (request.url === "/v1/models" && request.headers.authorization === "Bearer safe-storage-compatibility-token") {
+    if (
+      request.url === "/v1/chat/completions" &&
+      request.method === "POST" &&
+      request.headers.authorization === "Bearer safe-storage-compatibility-token"
+    ) {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end('{"data":[]}');
+      response.end('{"choices":[{"message":{"role":"assistant","content":"OK"}}]}');
       return;
     }
     response.writeHead(401);

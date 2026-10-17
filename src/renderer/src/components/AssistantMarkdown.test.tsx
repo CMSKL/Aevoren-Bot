@@ -75,4 +75,14 @@ describe("AssistantMarkdown", () => {
     expect(completedHtml).toContain("<strong>完成</strong>");
     expect(completedHtml.match(/第二项/g)).toHaveLength(1);
   });
+
+  it.each([899, 900, 901, 5_000])("renders all %s characters without a generated summary or fold control", (length) => {
+    const body = `完整正文起点\n\n${"正文".repeat(Math.ceil(length / 2))}\n\n完整正文终点`;
+    const html = renderToStaticMarkup(<AssistantMarkdown body={body} />);
+    expect(html).toContain("完整正文起点");
+    expect(html).toContain("完整正文终点");
+    expect(html).toContain("正文".repeat(Math.ceil(length / 2)));
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("message-priority-summary");
+  });
 });

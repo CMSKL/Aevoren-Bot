@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,7 @@ import { WorkspaceService } from "./workspace-service";
 import { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import { WorkspaceToolExecutor } from "./workspace-tool-executor";
 import { NetworkToolExecutor } from "./network-tool-executor";
+import { DecisionService, FakeDecisionProvider } from "./decision-service";
 
 const repositories: AppRepository[] = [];
 const directories: string[] = [];
@@ -25,14 +26,18 @@ afterEach(() => {
   while (directories.length > 0) rmSync(directories.pop()!, { recursive: true, force: true });
 });
 
-async function harness(resolution: "allow-once" | "deny") {
+async function harness(
+  resolution: "allow-once" | "deny",
+  decisionFactory?: (repository: AppRepository) => DecisionService,
+) {
   const repository = new AppRepository(":memory:");
   repositories.push(repository);
   const root = directory();
   writeFileSync(join(root, "brief.txt"), "PRIVATE_WORKSPACE_RESULT", "utf8");
   const workspaceService = new WorkspaceService(repository);
   const registered = await workspaceService.registerRoot(root);
-  const created = repository.createBot();
+  const decisions = decisionFactory?.(repository);
+  const created = repository.createBot(registered.project.id);
   const calls: ChatMessage[][] = [];
   const provider: ModelProvider = {
     async *run(messages, _signal, context) {
@@ -63,6 +68,7 @@ async function harness(resolution: "allow-once" | "deny") {
         queueMicrotask(() => void coordinator.resolve(event.sessionId, event.approval.id, event.approval.version, resolution));
       }
     },
+    decisions,
   );
   const worker = new SendWorker(
     repository,
@@ -97,6 +103,14 @@ describe("Workspace tool Runtime wiring", () => {
       testConnection: async () => {},
     };
     const service = new WorkspaceService(repository);
+    const decisions = new DecisionService(repository, new FakeDecisionProvider(() => ({
+      answers: {
+        riskLevel: { value: 0, confidence: 0.98 },
+        needsHumanApproval: { value: true, confidence: 0.99 },
+      },
+      modelVersion: "fake-decision-1",
+      requestId: "tool-shadow",
+    })), true);
     const coordinator = new WorkspaceToolCoordinator(
       repository,
       new WorkspaceToolExecutor(repository, service, new NetworkToolExecutor(() => new Date("2026-09-17T08:00:00.000Z"))),
@@ -105,6 +119,7 @@ describe("Workspace tool Runtime wiring", () => {
           queueMicrotask(() => void coordinator.resolve(event.sessionId, event.approval.id, event.approval.version, "allow-once"));
         }
       },
+      decisions,
     );
     const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "CLI 查询时间" });
@@ -112,6 +127,16 @@ describe("Workspace tool Runtime wiring", () => {
     expect(hostResult).toContain("2026-09-17T08:00:00.000Z");
     expect(repository.listTranscript(created.session.id).at(-1)?.body).toContain("CLI_RESULT");
     expect(repository.listToolInvocations(created.session.id)[0]).toMatchObject({ state: "succeeded", toolKind: "time-now" });
+    await vi.waitFor(() => expect(repository.listDecisionJournals()).toHaveLength(2));
+    expect(repository.listDecisionJournals().map((entry) => entry.policyId)).toEqual(expect.arrayContaining([
+      "tool-risk-shadow",
+      "tool-result-quality-shadow",
+    ]));
+    expect(repository.listDecisionJournals().every((entry) => entry.state === "completed")).toBe(true);
+    const riskJournal = repository.listDecisionJournals().find((entry) => entry.policyId === "tool-risk-shadow")!;
+    const qualityJournal = repository.listDecisionJournals().find((entry) => entry.policyId === "tool-result-quality-shadow")!;
+    expect(riskJournal.answers.existingApproval?.value).toMatchObject({ state: "pending" });
+    expect(qualityJournal.answers.existingResult?.value).toMatchObject({ resultCharacters: expect.any(Number) });
   });
 
   it("keeps fetched page text out of the journal while returning it to the same approved model run", async () => {
@@ -233,7 +258,15 @@ describe("Workspace tool Runtime wiring", () => {
   });
 
   it("executes only after allow-once, returns the result to the same model run, and persists only a digest", async () => {
-    const value = await harness("allow-once");
+    const capturedStates: Array<Record<string, unknown>> = [];
+    const value = await harness("allow-once", (repository) => new DecisionService(repository, new FakeDecisionProvider((request) => {
+      capturedStates.push(request.state);
+      return {
+        answers: { evidenceSufficiency: { value: true, confidence: 0.8 } },
+        modelVersion: "fake-decision-1",
+        requestId: "quality-shadow",
+      };
+    }), true));
     const sent = value.worker.send({ sessionId: value.created.session.id, clientNonce: crypto.randomUUID(), text: "读取 brief" });
     await vi.waitFor(() => expect(value.repository.getRuntimeRun(sent.runId).state).toBe("completed"));
 
@@ -248,6 +281,477 @@ describe("Workspace tool Runtime wiring", () => {
     expect(JSON.stringify(invocation)).not.toContain("PRIVATE_WORKSPACE_RESULT");
     expect(JSON.stringify(value.toolEvents)).not.toContain("PRIVATE_WORKSPACE_RESULT");
     expect(value.toolEvents.map((event) => event.invocation.state)).toEqual(expect.arrayContaining(["awaiting-approval", "approved", "succeeded"]));
+    await vi.waitFor(() => expect(value.repository.listDecisionJournals()).toHaveLength(2));
+    const qualityState = capturedStates.find((state) => state.privateContentOmitted === true);
+    expect(qualityState).toBeDefined();
+    expect(JSON.stringify(qualityState)).not.toContain("PRIVATE_WORKSPACE_RESULT");
+  });
+
+  it("executes multiple validated workspace reads from one Provider tool batch and returns one complete protocol turn", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const root = directory();
+    writeFileSync(join(root, "one.md"), "FIRST_REAL_FILE", "utf8");
+    writeFileSync(join(root, "two.md"), "SECOND_REAL_FILE", "utf8");
+    const service = new WorkspaceService(repository);
+    const registered = await service.registerRoot(root);
+    const created = repository.createBot(registered.project.id);
+    const calls: ChatMessage[][] = [];
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        calls.push(messages.map((message) => ({ ...message })));
+        const results = messages.filter((message) => message.role === "tool");
+        yield { type: "started", requestId: `multi-${calls.length}` };
+        if (results.length === 0) {
+          yield { type: "workspace-tool", toolCallId: "read-one", tool: { kind: "workspace-read", workspaceId: context!.workspaces![0]!.id, path: "one.md", maxBytes: 4096 }, providerToolName: "workspace_read" };
+          yield { type: "workspace-tool", toolCallId: "read-two", tool: { kind: "workspace-read", workspaceId: context!.workspaces![0]!.id, path: "two.md", maxBytes: 4096 }, providerToolName: "workspace_read" };
+          yield { type: "completed", finishReason: "tool_calls" };
+          return;
+        }
+        yield { type: "delta", text: results.map((message) => message.content).join("|") };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), (event) => {
+      if (event.approval.state === "pending") {
+        queueMicrotask(() => void coordinator.resolve(event.sessionId, event.approval.id, event.approval.version, "allow-once"));
+      }
+    });
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "同时读取两份文件" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.find((message) => message.role === "assistant" && "tool_calls" in message)).toMatchObject({
+      tool_calls: [
+        { id: "read-one", function: { name: "workspace_read" } },
+        { id: "read-two", function: { name: "workspace_read" } },
+      ],
+    });
+    expect(calls[1]?.filter((message) => message.role === "tool")).toHaveLength(2);
+    expect(repository.listToolInvocations(created.session.id)).toMatchObject([
+      { toolCallId: "read-one", state: "succeeded", targetPath: "one.md" },
+      { toolCallId: "read-two", state: "succeeded", targetPath: "two.md" },
+    ]);
+    expect(repository.listTranscript(created.session.id).at(-1)).toMatchObject({ status: "completed" });
+    expect(repository.listTranscript(created.session.id).at(-1)?.body).toContain("FIRST_REAL_FILE");
+    expect(repository.listTranscript(created.session.id).at(-1)?.body).toContain("SECOND_REAL_FILE");
+  });
+
+  it("auto-approves a trusted Workspace write, rejects extra output beyond the Bot policy, and reads the real file", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const root = directory();
+    mkdirSync(join(root, "01-inbox"));
+    const service = new WorkspaceService(repository);
+    const registered = await service.registerRoot(root);
+    repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, {
+      writeEnabled: true,
+      automationEnabled: true,
+    });
+    const created = repository.createBot(registered.project.id);
+    repository.updateBot(created.bot.id, created.bot.version, {
+      instructions: "每次任务只创建用户指定的一个正式线索文件，成功后停止额外写入。",
+    });
+    let providerRound = 0;
+    let writeLimitResult = "";
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        providerRound += 1;
+        yield { type: "started", requestId: `auto-workspace-${providerRound}` };
+        if (providerRound === 1) {
+          yield {
+            type: "workspace-tool",
+            toolCallId: "write-leads",
+            tool: { kind: "workspace-write", workspaceId: context!.workspaces![0]!.id, path: "01-inbox/leads.md", content: "# REAL_LEAD\n" },
+            providerToolName: "workspace_write",
+          };
+          yield { type: "completed", finishReason: "tool_calls" };
+          return;
+        }
+        if (providerRound === 2) {
+          yield {
+            type: "workspace-tool",
+            toolCallId: "rewrite-leads",
+            tool: { kind: "workspace-write", workspaceId: context!.workspaces![0]!.id, path: "01-inbox/leads.md", content: "must not overwrite" },
+            providerToolName: "workspace_write",
+          };
+          yield {
+            type: "workspace-tool",
+            toolCallId: "write-unwanted",
+            tool: { kind: "workspace-write", workspaceId: context!.workspaces![0]!.id, path: "01-inbox/unwanted.md", content: "must not exist" },
+            providerToolName: "workspace_write",
+          };
+          yield { type: "completed", finishReason: "tool_calls" };
+          return;
+        }
+        if (providerRound === 3) {
+          writeLimitResult = messages.filter((message) => message.role === "tool").map((message) => message.content).join("\n");
+          yield {
+            type: "workspace-tool",
+            toolCallId: "read-leads",
+            tool: { kind: "workspace-read", workspaceId: context!.workspaces![0]!.id, path: "01-inbox/leads.md", maxBytes: 4096 },
+            providerToolName: "workspace_read",
+          };
+          yield { type: "completed", finishReason: "tool_calls" };
+          return;
+        }
+        yield { type: "delta", text: "下游已读取真实共享文件。" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const events: Array<Parameters<ConstructorParameters<typeof WorkspaceToolCoordinator>[2]>[0]> = [];
+    const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), (event) => events.push(event));
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "写入后继续读取" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+
+    expect(providerRound).toBe(4);
+    expect(readFileSync(join(root, "01-inbox", "leads.md"), "utf8")).toBe("# REAL_LEAD\n");
+    expect(existsSync(join(root, "01-inbox", "unwanted.md"))).toBe(false);
+    expect(writeLimitResult).toContain("WORKSPACE_ARTIFACT_ALREADY_EXISTS");
+    expect(writeLimitResult).toContain("WORKSPACE_WRITE_LIMIT_REACHED");
+    expect(repository.listPendingApprovalRequests(created.session.id)).toEqual([]);
+    expect(repository.listToolInvocations(created.session.id)).toMatchObject([
+      { toolKind: "workspace-write", state: "succeeded", targetPath: "01-inbox/leads.md" },
+      { toolKind: "workspace-read", state: "succeeded", targetPath: "01-inbox/leads.md" },
+    ]);
+    expect(events.some((event) => event.approval.state === "allowed")).toBe(true);
+  });
+
+  it("completes a planner turn immediately after the real Brief write when the task enters a human approval gate", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const root = directory();
+    mkdirSync(join(root, "02-briefs"));
+    const service = new WorkspaceService(repository);
+    const registered = await service.registerRoot(root);
+    repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: true });
+    const created = repository.createBot(registered.project.id);
+    repository.updateBot(created.bot.id, created.bot.version, {
+      name: "选题策划师",
+      instructions: "只创建唯一 Brief，写入成功后等待人工批准。",
+    });
+    let calls = 0;
+    const provider: ModelProvider = {
+      async *run(_messages, _signal, context) {
+        calls += 1;
+        yield { type: "started", requestId: "planner-write" };
+        yield {
+          type: "workspace-tool",
+          toolCallId: "write-brief",
+          tool: { kind: "workspace-write", workspaceId: context!.workspaces![0]!.id, path: "02-briefs/options.md", content: "# 三个真实候选\n" },
+          providerToolName: "workspace_write",
+        };
+        yield { type: "completed", finishReason: "tool_calls" };
+      },
+      testConnection: async () => {},
+    };
+    const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "用 workspace_write 创建 Brief，然后停在等待人工选题批准" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    expect(calls).toBe(1);
+    expect(readFileSync(join(root, "02-briefs", "options.md"), "utf8")).toContain("三个真实候选");
+    expect(repository.listTranscript(created.session.id).at(-1)).toMatchObject({ status: "completed", body: expect.stringContaining("等待人工选题批准") });
+  });
+
+  it("blocks a fact-editor artifact until real text_measure results satisfy every requested range", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const root = directory();
+    mkdirSync(join(root, "04-review"));
+    const service = new WorkspaceService(repository);
+    const registered = await service.registerRoot(root);
+    repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: true });
+    const created = repository.createBot(registered.project.id);
+    repository.updateBot(created.bot.id, created.bot.version, { name: "事实编辑" });
+    let calls = 0;
+    let gateResult = "";
+    let measurementGuidance = "";
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        calls += 1;
+        yield { type: "started", requestId: `editor-gate-${calls}` };
+        if (calls === 1 || calls === 3) {
+          yield { type: "computation-tool", toolCallId: `measure-${calls}`, tool: { kind: "text-measure", text: calls === 1 ? "展".repeat(333) : "短".repeat(180) }, providerToolName: "text_measure" };
+          yield { type: "completed", finishReason: "tool_calls" };
+          return;
+        }
+        if (calls === 2 || calls === 4) {
+          if (calls === 2) measurementGuidance = messages.findLast((message) => message.role === "tool")?.content ?? "";
+          if (calls === 4) gateResult = messages.filter((message) => message.role === "tool").map((message) => message.content).join("\n");
+          yield {
+            type: "workspace-tool",
+            toolCallId: `write-review-${calls}`,
+            tool: { kind: "workspace-write", workspaceId: context!.workspaces![0]!.id, path: "04-review/final.md", content: "# 合格审校稿\n" },
+            providerToolName: "workspace_write",
+          };
+          yield { type: "completed", finishReason: "tool_calls" };
+          return;
+        }
+        yield { type: "delta", text: "短帖与展开版均已有真实区间证据，审校稿已写入。" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "workspaceId=e8d67efd-a281-46c4-84f0-9fdf7b18b7df；短帖 140–220、展开版 280–420；用 text_measure 后 workspace_write 写审校稿" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    expect(calls).toBe(5);
+    expect(measurementGuidance).toContain("missingRanges");
+    expect(measurementGuidance).toContain('"min":140');
+    expect(gateResult).toContain("MEASUREMENT_RANGE_NOT_SATISFIED");
+    expect(repository.listToolInvocations(created.session.id).map((item) => item.toolKind)).toEqual(["text-measure", "text-measure", "workspace-write"]);
+    expect(readFileSync(join(root, "04-review", "final.md"), "utf8")).toContain("合格审校稿");
+  });
+
+  it("fails a completed-looking reply that claims a file read without a succeeded tool record", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const created = repository.createBot();
+    const provider: ModelProvider = {
+      async *run() {
+        yield { type: "started", requestId: "false-read-claim" };
+        yield { type: "delta", text: "已真实调用 workspace_read 并成功读取 CSV 文件。" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "读取 CSV" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
+    expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_EVIDENCE_REQUIRED");
+    expect(repository.listToolInvocations(created.session.id)).toEqual([]);
+    expect(repository.listTranscript(created.session.id).at(-1)).toMatchObject({ status: "failed" });
+  });
+
+  it("fails a completed-looking reply that claims an audit artifact was written without a succeeded tool record", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const created = repository.createBot();
+    const provider: ModelProvider = {
+      async *run() {
+        yield { type: "started", requestId: "false-write-claim" };
+        yield { type: "delta", text: "审校稿已由真实工具写入。" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "写入审校稿文件" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
+    expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_EVIDENCE_REQUIRED");
+    expect(repository.listToolInvocations(created.session.id)).toEqual([]);
+  });
+
+  it("requires real search and fetch evidence for an explicit research task but preserves local-only planning", async () => {
+    for (const request of ["你帮我去调研一下个人网站如何做呢", "请调研个人网站如何做", "只规划一下调研方案，不联网"]) {
+      const repository = new AppRepository(":memory:");
+      repositories.push(repository);
+      const created = repository.createBot();
+      const provider: ModelProvider = {
+        async *run() {
+          yield { type: "started", requestId: "text-only-research" };
+          yield { type: "delta", text: "以下是基于训练知识的一般建议，未执行实际检索。" };
+          yield { type: "completed", finishReason: "stop" };
+        },
+        testConnection: async () => {},
+      };
+      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: request });
+      const planning = request.includes("不联网");
+      await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe(planning ? "completed" : "failed"));
+      if (!planning) expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TASK_REQUIREMENTS_UNMET");
+      expect(repository.listToolInvocations(created.session.id)).toEqual([]);
+    }
+  });
+
+  it("does not require negated tools, while positive requirements in mixed instructions still need real evidence", async () => {
+    for (const [request, required] of [
+      ["请本轮负责人只用一行确认已收到，不调用任何工具、不读取文件、不委派任务、不执行外部动作。", false],
+      ["请所有成员各用一行确认收到这条消息；不调用工具、不读取文件、不委派、不执行任何外部动作。", false],
+      ["请确认收到，不要读取文件，也不要写入。", false],
+      ["Please acknowledge; do not read files or use tools.", false],
+      ["请真实调研个人网站，不联网。", false],
+      ["请实际读取文件，但不要写入。", true],
+      ["Do not write files; read the file.", true],
+      ["不要读取文件，请实际写入文件。", true],
+      ["不要写入文件但是请实际读取文件。", true],
+      ["Don't write files but read the file.", true],
+      ["不要写入任何文件但先读取文件。", true],
+      ["不使用搜索结果并请实际读取文件。", true],
+      ["Do not write files and please read the file.", true],
+    ] as const) {
+      const repository = new AppRepository(":memory:");
+      repositories.push(repository);
+      const created = repository.createBot();
+      const provider: ModelProvider = {
+        async *run() {
+          yield { type: "started", requestId: "negated-requirements-regression" };
+          yield { type: "delta", text: "已收到，本轮不调用工具、不读取文件、不抓取网页、不写入文件、不创建 Bot、不组建群聊。" };
+          yield { type: "completed", finishReason: "stop" };
+        },
+        testConnection: async () => {},
+      };
+      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: request });
+      await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe(required ? "failed" : "completed"));
+      if (required) expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TASK_REQUIREMENTS_UNMET");
+      expect(repository.listToolInvocations(created.session.id)).toEqual([]);
+    }
+  });
+
+  it("does not let a negated neighboring action waive a positive unverified read, fetch or write claim", async () => {
+    for (const body of ["本轮不写入文件但已读取文件。", "本轮不读取文件但已抓取网页。", "本轮不读取文件但已写入文件。", "本轮不读取文件但已创建 Bot。", "本轮不读取文件但已组建群聊。"]) {
+      const repository = new AppRepository(":memory:");
+      repositories.push(repository);
+      const created = repository.createBot();
+      const provider: ModelProvider = {
+        async *run() {
+          yield { type: "started", requestId: "mixed-claim-regression" };
+          yield { type: "delta", text: body };
+          yield { type: "completed", finishReason: "stop" };
+        },
+        testConnection: async () => {},
+      };
+      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "确认收到；不要调用工具。" });
+      await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
+      expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_EVIDENCE_REQUIRED");
+      expect(repository.listToolInvocations(created.session.id)).toEqual([]);
+    }
+  });
+
+  it("answers a duplicate native write without hanging and requires complete hash-matching readback", async () => {
+    for (const mode of ["complete", "missing", "truncated"] as const) {
+      const repository = new AppRepository(":memory:");
+      repositories.push(repository);
+      const root = directory();
+      mkdirSync(join(root, "01-inbox"));
+      const service = new WorkspaceService(repository);
+      const registered = await service.registerRoot(root);
+      repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: true, automationEnabled: true });
+      const created = repository.createBot(registered.project.id);
+      const responses: string[] = [];
+      const provider: ModelProvider = {
+        async *run(_messages, signal) {
+          yield { type: "started", requestId: `native-write-${mode}` };
+          for (const content of ["# Public report\nVerified output.\n", "Must not overwrite"]) {
+            yield {
+              type: "workspace-tool", toolCallId: `native-write-${responses.length}`, providerToolName: "workspace_write", toolSignal: signal,
+              tool: { kind: "workspace-write", workspaceId: registered.workspace.id, path: "01-inbox/报告.md", content },
+              respond: async (value) => { responses.push(value); },
+            };
+          }
+          expect(responses[1]).toContain("WORKSPACE_ARTIFACT_ALREADY_EXISTS");
+          if (mode !== "missing") yield {
+            type: "workspace-tool", toolCallId: "native-readback", providerToolName: "workspace_read", toolSignal: signal,
+            tool: { kind: "workspace-read", workspaceId: registered.workspace.id, path: "01-inbox/报告.md", maxBytes: mode === "truncated" ? 8 : 4096 },
+            respond: async (value) => { responses.push(value); },
+          };
+          yield { type: "delta", text: "报告已由真实文件工具保存。" };
+          yield { type: "completed", finishReason: "stop" };
+        },
+        testConnection: async () => {},
+      };
+      const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
+      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+      const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "保存为 01-inbox/报告.md，保存后读取真实文件确认完整。" });
+      await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe(mode === "complete" ? "completed" : "failed"));
+      expect(repository.listToolInvocations(created.session.id).filter(tool => tool.toolKind === "workspace-write" && tool.state === "succeeded")).toHaveLength(1);
+      expect(readFileSync(join(root, "01-inbox", "报告.md"), "utf8")).toBe("# Public report\nVerified output.\n");
+      if (mode !== "complete") expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TASK_REQUIREMENTS_UNMET");
+    }
+  });
+
+  it("rejects CSV metrics and length claims without their exact deterministic evidence tools", async () => {
+    for (const fixture of [
+      { request: "分析 metrics.csv 的浏览和互动指标", body: "总浏览 7700，总互动 85，最高互动率 4%。", code: "DATA_EVIDENCE_REQUIRED" },
+      { request: "计算这段内容的非空白字符数", body: "该内容共有 205 个非空白字符。", code: "MEASUREMENT_EVIDENCE_REQUIRED" },
+    ]) {
+      const repository = new AppRepository(":memory:");
+      repositories.push(repository);
+      const created = repository.createBot();
+      const provider: ModelProvider = {
+        async *run() {
+          yield { type: "started", requestId: fixture.code };
+          yield { type: "delta", text: fixture.body };
+          yield { type: "completed", finishReason: "stop" };
+        },
+        testConnection: async () => {},
+      };
+      const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider);
+      const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: fixture.request });
+      await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
+      expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe(fixture.code);
+    }
+  });
+
+  it("auto-approves exact text measurement and accepts the resulting length claim", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const created = repository.createBot();
+    let round = 0;
+    const provider: ModelProvider = {
+      async *run(messages) {
+        round += 1;
+        yield { type: "started", requestId: `measure-${round}` };
+        if (!messages.some((message) => message.role === "tool")) {
+          yield { type: "computation-tool", toolCallId: "measure-1", tool: { kind: "text-measure", text: "你好 A" }, providerToolName: "text_measure" };
+          yield { type: "completed", finishReason: "tool_calls" };
+          return;
+        }
+        yield { type: "delta", text: "确定性结果为 3 个非空白字符。" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const service = new WorkspaceService(repository);
+    const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "计算非空白字符数" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    expect(repository.listToolInvocations(created.session.id)).toMatchObject([
+      { toolKind: "text-measure", effectClass: "pure", state: "succeeded" },
+    ]);
+    expect(repository.listTranscript(created.session.id).at(-1)).toMatchObject({ status: "completed" });
+  });
+
+  it("accepts data conclusions only after the exact CSV was successfully read in the same Runtime", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const root = directory();
+    writeFileSync(join(root, "metrics.csv"), "id,views,interactions\nA,1000,30\nB,1400,28\n", "utf8");
+    const service = new WorkspaceService(repository);
+    const registered = await service.registerRoot(root);
+    repository.updateWorkspacePermissions(registered.workspace.id, registered.workspace.version, { writeEnabled: false, automationEnabled: true });
+    const created = repository.createBot(registered.project.id);
+    let round = 0;
+    const provider: ModelProvider = {
+      async *run(messages, _signal, context) {
+        round += 1;
+        yield { type: "started", requestId: `csv-${round}` };
+        if (!messages.some((message) => message.role === "tool")) {
+          yield { type: "workspace-tool", toolCallId: "read-csv", tool: { kind: "workspace-read", workspaceId: context!.workspaces![0]!.id, path: "metrics.csv", maxBytes: 4096 }, providerToolName: "workspace_read" };
+          yield { type: "completed", finishReason: "tool_calls" };
+          return;
+        }
+        yield { type: "delta", text: "来源 metrics.csv：总浏览 2400，总互动 58。" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+      testConnection: async () => {},
+    };
+    const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "分析 metrics.csv 的浏览和互动指标" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    expect(repository.listToolInvocations(created.session.id)).toMatchObject([
+      { toolKind: "workspace-read", targetPath: "metrics.csv", state: "succeeded" },
+    ]);
   });
 
   it("returns a denial to the model without resolving any filesystem target", async () => {
@@ -267,8 +771,8 @@ describe("Workspace tool Runtime wiring", () => {
     const root = directory();
     writeFileSync(join(root, "brief.txt"), "NEVER_READ", "utf8");
     const service = new WorkspaceService(repository);
-    const workspace = (await service.registerRoot(root)).workspace;
-    const created = repository.createBot();
+    const { workspace, project } = await service.registerRoot(root);
+    const created = repository.createBot(project.id);
     const pending = vi.fn();
     const provider: ModelProvider = {
       async *run(_messages, _signal, context) {
@@ -288,13 +792,13 @@ describe("Workspace tool Runtime wiring", () => {
     expect(repository.listPendingApprovalRequests(created.session.id)).toEqual([]);
   });
 
-  it("stops a model that exceeds four consecutive workspace tool rounds", async () => {
+  it("stops a model that exceeds sixteen consecutive workspace tool rounds", async () => {
     const repository = new AppRepository(":memory:");
     repositories.push(repository);
     const root = directory();
     const service = new WorkspaceService(repository);
-    await service.registerRoot(root);
-    const created = repository.createBot();
+    const registered = await service.registerRoot(root);
+    const created = repository.createBot(registered.project.id);
     let calls = 0;
     const provider: ModelProvider = {
       async *run(_messages, _signal, context) {
@@ -314,8 +818,63 @@ describe("Workspace tool Runtime wiring", () => {
     const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "循环保护" });
     await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
     expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_ROUND_LIMIT_EXCEEDED");
-    expect(repository.listToolInvocations(created.session.id)).toHaveLength(4);
+    expect(repository.listToolInvocations(created.session.id)).toHaveLength(16);
     expect(repository.listToolInvocations(created.session.id).every((invocation) => invocation.state === "succeeded")).toBe(true);
-    expect(calls).toBe(5);
+    expect(calls).toBe(17);
+  });
+
+  it("allows up to thirty-two bounded rounds for an explicit deterministic length-convergence task", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const service = new WorkspaceService(repository);
+    const created = repository.createBot();
+    let calls = 0;
+    const provider: ModelProvider = {
+      async *run() {
+        calls += 1;
+        yield { type: "started", requestId: `measure-loop-${calls}` };
+        yield { type: "computation-tool", toolCallId: `measure-${calls}`, tool: { kind: "text-measure", text: "仍需继续收敛" }, providerToolName: "text_measure" };
+        yield { type: "completed", finishReason: "tool_calls" };
+      },
+      testConnection: async () => {},
+    };
+    const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "用 text_measure 精确计算字符数并持续修订长度" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("failed"));
+    expect(repository.getRuntimeRun(sent.runId).lastErrorCode).toBe("TOOL_ROUND_LIMIT_EXCEEDED");
+    expect(repository.listToolInvocations(created.session.id)).toHaveLength(32);
+    expect(calls).toBe(33);
+  });
+
+  it("bounds draft-stage measurement retries and returns control to the writer without weakening final measurement evidence", async () => {
+    const repository = new AppRepository(":memory:");
+    repositories.push(repository);
+    const service = new WorkspaceService(repository);
+    const created = repository.createBot();
+    repository.updateBot(created.bot.id, created.bot.version, { name: "内容主笔" });
+    let calls = 0;
+    const provider: ModelProvider = {
+      async *run(messages) {
+        calls += 1;
+        yield { type: "started", requestId: `draft-measure-${calls}` };
+        const lastTool = messages.findLast((message) => message.role === "tool");
+        if (lastTool?.content.includes("TEXT_MEASURE_DRAFT_LIMIT_REACHED")) {
+          yield { type: "delta", text: "初稿阶段已停止循环测量，交由事实编辑完成最终收敛。" };
+          yield { type: "completed", finishReason: "stop" };
+          return;
+        }
+        yield { type: "computation-tool", toolCallId: `draft-measure-tool-${calls}`, tool: { kind: "text-measure", text: "仍在修订的真实初稿" }, providerToolName: "text_measure" };
+        yield { type: "completed", finishReason: "tool_calls" };
+      },
+      testConnection: async () => {},
+    };
+    const coordinator = new WorkspaceToolCoordinator(repository, new WorkspaceToolExecutor(repository, service), vi.fn());
+    const worker = new SendWorker(repository, null, { transcript: vi.fn(), sendState: vi.fn(), runtime: vi.fn() }, false, provider, undefined, coordinator);
+    const sent = worker.send({ sessionId: created.session.id, clientNonce: crypto.randomUUID(), text: "用 text_measure 精确记录初稿长度" });
+    await vi.waitFor(() => expect(repository.getRuntimeRun(sent.runId).state).toBe("completed"));
+    expect(repository.listToolInvocations(created.session.id)).toHaveLength(6);
+    expect(calls).toBe(8);
+    expect(repository.listTranscript(created.session.id).at(-1)?.body).toContain("事实编辑");
   });
 });

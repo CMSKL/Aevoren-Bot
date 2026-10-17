@@ -262,11 +262,38 @@ describe("UpdateService", () => {
       expect(adapter.checkCalls).toBe(0);
       await vi.advanceTimersByTimeAsync(1);
       expect(adapter.checkCalls).toBe(1);
-      await vi.advanceTimersByTimeAsync(900);
+      service.setCheckIntervalMinutes(60);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(adapter.checkCalls).toBe(1);
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1_000 - 1_001);
+      expect(adapter.checkCalls).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
       expect(adapter.checkCalls).toBe(2);
       service.stop();
       await vi.advanceTimersByTimeAsync(2_000);
       expect(adapter.checkCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("automatically downloads a newer version found by the startup check", async () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = new FakeUpdateAdapter();
+      adapter.result = { isUpdateAvailable: true, updateInfo: { version: "1.1.0" } };
+      const service = new UpdateService(adapter, {
+        currentVersion: "1.0.0",
+        channel: "stable",
+        startupDelayMs: 100,
+        intervalMs: 60_000,
+      });
+      service.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(adapter.checkCalls).toBe(1);
+      expect(adapter.downloadCalls).toBe(1);
+      expect(service.getState()).toMatchObject({ status: "downloaded", availableVersion: "1.1.0" });
+      service.stop();
     } finally {
       vi.useRealTimers();
     }

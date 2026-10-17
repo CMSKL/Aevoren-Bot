@@ -17,6 +17,8 @@ import type { ProviderResolver } from "./providers/contracts";
 import { RuntimeExecutor, type CapabilitySnapshotSource, type RuntimeExecutionResult } from "./runtime-executor";
 import type { WorkspaceToolCoordinator } from "./workspace-tool-coordinator";
 import type { McpService } from "./mcp-service";
+import type { DecisionService } from "./decision-service";
+import type { MemoryCaptureService } from "./memory-capture-service";
 
 export type WorkerEvents = {
   transcript: (event: TranscriptEvent) => void;
@@ -38,6 +40,8 @@ export class RuntimeCoordinator {
     workspaceTools?: WorkspaceToolCoordinator,
     capabilitySnapshots?: CapabilitySnapshotSource,
     mcpTools?: Pick<McpService, "availableTools">,
+    decisions?: DecisionService,
+    memoryCapture?: MemoryCaptureService,
   ) {
     this.executor = executorOverride ?? new RuntimeExecutor(
       repository,
@@ -48,14 +52,16 @@ export class RuntimeCoordinator {
       workspaceTools,
       capabilitySnapshots,
       mcpTools,
+      decisions,
+      memoryCapture,
     );
   }
 
-  send(command: SendCommand): SendResult {
+  send(command: SendCommand, origin?: import("@shared/contracts").DelegationOrigin): SendResult {
     if (this.shuttingDown) throw new AevorenBotError("APP_INTERRUPTED");
     const session = this.repository.getSession(command.sessionId);
     if (!session.botId || session.roomId) throw new AevorenBotError("SESSION_NOT_FOUND");
-    const prepared = this.repository.prepareMessage(command);
+    const prepared = this.repository.prepareMessage(command, origin);
     if (prepared.disposition === "duplicate") {
       const existingRun = this.repository.getLatestRuntimeRun(command.clientNonce);
       if (!existingRun) throw new AevorenBotError("RUNTIME_NOT_FOUND");

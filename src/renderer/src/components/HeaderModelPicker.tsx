@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
+import { useEffectEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { AppError, Bot, ProviderInstanceInfo } from "@shared/contracts";
 import { BotIcon, CheckIcon, RefreshIcon } from "./Icons";
 import { ProviderMark } from "./ProviderPresentation";
@@ -27,6 +28,14 @@ export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderMo
   const [open, setOpen] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState(bot.modelSelection.providerInstanceId);
   const [query, setQuery] = useState("");
+  const handleProductView = useEffectEvent((event: Event) => {
+    const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
+    if (request.input.action !== "model_search") return;
+    setOpen(true);
+    setQuery(request.input.query ?? "");
+    respond({ status: "completed" });
+  });
+  useEffect(() => { const handler = (event: Event): void => handleProductView(event); window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -125,7 +134,9 @@ export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderMo
         }}
       >
         <span className="header-model-mark">{activeProvider ? <ProviderMark provider={activeProvider} size="small" /> : <BotIcon />}</span>
-        <span className="header-model-trigger-copy">{modelLabel(activeProvider, bot.modelSelection.modelId)}</span>
+        <span className="header-model-trigger-copy">
+          {activeProvider ? `${activeProvider.displayName} · ${modelLabel(activeProvider, bot.modelSelection.modelId)}` : modelLabel(activeProvider, bot.modelSelection.modelId)}
+        </span>
         <span className="header-model-chevron" aria-hidden="true">⌄</span>
       </button>
 
@@ -202,7 +213,7 @@ export function HeaderModelPicker({ bot, busy, onBotUpdated, onError }: HeaderMo
               </> : (
                 <div className="header-model-unavailable">
                   <strong>{providerStateLabel(selectedProvider)}</strong>
-                  <p>{selectedProvider.reason || "请在设置 → 模型与 CLI 中检查此来源。"}</p>
+                  <p>{selectedProvider.reason || "请在联系人 → 模型与能力 → 本机连接设置中检查此来源。"}</p>
                 </div>
               )}
             </> : <div className="header-model-unavailable"><p>尚未发现模型来源。</p></div>}

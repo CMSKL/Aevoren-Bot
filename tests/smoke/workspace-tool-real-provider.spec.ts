@@ -20,14 +20,14 @@ test("runs one approved workspace read through the configured real Provider", as
   let botName: string;
   let sessionId: string;
   try {
-    const created = repository.createBot();
+    const registered = await new WorkspaceService(repository).registerRoot(root);
+    const created = repository.createBot(registered.project.id);
     botName = `Workspace 真实验收-${Date.now().toString(36)}`;
     sessionId = created.session.id;
     repository.updateBot(created.bot.id, created.bot.version, {
       name: botName,
       instructions: "必须先且只调用一次 workspace_read，读取用户指定的文件；得到工具结果后，只输出文件原文。不要调用其他工具。",
     });
-    await new WorkspaceService(repository).registerRoot(root);
   } finally {
     repository.close();
   }
@@ -52,12 +52,14 @@ test("runs one approved workspace read through the configured real Provider", as
     );
     expect(connection.ok, connection.ok ? undefined : connection.error.code).toBe(true);
     await page.locator(".bot-row").filter({ hasText: botName }).click();
+    await expect(page.getByRole("heading", { name: botName })).toBeVisible();
     await page.getByLabel("消息").fill("请读取 provider-check.txt，并按 Instructions 返回结果。");
+    await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    const tool = page.getByTestId("workspace-tool-activity").last();
-    await expect(tool).toContainText("等待你的确认", { timeout: 90_000 });
+    const tool = page.getByTestId("tool-permission-dialog");
+    await expect(tool).toContainText("读取文件", { timeout: 90_000 });
     await tool.getByRole("button", { name: "仅允许一次" }).click();
-    await expect(tool).toContainText("执行完成", { timeout: 30_000 });
+    await expect(tool).toBeHidden({ timeout: 30_000 });
     await expect(page.locator('article.message-assistant[data-status="completed"]').last()).toContainText(token, { timeout: 90_000 });
   } finally {
     await application.close();

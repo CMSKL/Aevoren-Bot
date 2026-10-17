@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import type { PromptManifest } from "@shared/contracts";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "@shared/bot-avatar";
+import { DEFAULT_PROJECT_ID, type AttachmentDraft, type PromptManifest } from "@shared/contracts";
 import { AppRepository, MIGRATIONS } from "./database";
 import { AevorenBotError } from "./errors";
 
@@ -31,17 +32,34 @@ function manifest(sessionId: string, botId: string): PromptManifest {
 
 function createDatabaseAtVersion(filename: string, version: number, lastOpenedVersion = "0.1.0"): void {
   const database = new DatabaseSync(filename);
-  database.exec("PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);");
-  for (const migration of MIGRATIONS.filter((candidate) => candidate.version <= version)) {
-    const foreignKeysOff = "foreignKeysOff" in migration && migration.foreignKeysOff;
-    if (foreignKeysOff) database.exec("PRAGMA foreign_keys = OFF;");
-    database.exec(migration.sql);
-    database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(migration.version, "2026-09-16T00:00:00.000Z");
-    if (foreignKeysOff) database.exec("PRAGMA foreign_keys = ON;");
+  try {
+    database.exec("PRAGMA foreign_keys = ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);");
+    for (const migration of MIGRATIONS.filter((candidate) => candidate.version <= version)) {
+      const foreignKeysOff = "foreignKeysOff" in migration && migration.foreignKeysOff;
+      if (foreignKeysOff) database.exec("PRAGMA foreign_keys = OFF;");
+      try {
+        database.exec("BEGIN IMMEDIATE;");
+        try {
+          database.exec(migration.sql);
+          if (foreignKeysOff && database.prepare("PRAGMA foreign_key_check").all().length > 0) {
+            throw new Error("Migration produced foreign-key violations");
+          }
+          database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+            .run(migration.version, "2026-09-16T00:00:00.000Z");
+          database.exec("COMMIT;");
+        } catch (error) {
+          database.exec("ROLLBACK;");
+          throw error;
+        }
+      } finally {
+        if (foreignKeysOff) database.exec("PRAGMA legacy_alter_table = OFF; PRAGMA foreign_keys = ON;");
+      }
+    }
+    database.prepare("INSERT INTO app_settings(key, value, encrypted, updated_at) VALUES (?, ?, 0, ?)")
+      .run("app.lastOpenedVersion", lastOpenedVersion, "2026-09-16T00:00:00.000Z");
+  } finally {
+    database.close();
   }
-  database.prepare("INSERT INTO app_settings(key, value, encrypted, updated_at) VALUES (?, ?, 0, ?)")
-    .run("app.lastOpenedVersion", lastOpenedVersion, "2026-09-16T00:00:00.000Z");
-  database.close();
 }
 
 afterEach(() => {
@@ -53,6 +71,39 @@ afterEach(() => {
 });
 
 describe("AppRepository", () => {
+  it("migrates v26 folder grants into project nodes without inferring or moving legacy conversations", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-folder-binding-migration-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    createDatabaseAtVersion(filename, 26);
+    const legacy = new DatabaseSync(filename);
+    const folderIds = [crypto.randomUUID(), crypto.randomUUID()];
+    folderIds.forEach((id, index) => {
+      const root = join(directory, String(index), "资料");
+      mkdirSync(root, { recursive: true });
+      legacy.prepare(
+        `INSERT INTO workspaces(id, name, canonical_root, canonical_root_digest, version, write_enabled, automation_enabled, created_at, updated_at)
+         VALUES (?, '资料', ?, ?, 3, 1, 1, '2026-01-01', '2026-01-01')`,
+      ).run(id, realpathSync(root), "0".repeat(64));
+    });
+    legacy.prepare(
+      `INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at)
+       VALUES ('legacy-bot', '原有 Bot', '', '原有配置', '', 1, '2026-01-01', '2026-01-01')`,
+    ).run();
+    const grantsBefore = legacy.prepare("SELECT * FROM workspaces ORDER BY id").all();
+    legacy.close();
+    const repository = new AppRepository(filename);
+    repositories.push(repository);
+    expect(repository.listProjects().filter((project) => project.workspaceId).map((project) => project.workspaceId).toSorted())
+      .toEqual(folderIds.toSorted());
+    expect(repository.listProjects().filter((project) => project.workspaceId).every((project) => project.name === "资料")).toBe(true);
+    expect(repository.getBot("legacy-bot")).toMatchObject({ name: "原有 Bot", description: "原有配置", projectId: DEFAULT_PROJECT_ID });
+    expect(repository.listProjects().find((project) => project.id === DEFAULT_PROJECT_ID)?.workspaceId).toBeNull();
+    const inspected = new DatabaseSync(filename, { readOnly: true });
+    expect(inspected.prepare("SELECT * FROM workspaces ORDER BY id").all()).toEqual(grantsBefore);
+    expect(inspected.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    inspected.close();
+  });
   it("does not create a migration backup for a new database", () => {
     const directory = mkdtempSync(join(tmpdir(), "aevoren-new-database-backup-"));
     temporaryDirectories.push(directory);
@@ -84,8 +135,10 @@ describe("AppRepository", () => {
       sourceAppVersion: "0.1.0",
       targetAppVersion: "0.2.0-beta.1",
     });
-    expect(statSync(backupDirectory).mode & 0o777).toBe(0o700);
-    expect(statSync(String(metadata.databaseBackup)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(backupDirectory).mode & 0o777).toBe(0o700);
+      expect(statSync(String(metadata.databaseBackup)).mode & 0o777).toBe(0o600);
+    }
     const backup = new DatabaseSync(String(metadata.databaseBackup), { readOnly: true });
     expect(backup.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
     expect(backup.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: sourceSchemaVersion });
@@ -108,6 +161,57 @@ describe("AppRepository", () => {
     const database = new DatabaseSync(filename, { readOnly: true });
     expect(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: sourceSchemaVersion });
     database.close();
+  });
+
+  it("migrates every existing Bot and Room into the default project without changing their identities", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-project-migration-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    createDatabaseAtVersion(filename, 25);
+    const legacy = new DatabaseSync(filename);
+    legacy.prepare(
+      `INSERT INTO bots(id, name, label, description, instructions, version, created_at, updated_at)
+       VALUES (?, ?, '', '', '', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run("legacy-bot", "Legacy Bot");
+    legacy.prepare(
+      `INSERT INTO rooms(id, name, description, version, membership_version, archived_at, created_at, updated_at)
+       VALUES (?, ?, ?, 1, 1, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run("legacy-room", "Legacy Room", "Original description");
+    legacy.close();
+
+    const repository = new AppRepository(filename, { backupDirectory: join(directory, "Backups") });
+    repositories.push(repository);
+    const projects = repository.listProjects();
+    expect(projects).toHaveLength(1);
+    expect(projects[0]).toMatchObject({ id: DEFAULT_PROJECT_ID, name: "默认项目", isDefault: true });
+    expect(repository.getBot("legacy-bot")).toMatchObject({ id: "legacy-bot", name: "Legacy Bot", projectId: DEFAULT_PROJECT_ID });
+    expect(repository.getRoom("legacy-room")).toMatchObject({ id: "legacy-room", name: "Legacy Room", description: "Original description", projectId: DEFAULT_PROJECT_ID });
+
+    const newBot = repository.createBot().bot;
+    const secondBot = repository.createBot().bot;
+    const newRoom = repository.createRoom({ memberBotIds: [newBot.id, secondBot.id] }).room;
+    expect(newBot.projectId).toBe(DEFAULT_PROJECT_ID);
+    expect(newRoom.projectId).toBe(DEFAULT_PROJECT_ID);
+    expect(repository.getBot("legacy-bot").name).toBe("Legacy Bot");
+    expect(repository.getRoom("legacy-room").description).toBe("Original description");
+
+    const project = repository.createProject("Content Project");
+    expect(project).toMatchObject({ name: "Content Project", isDefault: false });
+    expect(() => repository.createProject("Content Project")).toThrow(AevorenBotError);
+    expect(() => repository.createProject("content project")).toThrow(AevorenBotError);
+    const projectBot = repository.createBot(project.id).bot;
+    const anotherProjectBot = repository.createBot(project.id).bot;
+    const projectRoom = repository.createRoom({ projectId: project.id, memberBotIds: [projectBot.id, anotherProjectBot.id] }).room;
+    expect(projectBot.projectId).toBe(project.id);
+    expect(projectRoom.projectId).toBe(project.id);
+    const globalRoom = repository.createRoom({ memberBotIds: ["legacy-bot", projectBot.id] });
+    expect(globalRoom.members.map(member => member.botId)).toEqual(["legacy-bot", projectBot.id]);
+    expect(repository.listSessionWorkspaces(globalRoom.session.id, projectBot.id)).toEqual([]);
+    const projectTeam = repository.createContentTeamTemplate(project.id);
+    expect(projectTeam.room.room.projectId).toBe(project.id);
+    expect(projectTeam.bots.every((bot) => bot.projectId === project.id)).toBe(true);
+    expect(repository.createContentTeamTemplate(project.id).disposition).toBe("existing");
+    expect(repository.duplicateBot(projectBot.id).bot.projectId).toBe(project.id);
   });
 
   it("migrates the legacy global model configuration into one provider instance without decrypting the key", () => {
@@ -225,6 +329,8 @@ describe("AppRepository", () => {
       hasUnread: false,
       version: 1,
     });
+    expect(BOT_AVATAR_SHAPES).toContain(created.bot.avatarShape);
+    expect(BOT_AVATAR_COLORS).toContain(created.bot.avatarColor);
     expect(created.session.kind).toBe("MAIN");
     expect(repository.listBots()).toHaveLength(1);
     expect(repository.getMainSession(created.bot.id).id).toBe(created.session.id);
@@ -351,6 +457,8 @@ describe("AppRepository", () => {
       version: 1,
     });
     expect(duplicate.bot.id).not.toBe(source.id);
+    expect(BOT_AVATAR_SHAPES).toContain(duplicate.bot.avatarShape);
+    expect(BOT_AVATAR_COLORS).toContain(duplicate.bot.avatarColor);
     expect(duplicate.session.id).not.toBe(created.session.id);
     expect(repository.listTranscript(duplicate.session.id)).toHaveLength(0);
     expect(repository.listTranscript(created.session.id)).toHaveLength(1);
@@ -464,6 +572,72 @@ describe("AppRepository", () => {
       expect.objectContaining<Partial<AevorenBotError>>({ code: "MESSAGE_NONCE_CONFLICT" }),
     );
     expect(repository.listTranscript(session.id)).toHaveLength(1);
+  });
+
+  it("persists attachment metadata, includes content in prompts, and detects attachment conflicts", () => {
+    const repository = memoryRepository();
+    const { session } = repository.createBot();
+    const attachment: AttachmentDraft = {
+      id: crypto.randomUUID(),
+      name: "brief.md",
+      mimeType: "text/markdown",
+      size: 16,
+      sha256: "34fc1b8daebc49b0787a099b0e71ca7ee9c253a1012fe263af11543b5faddba6",
+      kind: "text",
+      content: "# attached brief",
+    };
+    const nonce = crypto.randomUUID();
+    repository.prepareMessage({ sessionId: session.id, clientNonce: nonce, text: "阅读附件", attachments: [attachment] });
+    expect(repository.listTranscript(session.id)[0]?.attachments).toEqual([{
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      sha256: attachment.sha256,
+      kind: "text",
+    }]);
+    expect(repository.listPromptEntries(session.id)[0]?.attachmentContents?.[0]?.content).toBe(attachment.content);
+    expect(() => repository.prepareMessage({
+      sessionId: session.id,
+      clientNonce: nonce,
+      text: "阅读附件",
+      attachments: [{ ...attachment, content: "different" }],
+    })).toThrowError(expect.objectContaining({ code: "ATTACHMENT_INVALID" }));
+  });
+
+  it("persists the same attachment contract for a Room trigger message", () => {
+    const repository = memoryRepository();
+    const first = repository.createBot().bot;
+    const second = repository.createBot().bot;
+    const room = repository.createRoom({ memberBotIds: [first.id, second.id] });
+    const content = "room attachment";
+    const attachment: AttachmentDraft = {
+      id: crypto.randomUUID(),
+      name: "room.txt",
+      mimeType: "text/plain",
+      size: Buffer.byteLength(content),
+      sha256: "3784a2d7c76837737cb66c0569921d20a3671f44bc60dbefc9029c4804c3e7a5",
+      kind: "text",
+      content,
+    };
+    const created = repository.createRoomRunWithInitialTurns({
+      roomId: room.room.id,
+      sessionId: room.session.id,
+      clientNonce: crypto.randomUUID(),
+      text: "请阅读群聊附件",
+      attachments: [attachment],
+      membershipVersion: room.room.membershipVersion,
+      maxTurns: 2,
+      maxHops: 1,
+      maxTargetsPerTurn: 1,
+      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+      initialTurns: [{ agentId: first.id, nonce: crypto.randomUUID() }],
+      routingMode: "explicit",
+      routingReason: null,
+    });
+    expect(created.disposition).toBe("created");
+    expect(repository.listTranscript(room.session.id)[0]?.attachments?.[0]?.name).toBe("room.txt");
+    expect(repository.listPromptEntries(room.session.id)[0]?.attachmentContents?.[0]?.content).toBe(content);
   });
 
   it("recovers pre-acceptance and uncertain sends without auto-resending", () => {

@@ -1,4 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
+import { closeInspector } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,16 +51,21 @@ test("renders Markdown during streaming and keeps the same semantic structure wh
     const page = await application.firstWindow();
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+    await closeInspector(page);
     await page.getByLabel("消息").fill("请使用 Markdown 回复。");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistant = page.locator("article.message-assistant");
     await expect(assistant).toHaveAttribute("data-status", "streaming");
+    await expect(page.getByRole("button", { name: "停止回复", exact: true })).toBeVisible();
+    await expect(page.locator(".streaming-indicator, .composer-wrap .send-state:not(.runtime-stale)")).toHaveCount(0);
     await expect(assistant.locator("h2", { hasText: "背景" })).toBeVisible();
     await expect(assistant).toHaveAttribute("data-status", "streaming");
     await expect(assistant).not.toContainText("## 背景");
 
     await expect(assistant).toHaveAttribute("data-status", "completed");
+    await expect(page.getByRole("button", { name: /收起详细内容|展开证据与完整过程/u })).toHaveCount(0);
     await expect(assistant.locator("h2")).toHaveCount(10);
     await expect(assistant.locator("ol > li")).toHaveCount(2);
     await expect(assistant.locator("h2", { hasText: "背景" })).toHaveCount(1);

@@ -1,6 +1,9 @@
-import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
+import { productOperation } from "@shared/product-operations";
+import { useEffectEvent, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import type {
   AppError,
+  AttachmentDraft,
   ApprovalRequest,
   ApprovalResolution,
   Bot,
@@ -11,13 +14,15 @@ import type {
   RoomTurn,
   RuntimeRun,
   SessionLiveState,
-  SessionLiveStateName,
   ToolInvocation,
   TranscriptEntry,
   UserRoomRoutingMode,
 } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
+import type { LibraryResource, LibraryResourceKind, ResourceReference } from "@shared/library-contracts";
+import type { MessageMediaReference } from "@shared/media-contracts";
 import { buildBotIdentityMap, buildSnapshotIdentityMap } from "../bot-identity";
+import { shouldShowBriefApproval } from "../brief-approval-state";
 import { initialRoomRouteAgentIds, latestRoomTurnsByLogicalTurn, roomHandoffProgress } from "../room-runtime-state";
 import {
   EVERYONE_MENTION_ID,
@@ -29,20 +34,76 @@ import {
   type ActiveMentionQuery,
   type RoomMention,
 } from "../room-mentions";
+import { conversationArtifacts, groupToolActivity } from "../conversation-view-model";
+import { latestRuntimeAttempts, runtimeTaskKey } from "../runtime-state";
+import { BotAvatarIcon } from "./BotAvatarIcon";
+import { UserAvatar } from "./UserAvatar";
 import { AssistantMarkdown } from "./AssistantMarkdown";
-import { BotIcon, FolderIcon, MenuIcon, PanelIcon, SendIcon, StopIcon } from "./Icons";
-import { HeaderModelPicker } from "./HeaderModelPicker";
+import { AtIcon, AttachmentIcon, CheckIcon, CloseIcon, DocumentIcon, FolderIcon, MoreIcon, PanelIcon, StopIcon } from "./Icons";
+import { ExpandableTrace, type ExpandableTraceKind, type ExpandableTraceTone } from "./ExpandableTrace";
+import { ToolPermissionDialog } from "./ToolPermissionDialog";
+import { LibraryResourcePicker } from "./LibraryResourcePicker";
+import { MediaLibraryPanel } from "./MediaLibraryPanel";
+import { MediaReferenceBadge } from "./MediaReferenceBadge";
+import {
+  ArtifactStatusBar,
+  ArtifactCard,
+  BriefApprovalCard,
+  HandoffEventCard,
+  RunFailureCard,
+  type WorkflowAction,
+} from "./CollaborationFeedback";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
+const dateFormatter = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" });
+const defaultUserProfile = { name: "你", avatarUrl: null };
 
-const liveLabels: Record<Exclude<SessionLiveStateName, "idle">, string> = {
-  starting: "正在连接模型",
-  running: "模型已接受，正在运行",
-  composing: "正在生成回复",
-  retrying: "正在重新生成",
-  cancelling: "正在取消",
-  stale: "连接可能已停滞，仍可停止本次运行",
-};
+const ResourceReferenceBadge = memo(function ResourceReferenceBadge({ sessionId, reference, onRemove }: { sessionId: string; reference: ResourceReference; onRemove?: () => void }): React.JSX.Element {
+  const [metadata, setMetadata] = useState<{ key: string; label: string; unavailable: boolean } | null>(null);
+  const key = `${sessionId}:${reference.resourceId}:${reference.revisionId}:${reference.digest}`;
+  useEffect(() => {
+    let cancelled = false;
+    let sequence = 0;
+    const load = async (): Promise<void> => {
+      const request = ++sequence;
+      try {
+        const result = await window.aevorenBot.library.read({ sessionId, id: reference.resourceId, revisionId: reference.revisionId });
+        if (cancelled || request !== sequence) return;
+        const matches = result.ok && result.data.reference.digest === reference.digest;
+        setMetadata(matches ? { key, label: `${result.data.resource.kind === "skill" ? "Skill" : "资料"}：${result.data.revision.name} · v${result.data.revision.number}`, unavailable: false }
+          : { key, label: `资源 ${reference.resourceId.slice(0, 8)}… · 不可读取`, unavailable: true });
+      } catch {
+        if (!cancelled && request === sequence) setMetadata({ key, label: `资源 ${reference.resourceId.slice(0, 8)}… · 不可读取`, unavailable: true });
+      }
+    };
+    void load();
+    const unsubscribe = window.aevorenBot.library.onChanged(event => { if (event.resourceId === reference.resourceId) void load(); });
+    return () => { cancelled = true; unsubscribe(); };
+  }, [sessionId, reference.resourceId, reference.revisionId, reference.digest, key]);
+  const label = metadata?.key === key ? metadata.label : `资源 ${reference.resourceId.slice(0, 8)}… · 读取中`;
+  return onRemove ? <button className="attachment-chip" type="button" aria-label={`移除资源 ${label}`} onClick={onRemove}><DocumentIcon /><span>{label}</span><span aria-hidden="true">×</span></button>
+    : <span className="message-attachment" title={reference.revisionId}><DocumentIcon /><span>{label}</span></span>;
+});
+
+export type ConversationComposerDraft = { text: string; attachments: AttachmentDraft[]; roomMentions: RoomMention[]; routingMode: UserRoomRoutingMode; resourceRefs: ResourceReference[]; mediaRefs: MessageMediaReference[]; draftVersion: number };
+export type ConversationResourceInsertion = { id: string; sessionId: string; reference: ResourceReference; text?: string; expectedDraftVersion: number };
+export type ConversationMediaInsertion = { id: string; sessionId: string; reference: MessageMediaReference; expectedDraftVersion: number };
+function emptyComposerDraft(draftVersion = 0): ConversationComposerDraft { return { text: "", attachments: [], roomMentions: [], routingMode: "automatic", resourceRefs: [], mediaRefs: [], draftVersion }; }
+
+function localDayKey(value: string | Date): string {
+  const date = typeof value === "string" ? new Date(value) : value;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function conversationDateLabel(value: string, today: Date): string {
+  const day = localDayKey(value);
+  if (day === localDayKey(today)) return "今天";
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  return day === localDayKey(yesterday) ? "昨天" : dateFormatter.format(new Date(value));
+}
+
+type ConversationUserProfile = { name: string; avatarUrl: string | null };
 
 const handoffRejectionMessages: Record<string, string> = {
   INVALID_REQUEST: "任务转交格式不受支持，未执行。",
@@ -58,11 +119,6 @@ const handoffRejectionMessages: Record<string, string> = {
   RUNTIME_STATE_INVALID: "当前运行状态不允许继续转交。",
 };
 
-function summarizeHandoffTask(task: string): string {
-  const compact = task.replace(/\s+/g, " ").trim();
-  return compact.length > 120 ? `${compact.slice(0, 119)}…` : compact;
-}
-
 type HandoffDisplay = RoomHandoffView & {
   fromName: string;
   toName: string;
@@ -75,26 +131,40 @@ type HandoffRejectionDisplay = RoomHandoffRejectionView & {
   message: string;
 };
 
+const emptyToolInvocations: ToolInvocation[] = [];
+const emptyHandoffs: HandoffDisplay[] = [];
+const emptyHandoffRejections: HandoffRejectionDisplay[] = [];
+const emptyRouteDisplayNames: string[] = [];
+
 type TranscriptItemProps = {
   entry: TranscriptEntry;
   run: RuntimeRun | null;
   canRegenerate: boolean;
   canRetryRoomTurn: boolean;
+  busy: boolean;
   groupedWithPrevious: boolean;
   groupedWithNext: boolean;
+  isSuperseded: boolean;
+  speakerBot: Bot | null;
   speakerDisplayName: string | null;
+  userProfile: ConversationUserProfile;
   routeDisplayNames: string[];
   routeMode: UserRoomRoutingMode | "legacy" | null;
   routeReason: string | null;
   handoffs: HandoffDisplay[];
   handoffRejections: HandoffRejectionDisplay[];
+  coordinationErrorCode: string | null;
+  turnPurpose: RoomTurn["turnPurpose"];
+  taskPartial: boolean;
   toolInvocations: ToolInvocation[];
-  approvalsByInvocation: ReadonlyMap<string, ApprovalRequest>;
+  briefApproval: { roomId: string; sourceRuntimeRunId: string; briefInvocationId: string } | null;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onRetryRoomTurn(turnId: string): void;
   onOpenSpeaker(botId: string): void;
-  onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
+  onRevealWorkspaceArtifact(workspaceId: string, path: string): void;
+  onOpenWorkspaces(): void;
+  onWorkflowAction(action: WorkflowAction): Promise<boolean>;
 };
 
 const toolStateLabels: Record<ToolInvocation["state"], string> = {
@@ -112,35 +182,72 @@ const toolStateLabels: Record<ToolInvocation["state"], string> = {
   "interrupted-unknown": "执行被中断",
 };
 
+const roomBatchLabels: Record<RoomBatch["state"], string> = {
+  queued: "待处理", running: "处理中", completed: "已完成", partial: "部分完成", cancelled: "已停止", interrupted: "已中断",
+};
+const roomTurnLabels: Record<RoomTurn["state"], string> = {
+  queued: "待执行", running: "处理中", completed: "已完成", failed: "未完成", cancelled: "已停止", interrupted: "已中断",
+};
+
 function toolActionLabel(invocation: ToolInvocation): string {
   if (invocation.toolKind === "workspace-list") return "查看目录";
   if (invocation.toolKind === "workspace-read") return "读取文件";
   if (invocation.toolKind === "workspace-search") return "搜索文件";
+  if (invocation.toolKind === "workspace-write") return "新建文件";
   if (invocation.toolKind === "web-search") return "联网搜索";
   if (invocation.toolKind === "web-fetch") return "读取网页";
   if (invocation.toolKind === "weather-current") return "查询当前天气";
-  if (invocation.toolKind === "mcp-call") return `MCP · ${invocation.arguments.kind === "mcp-call" ? invocation.arguments.toolName : "Tool"}`;
+  if (invocation.toolKind === "mcp-call") return `外部工具 · ${invocation.arguments.kind === "mcp-call" ? invocation.arguments.toolName : "工具"}`;
   if (invocation.toolKind === "clipboard-read") return "读取剪贴板";
+  if (invocation.toolKind === "text-measure") return "精确计算文本长度";
+  if (invocation.arguments.kind === "product-call") return invocation.arguments.action === "catalog" ? "查询产品功能" : productOperation(invocation.arguments.operation)?.description ?? "产品操作";
+  if (invocation.toolKind === "project-bots") return "查看项目 Bot";
+  if (invocation.toolKind === "bot-create") return "创建 Bot";
+  if (invocation.toolKind === "room-create") return "创建群聊";
   return "查询当前时间";
+}
+
+const activeToolStates = new Set<ToolInvocation["state"]>(["prepared", "approved", "dispatching", "running"]);
+
+function toolTraceKind(invocation: ToolInvocation): ExpandableTraceKind {
+  if (["web-search", "web-fetch", "weather-current", "time-now"].includes(invocation.toolKind)) return "search";
+  if (["workspace-list", "workspace-read", "workspace-search"].includes(invocation.toolKind)) return "coding";
+  return "steps";
+}
+
+function toolTraceTone(invocation: ToolInvocation): ExpandableTraceTone {
+  if (activeToolStates.has(invocation.state)) return "working";
+  if (invocation.state === "succeeded") return "success";
+  if (["awaiting-approval", "denied", "expired", "cancelled"].includes(invocation.state)) return "attention";
+  if (["failed", "failed-before-execution", "interrupted-unknown"].includes(invocation.state)) return "error";
+  return "neutral";
+}
+
+function activeTraceLabel(kind: ExpandableTraceKind): string {
+  if (kind === "search") return "正在搜索";
+  if (kind === "coding") return "正在运行工具";
+  if (kind === "reasoning") return "正在思考";
+  return "正在执行步骤";
+}
+
+function completedTraceLabel(kind: ExpandableTraceKind): string {
+  if (kind === "search") return "已完成搜索";
+  if (kind === "coding") return "已运行工具";
+  if (kind === "reasoning") return "思考完成";
+  return "步骤已完成";
 }
 
 const ToolActivity = memo(function ToolActivity({
   invocation,
-  approval,
-  onResolve,
 }: {
   invocation: ToolInvocation;
-  approval?: ApprovalRequest;
-  onResolve(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
 }): React.JSX.Element {
-  const [resolving, setResolving] = useState<ApprovalResolution | null>(null);
-  const query = invocation.arguments.kind === "workspace-search" ? invocation.arguments.query : null;
-  const remote = invocation.effectClass === "read-remote";
-  const pure = invocation.effectClass === "pure";
-  const clipboardRead = invocation.toolKind === "clipboard-read";
+  const query = invocation.arguments.kind === "workspace-search" || invocation.arguments.kind === "web-search"
+    ? invocation.arguments.query
+    : null;
   const targetLabel = invocation.arguments.kind === "mcp-call"
     ? `Server ${invocation.arguments.serverId.slice(0, 8)}…`
-    : invocation.targetPath || "工作区根目录";
+    : invocation.targetPath || "文件夹根目录";
   const resultProvider = typeof invocation.resultMetadata?.provider === "string"
     ? invocation.resultMetadata.provider
     : typeof invocation.resultMetadata?.server === "string"
@@ -151,48 +258,70 @@ const ToolActivity = memo(function ToolActivity({
     : typeof invocation.resultMetadata?.retrievedAt === "string"
       ? invocation.resultMetadata.retrievedAt
       : null;
-
-  async function resolve(resolution: ApprovalResolution): Promise<void> {
-    if (!approval || resolving) return;
-    setResolving(resolution);
-    try {
-      await onResolve(approval, resolution);
-    } finally {
-      setResolving(null);
-    }
-  }
+  const traceKind = toolTraceKind(invocation);
+  const active = activeToolStates.has(invocation.state);
+  const settledLabel = invocation.state === "succeeded"
+    ? completedTraceLabel(traceKind)
+    : toolStateLabels[invocation.state];
 
   return (
-    <div className={`tool-activity tool-${invocation.state}`} data-testid="workspace-tool-activity">
-      <div className="tool-activity-heading">
-        <span className="tool-activity-icon"><FolderIcon /></span>
-        <span className="tool-activity-copy">
-          <strong>{toolActionLabel(invocation)}</strong>
-          <span>{targetLabel}{query ? ` · “${query}”` : ""}</span>
-        </span>
-        <span className="tool-activity-state">{toolStateLabels[invocation.state]}</span>
+    <ExpandableTrace
+      active={active}
+      activeLabel={activeTraceLabel(traceKind)}
+      autoExpanded={false}
+      className={`tool-${invocation.state}`}
+      kind={traceKind}
+      rows={[{
+        id: invocation.id,
+        primary: toolActionLabel(invocation),
+        secondary: `${targetLabel}${query ? ` · “${query}”` : ""}`,
+        trailing: toolStateLabels[invocation.state],
+        mono: traceKind === "coding",
+      }]}
+      settledLabel={settledLabel}
+      testId="workspace-tool-activity"
+      tone={toolTraceTone(invocation)}
+    >
+      <div className="expandable-trace-meta">
+        <time dateTime={invocation.createdAt}>调用于 {timeFormatter.format(new Date(invocation.createdAt))}</time>
+        {invocation.state === "succeeded" && resultProvider ? <span>来源：{resultProvider}</span> : null}
+        {invocation.state === "succeeded" && resultTime ? <span>结果时间：{resultTime}</span> : null}
       </div>
-      {invocation.state === "succeeded" && (resultProvider || resultTime) ? (
-        <div className="tool-provenance">
-          {resultProvider ? <span>来源：{resultProvider}</span> : null}
-          {resultTime ? <span>时间：{resultTime}</span> : null}
-        </div>
-      ) : null}
-      {approval?.state === "pending" ? (
-        <div className="tool-approval-actions" aria-label={remote ? "联网查询确认" : pure ? "系统信息确认" : clipboardRead ? "剪贴板读取确认" : "本地工具确认"}>
-          <p>{remote
-            ? "仅本次允许 Aevoren Bot 将上方查询内容发送给标明的外部只读数据服务。"
-            : pure
-              ? "仅本次允许 Aevoren Bot 读取本机系统时间；不会访问外部网络。"
-              : clipboardRead
-                ? "仅本次允许 Aevoren Bot 读取当前纯文本剪贴板内容；结果不会写入 Memory。"
-                : "仅本次允许 Aevoren Bot 访问这个已登记工作区目标。"}</p>
-          <div>
-            <button type="button" className="secondary-button" disabled={resolving !== null} onClick={() => void resolve("deny")}>{resolving === "deny" ? "正在拒绝…" : "拒绝"}</button>
-            <button type="button" className="primary-button" disabled={resolving !== null} onClick={() => void resolve("allow-once")}>{resolving === "allow-once" ? "正在执行…" : "仅允许一次"}</button>
+    </ExpandableTrace>
+  );
+});
+
+const ToolActivityList = memo(function ToolActivityList({
+  invocations,
+}: {
+  invocations: ToolInvocation[];
+}): React.JSX.Element {
+  const items = useMemo(() => groupToolActivity(invocations), [invocations]);
+  return (
+    <div className="message-tools" aria-label="工具活动">
+      {items.map((item) => item.kind === "run" ? (
+        <details className="tool-activity-run" key={item.id} data-testid="tool-activity-run">
+          <summary>
+            <span className="tool-run-check" aria-hidden="true"><CheckIcon /></span>
+            <span>已完成 {item.invocations.length} 个步骤</span>
+            <small>{item.invocations.slice(0, 3).map(toolActionLabel).join("、")}{item.invocations.length > 3 ? ` 等 ${item.invocations.length} 项` : ""}</small>
+            <span className="tool-run-chevron" aria-hidden="true">›</span>
+          </summary>
+          <div className="tool-activity-run-items">
+            {item.invocations.map((invocation) => (
+              <ToolActivity
+                invocation={invocation}
+                key={invocation.id}
+              />
+            ))}
           </div>
-        </div>
-      ) : null}
+        </details>
+      ) : (
+        <ToolActivity
+          invocation={item.invocation}
+          key={item.id}
+        />
+      ))}
     </div>
   );
 });
@@ -202,22 +331,33 @@ const TranscriptItem = memo(function TranscriptItem({
   run,
   canRegenerate,
   canRetryRoomTurn,
+  busy,
   groupedWithPrevious,
   groupedWithNext,
+  isSuperseded,
+  speakerBot,
   speakerDisplayName,
+  userProfile,
   routeDisplayNames,
   routeMode,
   routeReason,
   handoffs,
   handoffRejections,
+  coordinationErrorCode,
+  turnPurpose,
+  taskPartial,
   toolInvocations,
-  approvalsByInvocation,
+  briefApproval,
   onRetryMessage,
   onRetryRun,
   onRetryRoomTurn,
   onOpenSpeaker,
-  onResolveApproval,
+  onRevealWorkspaceArtifact,
+  onOpenWorkspaces,
+  onWorkflowAction,
 }: TranscriptItemProps): React.JSX.Element {
+  const evidenceId = useId();
+  const [evidenceExpanded, setEvidenceExpanded] = useState(false);
   const failedBeforeAcceptance = entry.sendState === "failed-before-acceptance";
   const interrupted = run?.state === "interrupted";
   const cancelled = entry.status === "cancelled";
@@ -227,27 +367,89 @@ const TranscriptItem = memo(function TranscriptItem({
     : entry.body;
   const longAssistant = entry.role === "assistant" && assistantBody.length > 160;
   const hasVisibleBody = entry.role === "user" || assistantBody.trim().length > 0;
-  const speakerName = entry.role === "assistant" ? speakerDisplayName ?? entry.speakerNameSnapshot ?? "Aevoren Bot" : "你";
+  const speakerName = entry.role === "assistant"
+    ? speakerDisplayName ?? speakerBot?.name ?? entry.speakerNameSnapshot ?? "Bot"
+    : entry.origin ? `${entry.origin.fromBotNameSnapshot ?? "Bot"} · ${entry.origin.kind === "routine" ? "定时任务" : "AI 委派"}` : userProfile.name;
+  const hasEvidence = toolInvocations.length > 0 || handoffs.length > 0 || handoffRejections.length > 0 || coordinationErrorCode !== null;
+  const hasCollaboration = handoffs.length > 0 || handoffRejections.length > 0 || turnPurpose !== undefined;
 
   return (
     <article
-      className={`message message-${entry.role}${longAssistant ? " message-long" : ""}${groupedWithPrevious ? " message-group-continuation" : ""}${groupedWithNext ? " message-group-has-next" : ""}`}
+      className={`message message-${entry.role}${longAssistant ? " message-long" : ""}${groupedWithPrevious ? " message-group-continuation" : ""}${groupedWithNext ? " message-group-has-next" : ""}${isSuperseded ? " message-superseded" : ""}`}
       data-status={entry.status}
+      data-runtime-run-id={run?.id}
+      data-turn-purpose={turnPurpose}
     >
       <div className="message-row">
         {entry.role === "assistant" ? (
-          <span className={`message-avatar${groupedWithPrevious ? " message-avatar-placeholder" : ""}`} aria-hidden="true">
-            {groupedWithPrevious ? null : <BotIcon />}
+          <span
+            className={`message-avatar message-avatar-with-bot${groupedWithPrevious ? " message-avatar-placeholder" : ""}`}
+            aria-hidden="true"
+          >
+            {groupedWithPrevious ? null : <BotAvatarIcon shape={speakerBot?.avatarShape} color={speakerBot?.avatarColor} size={48} />}
           </span>
         ) : null}
         <div className="message-stack">
-          {!groupedWithPrevious ? (
-            <header className="message-meta">
+          {!groupedWithPrevious || hasEvidence ? (
+            <header className={`message-meta${entry.role === "user" ? " message-meta-user" : ""}`}>
               {entry.speakerBotId ? (
                 <button className="speaker-link" type="button" onClick={() => onOpenSpeaker(entry.speakerBotId!)}>{speakerName}</button>
               ) : <strong>{speakerName}</strong>}
-              <time>{timeFormatter.format(new Date(entry.createdAt))}</time>
+              <time dateTime={entry.createdAt}>{timeFormatter.format(new Date(entry.createdAt))}</time>
+              {turnPurpose === "summary" ? <span>汇总</span> : turnPurpose === "coordinate" ? <span>协调</span> : null}
+              {hasEvidence ? (
+                <button
+                  className="message-evidence-toggle"
+                  type="button"
+                  aria-controls={evidenceId}
+                  aria-expanded={evidenceExpanded}
+                  onClick={() => setEvidenceExpanded((current) => !current)}
+                >
+                  {hasCollaboration ? "查看协作详情" : "查看工具活动"}
+                  <span aria-hidden="true">›</span>
+                </button>
+              ) : null}
             </header>
+          ) : null}
+          {isSuperseded ? <div className="superseded-attempt-note"><span aria-hidden="true">↻</span>较早失败版本，已由后续重试替代</div> : null}
+          {hasEvidence && evidenceExpanded ? (
+            <section className="message-evidence-panel" id={evidenceId} aria-label={`${speakerName} 的执行详情`}>
+              {toolInvocations.length > 0 ? <ToolActivityList invocations={toolInvocations} /> : null}
+              {handoffs.length > 0 ? (
+                <div className="message-handoffs" aria-label="Agent 任务转交" data-testid="room-handoff-list">
+                  {handoffs.map((handoff) => (
+                    <HandoffEventCard
+                      key={handoff.id}
+                      fromName={handoff.fromName}
+                      toName={handoff.toName}
+                      task={handoff.task}
+                      delivery={handoff.progress.deliveryLabel}
+                      execution={handoff.progress.executionLabel}
+                      tone={handoff.progress.tone}
+                      createdAt={handoff.deliveryAttempt?.acceptedAt ?? handoff.createdAt}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {handoffRejections.length > 0 ? (
+                <div className="message-handoff-rejections" aria-label="未执行的 Agent 任务转交" data-testid="room-handoff-rejection-list">
+                  {handoffRejections.map((rejection) => (
+                    <div className="room-handoff-rejection-row" key={rejection.id}>
+                      <span className="room-handoff-route">{rejection.fromName}<span aria-hidden="true">→</span>{rejection.toName}</span>
+                      <span className="room-handoff-rejection-message">{rejection.message}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {coordinationErrorCode ? (
+                <div className="handoff-status-card" role="status">
+                  <strong>下一阶段交接未完成</strong>
+                  <span>文字{entry.status === "completed" ? "已生成" : "尚未完整生成"}；工具成功 {toolInvocations.filter((item) => item.state === "succeeded").length} 次；文件已保存 {toolInvocations.filter((item) => item.toolKind === "workspace-write" && item.state === "succeeded").length} 个。</span>
+                  <span>已有成功结果仍然保留。下一位 Bot 尚未启动，需要处理交接。</span>
+                  <details><summary>技术详情</summary><code>{coordinationErrorCode}</code></details>
+                </div>
+              ) : null}
+            </section>
           ) : null}
           {hasVisibleBody ? <div className={`message-bubble${longAssistant ? " message-bubble-long" : ""}`}>
             {entry.role === "user" && (routeDisplayNames.length > 0 || routeMode === "automatic") ? (
@@ -257,52 +459,37 @@ const TranscriptItem = memo(function TranscriptItem({
                 {routeMode === "automatic" && routeReason ? <span className="message-route-reason">{routeReason}</span> : null}
               </div>
             ) : null}
-            {entry.role === "assistant"
+          {entry.origin ? <div className="message-route" aria-label="AI 委派来源"><span>{speakerName}</span></div> : null}
+          {entry.role === "assistant"
               ? <AssistantMarkdown body={assistantBody} />
               : <p className="user-message-body">{entry.body}</p>}
-          </div> : null}
-          {handoffs.length > 0 ? (
-            <div className="message-handoffs" aria-label="Agent 任务转交" data-testid="room-handoff-list">
-              {handoffs.map((handoff) => (
-                <div className={`room-handoff-row handoff-${handoff.state} handoff-tone-${handoff.progress.tone}`} key={handoff.id}>
-                  <span className="room-handoff-route">{handoff.fromName}<span aria-hidden="true">→</span>{handoff.toName}</span>
-                  <span className="room-handoff-task" title={handoff.task}>{summarizeHandoffTask(handoff.task)}</span>
-                  <span className="room-handoff-status">
-                    <span>投递：{handoff.progress.deliveryLabel}</span>
-                    {handoff.progress.executionLabel ? <span>执行：{handoff.progress.executionLabel}</span> : null}
+            {entry.attachments && entry.attachments.length > 0 ? (
+              <div className="message-attachments" aria-label="消息附件">
+                {entry.attachments.map((attachment) => (
+                  <span className="message-attachment" key={attachment.id}>
+                    <AttachmentIcon />
+                    <span>{attachment.name}</span>
+                    <small>{Math.max(1, Math.round(attachment.size / 1024))} KB</small>
                   </span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {handoffRejections.length > 0 ? (
-            <div className="message-handoff-rejections" aria-label="未执行的 Agent 任务转交" data-testid="room-handoff-rejection-list">
-              {handoffRejections.map((rejection) => (
-                <div className="room-handoff-rejection-row" key={rejection.id}>
-                  <span className="room-handoff-route">{rejection.fromName}<span aria-hidden="true">→</span>{rejection.toName}</span>
-                  <span className="room-handoff-rejection-message">{rejection.message}</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {toolInvocations.length > 0 ? (
-            <div className="message-tools" aria-label="工作区工具活动">
-              {toolInvocations.map((invocation) => (
-                <ToolActivity
-                  key={invocation.id}
-                  invocation={invocation}
-                  approval={approvalsByInvocation.get(invocation.id)}
-                  onResolve={onResolveApproval}
-                />
-              ))}
-            </div>
-          ) : null}
-          {entry.status === "streaming"
-            ? <div className="streaming-indicator">正在生成<span /></div>
+                ))}
+              </div>
+            ) : null}
+            {entry.resourceRefs?.length ? <div className="message-attachments" aria-label="消息资源引用">{entry.resourceRefs.map(reference => <ResourceReferenceBadge key={`${reference.resourceId}:${reference.revisionId}`} sessionId={entry.sessionId} reference={reference} />)}</div> : null}
+            {entry.mediaRefs?.length ? <div className="message-attachments" aria-label="消息媒体引用">{entry.mediaRefs.map(reference => <MediaReferenceBadge key={JSON.stringify(reference)} sessionId={entry.sessionId} reference={reference} />)}</div> : null}
+          </div> : null}
+          {entry.role === "assistant"
+            ? <ArtifactStatusBar
+                writes={toolInvocations}
+                onRevealWorkspace={onRevealWorkspaceArtifact}
+                onOpenWorkspaces={onOpenWorkspaces}
+              />
             : null}
-          {entry.role === "assistant" && entry.status === "completed"
-            ? <div className="entry-note success">已完成</div>
-            : null}
+          {briefApproval ? (
+            <BriefApprovalCard key={briefApproval.briefInvocationId} {...briefApproval} busy={busy} onAction={onWorkflowAction} />
+          ) : null}
+          {turnPurpose === "summary" && entry.status === "completed" && taskPartial ? (
+            <div className="entry-note warning" role="status">本轮仅部分完成。以上汇总不代表所有成员任务成功；已保存成果仍可在任务详情中查看。</div>
+          ) : null}
           {cancelled ? (
             <div className="entry-note warning">
               {entry.role === "assistant" ? "回复已停止。" : "消息已取消。"}
@@ -314,35 +501,55 @@ const TranscriptItem = memo(function TranscriptItem({
               ) : null}
             </div>
           ) : null}
-          {failed ? (
+          {failed && entry.role === "assistant" && turnPurpose === "summary" ? (
+            <div className="entry-note warning" role="status">
+              汇总未完成，成员已经完成的工作和保存的文件仍然保留。
+              {canRetryRoomTurn && entry.sourceTurnId ? <button type="button" className="text-button" disabled={busy} onClick={() => onRetryRoomTurn(entry.sourceTurnId!)}>重试汇总</button> : null}
+            </div>
+          ) : failed && entry.role === "assistant" ? (
+            canRetryRoomTurn && entry.sourceTurnId ? (
+              <div className="room-inline-failure" data-testid="room-batch-state">
+                <RunFailureCard
+                  step={speakerName}
+                  errorCode={run?.lastErrorCode}
+                  hostOutbound={run?.route === "host-outbound"}
+                  hostMcp={run?.route === "host-mcp"}
+                  invocations={toolInvocations}
+                  canRetry={canRetryRoomTurn}
+                  onRetry={() => onRetryRoomTurn(entry.sourceTurnId!)}
+                />
+              </div>
+            ) : isSuperseded ? (
+              <details className="superseded-attempt-details" data-testid={entry.sourceTurnId ? undefined : "direct-attempt-history"}>
+                <summary>查看较早失败详情</summary>
+                <RunFailureCard step={speakerName} errorCode={run?.lastErrorCode} hostOutbound={run?.route === "host-outbound"} hostMcp={run?.route === "host-mcp"} invocations={toolInvocations} canRetry={false} onRetry={() => undefined} />
+              </details>
+            ) : <RunFailureCard
+              step={speakerName}
+              errorCode={run?.lastErrorCode}
+              hostOutbound={run?.route === "host-outbound"}
+              hostMcp={run?.route === "host-mcp"}
+              invocations={toolInvocations}
+              canRetry={Boolean(canRegenerate && run)}
+              onRetry={() => { if (canRegenerate && run) onRetryRun(run.id); }}
+            />
+          ) : failed ? (
             <div className={"entry-note " + (interrupted || entry.sendState === "interrupted-unknown" ? "warning" : "error")}>
-              {entry.role === "assistant"
-                ? interrupted
-                  ? "运行被应用中断，没有自动重新发送。"
-                  : "回复生成失败，已保留可用的部分内容。"
-                : entry.sendState === "interrupted-unknown"
-                  ? "应用中断，模型可能已接受该消息；不会自动重发。"
-                  : "消息未成功发送。"}
-              {failedBeforeAcceptance && entry.clientNonce ? (
-                <button type="button" className="text-button" onClick={() => onRetryMessage(entry.clientNonce!)}>
-                  安全重试发送
-                </button>
-              ) : null}
-              {canRegenerate && run ? (
-                <button type="button" className="text-button" onClick={() => onRetryRun(run.id)}>重新生成回复</button>
-              ) : null}
-              {canRetryRoomTurn && entry.sourceTurnId ? (
-                <button type="button" className="text-button" onClick={() => onRetryRoomTurn(entry.sourceTurnId!)}>重试此成员</button>
-              ) : null}
+              {entry.sendState === "interrupted-unknown" ? "应用中断，模型可能已接受该消息；不会自动重发。" : "消息未成功发送。"}
+              {failedBeforeAcceptance && entry.clientNonce ? <button type="button" className="text-button" onClick={() => onRetryMessage(entry.clientNonce!)}>安全重试发送</button> : null}
             </div>
           ) : null}
         </div>
+        {entry.role === "user" ? <span className="message-avatar message-avatar-user">{entry.origin ? <BotAvatarIcon size={48} /> : <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={48} />}</span> : null}
       </div>
     </article>
   );
 });
 
 type ConversationProps = {
+  sessionId?: string;
+  approvalVisible?: boolean;
+  userProfile?: ConversationUserProfile;
   bot: Bot | null;
   room: RoomDetail | null;
   roomBatches: RoomBatch[];
@@ -359,22 +566,33 @@ type ConversationProps = {
   error: AppError | null;
   closeNotice: string | null;
   onOpenBots(): void;
-  onOpenProfile(): void;
+  onOpenRoomSettings(): void;
   onOpenWorkspaces(): void;
-  onBotUpdated(bot: Bot): void;
-  onError(error: AppError | null): void;
+  onPickAttachments(): Promise<AttachmentDraft[]>;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
-  onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode): Promise<boolean>;
+  onRememberPublicRead?(approval: ApprovalRequest): Promise<boolean>;
+  onRevealWorkspaceArtifact(workspaceId: string, path: string): Promise<boolean>;
+  onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode, attachments?: AttachmentDraft[], resourceRefs?: ResourceReference[], mediaRefs?: MessageMediaReference[]): Promise<boolean>;
+  initialDraft?: ConversationComposerDraft;
+  onDraftChange?(sessionId: string, draft: ConversationComposerDraft): ConversationComposerDraft | void;
+  resourceInsertion?: ConversationResourceInsertion | null;
+  onResourceInsertionHandled?(id: string): void;
+  mediaInsertion?: ConversationMediaInsertion | null;
+  onMediaInsertionHandled?(id: string): void;
+  onApproveBrief?(input: { roomId: string; sourceRuntimeRunId: string; briefInvocationId: string; sha256: string; candidate: "A" | "B" | "C"; clientNonce: string }): Promise<boolean>;
   onRetryMessage(clientNonce: string): void;
   onRetryRun(runId: string): void;
   onCancelRun(runId: string): void;
   onCancelRoomBatch(batchId: string): void;
-  onRetryRoomTurn(turnId: string): void;
+  onRetryRoomTurn(turnId: string): Promise<boolean>;
   onContinueRoomBatch(batchId: string): void;
   onOpenSpeaker(botId: string): void;
 };
 
 export function Conversation({
+  sessionId,
+  approvalVisible = true,
+  userProfile = defaultUserProfile,
   bot,
   room,
   roomBatches,
@@ -391,12 +609,14 @@ export function Conversation({
   error,
   closeNotice,
   onOpenBots,
-  onOpenProfile,
+  onOpenRoomSettings,
   onOpenWorkspaces,
-  onBotUpdated,
-  onError,
+  onPickAttachments,
   onResolveApproval,
+  onRememberPublicRead,
+  onRevealWorkspaceArtifact,
   onSend,
+  onApproveBrief,
   onRetryMessage,
   onRetryRun,
   onCancelRun,
@@ -404,16 +624,111 @@ export function Conversation({
   onRetryRoomTurn,
   onContinueRoomBatch,
   onOpenSpeaker,
+  initialDraft,
+  onDraftChange,
+  resourceInsertion,
+  onResourceInsertionHandled,
+  mediaInsertion,
+  onMediaInsertionHandled,
 }: ConversationProps): React.JSX.Element {
-  const [draft, setDraft] = useState("");
-  const [roomMentions, setRoomMentions] = useState<RoomMention[]>([]);
+  const [composer, setComposer] = useState<ConversationComposerDraft>(() => initialDraft ?? emptyComposerDraft());
+  const { text: draft, attachments, roomMentions, routingMode: routingPreference, resourceRefs, mediaRefs, draftVersion } = composer;
+  const composerStateRef = useRef(composer);
+  const composerSnapshotRef = useRef({ sessionId, draft, attachments, roomMentions, routingPreference, resourceRefs, mediaRefs, draftVersion });
+  const updateComposer = useCallback((update: (current: ConversationComposerDraft) => ConversationComposerDraft): void => {
+    const previous = composerStateRef.current;
+    const candidate = { ...update(previous), draftVersion: previous.draftVersion + 1 };
+    const next = sessionId ? onDraftChange?.(sessionId, candidate) ?? candidate : candidate;
+    composerStateRef.current = next;
+    composerSnapshotRef.current = { sessionId, draft: next.text, attachments: next.attachments, roomMentions: next.roomMentions, routingPreference: next.routingMode, resourceRefs: next.resourceRefs, mediaRefs: next.mediaRefs, draftVersion: next.draftVersion };
+    setComposer(next);
+  }, [sessionId, onDraftChange]);
+  const setDraft = useCallback((value: SetStateAction<string>): void => updateComposer(current => ({ ...current, text: typeof value === "function" ? value(current.text) : value })), [updateComposer]);
+  const setAttachments = useCallback((value: SetStateAction<AttachmentDraft[]>): void => updateComposer(current => ({ ...current, attachments: typeof value === "function" ? value(current.attachments) : value })), [updateComposer]);
+  const setRoomMentions = useCallback((value: SetStateAction<RoomMention[]>): void => updateComposer(current => ({ ...current, roomMentions: typeof value === "function" ? value(current.roomMentions) : value })), [updateComposer]);
+  const setRoutingPreference = useCallback((value: SetStateAction<UserRoomRoutingMode>): void => updateComposer(current => ({ ...current, routingMode: typeof value === "function" ? value(current.routingMode) : value })), [updateComposer]);
+  const setResourceRefs = useCallback((value: SetStateAction<ResourceReference[]>): void => updateComposer(current => ({ ...current, resourceRefs: typeof value === "function" ? value(current.resourceRefs) : value })), [updateComposer]);
+  const setMediaRefs = useCallback((value: SetStateAction<MessageMediaReference[]>): void => updateComposer(current => ({ ...current, mediaRefs: typeof value === "function" ? value(current.mediaRefs) : value })), [updateComposer]);
+  useLayoutEffect(() => {
+    if (!initialDraft || initialDraft.draftVersion <= composerStateRef.current.draftVersion) return;
+    composerStateRef.current = initialDraft;
+    composerSnapshotRef.current = { sessionId, draft: initialDraft.text, attachments: initialDraft.attachments, roomMentions: initialDraft.roomMentions, routingPreference: initialDraft.routingMode, resourceRefs: initialDraft.resourceRefs, mediaRefs: initialDraft.mediaRefs, draftVersion: initialDraft.draftVersion };
+    setComposer(initialDraft);
+  }, [sessionId, initialDraft]);
+  const [mediaMenuOpen, setMediaMenuOpen] = useState(false);
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  const [mediaImporting, setMediaImporting] = useState(false);
+  const mediaImportRequestRef = useRef(0);
+  const mediaMenuRef = useRef<HTMLDivElement>(null);
+  const mediaTriggerRef = useRef<HTMLButtonElement>(null);
+  const mediaPickerCloseRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!mediaMenuOpen) return;
+    const close = (event: PointerEvent): void => { if (!mediaMenuRef.current?.contains(event.target as Node)) setMediaMenuOpen(false); };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [mediaMenuOpen]);
+  useEffect(() => {
+    if (!mediaPickerOpen) return;
+    const trigger = mediaTriggerRef.current;
+    mediaPickerCloseRef.current?.focus();
+    return () => trigger?.focus();
+  }, [mediaPickerOpen]);
+  const [resourceGroup, setResourceGroup] = useState<"bot" | LibraryResourceKind>(room ? "bot" : "document");
+  const [skillQuery, setSkillQuery] = useState<ActiveMentionQuery | null>(null);
+  const [resourceError, setResourceError] = useState<string | null>(null);
+  const [menuScopeId, setMenuScopeId] = useState<string | null>(null);
+  const [artifactShelfScopeId, setArtifactShelfScopeId] = useState<string | null>(null);
+  const [taskDetailsTab, setTaskDetailsTab] = useState<"artifacts" | "records">("artifacts");
+  const [retriedTurnIds, setRetriedTurnIds] = useState<Set<string>>(() => new Set());
   const [mentionQuery, setMentionQuery] = useState<ActiveMentionQuery | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const transcriptRef = useRef<HTMLElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const pendingComposerCaretRef = useRef<number | null>(null);
   const dismissedMentionRef = useRef<{ start: number; text: string } | null>(null);
+  const approvalNonceRef = useRef<{ key: string; nonce: string } | null>(null);
   const followTranscriptTailRef = useRef(true);
+  const consumedInsertionRef = useRef<string | null>(null);
+  const consumedMediaInsertionRef = useRef<string | null>(null);
+  const composerMountedRef = useRef(true);
+  useEffect(() => { composerMountedRef.current = true; return () => { composerMountedRef.current = false; }; }, []);
+  const applyResourceInsertion = useEffectEvent((): void => {
+    if (!resourceInsertion || resourceInsertion.sessionId !== sessionId || resourceInsertion.id === consumedInsertionRef.current) return;
+    consumedInsertionRef.current = resourceInsertion.id;
+    if (resourceInsertion.expectedDraftVersion !== composerStateRef.current.draftVersion) {
+      setResourceError("草稿已变化，未加入迟到的资料引用，请重新选择。"); onResourceInsertionHandled?.(resourceInsertion.id); return;
+    }
+    if (resourceRefs.length >= 20 && !resourceRefs.some(reference => reference.resourceId === resourceInsertion.reference.resourceId)) {
+      setResourceError("一条消息最多引用 20 份资源，请先移除部分引用。");
+      onResourceInsertionHandled?.(resourceInsertion.id);
+      return;
+    }
+    setResourceRefs(current => [...current.filter(reference => reference.resourceId !== resourceInsertion.reference.resourceId), resourceInsertion.reference].slice(0, 20));
+    if (!draft.trim() && resourceInsertion.text) setDraft(resourceInsertion.text);
+    onResourceInsertionHandled?.(resourceInsertion.id);
+  });
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) applyResourceInsertion(); });
+    return () => { cancelled = true; };
+  }, [resourceInsertion, sessionId]);
+  const applyMediaInsertion = useEffectEvent((): void => {
+    if (!mediaInsertion || mediaInsertion.sessionId !== sessionId || mediaInsertion.id === consumedMediaInsertionRef.current) return;
+    consumedMediaInsertionRef.current = mediaInsertion.id;
+    if (mediaInsertion.expectedDraftVersion !== composerStateRef.current.draftVersion) {
+      setResourceError("草稿已变化，未加入迟到的媒体引用，请重新选择。"); onMediaInsertionHandled?.(mediaInsertion.id); return;
+    }
+    if (mediaRefs.length >= 6 && !mediaRefs.some(item => item.mediaId === mediaInsertion.reference.mediaId)) {
+      setResourceError("一条消息最多引用 6 个媒体。"); onMediaInsertionHandled?.(mediaInsertion.id); return;
+    }
+    setMediaRefs(current => [...current.filter(item => item.mediaId !== mediaInsertion.reference.mediaId), mediaInsertion.reference]);
+    onMediaInsertionHandled?.(mediaInsertion.id);
+  });
+  useEffect(() => { let cancelled = false; queueMicrotask(() => { if (!cancelled) applyMediaInsertion(); }); return () => { cancelled = true; }; }, [mediaInsertion, sessionId]);
   const activeRunId = liveState?.activeRunId ?? null;
   const activeBatch = roomBatches.toReversed().find((batch) => batch.state === "queued" || batch.state === "running") ?? null;
   const latestBatch = roomBatches.at(-1) ?? null;
@@ -423,7 +738,15 @@ export function Conversation({
   const invalidRoomMentions = roomMentions.filter((mention) => mention.kind === "bot" && !memberBotIds.includes(mention.id));
   const hasInvalidRoomMentions = invalidRoomMentions.length > 0;
   const targetBotIds = room ? resolveRoomTargetIds(roomMentions, memberBotIds) : [];
-  const subjectName = bot?.name ?? room?.room.name ?? "Aevoren Bot";
+  const explicitRoutingBlocked = Boolean(room && routingPreference === "explicit" && targetBotIds.length === 0);
+  const subjectName = bot?.name ?? room?.room.name ?? "选择对话";
+  const currentDate = new Date();
+  const conversationScopeId = room?.room.id ?? bot?.id ?? null;
+  const conversationMenuScopeId = conversationScopeId ?? "empty-conversation";
+  const menuOpen = menuScopeId === conversationMenuScopeId;
+  const artifactShelfOpen = conversationScopeId !== null && artifactShelfScopeId === conversationScopeId;
+  const artifacts = useMemo(() => conversationArtifacts(toolInvocations), [toolInvocations]);
+  const entryDays = useMemo(() => entries.map((entry) => localDayKey(entry.createdAt)), [entries]);
   const latestUserNonce = useMemo(
     () => entries.toReversed().find((entry) => entry.role === "user")?.clientNonce ?? null,
     [entries],
@@ -432,8 +755,9 @@ export function Conversation({
     () => new Map(runs.filter((run) => run.assistantEntryId).map((run) => [run.assistantEntryId, run])),
     [runs],
   );
+  const runsById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);
+  const latestAttempts = useMemo(() => latestRuntimeAttempts(runs), [runs]);
   const toolsByAssistant = useMemo(() => {
-    const runsById = new Map(runs.map((run) => [run.id, run]));
     const result = new Map<string, ToolInvocation[]>();
     for (const invocation of toolInvocations) {
       const assistantEntryId = runsById.get(invocation.runtimeRunId)?.assistantEntryId;
@@ -441,15 +765,79 @@ export function Conversation({
       result.set(assistantEntryId, [...(result.get(assistantEntryId) ?? []), invocation]);
     }
     return result;
-  }, [runs, toolInvocations]);
-  const approvalsByInvocation = useMemo(
-    () => new Map(approvalRequests.map((approval) => [approval.toolInvocationId, approval])),
-    [approvalRequests],
-  );
+  }, [runsById, toolInvocations]);
+  const briefApproval = useMemo(() => {
+    if (!room || !shouldShowBriefApproval(toolInvocations, entries)) return null;
+    const latestBriefWrite = toolInvocations
+      .filter((invocation) => invocation.toolKind === "workspace-write" && invocation.state === "succeeded" && invocation.targetPath.startsWith("02-briefs/"))
+      .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .at(-1);
+    const sourceRun = latestBriefWrite ? runsById.get(latestBriefWrite.runtimeRunId) : null;
+    const sourceTurn = latestBriefWrite ? roomTurns.find((turn) => turn.runtimeRunId === latestBriefWrite.runtimeRunId) : null;
+    if (sourceRun?.state !== "completed" || sourceTurn?.state !== "completed") return null;
+    const assistantEntryId = sourceRun.assistantEntryId;
+    return latestBriefWrite && assistantEntryId ? {
+      entryId: assistantEntryId,
+      roomId: room.room.id,
+      sourceRuntimeRunId: latestBriefWrite.runtimeRunId,
+      briefInvocationId: latestBriefWrite.id,
+    } : null;
+  }, [entries, room, roomTurns, runsById, toolInvocations]);
+  const pendingTool = useMemo(() => {
+    const pending = new Map(approvalRequests.filter(approval => approval.state === "pending").map(approval => [approval.toolInvocationId, approval]));
+    const invocation = toolInvocations.find(tool => tool.state === "awaiting-approval" && pending.has(tool.id));
+    return invocation ? { invocation, approval: pending.get(invocation.id)! } : null;
+  }, [approvalRequests, toolInvocations]);
+  const permissionBotName = pendingTool && room
+    ? room.members.find(member => member.botId === pendingTool.invocation.executorBotId)?.bot.name ?? subjectName
+    : subjectName;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOutside = (event: PointerEvent): void => {
+      if (!menuRef.current?.contains(event.target instanceof Node ? event.target : null)) setMenuScopeId(null);
+    };
+    const closeEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      setMenuScopeId(null);
+      menuTriggerRef.current?.focus();
+    };
+    menuRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]:not(:disabled), .header-model-trigger:not(:disabled)")?.focus();
+    window.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("keydown", closeEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("keydown", closeEscape);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!artifactShelfOpen) return;
+    const close = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setArtifactShelfScopeId(null);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [artifactShelfOpen]);
   const latestTurns = useMemo(() => {
     if (!latestBatch) return [];
     return latestRoomTurnsByLogicalTurn(roomTurns, latestBatch.id);
   }, [latestBatch, roomTurns]);
+  const latestFailedTurn = latestTurns.toReversed().find((turn) => ["failed", "cancelled", "interrupted"].includes(turn.state)) ?? null;
+  const latestFailedTurnHasMessage = latestFailedTurn
+    ? entries.some((entry) => entry.role === "assistant" && entry.sourceTurnId === latestFailedTurn.id)
+    : false;
+  const canContinueRoomBatch = Boolean(
+    latestBatch && ["interrupted", "partial"].includes(latestBatch.state) &&
+    latestTurns.some((turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null),
+  );
+  const latestFailedRun = latestFailedTurn?.runtimeRunId ? runsById.get(latestFailedTurn.runtimeRunId) ?? null : null;
+  const latestRetryRun = !room
+    ? [...latestAttempts.values()].find((run) => run.route !== "host-outbound" && run.route !== "host-mcp" && ["failed", "cancelled", "interrupted"].includes(run.state) && run.clientNonce === latestUserNonce) ?? null
+    : null;
+  const retryableUserEntry = entries.toReversed().find((entry) => entry.role === "user" && entry.sendState === "failed-before-acceptance" && entry.clientNonce === latestUserNonce) ?? null;
+  const latestFailedTools = latestFailedRun ? toolInvocations.filter((invocation) => invocation.runtimeRunId === latestFailedRun.id) : [];
+  const waitingForBriefApproval = latestTurns.some(turn => turn.lastErrorCode === "HUMAN_APPROVAL_REQUIRED") && briefApproval !== null;
   const roomTurnState = useMemo(() => {
     const byId = new Map(roomTurns.map((turn) => [turn.id, turn]));
     const latestByLogicalTurn = new Map<string, RoomTurn>();
@@ -474,7 +862,10 @@ export function Conversation({
     const runsById = new Map(runs.map((run) => [run.id, run]));
     const result = new Map<string, HandoffDisplay[]>();
     for (const handoff of roomHandoffs.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))) {
-      const sourceTurn = roomTurnState.byId.get(handoff.fromTurnId);
+      const originalSourceTurn = roomTurnState.byId.get(handoff.fromTurnId);
+      const sourceTurn = handoff.deliveryAttempt && originalSourceTurn
+        ? roomTurnState.latestByLogicalTurn.get(`${originalSourceTurn.batchId}:${originalSourceTurn.logicalTurnId}`) ?? originalSourceTurn
+        : originalSourceTurn;
       const targetTurn = roomTurnState.byId.get(handoff.targetTurnId);
       const latestTargetTurn = targetTurn
         ? roomTurnState.latestByLogicalTurn.get(`${targetTurn.batchId}:${targetTurn.logicalTurnId}`) ?? targetTurn
@@ -555,28 +946,74 @@ export function Conversation({
     composerInputRef.current?.setSelectionRange(caret, caret);
   }, [draft, roomMentions]);
 
+  const handleWorkflowAction = useCallback(async (action: WorkflowAction): Promise<boolean> => {
+    if (!room || busy) return false;
+    if (action.kind === "approve") {
+      if (!onApproveBrief) return false;
+      const key = `${room.room.id}:${action.sourceRuntimeRunId}:${action.briefInvocationId}:${action.sha256}:${action.candidate}`;
+      if (approvalNonceRef.current?.key !== key) approvalNonceRef.current = { key, nonce: crypto.randomUUID() };
+      return onApproveBrief({
+        roomId: room.room.id,
+        sourceRuntimeRunId: action.sourceRuntimeRunId,
+        briefInvocationId: action.briefInvocationId,
+        sha256: action.sha256,
+        candidate: action.candidate,
+        clientNonce: approvalNonceRef.current.nonce,
+      });
+    }
+    const planner = room.members.find((member) => member.bot.name === "选题策划师");
+    const text = action.kind === "return"
+        ? "RETURN：退回补证。请检查当前 Brief 的证据缺口，并结构化交给情报侦察员补充后重新提交。"
+        : "放弃本轮 Brief，本次任务停止，不再交给下游 Bot。";
+    if (action.kind === "return") return onSend(text, [], "automatic");
+    const targetIds = planner ? [planner.botId] : [];
+    return onSend(text, targetIds, targetIds.length > 0 ? "explicit" : "automatic");
+  }, [room, busy, onApproveBrief, onSend]);
+
+  const retryRoomTurn = useCallback(async (turnId: string): Promise<void> => {
+    if (await onRetryRoomTurn(turnId)) {
+      setRetriedTurnIds((current) => new Set(current).add(turnId));
+    }
+  }, [onRetryRoomTurn]);
+
+  const retryRoomTurnFromMessage = useCallback((turnId: string): void => { void retryRoomTurn(turnId); }, [retryRoomTurn]);
+  const revealWorkspaceArtifact = useCallback((workspaceId: string, path: string): void => { void onRevealWorkspaceArtifact(workspaceId, path); }, [onRevealWorkspaceArtifact]);
+
   async function submit(): Promise<void> {
     const text = draft.trim();
-    if (!text || (!bot && !room) || busy || hasInvalidRoomMentions) return;
+    if ((!text && mediaRefs.length === 0) || (!bot && !room) || busy || hasInvalidRoomMentions || explicitRoutingBlocked) return;
     followTranscriptTailRef.current = true;
     const routingMode: UserRoomRoutingMode | undefined = !room
       ? undefined
-      : effectiveRoomMentions.length === 0
-        ? "automatic"
-        : effectiveRoomMentions.some((mention) => mention.kind === "everyone")
-          ? "everyone"
-          : "explicit";
-    const accepted = await onSend(text, room ? targetBotIds : undefined, routingMode);
-    if (accepted) {
-      setDraft("");
-      setRoomMentions([]);
+      : routingPreference;
+    const routedTargetIds = !room
+      ? undefined
+      : routingPreference === "everyone"
+        ? memberBotIds
+        : routingPreference === "explicit"
+          ? targetBotIds
+          : [];
+    const sentVersion = composerStateRef.current.draftVersion;
+    const accepted = await onSend(text, routedTargetIds, routingMode, attachments, resourceRefs, mediaRefs);
+    if (accepted && composerMountedRef.current && composerStateRef.current.draftVersion === sentVersion) {
+      updateComposer(current => emptyComposerDraft(current.draftVersion));
+      setSkillQuery(null);
       setMentionQuery(null);
       dismissedMentionRef.current = null;
     }
   }
 
   function refreshMentionQuery(text: string, caret: number): void {
-    if (!room) return;
+    const slash = /(?:^|\s)\/([^\s/]*)$/u.exec(text.slice(0, caret));
+    if (slash) {
+      const query = slash[1] ?? "";
+      const start = caret - query.length - 1;
+      if (dismissedMentionRef.current?.start === start && dismissedMentionRef.current.text === text) return;
+      setSkillQuery({ start, end: caret, query });
+      setMentionQuery(null);
+      return;
+    }
+    setSkillQuery(null);
     const next = findActiveMentionQuery(text, caret);
     if (!next) {
       dismissedMentionRef.current = null;
@@ -589,6 +1026,7 @@ export function Conversation({
     }
     dismissedMentionRef.current = null;
     setActiveMentionIndex(0);
+    if (mentionQuery?.start !== next.start) setResourceGroup(room ? "bot" : "document");
     setMentionQuery(next);
   }
 
@@ -603,33 +1041,203 @@ export function Conversation({
         ? { kind: "everyone", id: EVERYONE_MENTION_ID }
         : { kind: "bot", id: itemId, label: selectedItem.label },
     ));
+    setRoutingPreference(itemId === EVERYONE_MENTION_ID ? "everyone" : "explicit");
     pendingComposerCaretRef.current = nextDraft.caret;
     setDraft(nextDraft.text);
     setMentionQuery(null);
     dismissedMentionRef.current = null;
   }
 
+  function selectResource(reference: ResourceReference, resource: LibraryResource): void {
+    if (!composerMountedRef.current || composerSnapshotRef.current.sessionId !== sessionId) return;
+    if (resourceRefs.length >= 20 && !resourceRefs.some(item => item.resourceId === reference.resourceId)) { setResourceError("一条消息最多引用 20 份资源。"); return; }
+    setResourceRefs(current => [...current.filter(item => item.resourceId !== reference.resourceId), reference]);
+    const query = skillQuery ?? mentionQuery;
+    if (query && composerSnapshotRef.current.draft === draft) {
+      const text = removeMentionQuery(draft, query).text;
+      setDraft(!text.trim() && resource.kind === "skill" ? `请使用「${resource.name}」完成以下任务：` : text);
+    }
+    setSkillQuery(null); setMentionQuery(null); setResourceError(null);
+  }
+
+  function openTaskDetails(tab: "artifacts" | "records"): void {
+    setTaskDetailsTab(tab);
+    setArtifactShelfScopeId(conversationScopeId);
+    setMenuScopeId(null);
+  }
+
+  async function pickTextAttachments(): Promise<void> {
+    const base = composerStateRef.current;
+    const picked = await onPickAttachments();
+    if (!composerMountedRef.current) return;
+    if (composerStateRef.current.draftVersion !== base.draftVersion) { setResourceError("草稿已变化，未加入迟到的附件。"); return; }
+    if (picked.length) setAttachments(current => [...current, ...picked.filter(item => !current.some(existing => existing.sha256 === item.sha256))].slice(0, 6));
+  }
+
+  async function importMedia(): Promise<void> {
+    if (!sessionId || mediaImporting) return;
+    const request = ++mediaImportRequestRef.current, base = composerStateRef.current;
+    setMediaMenuOpen(false); setMediaImporting(true); setResourceError(null);
+    try {
+      const result = await window.aevorenBot.media.pickImport({ sessionId });
+      if (!composerMountedRef.current || request !== mediaImportRequestRef.current) return;
+      if (!result.ok) { setResourceError(result.error.safeMessage); return; }
+      if (!result.data) return;
+      if (composerStateRef.current.draftVersion !== base.draftVersion) { setResourceError("媒体已导入原会话资料库；草稿已变化，未加入消息。"); return; }
+      if (result.data.imported.length) setMediaRefs(current => [...current, ...result.data!.imported.map(item => item.reference).filter(item => !current.some(existing => existing.mediaId === item.mediaId))].slice(0, 6));
+      if (result.data.failed.length) setResourceError(result.data.failed.map(item => `${item.name}：${item.reason}`).join("；"));
+    } catch { if (composerMountedRef.current && request === mediaImportRequestRef.current) setResourceError("媒体导入未完成，请重试。"); }
+    finally { if (composerMountedRef.current && request === mediaImportRequestRef.current) setMediaImporting(false); }
+  }
+
+  function selectMedia(reference: MessageMediaReference): void {
+    if (mediaRefs.length >= 6 && !mediaRefs.some(item => item.mediaId === reference.mediaId)) { setResourceError("一条消息最多引用 6 个媒体。"); return; }
+    setMediaRefs(current => [...current.filter(item => item.mediaId !== reference.mediaId), reference]);
+    setMediaPickerOpen(false);
+  }
+
+  function openMentionPicker(): void {
+    if (!sessionId) return;
+    const textarea = composerInputRef.current;
+    const caret = textarea?.selectionStart ?? draft.length;
+    const nextDraft = `${draft.slice(0, caret)}@${draft.slice(caret)}`;
+    setDraft(nextDraft);
+    pendingComposerCaretRef.current = caret + 1;
+    refreshMentionQuery(nextDraft, caret + 1);
+  }
+
+  const handleProductView = useEffectEvent(async (event: Event) => {
+    const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
+    const input = request.input;
+    if (!["task_details", "draft_get", "draft_update", "draft_remove_attachment", "draft_add_attachments"].includes(input.action)) return;
+    if (!sessionId || input.sessionId && input.sessionId !== sessionId) { respond({ status: "waiting_user", reason: "请先打开指定聊天。" }); return; }
+    if (input.action === "task_details") { openTaskDetails(input.tab ?? "artifacts"); respond({ status: "completed" }); return; }
+    const base = composerSnapshotRef.current;
+    const targets = room ? resolveRoomTargetIds(base.roomMentions, memberBotIds) : [];
+    const value = JSON.stringify({ sessionId, text: base.draft, attachments: base.attachments.map(item => item.id), routingPreference: base.routingPreference, targets, resourceRefs: base.resourceRefs, mediaRefs: base.mediaRefs });
+    const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))].map(byte => byte.toString(16).padStart(2, "0")).join("");
+    const unchanged = (): boolean => composerMountedRef.current && composerSnapshotRef.current === base;
+    if (!unchanged()) { respond({ status: "waiting_user", reason: "草稿已变化，请重新读取。" }); return; }
+    if (input.action === "draft_get") { respond({ status: "completed", result: { sessionId, text: base.draft, attachments: base.attachments.map(({ content: _content, ...item }) => item), routingMode: base.routingPreference, targetBotIds: targets, resourceRefs: base.resourceRefs, mediaRefs: base.mediaRefs, draftVersion: base.draftVersion, digest } }); return; }
+    if (input.expectedDraftVersion !== base.draftVersion || input.expectedDigest !== digest || composerInputRef.current?.value !== base.draft) { respond({ status: "waiting_user", reason: "草稿已变化，请重新读取摘要与草稿版本后操作。" }); return; }
+    if (input.targetBotIds?.some(id => !memberBotIds.includes(id))) { respond({ status: "failed", reason: "提及对象不是当前群成员。" }); return; }
+    if (input.action === "draft_remove_attachment") {
+      if (!base.attachments.some(item => item.id === input.attachmentId)) { respond({ status: "failed", reason: "附件不存在。" }); return; }
+      setAttachments(current => current.filter(item => item.id !== input.attachmentId)); respond({ status: "completed" }); return;
+    }
+    if (input.action === "draft_add_attachments") {
+      const picked = await onPickAttachments();
+      if (!unchanged()) { respond({ status: "waiting_user", reason: "草稿或聊天已变化，未修改附件。" }); return; }
+      if (picked.length) setAttachments(current => [...current, ...picked.filter(item => !current.some(existing => existing.sha256 === item.sha256))].slice(0, 6));
+      respond({ status: picked.length ? "completed" : "cancelled", result: picked.map(({ content: _content, ...item }) => item) }); return;
+    }
+    if (input.resourceRefs) {
+      const results = await Promise.all(input.resourceRefs.map(reference => window.aevorenBot.library.read({ sessionId, id: reference.resourceId, revisionId: reference.revisionId })));
+      if (results.some((result, index) => !result.ok || result.data.reference.digest !== input.resourceRefs![index]!.digest)) { respond({ status: "failed", reason: "引用资源未授权或固定版本不匹配。" }); return; }
+    }
+    if (input.mediaRefs) {
+      const results = await Promise.all(input.mediaRefs.map(reference => window.aevorenBot.media.metadata({ sessionId, id: reference.mediaId })));
+      if (results.some((result, index) => !result.ok || !result.data.asset.enabled || result.data.asset.deletedAt || result.data.asset.reference.sha256 !== input.mediaRefs![index]!.sha256)) { respond({ status: "failed", reason: "媒体未授权、已停用或原始摘要不匹配。草稿仍保留。" }); return; }
+    }
+    if (!unchanged() || composerInputRef.current?.value !== base.draft) { respond({ status: "waiting_user", reason: "验证期间草稿或聊天已变化，请重新读取草稿。" }); return; }
+    updateComposer(current => ({ ...current,
+      ...(input.resourceRefs ? { resourceRefs: input.resourceRefs } : {}),
+      ...(input.mediaRefs ? { mediaRefs: input.mediaRefs } : {}),
+      ...(input.text !== undefined ? { text: input.text } : {}),
+      ...(input.routingMode ? { routingMode: input.routingMode } : {}),
+      ...(input.targetBotIds ? { roomMentions: input.targetBotIds.map(id => ({ kind: "bot" as const, id, label: roomMemberIdentities.get(id)?.inline ?? id })) } : {}),
+    }));
+    respond({ status: "completed", result: { draftVersion: composerStateRef.current.draftVersion } });
+  });
+  useEffect(() => { const handler = (event: Event): void => { void handleProductView(event); }; window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   return (
     <main className="conversation">
       <header className="conversation-header">
-        <button className="mobile-panel-button" type="button" aria-label="打开 Bot 列表" onClick={onOpenBots}>
-          <MenuIcon />
-        </button>
+        {room ? (
+          <span className="conversation-group-avatar" aria-label={`${room.members.length} 位 Agent 和你`}>
+            {room.members.slice(0, 3).map((member) => <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={24} key={member.botId} />)}
+            <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={24} />
+          </span>
+        ) : bot ? <span className="conversation-bot-avatar"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span> : null}
         <div className="conversation-title">
           <h1>{subjectName}</h1>
-          <p>{room?.room.description || bot?.description || (room ? `${room.members.length} 个 Bot 协作，未点名时自动选择。` : bot ? "为这个 Bot 定义职责，然后开始对话。" : "创建一个 Bot，让它持续完成一类工作。")}</p>
+          {room ? <p className="conversation-header-counts">{room.members.length} 位 Agent</p> : bot ? <p className="conversation-header-counts">Bot</p> : null}
         </div>
-        <div className="conversation-actions">
-          {bot ? <HeaderModelPicker bot={bot} busy={busy} onBotUpdated={onBotUpdated} onError={onError} /> : null}
-          <button className="secondary-button model-settings-button" type="button" aria-label="工作区" title="工作区" onClick={onOpenWorkspaces}>
-            <FolderIcon />
-            <span>工作区</span>
+        <div className="conversation-menu-anchor" ref={menuRef}>
+          <button
+            className="conversation-menu-trigger"
+            type="button"
+            ref={menuTriggerRef}
+            aria-label="聊天选项"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-controls={menuId}
+            onClick={() => setMenuScopeId((current) => current === conversationMenuScopeId ? null : conversationMenuScopeId)}
+          >
+            <MoreIcon />
           </button>
-          <button className="mobile-panel-button" type="button" aria-label="打开 Bot 设置" onClick={onOpenProfile}>
-            <PanelIcon />
-          </button>
+          {menuOpen ? (
+            <div className="conversation-menu" id={menuId} role="menu" aria-label="聊天选项" onKeyDown={(event) => {
+              if (event.target instanceof Element && event.target.closest(".header-model-popover")) return;
+              if (event.key === "Tab") {
+                event.preventDefault();
+                setMenuScopeId(null);
+                if (event.shiftKey) menuTriggerRef.current?.focus();
+                else composerInputRef.current?.focus();
+                return;
+              }
+              if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+              event.preventDefault();
+              const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("[role=menuitem]:not(:disabled), .header-model-trigger:not(:disabled)")];
+              const index = items.indexOf(document.activeElement as HTMLButtonElement);
+              const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+              items[next]?.focus();
+            }}>
+              {bot || room ? <>
+              <button className="conversation-menu-item" type="button" role="menuitem" aria-label={artifacts.length > 0 ? `打开会话成果，共 ${artifacts.length} 个` : "打开任务详情"} aria-expanded={artifactShelfOpen} onClick={() => openTaskDetails("artifacts")}><FolderIcon /><span>{room ? "群文件" : "会话文件"}</span><small>{artifacts.length}</small></button>
+              <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => openTaskDetails("records")}><span>执行记录</span><small>{toolInvocations.length}</small></button>
+              {room ? <button className="conversation-menu-item" type="button" role="menuitem" onClick={() => { setMenuScopeId(null); onOpenRoomSettings(); }}><PanelIcon /><span>群聊管理</span></button> : null}
+              {latestFailedTurn ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); void retryRoomTurn(latestFailedTurn.id); }}>重试{latestFailedTurn.turnPurpose === "summary" ? "汇总" : "此成员"}</button> : null}
+              {latestRetryRun ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); onRetryRun(latestRetryRun.id); }}>重新生成回复</button> : null}
+              {retryableUserEntry?.clientNonce ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); onRetryMessage(retryableUserEntry.clientNonce!); }}>安全重试发送</button> : null}
+              {canContinueRoomBatch && latestBatch ? <button className="conversation-menu-item" type="button" role="menuitem" disabled={busy} onClick={() => { setMenuScopeId(null); onContinueRoomBatch(latestBatch.id); }}>继续未开始成员</button> : null}
+              </> : null}
+              <button className={`conversation-menu-item${bot || room ? " conversation-menu-mobile-item" : ""}`} type="button" role="menuitem" onClick={() => { setMenuScopeId(null); onOpenBots(); }}>打开 Bot 列表</button>
+            </div>
+          ) : null}
         </div>
       </header>
+
+      {artifactShelfOpen ? (
+        <>
+          <button className="artifact-shelf-backdrop" type="button" aria-label="关闭会话成果" onClick={() => setArtifactShelfScopeId(null)} />
+          <aside className="artifact-shelf task-details-shelf" aria-label="会话成果">
+            <header>
+              <div><span>{subjectName}</span><strong>任务详情</strong></div>
+              <button className="artifact-shelf-close" type="button" aria-label="关闭会话成果" onClick={() => setArtifactShelfScopeId(null)}><CloseIcon /></button>
+            </header>
+            <div className="task-details-navigation">
+              <div role="tablist" aria-label="任务详情内容">
+                <button type="button" role="tab" id="task-artifacts-tab" aria-selected={taskDetailsTab === "artifacts"} aria-controls="task-details-content" onClick={() => setTaskDetailsTab("artifacts")}>成果 {artifacts.length}</button>
+                <button type="button" role="tab" id="task-records-tab" aria-selected={taskDetailsTab === "records"} aria-controls="task-details-content" onClick={() => setTaskDetailsTab("records")}>执行记录 {toolInvocations.length}</button>
+              </div>
+              <p>{taskDetailsTab === "artifacts" ? "这里只显示真实工具保存的文件。" : "记录来自实际工具调用，模型文字不会自动成为执行证据。"}</p>
+            </div>
+            <div className="artifact-shelf-list task-details-content" role="tabpanel" id="task-details-content" aria-labelledby={taskDetailsTab === "artifacts" ? "task-artifacts-tab" : "task-records-tab"}>
+              {taskDetailsTab === "records" ? <ToolActivityList invocations={toolInvocations} /> : artifacts.length === 0 ? <p className="task-details-empty">尚无已保存成果</p> : artifacts.map((artifact) => (
+                <ArtifactCard
+                  artifact={artifact}
+                  key={artifact.id}
+                  onOpen={() => artifact.invocation.workspaceId
+                    ? void onRevealWorkspaceArtifact(artifact.invocation.workspaceId, artifact.invocation.targetPath)
+                    : onOpenWorkspaces()}
+                />
+              ))}
+            </div>
+            <footer><button type="button" className="secondary-button" onClick={() => { setArtifactShelfScopeId(null); onOpenWorkspaces(); }}>管理文件夹</button></footer>
+          </aside>
+        </>
+      ) : null}
 
       <section
         ref={transcriptRef}
@@ -643,21 +1251,30 @@ export function Conversation({
         {loading ? <div className="center-state">正在加载会话…</div> : null}
         {!loading && !bot && !room ? (
           <div className="center-state">
-            <strong>从创建第一个 Bot 开始</strong>
-            <span>明确选择创建后，再为它定义名称和职责。</span>
+            <strong>选择一个聊天</strong>
+            <span>从联系人发消息，或点击“+”创建 Bot 或群聊。</span>
           </div>
         ) : null}
         {!loading && (bot || room) && entries.length === 0 ? (
           <div className="center-state">
             <strong>开始对话</strong>
-            <span>{room ? "输入 @ 指定 Bot；未指定时自动选择最合适的 Bot。" : "告诉这个 Bot 你希望它完成什么。"}</span>
+            <span>{room ? room.room.leadBotId
+              ? "由群协调者安排成员协作，也可输入 @ 指定回复的 Bot。"
+              : "自动选择一位 Bot 回复；可输入 @ 指定成员，或选择全员分别回复。"
+              : "告诉这个 Bot 你希望它完成什么。"}</span>
           </div>
         ) : null}
         {entries.map((entry, index) => {
+          const previousEntry = entries[index - 1];
+          const nextEntry = entries[index + 1];
+          const entryDay = entryDays[index]!;
+          const samePreviousDay = previousEntry !== undefined && entryDays[index - 1] === entryDay;
+          const sameNextDay = nextEntry !== undefined && entryDays[index + 1] === entryDay;
           const run = runsByAssistant.get(entry.id) ?? null;
           const canRegenerate = Boolean(
             !room &&
-            run &&
+            run && run.route !== "host-outbound" && run.route !== "host-mcp" &&
+            latestAttempts.get(runtimeTaskKey(run))?.id === run.id &&
             ["failed", "cancelled", "interrupted"].includes(run.state) &&
             run.clientNonce === latestUserNonce &&
             !busy,
@@ -671,80 +1288,145 @@ export function Conversation({
             !busy,
           );
           return (
+            <Fragment key={entry.id}>
+            {!samePreviousDay ? (
+              <div className="conversation-date-separator">
+                <time dateTime={entryDay}>{conversationDateLabel(entry.createdAt, currentDate)}</time>
+              </div>
+            ) : null}
             <TranscriptItem
               key={entry.id}
               entry={entry}
               run={run}
               canRegenerate={canRegenerate}
               canRetryRoomTurn={canRetryRoomTurn}
-              groupedWithPrevious={entries[index - 1]?.role === entry.role && entries[index - 1]?.speakerBotId === entry.speakerBotId}
-              groupedWithNext={entries[index + 1]?.role === entry.role && entries[index + 1]?.speakerBotId === entry.speakerBotId}
+              busy={busy}
+              groupedWithPrevious={samePreviousDay && previousEntry?.role === entry.role && previousEntry?.speakerBotId === entry.speakerBotId}
+              groupedWithNext={sameNextDay && nextEntry?.role === entry.role && nextEntry?.speakerBotId === entry.speakerBotId}
+              isSuperseded={sourceTurn
+                ? retriedTurnIds.has(sourceTurn.id) || roomTurnState.latestByLogicalTurn.get(`${sourceTurn.batchId}:${sourceTurn.logicalTurnId}`)?.id !== sourceTurn.id
+                : Boolean(!room && run && latestAttempts.get(runtimeTaskKey(run))?.id !== run.id)}
+              speakerBot={entry.role === "assistant"
+                ? entry.speakerBotId
+                  ? room?.members.find((member) => member.botId === entry.speakerBotId)?.bot ?? (bot?.id === entry.speakerBotId ? bot : null)
+                  : bot
+                : null}
               speakerDisplayName={entry.speakerBotId
                 ? roomMemberIdentities.get(entry.speakerBotId)?.inline ?? snapshotIdentities.get(entry.speakerBotId) ?? null
                 : null}
+              userProfile={userProfile}
               routeDisplayNames={entry.role === "user" && entry.clientNonce
-                ? roomRoutesByNonce.get(entry.clientNonce)?.names ?? []
-                : []}
+                ? roomRoutesByNonce.get(entry.clientNonce)?.names ?? emptyRouteDisplayNames
+                : emptyRouteDisplayNames}
               routeMode={entry.role === "user" && entry.clientNonce
                 ? roomRoutesByNonce.get(entry.clientNonce)?.mode ?? null
                 : null}
               routeReason={entry.role === "user" && entry.clientNonce
                 ? roomRoutesByNonce.get(entry.clientNonce)?.reason ?? null
                 : null}
-              handoffs={handoffsByAssistantEntry.get(entry.id) ?? []}
-              handoffRejections={handoffRejectionsByAssistantEntry.get(entry.id) ?? []}
-              toolInvocations={toolsByAssistant.get(entry.id) ?? []}
-              approvalsByInvocation={approvalsByInvocation}
+              handoffs={handoffsByAssistantEntry.get(entry.id) ?? emptyHandoffs}
+              handoffRejections={handoffRejectionsByAssistantEntry.get(entry.id) ?? emptyHandoffRejections}
+              coordinationErrorCode={sourceTurn?.outcome?.summary?.startsWith("handoff-failed:")
+                ? sourceTurn.outcome.summary.slice("handoff-failed:".length)
+                : null}
+              turnPurpose={sourceTurn?.turnPurpose}
+              taskPartial={Boolean(sourceTurn && roomBatches.find(batch => batch.id === sourceTurn.batchId)?.state === "partial")}
+              toolInvocations={toolsByAssistant.get(entry.id) ?? emptyToolInvocations}
+              briefApproval={entry.id === briefApproval?.entryId ? briefApproval : null}
               onRetryMessage={onRetryMessage}
               onRetryRun={onRetryRun}
-              onRetryRoomTurn={onRetryRoomTurn}
+              onRetryRoomTurn={retryRoomTurnFromMessage}
               onOpenSpeaker={onOpenSpeaker}
-              onResolveApproval={onResolveApproval}
+              onRevealWorkspaceArtifact={revealWorkspaceArtifact}
+              onOpenWorkspaces={onOpenWorkspaces}
+              onWorkflowAction={handleWorkflowAction}
             />
+            </Fragment>
           );
         })}
       </section>
 
+      {approvalVisible && pendingTool ? <ToolPermissionDialog
+        key={pendingTool.approval.id}
+        {...pendingTool}
+        botName={permissionBotName}
+        label={toolActionLabel(pendingTool.invocation)}
+        onResolve={onResolveApproval}
+        onRememberPublicRead={onRememberPublicRead}
+        onStop={() => onCancelRun(pendingTool.invocation.runtimeRunId)}
+      /> : null}
+
       <footer className="composer-wrap">
         {closeNotice ? <div className="composer-notice" role="alert">{closeNotice}</div> : null}
-        {error ? <div className="composer-error" role="alert">{error.safeMessage}</div> : null}
-        {submitting ? <div className="send-state">正在准备</div> : null}
-        {!submitting && liveState && liveState.state !== "idle"
-          ? <div className={"send-state runtime-" + liveState.state}>{liveLabels[liveState.state]}</div>
+        {error && !(waitingForBriefApproval && error.code === "HUMAN_APPROVAL_REQUIRED") ? <div className="composer-error" role="alert">{error.safeMessage}</div> : null}
+        {!room && liveState?.state === "stale"
+          ? <div className="send-state runtime-stale" role="status">连接可能已停滞，仍可停止本次运行</div>
           : null}
-        {room && latestBatch ? (
-          <div className={`room-batch-state batch-${latestBatch.state}`} data-testid="room-batch-state">
-            <span>{latestBatch.state === "running" ? `正在按顺序执行 ${latestTurns.length} 个协作回合` : `本批状态：${latestBatch.state}`}</span>
-            {latestTurns.map((turn) => (
-              <span className={`room-turn-state turn-${turn.state}`} key={turn.id}>
-                {roomMemberIdentities.get(turn.memberBotId)?.inline ?? snapshotIdentities.get(turn.memberBotId) ?? turn.memberNameSnapshot}：{turn.state}
-                {(turn.state === "failed" || turn.state === "cancelled" || turn.state === "interrupted" && turn.promptCutoffSeq !== null) && !busy ? (
-                  <button className="text-button" type="button" onClick={() => onRetryRoomTurn(turn.id)}>重试</button>
-                ) : null}
-              </span>
-            ))}
-            {["interrupted", "partial"].includes(latestBatch.state) && latestTurns.some((turn) => turn.state === "interrupted" && turn.promptCutoffSeq === null) ? (
-              <button className="text-button" type="button" onClick={() => onContinueRoomBatch(latestBatch.id)}>继续未开始成员</button>
+        {room && waitingForBriefApproval ? (
+          <div className="composer-notice" role="status">等待你批准选题。已生成的 Brief 保留，批准后继续后续工作。</div>
+        ) : room && latestBatch && latestFailedTurn && (!latestFailedTurnHasMessage || canContinueRoomBatch) ? (
+          <div className="composer-run-status" data-testid="room-batch-state">
+            {!latestFailedTurnHasMessage && latestFailedTurn.turnPurpose === "summary" ? <div className="entry-note warning" role="status">
+              汇总未完成，成员的有效结果和文件已保留。
+              <button className="text-button" type="button" disabled={busy} onClick={() => void retryRoomTurn(latestFailedTurn.id)}>重试汇总</button>
+            </div> : !latestFailedTurnHasMessage ? <RunFailureCard
+              step={roomMemberIdentities.get(latestFailedTurn.memberBotId)?.inline ?? latestFailedTurn.memberNameSnapshot}
+              errorCode={latestFailedTurn.lastErrorCode ?? latestFailedRun?.lastErrorCode}
+              invocations={latestFailedTools}
+              canRetry={!busy}
+              onRetry={() => void retryRoomTurn(latestFailedTurn.id)}
+            /> : null}
+            {canContinueRoomBatch ? (
+              <button className="secondary-button continue-room-button" type="button" disabled={busy} onClick={() => onContinueRoomBatch(latestBatch.id)}>继续未开始成员</button>
             ) : null}
           </div>
+        ) : room && latestBatch && !["completed", "running", "queued"].includes(latestBatch.state) ? (
+          <details className={`room-batch-state batch-${latestBatch.state}`} data-testid="room-batch-state">
+            <summary>
+              <span className="room-presence-dot" aria-hidden="true" />
+              <strong>本轮状态：{roomBatchLabels[latestBatch.state]}</strong>
+              <span className="room-batch-chevron" aria-hidden="true">›</span>
+            </summary>
+            <div className="room-turn-list">
+              {latestTurns.map((turn) => (
+                <span className={`room-turn-state turn-${turn.state}`} key={turn.id}>
+                  {roomMemberIdentities.get(turn.memberBotId)?.inline ?? snapshotIdentities.get(turn.memberBotId) ?? turn.memberNameSnapshot}{turn.turnPurpose === "summary" ? " · 汇总" : ""}：{roomTurnLabels[turn.state]}
+                  {(turn.state === "failed" || turn.state === "cancelled" || turn.state === "interrupted" && turn.promptCutoffSeq !== null) && !busy ? (
+                    <button className="text-button" type="button" onClick={() => onRetryRoomTurn(turn.id)}>重试</button>
+                  ) : null}
+                </span>
+              ))}
+            </div>
+            {canContinueRoomBatch ? (
+              <button className="text-button" type="button" onClick={() => onContinueRoomBatch(latestBatch.id)}>继续未开始成员</button>
+            ) : null}
+          </details>
         ) : null}
-        {room ? <div className={`room-routing-hint${hasInvalidRoomMentions ? " invalid" : ""}`} role={hasInvalidRoomMentions ? "alert" : undefined}>
-          {hasInvalidRoomMentions
-            ? `${invalidRoomMentions.map((mention) => mention.kind === "bot" ? `@${mention.label}` : "").join("、")} 已不在群聊，请移除后重新选择`
-            : effectiveRoomMentions.length === 0
-            ? "未 @ 时，自动选择最合适的 Bot"
-            : effectiveRoomMentions.some((mention) => mention.kind === "everyone")
-              ? `已 @所有人，将调用 ${room.members.length} 个 Bot`
-              : `将调用 ${targetBotIds.length} 个被 @ 的 Bot`}
-        </div> : null}
+        {room && (hasInvalidRoomMentions || explicitRoutingBlocked) ? (
+          <div className="room-routing-hint invalid" role="alert">
+            {hasInvalidRoomMentions
+              ? `${invalidRoomMentions.map((mention) => mention.kind === "bot" ? `@${mention.label}` : "").join("、")} 已不在群聊，请移除后重新选择`
+              : "请先输入 @ 并选择要响应的 Bot"}
+          </div>
+        ) : null}
         <div className="composer">
-          {room && mentionQuery ? (
-            <div className="mention-menu" role="listbox" aria-label="提及 Bot" id="room-mention-menu">
+          {sessionId && skillQuery ? <LibraryResourcePicker sessionId={sessionId} kind="skill" open query={skillQuery.query} onSelect={(reference, resource) => selectResource(reference, resource)} onClose={() => { dismissedMentionRef.current = { start: skillQuery.start, text: draft }; setSkillQuery(null); }} /> : null}
+          {sessionId && mentionQuery ? (
+            <div className="mention-menu composer-resource-groups" id="room-mention-menu">
+              <div className="library-tabs" role="group" aria-label="提及类型">
+                {room ? <button type="button" aria-pressed={resourceGroup === "bot"} onClick={() => setResourceGroup("bot")}>Bot</button> : null}
+                <button type="button" aria-pressed={resourceGroup === "document"} onClick={() => setResourceGroup("document")}>资料</button>
+                <button type="button" aria-pressed={resourceGroup === "skill"} onClick={() => setResourceGroup("skill")}>Skill</button>
+              </div>
+              {resourceGroup !== "bot" ? <LibraryResourcePicker sessionId={sessionId} kind={resourceGroup} open query={mentionQuery.query} onSelect={(reference, resource) => selectResource(reference, resource)} onClose={() => { dismissedMentionRef.current = { start: mentionQuery.start, text: draft }; setMentionQuery(null); }} /> : <div role="listbox" aria-label="提及 Bot">
               <div className="mention-menu-header">提及</div>
               {mentionCandidates.length === 0 ? (
                 <div className="mention-empty">未找到与“{mentionQuery.query}”匹配的 Bot <span>按 Esc 关闭</span></div>
               ) : mentionCandidates.map((item, index) => {
                 const selected = effectiveRoomMentions.some((mention) => mention.id === item.id);
+                const mentionBot = item.id === EVERYONE_MENTION_ID
+                  ? null
+                  : room?.members.find((member) => member.botId === item.id)?.bot ?? null;
                 return (
                   <button
                     className={`mention-option${index === activeMentionIndex ? " active" : ""}${selected ? " selected" : ""}`}
@@ -756,7 +1438,7 @@ export function Conversation({
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => selectMention(item.id)}
                   >
-                    <span className="mention-option-icon"><BotIcon /></span>
+                    <span className="mention-option-icon bot-avatar-container"><BotAvatarIcon shape={mentionBot?.avatarShape} color={mentionBot?.avatarColor} size={24} /></span>
                     <span className="mention-option-copy">
                       <strong>{item.label}</strong>
                       <small>{item.id === EVERYONE_MENTION_ID ? "Bot · 群聊中的全部成员" : "Bot"}</small>
@@ -765,9 +1447,71 @@ export function Conversation({
                   </button>
                 );
               })}
+              </div>}
             </div>
           ) : null}
-          <div className="composer-editor">
+          <div className="composer-toolbar">
+            <button
+              className="attachment-button"
+              type="button"
+              aria-label="添加文本附件"
+              title="添加文本附件"
+              disabled={busy || attachments.length >= 6 || (!bot && !room)}
+              onClick={() => void pickTextAttachments()}
+            ><AttachmentIcon /></button>
+            <div className="composer-media-menu" ref={mediaMenuRef} onKeyDown={event => { if (event.key === "Escape") { setMediaMenuOpen(false); mediaTriggerRef.current?.focus(); } }}>
+              <button ref={mediaTriggerRef} className="attachment-button" type="button" aria-label="添加媒体" title="添加图片或文档" aria-haspopup="menu" aria-expanded={mediaMenuOpen} disabled={busy || mediaImporting || mediaRefs.length >= 6 || !sessionId} onClick={() => setMediaMenuOpen(current => !current)}><DocumentIcon /></button>
+              {mediaMenuOpen ? <div role="menu" aria-label="添加媒体方式"><button className="text-button" role="menuitem" type="button" onClick={() => void importMedia()}>导入媒体文件</button><button className="text-button" role="menuitem" type="button" onClick={() => { setMediaMenuOpen(false); setMediaPickerOpen(true); }}>引用已有媒体</button></div> : null}
+            </div>
+            {sessionId ? <>
+              <button className="composer-mention-button" type="button" aria-label={room ? "提及 Bot" : "引用资料"} title="提及 Bot 或引用资料" onClick={openMentionPicker}><AtIcon /></button>
+              <button className="composer-mention-button" type="button" aria-label="选择 Skill" title="选择 Skill" onClick={() => {
+                const caret = composerInputRef.current?.selectionStart ?? draft.length;
+                const next = `${draft.slice(0, caret)}/${draft.slice(caret)}`;
+                setDraft(next); refreshMentionQuery(next, caret + 1);
+              }}>/</button>
+            </> : null}
+            {room ? (
+              <>
+                <label className="composer-routing-control" title="群聊默认响应方式">
+                  <select
+                    aria-label="群聊默认响应方式"
+                    disabled={busy}
+                    value={routingPreference}
+                    onChange={(event) => {
+                      const mode = event.target.value as UserRoomRoutingMode;
+                      setRoutingPreference(mode);
+                      if (mode !== "explicit") setRoomMentions([]);
+                      setMentionQuery(null);
+                    }}
+                  >
+                    <option value="automatic">{room.room.leadBotId ? "自动 · 协作" : "自动 · 单人"}</option>
+                    <option value="explicit">@ 指定</option>
+                    <option value="everyone">全员</option>
+                  </select>
+                </label>
+              </>
+            ) : null}
+            {sessionId && resourceRefs.length > 0 ? <div className="attachment-chips" aria-label="已引用的资源">{resourceRefs.map(reference => <ResourceReferenceBadge key={`${reference.resourceId}:${reference.revisionId}`} sessionId={sessionId} reference={reference} onRemove={() => setResourceRefs(current => current.filter(item => item.resourceId !== reference.resourceId))} />)}</div> : null}
+            {sessionId && mediaRefs.length > 0 ? <div className="attachment-chips" aria-label="已引用的媒体">{mediaRefs.map(reference => <MediaReferenceBadge key={JSON.stringify(reference)} sessionId={sessionId} reference={reference} onRemove={() => setMediaRefs(current => current.filter(item => item.mediaId !== reference.mediaId))} />)}</div> : null}
+            {mediaImporting ? <p className="field-help" role="status">正在导入媒体；继续编辑会保留新草稿，导入结果仍留在原会话资料库。</p> : null}
+            {attachments.length > 0 ? <div className="attachment-chips" aria-label="已添加的附件">
+              {attachments.map((attachment) => (
+                <button
+                  className="attachment-chip"
+                  type="button"
+                  key={attachment.id}
+                  aria-label={`移除附件 ${attachment.name}`}
+                  disabled={busy}
+                  onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                >
+                  <DocumentIcon weight="duotone" />
+                  <span>{attachment.name}</span>
+                  <small>{Math.max(1, Math.round(attachment.size / 1024))} KB</small>
+                  <span aria-hidden="true">×</span>
+                </button>
+              ))}
+            </div> : null}
             {roomMentions.length > 0 ? <div className="mention-chips" aria-label="已提及的 Bot">
               {roomMentions.map((mention) => {
                 const invalid = mention.kind === "bot" && !memberBotIds.includes(mention.id);
@@ -782,18 +1526,21 @@ export function Conversation({
                     aria-label={`移除 @${label}`}
                     aria-invalid={invalid || undefined}
                     disabled={busy}
-                    onClick={() => setRoomMentions((current) => current.filter((item) => item.id !== mention.id))}
+                    onClick={() => updateComposer(current => { const next = current.roomMentions.filter(item => item.id !== mention.id); return { ...current, roomMentions: next, routingMode: next.length ? current.routingMode : "automatic" }; })}
                   >@{label}<span aria-hidden="true">×</span></button>
                 );
               })}
             </div> : null}
+          </div>
+          {resourceError ? <p className="library-error" role="alert">{resourceError}</p> : null}
+          <div className="composer-editor">
             <textarea
               ref={composerInputRef}
               aria-label="消息"
-              aria-autocomplete={room ? "list" : undefined}
+              aria-autocomplete={sessionId ? "list" : undefined}
               aria-controls={mentionQuery ? "room-mention-menu" : undefined}
-              aria-expanded={room ? Boolean(mentionQuery) : undefined}
-              aria-activedescendant={mentionQuery && mentionCandidates.length > 0 ? `room-mention-option-${activeMentionIndex}` : undefined}
+              aria-expanded={sessionId ? Boolean(mentionQuery || skillQuery) : undefined}
+              aria-activedescendant={mentionQuery && resourceGroup === "bot" && mentionCandidates.length > 0 ? `room-mention-option-${activeMentionIndex}` : undefined}
               placeholder={room ? `给 ${room.room.name} 发消息，输入 @ 指定 Bot…` : bot ? `给 ${bot.name} 发消息…` : "给 Bot 发消息…"}
               value={draft}
               onChange={(event) => {
@@ -802,10 +1549,33 @@ export function Conversation({
               }}
               onClick={(event) => refreshMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart)}
               onFocus={(event) => refreshMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart)}
-              onBlur={() => setMentionQuery(null)}
+              onBlur={event => {
+                if (event.relatedTarget instanceof Element && event.relatedTarget.closest(".mention-menu,.library-resource-picker")) return;
+                setMentionQuery(null); setSkillQuery(null);
+              }}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) return;
-                if (mentionQuery) {
+                if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                  event.preventDefault();
+                  const { selectionStart, selectionEnd } = event.currentTarget;
+                  const nextDraft = `${draft.slice(0, selectionStart)}\n${draft.slice(selectionEnd)}`;
+                  setDraft(nextDraft);
+                  pendingComposerCaretRef.current = selectionStart + 1;
+                  refreshMentionQuery(nextDraft, selectionStart + 1);
+                  return;
+                }
+                const resourceQuery = skillQuery ?? (resourceGroup !== "bot" ? mentionQuery : null);
+                if (resourceQuery) {
+                  if (["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
+                    event.preventDefault();
+                    const options = event.currentTarget.closest(".composer")?.querySelectorAll<HTMLButtonElement>("button[data-library-option]");
+                    const option = event.key === "ArrowUp" ? options?.item((options?.length ?? 1) - 1) : options?.item(0);
+                    if (event.key === "Enter") option?.click(); else option?.focus();
+                    return;
+                  }
+                  if (event.key === "Escape") { event.preventDefault(); dismissedMentionRef.current = { start: resourceQuery.start, text: draft }; setMentionQuery(null); setSkillQuery(null); return; }
+                }
+                if (mentionQuery && resourceGroup === "bot") {
                   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                     event.preventDefault();
                     if (mentionCandidates.length > 0) setActiveMentionIndex((current) => (
@@ -829,6 +1599,7 @@ export function Conversation({
                 if (event.key === "Backspace" && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0 && draft.length === 0 && roomMentions.length > 0) {
                   event.preventDefault();
                   setRoomMentions((current) => current.slice(0, -1));
+                  if (roomMentions.length === 1) setRoutingPreference("automatic");
                   return;
                 }
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -837,9 +1608,11 @@ export function Conversation({
                 }
               }}
               disabled={!bot && !room}
-              rows={2}
+              rows={3}
             />
           </div>
+          <div className="composer-footer-actions">
+            <span className="composer-hint">Enter 发送 · Shift + Enter 换行</span>
           {activeBatch ? (
             <button className="send-button stop" type="button" onClick={() => onCancelRoomBatch(activeBatch.id)} aria-label="停止群聊回复"><StopIcon /></button>
           ) : activeRunId ? (
@@ -856,15 +1629,16 @@ export function Conversation({
               className="send-button"
               type="button"
               onClick={() => void submit()}
-              disabled={(!bot && !room) || !draft.trim() || busy || hasInvalidRoomMentions}
+              disabled={(!bot && !room) || (!draft.trim() && mediaRefs.length === 0) || busy || hasInvalidRoomMentions || explicitRoutingBlocked}
               aria-label="发送"
             >
-              <SendIcon />
+              发送
             </button>
           )}
+          </div>
         </div>
-        <div className="composer-hint">Enter 发送 · Shift + Enter 换行</div>
       </footer>
+      {mediaPickerOpen && sessionId ? <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMediaPickerOpen(false); }}><section className="media-selection-dialog" role="dialog" aria-modal="true" aria-label="选择媒体引用" onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setMediaPickerOpen(false); } }}><header><h2>引用当前会话媒体</h2><button ref={mediaPickerCloseRef} className="icon-button" type="button" aria-label="关闭媒体选择" onClick={() => setMediaPickerOpen(false)}><CloseIcon /></button></header><MediaLibraryPanel key={sessionId} sessionId={sessionId} onUse={selectMedia} /></section></div> : null}
     </main>
   );
 }

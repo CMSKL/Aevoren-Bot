@@ -1,12 +1,14 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { parseStructuredModelToolCall, structuredModelToolDefinitions, type ChatMessage, type ModelEvent, type ModelProvider, type ModelRunContext } from "../model";
+import { toolImageResponse, modelImageDataUrl } from "../model-image";
 import { AevorenBotError } from "../errors";
-import { cliEnvironment, isolatedCodexEnvironment, probeCliVersion, readCodexConfiguredSelection, resolveCliPath } from "./cli-utils";
+import { containsLikelySecret } from "../memory-safety";
+import { cliEnvironment, cliShellOptions, isolatedCodexEnvironment, probeCliVersion, readCodexConfiguredSelection, resolveCliPath } from "./cli-utils";
 
 const DISABLED_CODEX_FEATURES = [
   "plugins",
@@ -52,6 +54,7 @@ const FALLBACK_CODEX_MODELS: CodexModelCatalog = {
 };
 
 type PendingRequest = {
+  method: string;
   resolve(value: unknown): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
@@ -83,6 +86,7 @@ class CodexRpcClient {
         cwd: this.cwd,
         env: isolatedCodexEnvironment(join(this.cwd, ".codex-home")),
         stdio: ["pipe", "pipe", "pipe"],
+        ...cliShellOptions(this.cliPath),
       });
     } catch {
       throw new AevorenBotError("MODEL_CLI_INVALID");
@@ -115,7 +119,7 @@ class CodexRpcClient {
         reject(new AevorenBotError("MODEL_CONNECTION_TIMEOUT"));
       }, timeoutMs);
       timer.unref?.();
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { method, resolve, reject, timer });
       try {
         child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
       } catch {
@@ -144,13 +148,33 @@ class CodexRpcClient {
     const child = this.child;
     this.closed = true;
     this.failAll(new AevorenBotError("MODEL_TRANSPORT_ERROR"));
-    if (!child || child.exitCode !== null) return;
-    child.kill("SIGTERM");
-    await Promise.race([
-      new Promise<void>((resolve) => child.once("close", () => resolve())),
-      new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
-    ]);
-    if (child.exitCode === null) child.kill("SIGKILL");
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    let closed = false;
+    const markClosed = (): void => { closed = true; };
+    child.once("close", markClosed);
+    const waitForClose = (milliseconds: number): Promise<boolean> => closed ? Promise.resolve(true) : new Promise(resolve => {
+      const done = (result: boolean): void => { clearTimeout(timer); child.removeListener("close", onClose); resolve(result); };
+      const onClose = (): void => done(true);
+      const timer = setTimeout(() => done(false), milliseconds);
+      child.once("close", onClose);
+    });
+    const live = (): boolean => !closed && child.exitCode === null && child.signalCode === null;
+    try {
+      child.stdin.once("error", () => undefined);
+      child.stdin.end();
+      if (await waitForClose(1_000)) return;
+      if (process.platform === "win32" && child.pid && live()) {
+        // Kill the known, still-live wrapper and its descendants before losing
+        // its PID; terminating cmd.exe first can orphan a persistent CLI server.
+        await new Promise<void>(resolve => execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], { timeout: 5_000, windowsHide: true }, () => resolve()));
+        if (await waitForClose(1_000)) return;
+      } else if (live()) {
+        child.kill("SIGTERM");
+        if (await waitForClose(1_000)) return;
+      }
+      if (live()) child.kill("SIGKILL");
+      await waitForClose(1_000);
+    } finally { child.removeListener("close", markClosed); }
   }
 
   private handleLine(line: string): void {
@@ -173,6 +197,9 @@ class CodexRpcClient {
       this.pending.delete(id);
       clearTimeout(pending.timer);
       if (message.error) {
+        const detail = object(message.error);
+        const diagnostic = typeof detail?.message === "string" ? detail.message : "No provider diagnostic";
+        console.warn("[codex-runtime] request failed", { method: pending.method, code: detail?.code, message: containsLikelySecret(diagnostic) ? "Sensitive diagnostic redacted" : diagnostic.slice(0, 1_000) });
         pending.reject(new AevorenBotError("MODEL_REQUEST_REFUSED"));
       } else {
         pending.resolve(message.result);
@@ -184,15 +211,17 @@ class CodexRpcClient {
   }
 
   private async handleServerRequest(id: string | number, method: string, params: unknown): Promise<void> {
-    if (!this.child) return;
+    if (!this.child || this.closed) return;
     if (!this.serverRequestHandler) {
       this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message: "method not found" } })}\n`);
       return;
     }
     try {
       const result = await this.serverRequestHandler(method, params);
+      if (this.closed) return;
       this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
     } catch {
+      if (this.closed) return;
       this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message: "tool request failed" } })}\n`);
     }
   }
@@ -397,6 +426,7 @@ class CodexExecProvider implements ModelProvider {
       cwd: this.cwd,
       env: isolatedCodexEnvironment(join(this.cwd, ".codex-home")),
       stdio: ["pipe", "pipe", "pipe"],
+      ...cliShellOptions(path),
     });
     let processError = false;
     let started = false;
@@ -530,6 +560,9 @@ export class CodexCliProvider implements ModelProvider {
           queue.push({ type: "completed", finishReason: "stop" });
           queue.end();
         } else {
+          const detail = object(turn?.error);
+          const message = typeof detail?.message === "string" ? detail.message : "No provider diagnostic";
+          console.warn("[codex-runtime] turn failed", { status: turn?.status, message: containsLikelySecret(message) ? "Sensitive diagnostic redacted" : message.slice(0, 1_000) });
           queue.fail(new AevorenBotError("MODEL_REQUEST_REFUSED"));
         }
         settleCompletion?.();
@@ -560,8 +593,9 @@ export class CodexCliProvider implements ModelProvider {
         let answered = false;
         queue.push({
           ...parsed,
-          respond: async (content) => {
+          respond: async (content, images, modelText) => {
             if (answered) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+            const visual = toolImageResponse(content, images, modelText);
             answered = true;
             let success = true;
             try {
@@ -570,7 +604,7 @@ export class CodexCliProvider implements ModelProvider {
             } catch {
               // A successful read result is commonly a plain structured JSON object.
             }
-            resolve({ contentItems: [{ type: "inputText", text: content }], success });
+            resolve({ contentItems: [{ type: "inputText", text: visual.text }, ...visual.images.map(image => ({ type: "inputImage", imageUrl: modelImageDataUrl(image) }))], success });
           },
         });
       });
@@ -646,8 +680,13 @@ export class CodexCliProvider implements ModelProvider {
     yield* queue.iterate();
   }
 
-  async testConnection(_signal: AbortSignal): Promise<void> {
-    const inspected = await inspectCodexCli(this.cliCommand, this.cwd).catch(() => inspectCodexCliFallback(this.cliCommand));
-    if (!inspected.authenticated) throw new AevorenBotError("MODEL_PROVIDER_UNAVAILABLE", undefined, false, { reason: "authentication" });
+  async testConnection(signal: AbortSignal): Promise<void> {
+    let completed = false;
+    for await (const event of this.run([
+      { role: "user", content: "Reply only AEVOREN_CODEX_CONNECTION_OK." },
+    ], signal)) {
+      if (event.type === "completed") completed = true;
+    }
+    if (!completed) throw new AevorenBotError("MODEL_STREAM_TRUNCATED");
   }
 }

@@ -1,9 +1,10 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { AppRepository } from "../../src/main/database";
+import { closeInspector, openConversationMenu, openInspector } from "./navigation";
 
 test("keeps compact header controls visible at 150 and 200 percent zoom", async () => {
   test.setTimeout(30_000);
@@ -22,7 +23,9 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
     });
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
-
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+    await page.getByRole("main", { name: "联系人资料", exact: true }).getByRole("button", { name: "发消息", exact: true }).click();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeHidden();
     for (const zoomFactor of [1.5, 2]) {
       await application.evaluate(({ BrowserWindow }, factor) => {
         const window = BrowserWindow.getAllWindows()[0];
@@ -30,10 +33,12 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
         window?.setSize(390, 640);
       }, zoomFactor);
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(Math.ceil(390 / zoomFactor));
+      await expect(page.locator(".conversation:not(.contact-detail) .conversation-header").getByRole("button", { name: "聊天选项", exact: true })).toBeVisible();
+      await expect(page.locator(".conversation:not(.contact-detail) .conversation-header button")).toHaveCount(1);
 
       const layout = await page.evaluate(() => {
-        const header = document.querySelector<HTMLElement>(".conversation-header");
-        const title = document.querySelector<HTMLElement>(".conversation-title");
+        const header = document.querySelector<HTMLElement>(".conversation:not(.contact-detail) .conversation-header");
+        const title = header?.querySelector<HTMLElement>(".conversation-title");
         const centerCopy = document.querySelector<HTMLElement>(".center-state span");
         const composer = document.querySelector<HTMLElement>(".composer");
         if (!header || !title || !centerCopy || !composer) throw new Error("missing compact chat layout");
@@ -47,6 +52,8 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
             const rect = button.getBoundingClientRect();
             return rect.left >= 0 && rect.right <= window.innerWidth;
           }),
+          headerDragRegion: getComputedStyle(header).getPropertyValue("-webkit-app-region"),
+          controlsNoDrag: [...header.querySelectorAll("button")].every((button) => getComputedStyle(button).getPropertyValue("-webkit-app-region") === "no-drag"),
           centerCopyContained: centerRect.left >= 0 && centerRect.right <= window.innerWidth,
           composerContained: composerRect.left >= 0 && composerRect.right <= window.innerWidth,
         };
@@ -55,10 +62,21 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
         headerContained: true,
         titleWidth: expect.any(Number),
         controlsContained: true,
+        headerDragRegion: "drag",
+        controlsNoDrag: true,
         centerCopyContained: true,
         composerContained: true,
       });
       expect(layout.titleWidth).toBeGreaterThanOrEqual(40);
+      const menu = await openConversationMenu(page);
+      await expect(menu.getByRole("menuitem", { name: /打开任务详情|打开会话成果/u })).toBeVisible();
+      await expect(menu.getByRole("menuitem", { name: "Bot 设置", exact: true })).toHaveCount(0);
+      expect(await menu.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= window.innerWidth;
+      })).toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(menu).toBeHidden();
     }
 
     await page.screenshot({ path: "/tmp/aevoren-bot-responsive-zoom-200-fixed.png" });
@@ -69,7 +87,7 @@ test("keeps compact header controls visible at 150 and 200 percent zoom", async 
   }
 });
 
-test("keeps inspector and model settings usable at 200 percent zoom", async () => {
+test("keeps contact editing, model configuration and settings usable at 200 percent zoom", async () => {
   test.setTimeout(30_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-responsive-panels-"));
   const application = await electron.launch({
@@ -86,6 +104,9 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
     });
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+    await page.getByRole("main", { name: "联系人资料", exact: true }).getByRole("button", { name: "发消息", exact: true }).click();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeHidden();
     await application.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows()[0];
       window?.webContents.setZoomFactor(2);
@@ -93,11 +114,12 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
     });
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(195);
 
-    await page.getByRole("button", { name: "打开 Bot 设置" }).click();
-    await expect(page.locator(".inspector")).toBeVisible();
+    await openInspector(page);
+    const contact = page.getByRole("main", { name: "联系人资料", exact: true });
+    await expect(contact).toBeVisible();
     await expect.poll(
       () => page.evaluate(() => {
-        const inspector = document.querySelector<HTMLElement>(".inspector");
+        const inspector = document.querySelector<HTMLElement>(".contact-detail");
         if (!inspector) return false;
         const rect = inspector.getBoundingClientRect();
         return rect.left >= 0 && rect.right <= window.innerWidth;
@@ -105,11 +127,11 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
       { timeout: 2_000 },
     ).toBe(true);
     const inspectorLayout = await page.evaluate(() => {
-      const inspector = document.querySelector<HTMLElement>(".inspector");
-      const header = document.querySelector<HTMLElement>(".inspector-header");
-      const heading = header?.querySelector<HTMLElement>("h2");
+      const inspector = document.querySelector<HTMLElement>(".contact-detail");
+      const header = document.querySelector<HTMLElement>(".contact-detail-header");
+      const heading = header?.querySelector<HTMLElement>("h1");
       const firstField = inspector?.querySelector<HTMLElement>("input, textarea");
-      if (!inspector || !header || !heading || !firstField) throw new Error("missing compact inspector");
+      if (!inspector || !header || !heading || !firstField) throw new Error("missing compact contact editor");
       const inspectorRect = inspector.getBoundingClientRect();
       return {
         inspectorContained: inspectorRect.left >= 0 && inspectorRect.right <= window.innerWidth,
@@ -122,6 +144,7 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
           return rect.left >= inspectorRect.left && rect.right <= inspectorRect.right;
         }),
         fieldsContained: [...inspector.querySelectorAll("input, textarea")].every((field) => {
+          if (field.getClientRects().length === 0) return true;
           const rect = field.getBoundingClientRect();
           return rect.left >= inspectorRect.left && rect.right <= inspectorRect.right;
         }),
@@ -136,29 +159,68 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
       controlsContained: true,
       fieldsContained: true,
     });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const contactCapture = await application.evaluate(async ({ BrowserWindow }) =>
+      (await BrowserWindow.getAllWindows()[0]!.webContents.capturePage()).toPNG().toString("base64"),
+    );
+    writeFileSync("/tmp/aevoren-bot-responsive-contact-zoom-200-fixed.png", Buffer.from(contactCapture, "base64"));
     expect(inspectorLayout.inspectorWidth).toBeGreaterThanOrEqual(170);
-    expect(inspectorLayout.headingHeight).toBeLessThanOrEqual(30);
+    expect(inspectorLayout.headingHeight).toBeLessThanOrEqual(54);
     expect(inspectorLayout.fieldWidth).toBeGreaterThanOrEqual(140);
-    await page.screenshot({ path: "/tmp/aevoren-bot-responsive-inspector-zoom-200-fixed.png" });
-    await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
+    await contact.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await expect(contact.getByLabel("模型供应商", { exact: true })).toBeVisible();
+    await expect(contact.getByLabel("Bot 模型", { exact: true })).toBeVisible();
+    expect(await contact.getByRole("tabpanel", { name: "模型与能力", exact: true }).evaluate((panel) => {
+      const container = panel.closest(".contact-detail")!.getBoundingClientRect();
+      return [...panel.querySelectorAll<HTMLElement>("button,input,select")].filter(control => control.getClientRects().length > 0).every(control => {
+        const rect = control.getBoundingClientRect();
+        return rect.left >= container.left && rect.right <= container.right;
+      });
+    })).toBe(true);
+    await contact.getByRole("button", { name: "发消息", exact: true }).click();
+    await expect(contact).toBeHidden();
 
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await (await openConversationMenu(page)).getByRole("menuitem", { name: "打开 Bot 列表", exact: true }).click();
+    await expect(page.locator(".sidebar.mobile-open")).toBeVisible();
+    const sidebarHeader = await page.locator(".sidebar-list-header").evaluate((header) => {
+      const search = header.querySelector<HTMLInputElement>(".sidebar-search input");
+      const controls = [...header.querySelectorAll<HTMLElement>(":scope > .sidebar-search, :scope > button")];
+      if (!search) throw new Error("Missing sidebar search input");
+      const rectangles = controls.map((control) => control.getBoundingClientRect());
+      const overlap = rectangles.some((rect, index) => rectangles.slice(index + 1).some((other) => {
+        return Math.min(rect.right, other.right) - Math.max(rect.left, other.left) > 1
+          && Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top) > 1;
+      }));
+      return { inputWidth: search.getBoundingClientRect().width, overlap };
+    });
+    expect(sidebarHeader.inputWidth).toBeGreaterThan(30);
+    expect(sidebarHeader.overlap).toBe(false);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const sidebarCapture = await application.evaluate(async ({ BrowserWindow }) =>
+      (await BrowserWindow.getAllWindows()[0]!.webContents.capturePage()).toPNG().toString("base64"),
+    );
+    writeFileSync("/tmp/aevoren-bot-sidebar-zoom-200-native.png", Buffer.from(sidebarCapture, "base64"));
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await page.getByRole("button", { name: "模型与 CLI", exact: true }).click();
+    await expect(page.getByRole("region", { name: "设置", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Docker 执行环境", exact: true }).getByRole("button", { name: "准备 Linux 镜像", exact: true })).toBeVisible();
     const settingsLayout = await page.locator(".settings-dialog").evaluate((dialog) => {
       const dialogRect = dialog.getBoundingClientRect();
       const panel = dialog.querySelector('.settings-panel:not([hidden])');
       const paragraph = panel?.querySelector("p");
-      if (!(dialog instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(paragraph instanceof HTMLElement)) {
-        throw new Error("missing compact model settings");
+      const navigation = dialog.querySelector<HTMLElement>(".settings-nav nav");
+      if (!(dialog instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(paragraph instanceof HTMLElement) || !navigation) {
+        throw new Error("missing compact settings page");
       }
       const paragraphRect = paragraph.getBoundingClientRect();
+      const navigationRect = navigation.getBoundingClientRect();
       const visibleControls = [...dialog.querySelectorAll("button, input, select")].filter(
-        (control): control is HTMLElement => control instanceof HTMLElement && control.offsetParent !== null,
+        (control): control is HTMLElement => control instanceof HTMLElement && control.offsetParent !== null && !control.closest(".settings-nav"),
       );
       return {
         dialogContained: dialogRect.left >= 0 && dialogRect.right <= window.innerWidth,
         horizontalContentContained: dialog.scrollWidth <= dialog.clientWidth,
+        navigationContained: navigationRect.left >= dialogRect.left && navigationRect.right <= dialogRect.right,
+        navigationScrollable: navigation.scrollWidth > navigation.clientWidth && getComputedStyle(navigation).overflowX === "auto",
         descriptionContained: paragraphRect.left >= dialogRect.left && paragraphRect.right <= dialogRect.right,
         controlsContained: visibleControls.every((control) => {
           const rect = control.getBoundingClientRect();
@@ -177,11 +239,27 @@ test("keeps inspector and model settings usable at 200 percent zoom", async () =
     expect(settingsLayout).toEqual({
       dialogContained: true,
       horizontalContentContained: true,
+      navigationContained: true,
+      navigationScrollable: true,
       descriptionContained: true,
       controlsContained: true,
       outOfBounds: [],
     });
-    await page.screenshot({ path: "/tmp/aevoren-bot-responsive-settings-zoom-200-fixed.png" });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const settingsCapture = await application.evaluate(async ({ BrowserWindow }) =>
+      (await BrowserWindow.getAllWindows()[0]!.webContents.capturePage()).toPNG().toString("base64"),
+    );
+    writeFileSync("/tmp/aevoren-bot-responsive-settings-zoom-200-fixed.png", Buffer.from(settingsCapture, "base64"));
+    const sections = ["通用", "能力与权限", "长期记忆", "应用连接", "MCP", "主动服务", "版本更新"];
+    await page.getByRole("button", { name: sections[0], exact: true }).focus();
+    for (const [index, name] of sections.entries()) {
+      const category = page.getByRole("button", { name, exact: true });
+      await expect(category).toBeFocused();
+      await expect(category).toBeInViewport();
+      await page.keyboard.press("Enter");
+      await expect(category).toHaveAttribute("aria-current", "page");
+      if (index < sections.length - 1) await page.keyboard.press("Tab");
+    }
     expect(consoleErrors).toEqual([]);
   } finally {
     await application.close();
@@ -215,39 +293,41 @@ test("keeps Room member actions on one line beside a long Bot name", async () =>
     const page = await application.firstWindow();
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1180, 800));
     await page.locator(".bot-row").filter({ hasText: roomName }).click();
-    await page.getByRole("button", { name: "打开 Bot 设置" }).click();
+    await openInspector(page);
     await expect(page.locator(".inspector")).toBeVisible();
+    await page.getByRole("button", { name: /管理群聊成员/u }).click();
     const memberRow = page.locator(".room-member-row").filter({ hasText: longName });
     const removeButton = memberRow.getByRole("button", { name: "移除" });
     const layout = await memberRow.evaluate((row) => {
       const name = row.querySelector<HTMLElement>(".member-main-link");
+      const nameText = name?.querySelector<HTMLElement>(":scope > span");
       const remove = [...row.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "移除");
-      if (!name || !remove) throw new Error("missing Room member controls");
+      if (!name || !nameText || !remove) throw new Error("missing Room member controls");
       const rowRect = row.getBoundingClientRect();
       const nameRect = name.getBoundingClientRect();
       const removeRect = remove.getBoundingClientRect();
       return {
         rowHeight: rowRect.height,
         removeHeight: removeRect.height,
-        removeWhiteSpace: getComputedStyle(remove).whiteSpace,
-        nameEllipses: getComputedStyle(name).textOverflow === "ellipsis",
+        removeSingleLine: removeRect.height <= 36 && remove.scrollWidth <= remove.clientWidth,
+        nameEllipses: getComputedStyle(nameText).textOverflow === "ellipsis" && getComputedStyle(nameText).whiteSpace === "nowrap",
         controlsSeparated: nameRect.right <= removeRect.left,
       };
     });
     await expect(removeButton).toBeVisible();
-    expect(layout.rowHeight).toBeLessThanOrEqual(40);
-    expect(layout.removeHeight).toBeLessThanOrEqual(24);
-    expect(layout.removeWhiteSpace).toBe("nowrap");
+    await page.screenshot({ path: "/tmp/aevoren-bot-responsive-long-member-fixed.png" });
+    expect(layout.rowHeight).toBeLessThanOrEqual(76);
+    expect(layout.removeHeight).toBe(36);
+    expect(layout.removeSingleLine).toBe(true);
     expect(layout.nameEllipses).toBe(true);
     expect(layout.controlsSeparated).toBe(true);
-    await page.screenshot({ path: "/tmp/aevoren-bot-responsive-long-member-fixed.png" });
   } finally {
     await application.close();
     removeTestDirectory(userDataDir);
   }
 });
 
-test("uses a two-stage compact layout around the desktop breakpoint", async () => {
+test("keeps the sidebar through tablet widths and edits contacts in place at the mobile breakpoint", async () => {
   test.setTimeout(30_000);
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-responsive-breakpoint-"));
   const application = await electron.launch({
@@ -260,11 +340,16 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
     const page = await application.firstWindow();
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+    await closeInspector(page);
     const expected = [
-      { width: 1181, sidebar: true, inspector: true, minConversationWidth: 580 },
-      { width: 1180, sidebar: true, inspector: false, minConversationWidth: 850 },
-      { width: 1021, sidebar: true, inspector: false, minConversationWidth: 700 },
-      { width: 1020, sidebar: false, inspector: false, minConversationWidth: 950 },
+      { width: 1181, sidebarWidth: 404 },
+      { width: 1180, sidebarWidth: 342 },
+      { width: 1021, sidebarWidth: 342 },
+      { width: 1020, sidebarWidth: 308 },
+      { width: 621, sidebarWidth: 308 },
+      { width: 620, sidebarWidth: 0 },
+      { width: 390, sidebarWidth: 0 },
     ];
 
     for (const item of expected) {
@@ -273,52 +358,82 @@ test("uses a two-stage compact layout around the desktop breakpoint", async () =
         () => page.evaluate((expectedWidth) => {
           const sidebar = document.querySelector<HTMLElement>(".sidebar");
           const inspector = document.querySelector<HTMLElement>(".inspector");
-          if (!sidebar || !inspector) return false;
-          const isVisible = (element: HTMLElement): boolean => {
+          if (!sidebar) return false;
+          const isVisible = (element: HTMLElement | null): boolean => {
+            if (!element) return false;
             const rect = element.getBoundingClientRect();
-            return getComputedStyle(element).visibility !== "hidden" && rect.right > 0 && rect.left < window.innerWidth;
+            return getComputedStyle(element).visibility !== "hidden" && rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.left < window.innerWidth;
           };
           return window.innerWidth === expectedWidth
-            && isVisible(sidebar) === (window.innerWidth > 1020)
-            && isVisible(inspector) === (window.innerWidth > 1180);
+            && isVisible(sidebar) === (window.innerWidth > 620)
+            && !isVisible(inspector);
         }, item.width),
         { timeout: 2_000 },
       ).toBe(true);
       const layout = await page.evaluate(() => {
         const sidebar = document.querySelector<HTMLElement>(".sidebar");
         const inspector = document.querySelector<HTMLElement>(".inspector");
-        const conversation = document.querySelector<HTMLElement>(".conversation");
-        if (!sidebar || !inspector || !conversation) throw new Error("missing responsive columns");
-        const isVisible = (element: HTMLElement): boolean => {
+        const conversation = document.querySelector<HTMLElement>(".conversation:not(.contact-detail)");
+        const header = conversation?.querySelector<HTMLElement>(".conversation-header");
+        if (!sidebar || !conversation || !header) throw new Error("missing responsive columns");
+        const isVisible = (element: HTMLElement | null): boolean => {
+          if (!element) return false;
           const rect = element.getBoundingClientRect();
-          return getComputedStyle(element).visibility !== "hidden" && rect.right > 0 && rect.left < window.innerWidth;
+          return getComputedStyle(element).visibility !== "hidden" && rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.left < window.innerWidth;
         };
         return {
           viewportWidth: window.innerWidth,
           sidebar: isVisible(sidebar),
+          sidebarWidth: isVisible(sidebar) ? sidebar.getBoundingClientRect().width : 0,
           inspector: isVisible(inspector),
           conversationWidth: conversation.getBoundingClientRect().width,
+          conversationLeft: conversation.getBoundingClientRect().left,
+          headerHeight: header.getBoundingClientRect().height,
           rootContained: document.documentElement.scrollWidth <= window.innerWidth,
         };
       });
       expect(layout.viewportWidth).toBeGreaterThanOrEqual(item.width - 2);
       expect(layout.viewportWidth).toBeLessThanOrEqual(item.width + 2);
-      const expectedSidebar = layout.viewportWidth > 1020;
-      const expectedInspector = layout.viewportWidth > 1180;
-      expect(layout.sidebar).toBe(expectedSidebar);
-      expect(layout.inspector).toBe(expectedInspector);
-      expect(layout.conversationWidth).toBeGreaterThanOrEqual(item.minConversationWidth);
+      expect(layout.sidebar).toBe(item.sidebarWidth > 0);
+      expect(layout.sidebarWidth).toBe(item.sidebarWidth);
+      expect(layout.inspector).toBe(false);
+      expect(layout.conversationLeft).toBe(item.sidebarWidth);
+      expect(layout.conversationWidth).toBe(item.width - item.sidebarWidth);
+      expect(layout.headerHeight).toBe(item.width <= 620 ? 64 : 88);
       expect(layout.rootContained).toBe(true);
-      if (item.width === 1180) await page.screenshot({ path: "/tmp/aevoren-bot-responsive-two-pane-1180-fixed.png" });
-      if (item.width === 1020) await page.screenshot({ path: "/tmp/aevoren-bot-responsive-single-pane-1020-fixed.png" });
-    }
+      if ([1180, 621, 620].includes(item.width)) await page.screenshot({ path: `/tmp/aevoren-bot-responsive-sidebar-${item.width}-fixed.png` });
 
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1180, 700));
-    await page.waitForTimeout(220);
-    await page.getByRole("button", { name: "打开 Bot 设置" }).click();
-    await expect(page.locator(".inspector")).toBeVisible();
-    await page.getByRole("button", { name: "关闭 Bot 设置" }).click();
-    await expect(page.locator(".inspector")).not.toBeVisible();
+      await openInspector(page);
+      const contact = page.getByRole("main", { name: "联系人资料", exact: true });
+      await expect(contact).toBeVisible();
+      await expect(page.locator(".inspector")).toHaveCount(0);
+      const contactLayout = await contact.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          width: rect.width,
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          viewportHeight: window.innerHeight,
+          fieldsContained: [...element.querySelectorAll<HTMLElement>("input,textarea")].filter(field => field.getClientRects().length > 0).every(field => {
+            const fieldRect = field.getBoundingClientRect();
+            return fieldRect.left >= rect.left && fieldRect.right <= rect.right;
+          }),
+          rootContained: document.documentElement.scrollWidth <= window.innerWidth,
+        };
+      });
+      expect(contactLayout.width).toBe(layout.conversationWidth);
+      expect(contactLayout.left).toBe(item.sidebarWidth);
+      expect(contactLayout.right).toBe(item.width);
+      expect(contactLayout.top).toBe(0);
+      expect(contactLayout.bottom).toBe(contactLayout.viewportHeight);
+      expect(contactLayout.fieldsContained).toBe(true);
+      expect(contactLayout.rootContained).toBe(true);
+      await contact.getByRole("button", { name: "发消息", exact: true }).click();
+      await expect(contact).toBeHidden();
+      await expect(page.locator(".inspector")).toBeHidden();
+    }
   } finally {
     await application.close();
     removeTestDirectory(userDataDir);
@@ -338,8 +453,10 @@ test("does not stack the new-chat chooser over an open narrow sidebar", async ()
     const page = await application.firstWindow();
     await page.getByRole("button", { name: "新建聊天" }).click();
     await page.getByRole("button", { name: "创建新 Bot" }).click();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+    await closeInspector(page);
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(390, 640));
-    await page.getByRole("button", { name: "打开 Bot 列表" }).click();
+    await (await openConversationMenu(page)).getByRole("menuitem", { name: "打开 Bot 列表", exact: true }).click();
     await expect(page.locator(".sidebar")).toBeVisible();
     await page.getByRole("button", { name: "新建聊天" }).click();
     await expect(page.locator(".new-bot-chooser")).toBeVisible();
@@ -397,14 +514,14 @@ test("keeps a long sidebar scrollable without pushing the conversation below the
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1338, 808));
-    await expect(page.locator(".conversation")).toBeVisible();
+    await expect(page.locator(".conversation:not(.contact-detail)")).toBeVisible();
     await expect(page.locator(".bot-list")).toBeVisible();
 
     const layout = await page.evaluate(() => {
       const shell = document.querySelector<HTMLElement>(".app-shell");
       const sidebar = document.querySelector<HTMLElement>(".sidebar");
       const list = document.querySelector<HTMLElement>(".bot-list");
-      const conversation = document.querySelector<HTMLElement>(".conversation");
+      const conversation = document.querySelector<HTMLElement>(".conversation:not(.contact-detail)");
       const composer = document.querySelector<HTMLElement>(".composer-wrap");
       if (!shell || !sidebar || !list || !conversation || !composer) throw new Error("missing primary layout");
       const sidebarRect = sidebar.getBoundingClientRect();
@@ -428,7 +545,7 @@ test("keeps a long sidebar scrollable without pushing the conversation below the
 
     const scrollResult = await page.locator(".bot-list").evaluate((list) => {
       list.scrollTop = list.scrollHeight;
-      const lastRow = list.querySelector<HTMLElement>('.bot-row[aria-label="滚动验收 Bot 12"]');
+      const lastRow = [...list.querySelectorAll<HTMLElement>(".bot-row")].at(-1);
       if (!lastRow) throw new Error("missing final sidebar row");
       const listRect = list.getBoundingClientRect();
       const rowRect = lastRow.getBoundingClientRect();

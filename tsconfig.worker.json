@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "module": "ESNext", "moduleResolution": "Bundler",
+    "paths": { "@shared/*": ["./src/shared/*"] }, "strict": true,
+    "noUncheckedIndexedAccess": true, "types": ["node", "vitest/globals"],
+    "skipLibCheck": true, "noEmit": true
+  },
+  "include": ["src/worker/**/*.ts", "worker.vite.config.ts"]
+}

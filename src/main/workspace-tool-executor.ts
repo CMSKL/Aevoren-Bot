@@ -1,27 +1,66 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, readdir } from "node:fs/promises";
-import { posix } from "node:path";
+import { link, lstat, open, readdir, realpath, unlink } from "node:fs/promises";
+import { join, posix } from "node:path";
 import type { Stats } from "node:fs";
-import type { DeviceToolRequest, NetworkToolRequest, ToolInvocation, ToolRequest, WorkspaceToolRequest } from "@shared/contracts";
+import type { ComputationToolRequest, DeviceToolRequest, NetworkToolRequest, ToolInvocation, ToolRequest, WorkspaceToolRequest } from "@shared/contracts";
 import type { AppRepository } from "./database";
-import { AevorenBotError } from "./errors";
+import { asAppError, AevorenBotError, type ErrorCode } from "./errors";
 import type { WorkspaceService } from "./workspace-service";
 import type { NetworkToolExecutor } from "./network-tool-executor";
 import type { McpService } from "./mcp-service";
 import type { DeviceToolExecutor } from "./device-tool-executor";
+import { containsLikelySecret } from "./memory-safety";
 
 const MAX_SEARCH_FILES = 2_000;
 const MAX_SEARCH_BYTES = 20 * 1_048_576;
 const MAX_SEARCH_FILE_BYTES = 1_048_576;
 const MAX_SEARCH_DURATION_MS = 5_000;
 const MAX_PREVIEW_CHARACTERS = 240;
+const MAX_WRITE_BYTES = 256 * 1_024;
 
 type ResultMetadata = Record<string, string | number | boolean | null>;
+
+function summarizeCsv(text: string): { rowCount: number; numericSums: Record<string, number> } | null {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]!;
+    if (quoted) {
+      if (character === '"' && text[index + 1] === '"') { field += '"'; index += 1; }
+      else if (character === '"') quoted = false;
+      else field += character;
+      continue;
+    }
+    if (character === '"' && field.length === 0) quoted = true;
+    else if (character === ",") { row.push(field); field = ""; }
+    else if (character === "\n") { row.push(field.replace(/\r$/u, "")); rows.push(row); row = []; field = ""; }
+    else field += character;
+    if (rows.length > 10_001 || row.length > 200) return null;
+  }
+  if (quoted) return null;
+  if (field.length > 0 || row.length > 0) { row.push(field.replace(/\r$/u, "")); rows.push(row); }
+  while (rows.length > 0 && rows.at(-1)?.every((value) => value === "")) rows.pop();
+  const header = rows.shift();
+  if (!header?.length || new Set(header).size !== header.length || header.some((name) => !name.trim())) return null;
+  const numericSums: Record<string, number> = {};
+  header.forEach((name, column) => {
+    const values = rows.map((values) => values[column] ?? "").filter((value) => value.trim() !== "");
+    if (values.length !== rows.length || values.some((value) => !/^-?\d+(?:\.\d+)?$/u.test(value.trim()))) return;
+    const numbers = values.map(Number);
+    const sum = numbers.reduce((total, value) => total + value, 0);
+    if (numbers.every(Number.isFinite) && Number.isFinite(sum) && Math.abs(sum) <= Number.MAX_SAFE_INTEGER) numericSums[name.trim()] = sum;
+  });
+  return { rowCount: rows.length, numericSums };
+}
 
 export type WorkspaceToolExecutionResult = {
   invocation: ToolInvocation;
   content: string;
+  images?: import("./model-image").ModelImageAttachment[];
+  modelText?: import("./model-image").ModelTextAttachment;
 };
 
 function sameIdentity(left: Stats, right: Stats): boolean {
@@ -41,7 +80,10 @@ function checkCancellation(signal: AbortSignal): void {
 }
 
 function stableError(error: unknown): AevorenBotError {
-  return error instanceof AevorenBotError ? error : new AevorenBotError("TOOL_EXECUTION_FAILED");
+  if (error instanceof AevorenBotError) return error;
+  const mapped = asAppError(error);
+  if (mapped.code.startsWith("CONNECTOR_") || mapped.code === "TOOL_EXECUTION_CANCELLED") return new AevorenBotError(mapped.code as ErrorCode, undefined, undefined, mapped.details);
+  return new AevorenBotError("TOOL_EXECUTION_FAILED");
 }
 
 function digestResult(content: string): string {
@@ -89,6 +131,21 @@ async function stableDirectoryEntries(path: string, signal: AbortSignal) {
 }
 
 export class WorkspaceToolExecutor {
+  private productOperations?: import("./product-operation-service").ProductOperationService;
+
+  setProductOperations(service: import("./product-operation-service").ProductOperationService): void { this.productOperations = service; }
+
+  productRequestPreview(tool: import("@shared/contracts").ProductToolRequest): string { return this.productOperations?.preview(tool) ?? "产品操作"; }
+
+  productRequestRequiresApproval(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId?: string): boolean { return this.productOperations?.requiresApproval(tool, runtimeRunId) ?? true; }
+  productRequestApprovalReview(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined {
+    return this.productOperations?.approvalReview(tool, runtimeRunId);
+  }
+
+  validateProductRequest(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): void {
+    if (!this.productOperations) throw new AevorenBotError("TOOL_STATE_INVALID");
+    this.productOperations.validate(tool, runtimeRunId);
+  }
   constructor(
     private readonly repository: AppRepository,
     private readonly workspaceService: WorkspaceService,
@@ -107,19 +164,30 @@ export class WorkspaceToolExecutor {
       throw cancelled();
     }
 
-    this.repository.transitionToolInvocation(id, "dispatching");
     try {
-      if (initial.workspaceId) {
+      this.repository.transitionToolInvocation(id, "dispatching");
+      this.assertInvocationAccess(initial);
+      if (initial.workspaceId && initial.toolKind !== "workspace-write") {
         const targetType = initial.toolKind === "workspace-read" ? "file" : "directory";
         await this.workspaceService.resolveExistingTarget(initial.workspaceId, initial.targetPath, targetType);
       }
       checkCancellation(signal);
       this.repository.transitionToolInvocation(id, "running");
 
-      const result = await this.run(initial.arguments, signal);
+      if (initial.arguments.kind === "bot-create" || initial.arguments.kind === "room-create") {
+        return this.repository.executeProjectCreation(id);
+      }
+
+      const result = await this.run(initial.arguments, signal, initial);
       checkCancellation(signal);
-      const invocation = this.repository.completeToolInvocation(id, digestResult(result.content), result.metadata);
-      return { invocation, content: result.content };
+      this.assertInvocationAccess(initial);
+      const outboundResult=initial.arguments.kind==="product-call"&&initial.arguments.action==="execute"&&["outbound.send", "mcp.executeTool"].includes(initial.arguments.operation)
+        ? JSON.parse(result.content) as {result?:{state?:string}} : null;
+      if(outboundResult?.result?.state==="unknown")return {invocation:this.repository.interruptProductToolInvocation(id,result.content),content:result.content};
+      const invocation = this.repository.getToolInvocation(id).state === "succeeded" ? this.repository.getToolInvocation(id) : initial.arguments.kind === "product-call"
+        ? this.repository.completeProductToolInvocation(id, digestResult(result.content), result.content, result.metadata)
+        : this.repository.completeToolInvocation(id, digestResult(result.content), result.metadata);
+      return { invocation, content: result.content, ...(result.images ? { images: result.images } : {}), ...(result.modelText ? { modelText: result.modelText } : {}) };
     } catch (error) {
       const normalized = signal.aborted ? cancelled() : stableError(error);
       const current = this.repository.getToolInvocation(id);
@@ -129,15 +197,35 @@ export class WorkspaceToolExecutor {
         }
       } else if (current.state === "dispatching" || current.state === "running") {
         this.repository.failToolInvocation(id, normalized.code);
+      } else if (current.state === "approved") {
+        // A dispatch-time permission check can reject before the state changes.
+        this.repository.cancelToolInvocation(id);
       }
       throw normalized;
+    }
+  }
+
+  private assertInvocationAccess(invocation: ToolInvocation): void {
+    this.repository.assertSessionExecutor(invocation.sessionId, invocation.executorBotId);
+    if (!invocation.workspaceId) return;
+    this.repository.assertSessionWorkspaceAccess(
+      invocation.sessionId, invocation.executorBotId, invocation.workspaceId, invocation.toolKind,
+    );
+    const workspace = this.repository.getWorkspace(invocation.workspaceId);
+    if (invocation.toolKind === "workspace-write" && !workspace.writeEnabled) {
+      throw new AevorenBotError("WORKSPACE_WRITE_NOT_ENABLED");
     }
   }
 
   private async run(
     tool: ToolRequest,
     signal: AbortSignal,
-  ): Promise<{ content: string; metadata: ResultMetadata }> {
+    invocation: ToolInvocation,
+  ): Promise<{ content: string; metadata: ResultMetadata; images?: import("./model-image").ModelImageAttachment[]; modelText?: import("./model-image").ModelTextAttachment }> {
+    if (tool.kind === "product-call") {
+      if (!this.productOperations) throw new AevorenBotError("TOOL_STATE_INVALID");
+      return this.productOperations.execute(tool, invocation, signal);
+    }
     if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "time-now") {
       if (!this.networkTools) throw new AevorenBotError("NETWORK_TOOL_UNAVAILABLE");
       return this.networkTools.run(tool as NetworkToolRequest, signal);
@@ -150,6 +238,12 @@ export class WorkspaceToolExecutor {
       if (!this.deviceTools) throw new AevorenBotError("TOOL_EXECUTION_FAILED");
       return this.deviceTools.run(tool as DeviceToolRequest, signal);
     }
+    if (tool.kind === "text-measure") return this.measureText(tool as ComputationToolRequest);
+    if (tool.kind === "project-bots") {
+      const result = this.repository.projectBotCatalog(invocation.executorBotId, invocation.sessionId);
+      return { content: JSON.stringify({ ok: true, ...result }), metadata: { projectId: result.projectId, count: result.bots.length } };
+    }
+    if (tool.kind === "bot-create" || tool.kind === "room-create") throw new AevorenBotError("TOOL_STATE_INVALID");
     switch (tool.kind) {
       case "workspace-list":
         return this.list(tool, signal);
@@ -157,7 +251,20 @@ export class WorkspaceToolExecutor {
         return this.read(tool, signal);
       case "workspace-search":
         return this.search(tool, signal);
+      case "workspace-write":
+        return this.write(tool, signal, () => this.assertInvocationAccess(invocation));
     }
+  }
+
+  private measureText(tool: ComputationToolRequest): { content: string; metadata: ResultMetadata } {
+    const characters = [...tool.text].length;
+    const nonWhitespaceCharacters = [...tool.text].filter((character) => !/\s/u.test(character)).length;
+    const words = [...new Intl.Segmenter("zh-CN", { granularity: "word" }).segment(tool.text)]
+      .filter((segment) => segment.isWordLike).length;
+    const lines = tool.text.length === 0 ? 0 : tool.text.split(/\r?\n/u).length;
+    const utf8Bytes = Buffer.byteLength(tool.text, "utf8");
+    const result = { characters, nonWhitespaceCharacters, words, lines, utf8Bytes };
+    return { content: JSON.stringify(result), metadata: { kind: tool.kind, ...result } };
   }
 
   private async list(
@@ -190,9 +297,16 @@ export class WorkspaceToolExecutor {
     signal: AbortSignal,
   ): Promise<{ content: string; metadata: ResultMetadata }> {
     const value = await this.readText(tool.workspaceId, tool.path, tool.maxBytes, signal);
+    const csvSummary = !value.truncated && tool.path.toLowerCase().endsWith(".csv") ? summarizeCsv(value.text) : null;
     return {
-      content: JSON.stringify({ text: value.text, truncated: value.truncated }),
-      metadata: { kind: tool.kind, bytes: value.bytes, truncated: value.truncated },
+      content: JSON.stringify({ text: value.text, truncated: value.truncated, ...(csvSummary ? { csvSummary } : {}) }),
+      metadata: {
+        kind: tool.kind,
+        bytes: value.bytes,
+        truncated: value.truncated,
+        sha256: createHash("sha256").update(value.text, "utf8").digest("hex"),
+        ...(csvSummary ? { csvRowCount: csvSummary.rowCount, csvNumericSums: JSON.stringify(csvSummary.numericSums) } : {}),
+      },
     };
   }
 
@@ -223,7 +337,10 @@ export class WorkspaceToolExecutor {
       for (const entry of directory.entries) {
         if (limitReached()) return;
         const childRelative = relativeDirectory ? posix.join(relativeDirectory, entry.name) : entry.name;
-        const childCanonical = posix.join(canonicalDirectory, entry.name);
+        // Keep user-visible relative paths POSIX-normalized, but use the host
+        // path implementation for canonical filesystem paths (Windows drive
+        // roots and separators must not be joined with posix.join()).
+        const childCanonical = join(canonicalDirectory, entry.name);
         const before = await lstat(childCanonical);
         if (before.isSymbolicLink()) continue;
         if (before.isDirectory()) {
@@ -280,6 +397,57 @@ export class WorkspaceToolExecutor {
     };
   }
 
+  private async write(
+    tool: Extract<WorkspaceToolRequest, { kind: "workspace-write" }>,
+    signal: AbortSignal,
+    assertAccess: () => void,
+  ): Promise<{ content: string; metadata: ResultMetadata }> {
+    checkCancellation(signal);
+    const bytes = Buffer.byteLength(tool.content, "utf8");
+    if (bytes < 1 || bytes > MAX_WRITE_BYTES) throw new AevorenBotError("WORKSPACE_WRITE_FAILED");
+    if (containsLikelySecret(tool.content)) throw new AevorenBotError("WORKSPACE_WRITE_SECRET_BLOCKED");
+    const target = await this.workspaceService.resolveNewTextTarget(tool.workspaceId, tool.path);
+    assertAccess();
+    checkCancellation(signal);
+    const temporaryPath = join(target.canonicalParent, `.aevoren-${randomUUID()}.tmp`);
+    const noFollowFlag = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      handle = await open(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag, 0o600);
+      await handle.writeFile(tool.content, "utf8");
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      const latest = await this.workspaceService.resolveNewTextTarget(tool.workspaceId, tool.path);
+      if (latest.canonicalPath !== target.canonicalPath || latest.canonicalParent !== target.canonicalParent) {
+        throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+      }
+      assertAccess();
+      checkCancellation(signal);
+      await link(temporaryPath, target.canonicalPath);
+      await unlink(temporaryPath);
+      const canonical = await realpath(target.canonicalPath);
+      if (canonical !== target.canonicalPath) throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+      const written = await lstat(canonical);
+      if (!written.isFile() || written.isSymbolicLink() || written.size !== bytes) {
+        throw new AevorenBotError("WORKSPACE_WRITE_FAILED");
+      }
+      const sha256 = digestResult(tool.content);
+      return {
+        content: JSON.stringify({ ok: true, path: tool.path, bytes, sha256, created: true }),
+        metadata: { kind: tool.kind, path: tool.path, bytes, sha256, created: true },
+      };
+    } catch (error) {
+      if (handle) await handle.close().catch(() => undefined);
+      await unlink(temporaryPath).catch(() => undefined);
+      if (error instanceof AevorenBotError) throw error;
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST") {
+        throw new AevorenBotError("WORKSPACE_WRITE_CONFLICT");
+      }
+      throw new AevorenBotError("WORKSPACE_WRITE_FAILED");
+    }
+  }
+
   private async readText(
     workspaceId: string,
     relativePath: string,
@@ -288,7 +456,11 @@ export class WorkspaceToolExecutor {
   ): Promise<{ text: string; bytes: number; truncated: boolean }> {
     checkCancellation(signal);
     const target = await this.workspaceService.resolveExistingTarget(workspaceId, relativePath, "file");
-    const handle = await open(target.canonicalPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    // Windows does not expose the POSIX O_NOFOLLOW flag. The target was already
+    // resolved and checked for symlinks by WorkspaceService; keep that guard on
+    // Windows while retaining the stronger open-time check on POSIX platforms.
+    const noFollowFlag = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+    const handle = await open(target.canonicalPath, constants.O_RDONLY | noFollowFlag);
     try {
       const before = await handle.stat();
       if (!before.isFile()) throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");

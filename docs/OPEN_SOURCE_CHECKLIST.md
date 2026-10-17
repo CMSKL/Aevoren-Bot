@@ -1,6 +1,6 @@
 # Open-Source Release Checklist
 
-Last reviewed: 2026-09-18. This is a readiness record, not authorization to publish or create a Release.
+Last reviewed: 2026-09-21. This is the readiness record for the current public Beta release line.
 
 ## P0 — public release blockers
 
@@ -12,14 +12,14 @@ Last reviewed: 2026-09-18. This is a readiness record, not authorization to publ
 | Third-party dependency license inventory | Passed | `pnpm licenses:check`; generated `THIRD_PARTY_NOTICES.md`; production graph has no GPL/AGPL/LGPL/SSPL/BUSL/unknown group |
 | Vulnerability audit | Passed | `pnpm audit --audit-level high`: 0 high/critical findings at review time |
 | Reverse-engineering and third-party evidence | Passed | A verified private Git bundle and checksummed material archive were created; 99 internal/evidence paths and the superseded visual assets were removed from the reachable history of `dev`, `beta`, and `master` |
-| Icon and visual asset provenance | Conditionally passed | The legacy face icon is covered by the maintainer redistribution attestation in `docs/ASSET_PROVENANCE.md`; independent-authorship evidence and trademark clearance remain legal-review risks, not an undocumented project decision |
+| Icon and visual asset provenance | Conditionally passed | The project-generated graphite and ivory icon replaced the legacy face icon with maintainer approval on 2026-10-12; editable Icon Composer layers, derivative hashes, and approval are recorded in `docs/ASSET_PROVENANCE.md`. Formal trademark clearance remains a legal-review item |
 | README and public setup docs | Passed | Public README plus Installation, Configuration, Release, Support, Security, Contribution, Code of Conduct, Changelog, Notice, and trademark docs added |
 | Reproducible dependency install | Passed | Fresh local `pnpm install --frozen-lockfile`, offline reinstall, and remote Ubuntu/macOS CI installs succeeded |
-| Build and macOS package | Passed | Current `0.2.0-beta.7` arm64 directory package built locally and in remote CI; packaged hidden startup smoke passed |
+| Build and macOS package | Passed | Current `0.3.0-beta.3` arm64 package built in remote CI; packaged hidden startup, settings, model/CLI, and data-compatibility checks passed |
 | Privacy declarations and ATS | Passed | Unused camera/microphone/Bluetooth descriptions removed during `afterPack`; arbitrary network loads disabled; local networking retained |
 | PR CI | Passed on `dev` | Pinned GitHub Actions workflow completed secret scan, Node 24 validation/build, dependency audit/license gate, macOS smoke, and unsigned package for the rewritten `dev` head |
-| Signed/notarized release | Deferred binary gate | Not required for publishing source code; before the first public macOS binary, create a new version and verify Developer ID, Hardened Runtime, notarization, Gatekeeper, checksums, attestation, and update metadata |
-| Real update from an older public build | Deferred binary gate | Requires two public test artifacts; complete Beta N → Beta N+1 download/install/relaunch validation before claiming production auto-update readiness |
+| Signed/notarized release | Passed | `v0.3.0-beta.3` is signed with Developer ID, uses Hardened Runtime, is notarized and stapled, passes Gatekeeper, and includes verified checksums, build attestation, SBOM, blockmaps, and Beta update metadata |
+| Real update from an older public build | Passed | Installed `v0.3.0-beta.2` detected, downloaded, installed, and relaunched into signed `v0.3.0-beta.3`; the receipt converged to `updated` and the follow-up live check returned `up-to-date` |
 | Repository settings | Passed | Repository is public with default branch `master`; vulnerability reporting, secret scanning, and public CI are enabled; master protection is handled as a post-public governance gate |
 
 The tag workflow invokes `pnpm open-source:check` before building, so an accidental version tag cannot publish while the license or internal-history blockers remain.
@@ -29,7 +29,8 @@ The tag workflow invokes `pnpm open-source:check` before building, so an acciden
 | Item | Status / action |
 | --- | --- |
 | SBOM | Passed locally | `pnpm sbom:generate` creates a deterministic CycloneDX 1.5 SBOM; the release workflow attests and uploads it with the immutable asset set |
-| Intel macOS / Windows / Linux | Documented unsupported | README, Installation, Support, and Portal explicitly scope the current release line to macOS 13+ Apple silicon |
+| Windows 10/11 x64 | MVP validation track | Source build, Windows-specific CLI/path tests, CI smoke, and unsigned NSIS package job are configured; signed public installer remains blocked on Windows certificate secrets |
+| Intel macOS / Linux | Documented unsupported | README, Installation, Support, and Portal scope the current release line to macOS arm64 and Windows x64 MVP |
 | Accessibility and localization | Pending public review | Core UI tests and user-facing English/Chinese strings exist, but a dedicated accessibility audit and documentation-language decision remain |
 | Dependency update automation | Prepared | Dependabot grouping is active and grouped PRs have been observed; upgrades remain subject to compatibility and license gates |
 | Support operations | Passed | SUPPORT.md defines private security reporting, issue triage guidance, and maintainer response targets |

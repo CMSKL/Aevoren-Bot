@@ -12,6 +12,7 @@ type Props = {
   onRename(): void;
   onCopyId(): void;
   onHide(): void;
+  onClear(): void;
   onArchive(): void;
   onDelete(): void;
 };
@@ -32,7 +33,7 @@ function MenuItem({ children, danger = false, icon, onSelect }: ItemProps): Reac
   );
 }
 
-export function RoomContextMenu({ room, x, y, onClose, onPin, onUnread, onRename, onCopyId, onHide, onArchive, onDelete }: Props): React.JSX.Element {
+export function RoomContextMenu({ room, x, y, onClose, onPin, onUnread, onRename, onCopyId, onHide, onClear, onArchive, onDelete }: Props): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -85,7 +86,7 @@ export function RoomContextMenu({ room, x, y, onClose, onPin, onUnread, onRename
     >
       <div className="bot-context-section">
         {room.hiddenAt
-          ? <MenuItem icon={<EyeIcon />} onSelect={() => select(onHide)}>恢复到侧边栏</MenuItem>
+          ? <MenuItem icon={<EyeIcon />} onSelect={() => select(onHide)}>恢复聊天</MenuItem>
           : <MenuItem icon={<PinIcon />} onSelect={() => select(onPin)}>{room.pinnedAt ? "取消置顶" : "置顶"}</MenuItem>}
         <MenuItem icon={<BellIcon />} onSelect={() => select(onUnread)}>{room.hasUnread ? "标为已读" : "标为未读"}</MenuItem>
       </div>
@@ -98,11 +99,12 @@ export function RoomContextMenu({ room, x, y, onClose, onPin, onUnread, onRename
       <div className="bot-context-section">
         {!room.hiddenAt ? (
           <>
-          <MenuItem icon={<EyeOffIcon />} onSelect={() => select(onHide)}>从侧边栏隐藏</MenuItem>
+          <MenuItem icon={<EyeOffIcon />} onSelect={() => select(onHide)}>移除聊天</MenuItem>
           <MenuItem icon={<FolderIcon />} onSelect={() => select(onArchive)}>归档群聊</MenuItem>
           </>
         ) : null}
-        <MenuItem danger icon={<TrashIcon />} onSelect={() => select(onDelete)}>删除</MenuItem>
+        <MenuItem icon={<TrashIcon />} onSelect={() => select(onClear)}>清空聊天记录</MenuItem>
+        <MenuItem danger icon={<TrashIcon />} onSelect={() => select(onDelete)}>删除群聊</MenuItem>
       </div>
     </div>
   );

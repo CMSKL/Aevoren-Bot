@@ -1,5 +1,5 @@
 import { gte, gt, prerelease, valid } from "semver";
-import type { AppError, UpdateChannel, UpdateProgress, UpdateState } from "@shared/contracts";
+import type { AppError, UpdateChannel, UpdateCheckIntervalMinutes, UpdateProgress, UpdateState } from "@shared/contracts";
 import { AevorenBotError } from "./errors";
 
 export type UpdateInfoLike = {
@@ -120,11 +120,13 @@ export class UpdateService {
   private operation: "checking" | "downloading" | "installing" | null = null;
   private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private intervalTimer: ReturnType<typeof setInterval> | null = null;
+  private intervalMs: number;
 
   constructor(
     private readonly adapter: UpdateAdapter,
     private readonly options: UpdateServiceOptions,
   ) {
+    this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     this.state = initialState(options);
     this.adapter.onChecking(() => {
       if (this.operation === "checking") this.replace({ status: "checking", error: null });
@@ -171,8 +173,7 @@ export class UpdateService {
     });
     this.startupTimer = setTimeout(() => void this.check(), this.options.startupDelayMs ?? DEFAULT_STARTUP_DELAY_MS);
     this.startupTimer.unref?.();
-    this.intervalTimer = setInterval(() => void this.check(), this.options.intervalMs ?? DEFAULT_INTERVAL_MS);
-    this.intervalTimer.unref?.();
+    this.scheduleIntervalCheck();
   }
 
   stop(): void {
@@ -181,6 +182,13 @@ export class UpdateService {
     this.startupTimer = null;
     this.intervalTimer = null;
     this.started = false;
+  }
+
+  setCheckIntervalMinutes(minutes: UpdateCheckIntervalMinutes): void {
+    const nextIntervalMs = minutes * 60 * 1_000;
+    if (this.intervalMs === nextIntervalMs) return;
+    this.intervalMs = nextIntervalMs;
+    this.scheduleIntervalCheck();
   }
 
   async check(): Promise<UpdateState> {
@@ -292,6 +300,13 @@ export class UpdateService {
 
   private isNewer(candidate: string): boolean {
     return valid(candidate) !== null && valid(this.state.currentVersion) !== null && gt(candidate, this.state.currentVersion);
+  }
+
+  private scheduleIntervalCheck(): void {
+    if (!this.started || this.state.channel === "development") return;
+    if (this.intervalTimer) clearInterval(this.intervalTimer);
+    this.intervalTimer = setInterval(() => void this.check(), this.intervalMs);
+    this.intervalTimer.unref?.();
   }
 
   private writeDownloadedReceipt(version: string): void {

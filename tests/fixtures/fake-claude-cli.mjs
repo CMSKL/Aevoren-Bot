@@ -26,6 +26,11 @@ process.stdin.on("end", () => {
   const sessionId = randomUUID();
   const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
   send({ type: "system", subtype: "init", session_id: sessionId });
+  if (process.env.FAKE_CLAUDE_RESULT_ERROR === "quota") {
+    send({ type: "result", subtype: "success", is_error: true, session_id: sessionId, result: "You've reached your weekly usage limit." });
+    process.exitCode = 1;
+    return;
+  }
   send({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Claude " } } });
   send({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "reply" } } });
   send({ type: "result", subtype: "success", is_error: false, session_id: sessionId, result: "Claude reply" });
