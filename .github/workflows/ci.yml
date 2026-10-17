@@ -120,20 +120,6 @@ jobs:
       - run: pnpm build
       - name: Prepare Electron test runtime
         run: pnpm exec electron --version
-      - name: Observe six independent cancelled MCP closes
-        if: github.event_name == 'pull_request' && github.head_ref == 'codex/mcp-close-observation'
-        timeout-minutes: 10
-        env:
-          AEVOREN_BOT_TEST_HIDDEN: "1"
-        run: pnpm exec playwright test tests/smoke/mcp-apps.spec.ts --grep 'a cancelled dispatched MCP request' --repeat-each=6 --workers=1
-      - name: Preserve cancelled MCP close phase observations
-        if: always() && github.event_name == 'pull_request' && github.head_ref == 'codex/mcp-close-observation'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: mcp-close-observation-${{ github.sha }}-${{ github.run_attempt }}
-          path: test-results/
-          if-no-files-found: error
-          retention-days: 7
       - name: Run Windows Electron smoke tests
         env:
           # GitHub-hosted Windows runners have no interactive desktop. The

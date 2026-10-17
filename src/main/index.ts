@@ -166,6 +166,14 @@ function armCloseConfirmationTimer(): void {
   }, CLOSE_CONFIRMATION_TIMEOUT_MS);
 }
 
+let shutdownObservationStarted = 0;
+function observeShutdownPhase(phase: string): void {
+  if (!hideTestWindow || process.env.AEVOREN_BOT_CLOSE_DIAGNOSTICS !== "1") return;
+  if (phase === "shutdown-requested") shutdownObservationStarted = performance.now();
+  try { console.error("AEVOREN_MCP_CLOSE_PHASE " + JSON.stringify({ phase, shutdownElapsedMs: Math.round(performance.now() - shutdownObservationStarted) })); }
+  catch { /* Optional observation must not change application shutdown. */ }
+}
+
 async function finishClose(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (!quitRequested && routineService?.hasEnabled()) {
@@ -175,25 +183,41 @@ async function finishClose(): Promise<void> {
     mainWindow.hide();
     return;
   }
+  if (!shutdownPromise) observeShutdownPhase("shutdown-requested");
   roomCoordinator?.beginShutdown();
   shutdownPromise ??= (async () => {
+    observeShutdownPhase("shutdown-room-admission-closed");
     await mcpAppsBridge?.dispose();
+    observeShutdownPhase("shutdown-apps-closed");
     await mcpWriteService?.shutdown();
+    observeShutdownPhase("shutdown-mcp-writes-closed");
     await nativeOutboundService?.shutdown();
+    observeShutdownPhase("shutdown-outbound-closed");
     await nativeConnectorService?.shutdown();
+    observeShutdownPhase("shutdown-connectors-closed");
     await skillExecutionService?.shutdown();
+    observeShutdownPhase("shutdown-skills-closed");
     await mediaService?.shutdown();
+    observeShutdownPhase("shutdown-media-closed");
     await runtimeCoordinator?.shutdown();
+    observeShutdownPhase("shutdown-runtime-closed");
     await roomCoordinator?.shutdown();
+    observeShutdownPhase("shutdown-room-closed");
     await environmentService?.shutdown();
+    observeShutdownPhase("shutdown-environments-closed");
     await browserService?.shutdown();
+    observeShutdownPhase("shutdown-browser-closed");
     await providerService?.dispose();
+    observeShutdownPhase("shutdown-providers-closed");
     await mcpService?.dispose();
+    observeShutdownPhase("shutdown-mcp-connections-closed");
     routineService?.stop();
+    observeShutdownPhase("shutdown-complete");
   })();
   try {
     await shutdownPromise;
   } catch {
+    observeShutdownPhase("shutdown-failed");
     shutdownPromise = null;
     closeRequested = false;
     pendingClose = false;
