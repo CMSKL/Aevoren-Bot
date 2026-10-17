@@ -1,6 +1,8 @@
 # Changelog
 
-## v0.3.0-beta.36 (consolidated delivery candidate)
+## [0.3.0-beta.36] - 2026-10-17
+
+Published as one consolidated Beta: signed/notarized [macOS Release](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.36) and [unsigned Windows x64 validation](https://github.com/CMSKL/Aevoren-Bot/actions/runs/39001788239/artifacts/12090189139) (expires 2026-11-16 UTC). Release code is `c4ec7e06cdfd2bf235ea492ff1e1a324ae728caf`; [Beta CI](https://github.com/CMSKL/Aevoren-Bot/actions/runs/39001788239) and [macOS signing](https://github.com/CMSKL/Aevoren-Bot/actions/runs/39005208805) passed. Source/installation/database migration evidence is separate from unverified third-party accounts, Windows Docker and actual automatic-update installation.
 
 - Consolidate unpublished beta.34 MCP/Apps and beta.35 Notion updates with beta.36 image/document media. Voice and Phase 6 remain outside this delivery.
 - Freeze feature expansion and preserve later branches. Reuse applicable evidence; distinguish local checks, CI, installed-package acceptance, signed publication and real third-party validation.

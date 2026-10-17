@@ -12,9 +12,9 @@
 
 Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联系人组织长期使用的 Bot 与群协作，通过按会话授权的工作区访问本地项目文件。对话、经审核的记忆、工具审批和运行恢复保存在用户自己的电脑上，模型来源可选择 API、Claude Code 或 Codex CLI。
 
-> **源码版本：v0.3.0-beta.36。** 本轮将可写 MCP／交互 Apps、Notion 页面更新和图片／PDF／DOCX 导入、固定引用、隔离解析及真实工具图片传输合并交付；语音与阶段 6 留到下一批。读取和本地草稿按会话／Bot 授权；候选功能与已发布安装包分别验收。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
+> **源码版本：v0.3.0-beta.36。** 本轮将可写 MCP／交互 Apps、Notion 页面更新和图片／PDF／DOCX 导入、固定引用、隔离解析及真实工具图片传输合并交付；语音与阶段 6 留到下一批。读取和本地草稿按会话／Bot 授权；源码、安装包和真实服务分别记录验证结果。已发布安装包请从 [Beta Releases](https://github.com/CMSKL/Aevoren-Bot/releases) 下载。官方 macOS Apple silicon 安装包提供签名、公证和**设置 → 版本更新**；Windows 签名公开安装包仍待配置签名。下方源码说明使用 `beta` 分支；本地未签名构建用于验证。版本历史见[变更记录](CHANGELOG.md)。
 
-[v0.3.0-beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33) 已公开发布签名公证 macOS 包，包含资料库、Docker 环境、隔离 Chromium、电脑接管、截图传输、登记服务预览、脚本 Skill、可审阅的示范草稿、Gmail／Drive／Notion 原生读取、本地草稿，以及独立审批的 Gmail 发信、Drive 普通文本文件写入和 Notion 页面创建。可写 MCP／Apps、Notion 页面更新与图片／文档媒体合并为 beta.36 交付候选；语音与阶段 6 保留在后续开发分支。真实 Windows Docker、真实第三方账号未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
+[v0.3.0-beta.36](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.36) 已公开发布签名公证 macOS 包，合并交付 MCP／交互 Apps、Notion 更新、图片／PDF／DOCX，并保留资料库、Docker／浏览器／电脑、脚本／示范 Skill 及独立审批的原生应用外发。[Windows x64 未签名手动测试包](https://github.com/CMSKL/Aevoren-Bot/actions/runs/39001788239/artifacts/12090189139) 使用同一 Beta 提交中已通过安装验收的 NSIS 文件，需要 GitHub 登录，至 2026-11-16 UTC。语音与阶段 6 保留在后续分支；真实第三方账号、云模型视觉、Windows Docker 和真实自动更新安装未验证，进度见[实施记录](docs/IMPLEMENTATION_PLAN.md)。
 
 > **维护者与项目记录：** Allen 和 GitHub CMSKL 是同一人。Aevoren Bot 由 Allen 主导，AI 负责开发。[个人网站项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)说明了这项角色陈述、所记录的固定 Beta 版本和现有证据的边界。
 
@@ -52,7 +52,7 @@ Aevoren Bot 是一个本地优先的 Agent 聊天工作台，通过聊天和联�
 | --- | --- |
 | macOS 13+ Apple silicon | 当前开发和发行目标 |
 | Intel macOS | 未测试、未发行 |
-| Windows 10/11 x64 | MVP 源码、冒烟与打包验证目标；签名公开安装包待配置 |
+| Windows 10/11 x64 | 已提供通过 CI 安装验收的未签名测试包；正式签名包待证书配置 |
 | Linux | 未测试、未发行 |
 | Mobile | 尚未实现 |
 

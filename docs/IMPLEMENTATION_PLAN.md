@@ -2,9 +2,19 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-## Release qualification correction
+## v0.3.0-beta.36 已发布
 
-Beta candidate e1a16b0 CI 38996341444 completed all four jobs, but its raw Windows log records a contact-focus teardown fallback after the business assertions. That case did not record its native exit code, so this proves neither normal exit nor an actual process kill. No beta.36 tag or Release was created. A real-child-process regression reproduces the original helper swallowing close failure after disposal. Strict close now rejects after a fallback; business-only cleanup and intentional close-refusal cases explicitly dispose their fixture without claiming normal exit. Contact and MCP retain bounded shutdown phases and require strict close plus native exit 0/no signal. Contact now covers macOS unsigned/signed packages and signed Windows; it already belongs to installed Windows acceptance. The existing Windows source contact case moves to a separate first step and is removed from the remaining selection, preserving all 51 cases once on success. Fail-fast preserves the first failure without wasting later checks. No product shutdown order, approval, normal-close deadline or business assertion changes.
+[v0.3.0-beta.36](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.36) 已公开发布，标签及标题均严格为 `v0.3.0-beta.36`，发行代码为 `c4ec7e06cdfd2bf235ea492ff1e1a324ae728caf`。未单独发布 .34/.35；master 暂不晋级。后续六阶段工作及本地分支均保留。
+
+[Beta 验收](https://github.com/CMSKL/Aevoren-Bot/actions/runs/39001788239) 四项通过：macOS 源码 150、实际包内业务 27、关闭握手 8；Windows 单元 1,634/条件跳过 66、源码 1+50、源码关闭 8、安装后业务 43、安装后关闭 8。联系人/MCP 严格正常关闭及原生退出码 0/无信号通过；实际 Electron 用例没有清理回退。Node 六项负向/正向子进程测试中的四次预期清理不作为正常退出凭证。
+
+[macOS 签名发布](https://github.com/CMSKL/Aevoren-Bot/actions/runs/39005208805) 完成签名、公证、Gatekeeper、更新清单、校验和、SBOM 及发布验证。[Windows x64 手动测试包](https://github.com/CMSKL/Aevoren-Bot/actions/runs/39001788239/artifacts/12090189139) 来自本次同一份安装验收文件，未签名，GitHub 登录后下载，至 `2026-11-16T05:06:37Z`；不进入签名 Release 或自动更新清单。安装包 SHA-256 为 `47778ad4bc9d48b7595bb1e6ca7192580648551522d99d1e482d8e2c1f0c8b74`。
+
+本轮复现并修复的是测试清理误报；历史退出变慢的具体原因未稳定复现，保留阶段取证。数据库从公开 .33 的 schema 40、以及 schema 41 升级至 42，原聊天、Memory、附件、Runtime 和原始备份验证通过。真实第三方服务、云模型视觉、Windows Docker、物理设备及真实自动更新安装未由上述测试证明。下文保留发布前历史记录，不能与当前发行状态混淆。
+
+## 历史：退出验收修正
+
+Beta candidate e1a16b0 CI 38996341444 completed all four jobs, but its raw Windows log records a contact-focus teardown fallback after the business assertions. That case did not record its native exit code, so this proves neither normal exit nor an actual process kill. No tag or Release was created for that rejected candidate. A real-child-process regression reproduces the original helper swallowing close failure after disposal. Strict close now rejects after a fallback; business-only cleanup and intentional close-refusal cases explicitly dispose their fixture without claiming normal exit. Contact and MCP retain bounded shutdown phases and require strict close plus native exit 0/no signal. Contact now covers macOS unsigned/signed packages and signed Windows; it already belongs to installed Windows acceptance. The existing Windows source contact case moves to a separate first step and is removed from the remaining selection, preserving all 51 cases once on success. Fail-fast preserves the first failure without wasting later checks. No product shutdown order, approval, normal-close deadline or business assertion changes.
 
 ## 本轮收敛交付：v0.3.0-beta.36
 
@@ -56,9 +66,9 @@ PR #67 的首个完整组合 CI（`0444b749`／38875596148）保留为失败记�
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 已纳入 v0.3.0-beta.29 签名发行 | 开发与跨平台安装包验证通过，之前签名 fixture 失败保留为历史记录 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
-| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本／读取／外发／示范已纳入 beta.33；MCP／Apps 与 Notion 更新合并进本轮 beta.36 候选 | 历史组合 `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
-| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1 已合入 dev，本轮交付候选；5.2–5.3 留到下一批 | 固定引用、CAS、会话／任务准入与隔离解析保留原单元证据；当前组合本机专测 106／可选跳过 1、源码解析器 6、实际 Mac 包 10 通过；正常 CI 待执行，不宣称阶段验收完成 |
-| 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 后续交付，未纳入本单元 | 待按对应单元补充 |
+| 4 技能包与应用连接 | Bash/Python/Node、示范、原生连接与 MCP/Apps | 已纳入 beta.36 | 当前 Beta 与签名包验证通过；真实第三方账号未验证 |
+| 5 多模态与语音 | 图片/PDF/DOCX、音视频及语音 | 5.1 已纳入 beta.36；5.2–5.3 后续 | 当前固定引用、隔离解析与包内验收通过；音视频/语音未交付 |
+| 6 自动化、搜索与分享 | TASK、搜索、组织、群 Routine、事件、模板/导出 | 后续分支和本地工作保留，未纳入本版 | 本轮停止扩展与传播，下一批按范围验收 |
 
 ## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
 
