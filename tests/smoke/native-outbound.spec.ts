@@ -7,7 +7,7 @@ import type { AevorenBotApi, ApiResult } from "../../src/shared/contracts";
 import type { ConnectorDraftResult, NativeConnection } from "../../src/shared/native-connector-contracts";
 import type { NativeOutboundIntent } from "../../src/shared/native-outbound-contracts";
 import { AppRepository } from "../../src/main/database";
-import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
+import { closeTestApplication, disposeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { openInspector } from "./navigation";
 
 const parentId = "11111111-1111-4111-8111-111111111111";
@@ -134,7 +134,10 @@ async function withOutbound(callback: (fixture: Fixture) => Promise<void>): Prom
   }
   async function closeOwned(phase: "restart" | "cleanup"): Promise<void> {
     const owned = application!, probe = probes.get(owned), attempt = ++closeAttempt; probe?.record(`${phase}-close-request`);
-    try { await closeTestApplication(owned); probe?.record(`${phase}-close-resolved`); }
+    try {
+      if (phase === "restart") { await closeTestApplication(owned); probe?.record("restart-close-resolved"); }
+      else { const graceful = await disposeTestApplication(owned); probe?.record(graceful ? "cleanup-close-resolved" : "cleanup-disposed-after-close-failure"); }
+    }
     catch (error) { probe?.record(`${phase}-close-rejected`); throw error; }
     finally { if (probe) await test.info().attach(`native-outbound-close-${attempt}-${phase}`, { body: JSON.stringify({ phase, phases: probe.phases }), contentType: "application/json" }); }
   }

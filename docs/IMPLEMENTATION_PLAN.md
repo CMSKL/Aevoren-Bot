@@ -2,6 +2,10 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
+## Release qualification correction
+
+Beta candidate e1a16b0 CI 38996341444 completed all four jobs, but its raw Windows log records a contact-focus teardown fallback after the business assertions. That case did not record its native exit code, so this proves neither normal exit nor an actual process kill. No beta.36 tag or Release was created. A real-child-process regression reproduces the original helper swallowing close failure after disposal. Strict close now rejects after a fallback; business-only cleanup and intentional close-refusal cases explicitly dispose their fixture without claiming normal exit. Contact and MCP retain bounded shutdown phases and require strict close plus native exit 0/no signal. Contact now covers macOS unsigned/signed packages and signed Windows; it already belongs to installed Windows acceptance. The existing Windows source contact case moves to a separate first step and is removed from the remaining selection, preserving all 51 cases once on success. Fail-fast preserves the first failure without wasting later checks. No product shutdown order, approval, normal-close deadline or business assertion changes.
+
 ## 本轮收敛交付：v0.3.0-beta.36
 
 保留六阶段目标，本轮冻结新增功能及向后续开发分支的批量传播。将尚未发布的 beta.34（MCP／交互 Apps）、beta.35（Notion 页面更新）和 beta.36（PNG／JPEG／PDF／DOCX）合并为一个 Beta；不逐个发布中间版本。音视频、转写／朗读、实时语音和阶段 6 不进入本轮。各开发分支及本地未提交工作保留。

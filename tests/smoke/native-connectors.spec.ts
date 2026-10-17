@@ -6,7 +6,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import type { AevorenBotApi, ApiResult } from "../../src/shared/contracts";
 import type { ConnectorBinding, NativeConnection } from "../../src/shared/native-connector-contracts";
 import { AppRepository } from "../../src/main/database";
-import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
+import { disposeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { openInspector } from "./navigation";
 
 const pageId = "11111111-1111-4111-8111-111111111111";
@@ -90,7 +90,7 @@ async function withNative(callback: (fixture: Fixture) => Promise<void>): Promis
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
   } finally {
     server.closeAllConnections();
-    if (application) await closeTestApplication(application);
+    if (application) await disposeTestApplication(application);
     await new Promise<void>(resolve => server.close(() => resolve()));
     removeTestDirectory(data);
   }

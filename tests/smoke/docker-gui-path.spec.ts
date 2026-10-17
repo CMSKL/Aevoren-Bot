@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { _electron as electron, expect, test, type ElectronApplication } from "@playwright/test";
 import type { AevorenBotApi } from "../../src/shared/contracts";
-import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
+import { closeTestApplication, disposeTestApplication, removeTestDirectory } from "./test-cleanup";
 
 const guiPath = "/usr/bin:/bin:/usr/sbin:/sbin";
 const dockerPath = "/Applications/Docker.app/Contents/Resources/bin/docker";
@@ -46,7 +46,7 @@ test("discovers the real installed Docker CLI from a packaged macOS GUI PATH", a
     expect({ code: owned.exitCode, signal: owned.signalCode }).toEqual({ code: 0, signal: null });
     application = undefined;
   } finally {
-    try { if (application) await closeTestApplication(application); }
+    try { if (application) await disposeTestApplication(application); }
     finally { removeTestDirectory(data); }
   }
 });

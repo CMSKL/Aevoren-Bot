@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { _electron as electron, expect, test } from "@playwright/test";
 import type { AevorenBotApi } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
-import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
+import { disposeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { openInspector } from "./navigation";
 test("hidden demonstration UI retains conflicts and publishes only an explicitly confirmed disabled Skill", async () => {
   // Windows used 9s for setup and reached the second v2 draft click at 28.254s, before publication.
@@ -52,5 +52,5 @@ test("hidden demonstration UI retains conflicts and publishes only an explicitly
     const saved = await page.evaluate(async input => { const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot; const d = await api.demonstrations.readDraft(input); if (!d.ok) throw new Error(d.error.code); const listed = await api.library.list({ sessionId: input.sessionId, includeDisabled: true }); if (!listed.ok) throw new Error(listed.error.code); return { draft: d.data, resources: listed.data }; }, { ...scope, id: draft.id });
     expect(saved.draft.state).toBe("published"); expect(saved.resources).toHaveLength(1); expect(saved.resources[0]).toMatchObject({ kind: "skill", enabled: false, id: saved.draft.publishedResourceId }); expect(errors).toEqual([]);
     await app.close(); const reopened = new AppRepository(filename); try { expect(reopened.demonstrations.read(scope, draft.id)).toMatchObject({ state: "published", version: 2 }); expect(reopened.skillExecutions.list(scope)).toEqual([]); } finally { reopened.close(); }
-  } finally { await closeTestApplication(app); removeTestDirectory(data); }
+  } finally { await disposeTestApplication(app); removeTestDirectory(data); }
 });

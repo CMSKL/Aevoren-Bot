@@ -13,7 +13,7 @@ import { IPC } from "../../src/shared/channels";
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { tinyDocx, tinyPdf } from "../fixtures/media-parser-data";
-import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
+import { disposeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { closeInspector, openInspector } from "./navigation";
 
 type Fixture = { application: ElectronApplication; page: Page; data: string; source: string; workspaceId: string; bots: { id: string; name: string; sessionId: string }[]; room: { id: string; sessionId: string; name: string }; imageSha256: string };
@@ -71,7 +71,7 @@ async function withMedia(work: (f: Fixture) => Promise<void>): Promise<void> {
     const f: Fixture = { application, page, data, source, workspaceId: registration.workspace.id, bots, room: { id: room.room.id, sessionId: room.session.id, name: room.room.name }, imageSha256: createHash("sha256").update(image).digest("hex") };
     await selectBot(f, 0); await work(f);
     expect(errors).toEqual([]); expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
-  } finally { if (application) await closeTestApplication(application); removeTestDirectory(data); }
+  } finally { if (application) await disposeTestApplication(application); removeTestDirectory(data); }
 }
 
 // Replace only the OS selection with a registered test Workspace path. Import parsing,
