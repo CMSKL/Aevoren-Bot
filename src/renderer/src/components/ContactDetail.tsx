@@ -3,8 +3,9 @@ import type { AppError, Bot, Room } from "@shared/contracts";
 import type { ResourceReference } from "@shared/library-contracts";
 import type { MessageMediaReference } from "@shared/media-contracts";
 import type { EnvironmentScope } from "@shared/environment-contracts";
+import { DetailsTabs } from "./DetailsTabs";
 import { BotAvatarIcon } from "./BotAvatarIcon";
-import { CheckIcon, ChevronDownIcon, MenuIcon, RoomIcon } from "./Icons";
+import { CheckIcon, ChevronDownIcon, CloseIcon, MenuIcon, RoomIcon } from "./Icons";
 import { ProfileInspector, type ProfileInspectorHandle, type SaveStatus } from "./ProfileInspector";
 import { LibraryPanel, type LibraryPanelHandle } from "./LibraryPanel";
 import { MediaLibraryPanel } from "./MediaLibraryPanel";
@@ -36,6 +37,7 @@ type Props = {
   onBotUpdated(bot: Bot): void;
   onAddToRoom(bot: Bot, roomId: string): Promise<boolean>;
   onOpenBots(): void;
+  onClose?(): void;
   onError?(error: AppError | null): void;
 };
 
@@ -117,40 +119,33 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
   }
 
   return (
-    <section ref={profileElementRef} className="contact-profile-panel" aria-label="联系人资料">
+    <section ref={profileElementRef} className={`contact-profile-panel${tab === "computer" ? " computer-profile" : ""}`} aria-label="联系人资料">
       <div className="contact-profile-hero">
-        <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={92} title={`${bot.name}头像`} />
-        <div><h2>{bot.name}</h2><p>{bot.label || "Bot"}</p></div>
+        <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={64} title={`${bot.name}头像`} />
+        <div><h2>{bot.name}</h2><p>{tab === "computer" ? "当前聊天" : bot.label || "Bot"}</p></div>
         {tab === "profile" ? <button className="text-button contact-edit-button" type="button" disabled={pending} onClick={() => {
           if (editing) void flush().then((saved) => { if (saved) setEditing(false); });
           else focusName();
         }}>{editing ? "完成编辑" : "编辑资料"}</button> : null}
       </div>
-      <div className="contact-profile-tabs" role="tablist" aria-label="联系人配置">
-        {([ ["profile", "资料"], ["models", "模型与能力"], ["memory", "记忆"], ["library", "资料库"], ["skill", "Skill"], ["environment", "执行环境"], ["browser", "浏览器"], ["computer", "电脑"], ["apps", "应用"] ] as const).map(([value, label]) => (
-          <button key={value} id={`contact-${bot.id}-${value}-tab`} role="tab" tabIndex={tab === value ? 0 : -1} disabled={changingTab} aria-selected={tab === value} aria-controls={`contact-${bot.id}-${value}-panel`} type="button" onClick={() => void changeTab(value)} onKeyDown={(event) => {
-            const tabs: ProfileTab[] = ["profile", "models", "memory", "library", "skill", "environment", "browser", "computer", "apps"];
-            const index = tabs.indexOf(value);
-            const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : null;
-            if (!next) return;
-            event.preventDefault();
-            void changeTab(next).then((changed) => { if (changed) document.getElementById(`contact-${bot.id}-${next}-tab`)?.focus(); });
-          }}>{label}</button>
-        ))}
-      </div>
+      <DetailsTabs idPrefix={`contact-${bot.id}`} label="联系人配置" tabs={[
+        { id: "profile", label: "详情" }, { id: "library", label: "资料库" }, { id: "computer", label: "电脑" },
+        { id: "models", label: "模型与能力" }, { id: "memory", label: "记忆" }, { id: "skill", label: "Skill" },
+        { id: "environment", label: "高级工具" }, { id: "browser", label: "电脑工具" }, { id: "apps", label: "应用" },
+      ]} primary={["profile", "library", "computer"]} value={tab} disabled={changingTab} onChange={next => changeTab(next as ProfileTab)} />
       <div hidden={tab === "library" || tab === "skill" || tab === "environment" || tab === "browser" || tab === "computer" || tab === "apps"}><ProfileInspector ref={editorRef} bot={bot} workspaceIds={workspaceIds} activeTab={tab === "models" || tab === "memory" ? tab : "profile"} editing={editing} onBotUpdated={onBotUpdated} onError={onLocalError} onSaveStatusChange={onSaveStatusChange} /></div>
       <div id={`contact-${bot.id}-library-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-library-tab`} hidden={tab !== "library"} className="contact-tab-panel">
-        {librarySessionId ? <LibraryPanel ref={documentsRef} sessionId={librarySessionId} kind="document" active={tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊资料范围…</p>}
+        {librarySessionId ? <LibraryPanel ref={documentsRef} sessionId={librarySessionId} kind="document" active={active && tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊资料范围…</p>}
         {librarySessionId ? <MediaLibraryPanel key={librarySessionId} sessionId={librarySessionId} active={active && tab === "library"} busy={!onUseMedia} onUse={reference => onUseMedia?.(reference)} /> : null}
       </div>
       <div id={`contact-${bot.id}-skill-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-skill-tab`} hidden={tab !== "skill"} className="contact-tab-panel">
-        {librarySessionId ? <LibraryPanel ref={skillsRef} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} kind="skill" active={tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} onOpenExecution={execution => { if (execution.sessionId !== librarySessionId || execution.executorBotId !== bot.id) return; setScriptExecution(execution); void changeTab("environment"); }} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊 Skill 范围…</p>}
+        {librarySessionId ? <LibraryPanel ref={skillsRef} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} kind="skill" active={active && tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} onOpenExecution={execution => { if (execution.sessionId !== librarySessionId || execution.executorBotId !== bot.id) return; setScriptExecution(execution); void changeTab("environment"); }} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊 Skill 范围…</p>}
       </div>
       <div id={`contact-${bot.id}-environment-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-environment-tab`} hidden={tab !== "environment"} className="contact-tab-panel">
-        {librarySessionId ? <EnvironmentPanel sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={tab === "environment"} initialExecutionId={scriptExecution?.sessionId === librarySessionId && scriptExecution.executorBotId === bot.id ? scriptExecution.id : undefined} onOpenPreview={pageId => { setPreviewPageId(pageId); void changeTab("browser"); }} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊执行范围…</p>}
+        {librarySessionId ? <EnvironmentPanel sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={active && tab === "environment"} initialExecutionId={scriptExecution?.sessionId === librarySessionId && scriptExecution.executorBotId === bot.id ? scriptExecution.id : undefined} onOpenPreview={pageId => { setPreviewPageId(pageId); void changeTab("browser"); }} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊执行范围…</p>}
       </div>
       {(["browser", "computer"] as const).map(mode => <div key={mode} id={`contact-${bot.id}-${mode}-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-${mode}-tab`} hidden={tab !== mode} className="contact-tab-panel">
-        {librarySessionId ? <ComputerPanel sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} mode={mode} initialPageId={previewPageId} active={tab === mode} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊浏览器范围…</p>}
+        {librarySessionId ? <ComputerPanel sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} mode={mode} initialPageId={previewPageId} active={active && tab === mode} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊浏览器范围…</p>}
       </div>)}
       <div id={`contact-${bot.id}-apps-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-apps-tab`} hidden={tab !== "apps"} className="contact-tab-panel">
         {librarySessionId ? <ConnectorPanel key={`${librarySessionId}:${bot.id}`} ref={appsRef} sessionId={librarySessionId} executorBotId={bot.id} ownerName={bot.name} active={active && tab === "apps"} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊应用范围…</p>}
@@ -204,7 +199,7 @@ export const ContactDetail = forwardRef<ContactDetailHandle, Props>(function Con
   }));
 
   return (
-    <main className="contact-detail" aria-label="联系人资料">
+    <main id={props.onClose ? "conversation-inspector" : undefined} className={`contact-detail${props.onClose ? " contact-detail-drawer" : ""}`} aria-label="联系人资料">
       <header className="contact-detail-header">
         <button className="mobile-panel-button" type="button" aria-label="打开 Bot 列表" onClick={props.onOpenBots}><MenuIcon /></button>
         <div className="contact-detail-title"><h1>联系人资料</h1></div>
@@ -229,6 +224,7 @@ export const ContactDetail = forwardRef<ContactDetailHandle, Props>(function Con
             })();
           }}>{opening ? "打开中…" : "发消息"}</button>
         </div> : null}
+        {props.onClose ? <button className="icon-button" type="button" aria-label="关闭详情" onClick={props.onClose}><CloseIcon /></button> : null}
       </header>
       <div className="contact-detail-body">
         {error ? <div className="dialog-error contact-local-error" role="alert">{error.safeMessage}</div> : null}

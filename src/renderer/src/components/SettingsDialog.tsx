@@ -1,7 +1,5 @@
 import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
 import { useEffectEvent, useCallback, useEffect, useRef, useState } from "react";
-import darkThemePreview from "../assets/themes/dark.png";
-import lightThemePreview from "../assets/themes/light.png";
 import { UPDATE_CHECK_INTERVAL_MINUTES, type AppearanceTheme, type AppError, type LoginItemStatus, type UpdateCheckIntervalMinutes, type UpdateState } from "@shared/contracts";
 import { BellIcon, BotIcon, CheckIcon, CloseIcon, EyeIcon, PanelIcon, RefreshIcon, SettingsIcon } from "./Icons";
 import { CapabilitiesSettingsPanel } from "./CapabilitiesSettingsPanel";
@@ -16,8 +14,8 @@ type SettingsSection = "general" | "capabilities" | "memory" | "mcp" | "routines
 
 type SettingsDialogProps = {
   open: boolean;
+  initialSection?: "general" | "apps";
   theme: AppearanceTheme;
-  resolvedTheme?: Exclude<AppearanceTheme, "system">;
   launchAtLogin: boolean;
   launchAtLoginSupported: boolean;
   launchAtLoginStatus: LoginItemStatus;
@@ -37,11 +35,6 @@ type SettingsDialogProps = {
   onRetryUpdate(): void;
   onInstallUpdate(): void;
   onOpenWorkspaceManager?(): void;
-};
-
-const themeLabels: Record<Exclude<AppearanceTheme, "system">, string> = {
-  dark: "暗黑",
-  light: "白昼",
 };
 
 const loginItemStatusLabels: Record<LoginItemStatus, string> = {
@@ -68,8 +61,8 @@ const updateStatusLabels: Record<UpdateState["status"], string> = {
 
 export function SettingsDialog({
   open,
+  initialSection = "general",
   theme,
-  resolvedTheme,
   launchAtLogin,
   launchAtLoginSupported,
   launchAtLoginStatus,
@@ -89,7 +82,7 @@ export function SettingsDialog({
   onInstallUpdate,
   onOpenWorkspaceManager,
 }: SettingsDialogProps): React.JSX.Element | null {
-  const [section, setSection] = useState<SettingsSection>("general");
+  const [section, setSection] = useState<SettingsSection>(initialSection);
   const handleProductView = useEffectEvent((event: Event) => {
     const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
     if (request.input.action !== "open_settings") return;
@@ -106,9 +99,6 @@ export function SettingsDialog({
   const [updateIntervalPending, setUpdateIntervalPending] = useState(false);
   const [updateIntervalError, setUpdateIntervalError] = useState<AppError | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const displayedTheme = theme === "system"
-    ? resolvedTheme ?? (document.documentElement.dataset.theme === "dark" ? "dark" : "light")
-    : theme;
 
   const close = useCallback((): void => {
     setSection("general");
@@ -120,14 +110,20 @@ export function SettingsDialog({
 
   useEffect(() => {
     if (!open) return;
-    requestAnimationFrame(() => closeButtonRef.current?.focus());
+    const previous = document.activeElement;
+    const dialog = closeButtonRef.current?.closest(".settings-dialog");
+    const frame = requestAnimationFrame(() => closeButtonRef.current?.focus());
     function closeOnEscape(event: KeyboardEvent): void {
       if (event.key !== "Escape") return;
       event.preventDefault();
       close();
     }
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", closeOnEscape);
+      if (previous instanceof HTMLElement && previous.isConnected && (document.activeElement === document.body || dialog?.contains(document.activeElement))) previous.focus();
+    };
   }, [open, close]);
 
   if (!open) return null;
@@ -172,7 +168,15 @@ export function SettingsDialog({
   const updateBusy = Boolean(updateActionPending) || (updateState ? ["checking", "available", "downloading", "installing"].includes(updateState.status) : true);
 
   return (
-      <section className="settings-dialog settings-hub settings-grouped-layout settings-page" role="region" aria-labelledby="settings-title">
+      <div className="modal-backdrop settings-modal-backdrop" role="presentation">
+      <section className="settings-dialog settings-hub settings-grouped-layout settings-page" role="dialog" aria-modal="true" aria-labelledby="settings-title" onKeyDown={event => {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
+        if (event.key !== "Tab") return;
+        const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]')].filter(element => element.getClientRects().length > 0);
+        const first = controls[0], last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }}>
         <aside className="settings-nav" aria-label="设置分类">
           <div className="settings-nav-title" id="settings-title">设置</div>
           <nav>
@@ -198,19 +202,7 @@ export function SettingsDialog({
               <p>仅调整这台电脑上的应用偏好。</p>
             </div>
             <h3>外观</h3>
-            <div className="settings-appearance-row">
-              <strong>界面主题</strong>
-              <div className="settings-theme-options" role="group" aria-label="外观主题">
-                {(Object.keys(themeLabels) as Array<Exclude<AppearanceTheme, "system">>).map((value) => (
-                  <button key={value} className={`settings-theme-option settings-theme-${value}`} type="button" aria-label={themeLabels[value]} aria-pressed={displayedTheme === value} disabled={themePending} onClick={() => void changeTheme(value)}>
-                    <img className="settings-theme-preview" src={value === "dark" ? darkThemePreview : lightThemePreview} alt="" loading="lazy" />
-                    {displayedTheme === value ? <CheckIcon className="settings-theme-check" aria-hidden="true" /> : null}
-                    <strong>{themeLabels[value]}</strong>
-                    <span>{displayedTheme === value ? <><CheckIcon />已选择</> : "选择此主题"}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+            <div className="settings-card settings-form-group"><label className="settings-row"><span><strong>主题</strong></span><select aria-label="界面主题" value={theme} disabled={themePending} onChange={event => void changeTheme(event.target.value as AppearanceTheme)}><option value="system">跟随系统</option><option value="dark">深色</option><option value="light">浅色</option></select></label></div>
             {themeError ? <div className="dialog-error" role="alert">{themeError.safeMessage}</div> : null}
             <h3>工具自动化</h3>
             <div className="settings-card settings-form-group">
@@ -336,5 +328,6 @@ export function SettingsDialog({
           </div>
         </div>
       </section>
+      </div>
   );
 }

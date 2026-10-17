@@ -7,7 +7,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import type { AevorenBotApi, PromptManifest } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { removeTestDirectory } from "./test-cleanup";
-import { openBotList, openInspector, openWorkspaceTab } from "./navigation";
+import { openComposerTools, openBotList, openInspector, openWorkspaceTab, selectNavigationTab } from "./navigation";
 
 // Browser plugin not available. Exercise the real isolated Electron/SQLite/IPC
 // paths, without a fake provider or any model request. The persisted user inputs
@@ -100,7 +100,7 @@ async function openArchive(page: Page, count?: number): Promise<void> {
 }
 
 async function assertNoChatArchive(page: Page, excludeArchivedName = true): Promise<void> {
-  await page.getByRole("tab", { name: "聊天", exact: true }).click();
+  await selectNavigationTab(page, "聊天");
   await expect(page.getByRole("button", { name: /^已归档/u })).toHaveCount(0);
   await expect(archiveSection(page)).toHaveCount(0);
   if (excludeArchivedName) await expect(page.locator(".sidebar-list")).not.toContainText("未关联归档群聊");
@@ -175,6 +175,7 @@ test("restoring preserves the current view, draft, attachment, unread state and 
     const consoleErrors: string[] = [];
     page.on("pageerror", error => pageErrors.push(error.message));
     page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+    await openComposerTools(page);
     await page.getByLabel("添加文本附件").click();
     await expect(page.getByRole("button", { name: /移除附件 归档验收附件\.md/u })).toBeVisible();
     const draft = "不要发送：恢复另一个群聊时保留本对话的草稿。";
@@ -215,7 +216,7 @@ test("restoring preserves the current view, draft, attachment, unread state and 
       }
       await expect(archiveFeedback(page, detail.room.id)).toContainText("已恢复到聊天列表");
       await expect(archiveFeedback(page, detail.room.id).getByRole("button", { name: "打开", exact: true })).toBeEnabled();
-      await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
       await expect(page.locator(".sidebar-workspace")).toBeVisible();
       await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);
       await expect(page.getByRole("button", { name: /移除附件 归档验收附件\.md/u })).toBeVisible();
@@ -247,24 +248,24 @@ test("restoring preserves the current view, draft, attachment, unread state and 
     // Success feedback stays reachable even after the last archived item leaves.
     const open = archiveFeedback(page, fixture.globalRoom.room.id).getByRole("button", { name: /^(?:打开|重新打开)$/u });
     await expect(open).toBeVisible();
-    // Contact editing is now a separate page: a dirty failed profile cannot
-    // physically share the archive controls. Exercise the real guard before
-    // returning to archive management instead of clicking detached/hidden UI.
+    // The modeless profile drawer must block dismissal and navigation when
+    // its real database save fails, retaining both profile and chat drafts.
     await openInspector(page);
     execute(fixture.path, `CREATE TRIGGER reject_archive_open_save BEFORE UPDATE ON bots
       WHEN NEW.id = '${fixture.current.bot.id}' BEGIN SELECT RAISE(ABORT, 'archive save guard test'); END;`);
     await page.getByRole("textbox", { name: "描述", exact: true }).fill(description);
-    await page.getByRole("button", { name: "发消息", exact: true }).click();
+    await page.getByRole("button", { name: "关闭详情", exact: true }).click();
     await expect(page.getByTestId("profile-save-status")).toContainText("保存失败");
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await expect(page.getByRole("alert").first()).toBeVisible();
-    await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "描述", exact: true })).toHaveValue(description);
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);
     expect(inspect(fixture.path, fixture.globalRoom.session.id, fixture.globalRoom.room.id).conversation).toMatchObject({ has_unread: 1 });
     execute(fixture.path, "DROP TRIGGER reject_archive_open_save;");
-    await page.getByRole("button", { name: "发消息", exact: true }).click();
+    await page.getByRole("button", { name: "关闭详情", exact: true }).click();
+    await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeHidden();
     await openArchive(page, 0);
     await open.click();
     await expect(page.getByRole("heading", { name: "未关联归档群聊", exact: true })).toBeVisible();
@@ -328,7 +329,7 @@ test("real SQLite archive and visibility failures keep a retry path without repe
     const database = new DatabaseSync(fixture.path, { readOnly: true });
     try { expect(database.prepare("SELECT COUNT(*) AS count FROM archive_fault_audit").get()).toEqual({ count: 1 }); }
     finally { database.close(); }
-    await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
     await expect(archiveSection(page)).not.toContainText("SqliteError");
     await expect(archiveSection(page)).not.toContainText("archive visibility persistence test");
 
@@ -338,12 +339,12 @@ test("real SQLite archive and visibility failures keep a retry path without repe
       BEGIN SELECT RAISE(ABORT, 'archive open persistence test'); END;`);
     await feedback.getByRole("button", { name: "打开", exact: true }).click();
     await expect(feedback).toContainText("已恢复，但暂时无法打开");
-    await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
     expect(inspect(fixture.path, fixture.globalRoom.session.id, fixture.globalRoom.room.id).conversation).toMatchObject({ has_unread: 1 });
     execute(fixture.path, "DROP TRIGGER reject_archive_open;");
     await feedback.getByRole("button", { name: "重新打开", exact: true }).click();
     await expect(page.getByRole("heading", { name: "未关联归档群聊", exact: true })).toBeVisible();
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     const row = page.locator(`.bot-row[aria-label="${fixture.globalRoom.room.name}"]`);
     await row.click({ button: "right" });
     await page.getByRole("menu", { name: "群聊操作", exact: true }).getByRole("menuitem", { name: "标为未读", exact: true }).click();
@@ -382,7 +383,7 @@ test("global archive controls remain usable in both themes and 1180/1020/620/390
       await openBotList(page);
       await page.getByRole("button", { name: "设置", exact: true }).click();
       await page.getByRole("button", { name: "通用", exact: true }).click();
-      await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: theme === "dark" ? /^暗黑/u : /^白昼/u }).click();
+      await page.getByRole("combobox", { name: "界面主题", exact: true }).selectOption(theme);
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
       await page.getByRole("button", { name: "关闭设置", exact: true }).click();
       for (const width of [1180, 1020, 620, 390]) {
@@ -453,7 +454,7 @@ test("a real list-sync schema failure retries only synchronization after unarchi
     const audited = new DatabaseSync(fixture.path, { readOnly: true });
     try { expect(audited.prepare("SELECT kind, COUNT(*) AS count FROM archive_sync_audit GROUP BY kind ORDER BY kind").all()).toEqual([{ kind: "archive", count: 1 }, { kind: "show", count: 1 }]); }
     finally { audited.close(); }
-    await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
     expect(inspect(fixture.path, fixture.globalRoom.session.id, fixture.globalRoom.room.id).conversation).toMatchObject({ project_id: null, has_unread: 1, hidden_at: null });
   } finally {
     if (altered) execute(fixture.path, "ALTER TABLE conversation_metadata RENAME COLUMN archive_test_activity_at TO last_activity_at;");
@@ -485,9 +486,9 @@ test("a real SQLite writer lock does not discard editing or change the user's vi
     await archiveRow(page, fixture.globalRoom.room.id).getByRole("button", { name: "恢复", exact: true }).click();
     const draft = "数据库暂忙期间仍可编辑，不得被后台恢复清掉。";
     await page.getByLabel("消息", { exact: true }).fill(draft);
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
-    await expect(page.getByRole("tab", { name: "聊天", exact: true })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
+    await selectNavigationTab(page, "聊天");
+    await expect(page.locator("#navigation-chats")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);
     locker.exec("COMMIT");
     locked = false;
@@ -502,7 +503,7 @@ test("a real SQLite writer lock does not discard editing or change the user's vi
     const retry = feedback.getByRole("button", { name: "重试", exact: true });
     if (await retry.isVisible()) await retry.click();
     await expect(feedback).toContainText("已恢复到聊天列表");
-    await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);
     const database = new DatabaseSync(fixture.path, { readOnly: true });
     try { expect(database.prepare("SELECT kind, COUNT(*) AS count FROM archive_lock_audit GROUP BY kind ORDER BY kind").all()).toEqual([{ kind: "archive", count: 1 }, { kind: "show", count: 1 }]); }
@@ -600,7 +601,7 @@ test("real detached and legacy Rooms remain recoverable, and a corrupt historica
     const feedback = archiveFeedback(page, fixture.projectRoom.room.id);
     await feedback.getByRole("button", { name: "打开", exact: true }).click();
     await expect(feedback).toContainText("已恢复，但暂时无法打开");
-    await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);
     await expect(page.locator("main").getByRole("alert")).toHaveCount(0);
     expect(await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).toBe(selection);
@@ -647,7 +648,7 @@ test("different Rooms restore concurrently without false sync failures and later
       await expect(archiveFeedback(page, id).getByRole("button", { name: "打开", exact: true })).toBeEnabled();
     }
     await expect(archiveSection(page)).not.toContainText("列表同步未完成");
-    await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue("两个后台恢复不得切换当前会话。");
     const audit = new DatabaseSync(fixture.path, { readOnly: true });
     try {
@@ -655,7 +656,7 @@ test("different Rooms restore concurrently without false sync failures and later
       expect(writes).toHaveLength(4);
       expect(writes.every(row => row.count === 1)).toBe(true);
     } finally { audit.close(); }
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     const globalRow = page.locator(`.bot-row[aria-label="${fixture.globalRoom.room.name}"]`);
     await globalRow.click({ button: "right" });
     await page.getByRole("menu", { name: "群聊操作", exact: true }).getByRole("menuitem", { name: "移除聊天", exact: true }).click();
@@ -741,7 +742,7 @@ test("actual member deletion between unarchive and show rearchives the Room with
     await expect(archiveRow(page, fixture.globalRoom.room.id)).toBeVisible();
     await expect(archiveFeedback(page, fixture.globalRoom.room.id)).toHaveCount(0);
     await expect(archiveSection(page)).not.toContainText("已恢复到聊天列表");
-    await expect(page.getByRole("heading", { name: "当前对话", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
     const after = inspect(fixture.path, fixture.globalRoom.session.id, fixture.globalRoom.room.id);
     expect(after.room).toMatchObject({ id: fixture.globalRoom.room.id, archived_at: expect.any(String) });
     expect(after.session).toEqual(before.session);

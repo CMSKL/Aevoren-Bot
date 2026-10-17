@@ -8,7 +8,7 @@ import type { AevorenBotApi } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { removeTestDirectory } from "./test-cleanup";
-import { openConversationFiles, openWorkspaceTab } from "./navigation";
+import { openComposerTools, openConversationFiles, openWorkspaceTab, selectNavigationTab } from "./navigation";
 
 // Browser plugin not available. These tests use hidden real Electron, isolated
 // SQLite, actual files and unchanged IPC handlers. UI-only permission cases do
@@ -119,7 +119,7 @@ test("UX-01 chat file management targets its granted B folder before and after m
     await page.getByRole("button", { name: `管理工作区 ${f.a.workspace.name}`, exact: true }).click();
     await checkTarget(page, f.a.workspace.name);
     await page.getByRole("dialog", { name: "工作区权限" }).getByRole("button", { name: "完成", exact: true }).click();
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     await expect(page.getByRole("heading", { name: "B文件助手", exact: true })).toBeVisible();
     await openConversationFiles(page);
     await page.locator(".task-details-shelf").getByRole("button", { name: "管理文件夹", exact: true }).click();
@@ -425,6 +425,7 @@ test("UX-03 real Codex members without coordination capability default to single
     expect(firstRuns).toHaveLength(1);
     expect(firstRuns[0]).toMatchObject({ state: "completed", route: "codex-cli" });
     expect(firstRuns[0]!.providerRequestId).toBeTruthy();
+    await openComposerTools(page);
     await mode.selectOption("everyone");
     await page.getByLabel("消息", { exact: true }).fill("请所有成员各用一行确认收到这条消息；不调用工具、不读取文件、不委派、不执行任何外部动作。");
     await page.getByRole("button", { name: "发送", exact: true }).click();

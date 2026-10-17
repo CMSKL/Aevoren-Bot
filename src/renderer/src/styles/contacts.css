@@ -10,17 +10,6 @@
 .contact-detail .contact-detail-body { padding: 28px clamp(36px, 6vw, 88px) 48px; }
 .contact-detail .contact-profile-panel { width: 100%; max-width: 960px; margin: 0 auto; }
 .contact-detail .contact-local-error { max-width: 960px; margin: 0 auto 24px; }
-.contact-detail .contact-profile-hero { display: flex; align-items: center; gap: 28px; min-width: 0; margin-bottom: 22px; }
-.contact-detail .contact-profile-hero > .bot-avatar-icon { width: 92px; height: 92px; flex: 0 0 92px; }
-.contact-detail .contact-profile-hero > div { min-width: 0; }
-.contact-detail .contact-profile-hero h2 { margin: 0 0 6px; font-size: 24px; line-height: 1.4; font-weight: 650; overflow-wrap: anywhere; }
-.contact-detail .contact-profile-hero p { margin: 0; color: var(--text-muted); font-size: 16px; overflow-wrap: anywhere; }
-.contact-detail .contact-edit-button { margin-left: auto; color: var(--accent-strong); white-space: nowrap; flex: 0 0 auto; }
-.contact-detail .contact-profile-tabs { display: flex; gap: 32px; width: 100%; border-bottom: 1px solid var(--border); }
-.contact-detail .contact-profile-tabs > button { min-height: 48px; padding: 10px 6px 13px; border-bottom: 2px solid transparent; color: var(--text-muted); font-size: 15px; white-space: nowrap; }
-.contact-detail .contact-profile-tabs > button[aria-selected="true"] { color: var(--accent-strong); border-bottom-color: var(--accent); font-weight: 600; }
-.contact-detail .contact-profile-tabs > button:hover { color: var(--text); }
-.contact-detail .contact-tab-panel { padding-top: 28px; }
 .contact-detail .contact-field { display: grid; grid-template-columns: 116px minmax(0, 1fr); align-items: start; gap: 16px; max-width: 592px; margin-bottom: 22px; }
 .contact-detail .contact-profile-fields .contact-field { max-width: 786px; }
 .contact-detail .contact-field > span,

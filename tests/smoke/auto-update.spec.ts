@@ -71,7 +71,7 @@ test("restores an interrupted install receipt without retrying or claiming succe
     await expect(page.locator(".update-status-notice")).toHaveCount(0);
     await openBotList(page);
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    const settings = page.getByRole("region", { name: "设置", exact: true });
+    const settings = page.getByRole("dialog", { name: "设置", exact: true });
     await settings.getByRole("button", { name: "版本更新", exact: true }).click();
     await expect(settings.getByText("上次更新未完成", { exact: true })).toBeVisible();
     await expect(settings.getByRole("button", { name: "重试", exact: true })).toBeVisible();

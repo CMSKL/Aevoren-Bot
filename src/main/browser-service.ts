@@ -1,3 +1,4 @@
+import type { ComputerStartup } from "@shared/browser-contracts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,6 +15,8 @@ import type { EnvironmentService } from "./environment-service";
 import type { SecretCodec } from "./settings";
 import type { ModelImageAttachment } from "./model-image";
 import { AevorenBotError } from "./errors";
+import { DockerCommandError } from "./docker-driver";
+import { openDockerDesktop } from "./docker-desktop";
 import { BrowserDockerDriver } from "./browser-docker-driver";
 import { ExecutionWorkerClient, ExecutionWorkerError } from "./execution-worker-client";
 import { BrowserMediaStore, verifiedFrame } from "./browser-media-store";
@@ -35,6 +38,15 @@ function failure(error: unknown): AevorenBotError {
   return new AevorenBotError("BROWSER_UNAVAILABLE");
 }
 
+function waitForPreparation<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = (): void => { reject(signal.reason); };
+    signal.addEventListener("abort", abort, { once: true });
+    void pending.then(value => { signal.removeEventListener("abort", abort); resolve(value); }, error => { signal.removeEventListener("abort", abort); reject(error); });
+  });
+}
+
 /** One host-owned business service for the trusted interface and scoped AI tools. */
 export class BrowserService {
   private readonly media: BrowserMediaStore;
@@ -43,6 +55,9 @@ export class BrowserService {
   private readonly active = new Map<string, { scope: BrowserScope; runtimeRunId?: string }>();
   private readonly controls = new Map<string, { scope: BrowserScope; owner: ComputerOwner; previousEpoch: number; claimedEpoch: number; bootId: string | null; completedEpoch?: number }>();
   private readonly ticketResults = new Map<string, ComputerVncTicket>();
+  private readonly startupClosing = new AbortController();
+  private readonly startups = new Map<string, ComputerStartup>();
+  private readonly startupRequests = new Map<string, { controller: AbortController; promise: Promise<BrowserSession> }>();
   private preparing?: Promise<import("./docker-driver").DockerImage>;
   private closing = false;
   private readonly demonstrationClosing = new AbortController();
@@ -61,7 +76,7 @@ export class BrowserService {
     if (this.closing) throw new AevorenBotError("BROWSER_UNAVAILABLE");
     if (context.runtimeRunId) { const run = this.repository.getRuntimeRun(context.runtimeRunId); if (run.sessionId !== input.sessionId || run.executorBotId !== input.executorBotId) throw new AevorenBotError("BROWSER_SCOPE_INVALID"); }
   }
-  private emit(input: BrowserScope, type: BrowserChangedEvent["type"], beforeVersion?: number): void {
+  private emit(input: BrowserScope, type: Exclude<BrowserChangedEvent["type"], "startup">, beforeVersion?: number): void {
     const current = this.repository.browsers.get(input); if (!current || beforeVersion === current.version) return;
     this.changed({ ...scope(input), type, browserSessionId: current.id, controlEpoch: current.controlEpoch });
   }
@@ -130,9 +145,65 @@ export class BrowserService {
       return existing?.bundleSha256 === digest && existing.workerVersion === BROWSER_WORKER_VERSION ? existing : this.docker.initializeBrowser(this.contextPath, digest, signal); })();
     this.preparing = task; try { return await task; } finally { if (this.preparing === task) this.preparing = undefined; }
   }
-  async start(input: BrowserMutationCall<BrowserMutationInput>, context: BrowserCallContext = {}): Promise<BrowserSession> {
-    const parsed = this.parseMutation(schemas.browserMutationSchema, input, context);
-    return this.locked(parsed, async () => {
+  startupStatus(input: BrowserScope): ComputerStartup | null {
+    this.live(scope(input), {}); return this.startups.get(`${input.sessionId}:${input.executorBotId}`) ?? null;
+  }
+  private startupPhase(input: BrowserScope, phase: ComputerStartup["phase"], message: string, blocker: ComputerStartup["blocker"] = null): void {
+    const key = `${input.sessionId}:${input.executorBotId}`, current = this.startups.get(key);
+    if (!current) return;
+    const startup = { ...current, phase, message, blocker }; this.startups.set(key, startup);
+    this.changed({ ...scope(input), type: "startup", startup });
+  }
+  cancelStartup(input: BrowserScope & { attemptId: string }): ComputerStartup | null {
+    const parsed = schemas.browserScopeSchema.extend({ attemptId: z.string().uuid() }).parse(input);
+    this.live(parsed, {});
+    const key = `${parsed.sessionId}:${parsed.executorBotId}`, current = this.startups.get(key);
+    if (current?.attemptId === parsed.attemptId) this.startupRequests.get(key)?.controller.abort();
+    return current ?? null;
+  }
+  async openDocker(input: BrowserScope): Promise<void> { this.live(scope(input), {}); await openDockerDesktop(); }
+  start(input: BrowserMutationCall<BrowserMutationInput>, context: BrowserCallContext = {}): Promise<BrowserSession> {
+    const parsed = this.parseMutation(schemas.browserMutationSchema, input, context); this.live(parsed, context);
+    const key = `${parsed.sessionId}:${parsed.executorBotId}`, existing = this.startupRequests.get(key);
+    const saved = this.repository.browsers.get(parsed);
+    if (parsed.expectedVersion !== undefined && saved && saved.version !== parsed.expectedVersion) return Promise.reject(new AevorenBotError("BROWSER_VERSION_CONFLICT"));
+    if (existing) return context.signal ? waitForPreparation(existing.promise, context.signal) : existing.promise;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, this.startupClosing.signal, ...(context.signal ? [context.signal] : [])]);
+    this.startups.set(key, { attemptId: randomUUID(), phase: "checking", message: "正在检查电脑", blocker: null });
+    const promise = Promise.resolve().then(async () => {
+      try {
+        this.live(parsed, { ...context, signal }); this.startupPhase(parsed, "checking", "正在检查电脑");
+        const probe = await this.environments.probe(signal); signal.throwIfAborted(); this.live(parsed, context);
+        if (!probe.available) {
+          const blocker = !probe.dockerInstalled ? "docker-missing" : probe.dockerStatus === "unsupported" ? "docker-unsupported" : "docker-stopped";
+          const message = blocker === "docker-missing" ? "电脑需要 Docker 才能运行" : blocker === "docker-stopped" ? "Docker 尚未启动" : "当前 Docker 环境不支持 Linux 电脑";
+          this.startupPhase(parsed, "error", message, blocker); throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE", message);
+        }
+        const environment = this.repository.environments.get(parsed);
+        if (!environment) {
+          this.startupPhase(parsed, "preparing-environment", "正在准备运行组件");
+          await waitForPreparation(this.environments.initialize(this.startupClosing.signal), signal); this.live(parsed, { ...context, signal });
+        }
+        if (environment?.state !== "running") {
+          this.startupPhase(parsed, "starting-environment", "正在启动工作空间");
+          await this.environments.start(scope(parsed), signal); this.live(parsed, { ...context, signal });
+        }
+        const result = await this.locked(parsed, () => this.startPrepared(parsed, { ...context, signal }));
+        this.startupPhase(parsed, "ready", "电脑已就绪"); return result;
+      } catch (error) {
+        if (signal.aborted) { this.startupPhase(parsed, "cancelled", "电脑启动已取消"); throw new AevorenBotError("TOOL_EXECUTION_CANCELLED"); }
+        if (this.startups.get(key)?.blocker) throw error;
+        const problem = error instanceof DockerCommandError && error.code === "DOCKER_TIMEOUT"
+          ? new AevorenBotError("BROWSER_UNAVAILABLE", "准备电脑超时，请检查网络后重试。") : failure(error);
+        this.startupPhase(parsed, "error", problem.message, "startup-failed"); throw problem;
+      }
+    });
+    this.startupRequests.set(key, { controller, promise });
+    void promise.finally(() => { if (this.startupRequests.get(key)?.promise === promise) this.startupRequests.delete(key); }).catch(() => undefined);
+    return promise;
+  }
+  private async startPrepared(parsed: BrowserMutationInput, context: BrowserCallContext): Promise<BrowserSession> {
       this.live(parsed, context); const environment = this.repository.environments.get(parsed);
       if (!environment || environment.state !== "running") throw new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
       const current = this.repository.browsers.get(parsed);
@@ -146,12 +217,14 @@ export class BrowserService {
           this.emit(parsed, "browser", current!.version); return this.repository.browsers.get(parsed)!;
         }
       }
-      const image = record?.imageDigest ? await this.docker.inspectBrowserImage(record.imageDigest, context.signal) : await this.prepare(context.signal);
+      this.startupPhase(parsed, "preparing-browser", "正在准备浏览器组件");
+      const image = record?.imageDigest ? await this.docker.inspectBrowserImage(record.imageDigest, context.signal) : await waitForPreparation(this.prepare(this.startupClosing.signal), context.signal!);
       this.live(parsed, context); if (!image || !this.codec.isAvailable()) throw new AevorenBotError("BROWSER_UNAVAILABLE");
       if (!record) { this.repository.browsers.ensure(parsed, { environmentId: environment.id }); record = this.repository.browsers.getInternal(parsed)!; }
       const token = record.encryptedToken ? this.codec.decrypt(record.encryptedToken) : randomBytes(32).toString("hex");
       this.repository.browsers.updateConnection(parsed, { encryptedToken: this.codec.encrypt(token), imageRef: image.ref, imageDigest: image.id, workerVersion: image.workerVersion, platform: image.platform });
       this.repository.browsers.update(parsed, this.repository.browsers.get(parsed)!.version, { state: "starting" });
+      this.startupPhase(parsed, "starting-browser", "正在连接电脑");
       try {
         const old = await this.docker.inspectBrowser(record.id, environment.id, context.signal);
         if (old && old.imageId !== image.id) throw new AevorenBotError("BROWSER_SCOPE_INVALID");
@@ -164,10 +237,12 @@ export class BrowserService {
         this.repository.browsers.update(parsed, this.repository.browsers.get(parsed)!.version, { state: "running" });
         await this.tabs({ ...scope(parsed), expectedEpoch: health.control.controlEpoch }, context); this.emit(parsed, "browser"); return this.repository.browsers.get(parsed)!;
       } catch (error) { const now = this.repository.browsers.get(parsed); if (now) this.repository.browsers.update(parsed, now.version, { state: "unknown" }); throw failure(error); }
-    });
   }
   async stop(input: BrowserMutationCall<BrowserMutationInput>, context: BrowserCallContext = {}): Promise<BrowserSession> {
-    const parsed = this.parseMutation(schemas.browserMutationSchema, input, context);
+    const parsed = this.parseMutation(schemas.browserMutationSchema, input, context); this.live(parsed, context);
+    const saved = this.repository.browsers.get(parsed);
+    if (saved && parsed.expectedVersion !== undefined && saved.version !== parsed.expectedVersion) throw new AevorenBotError("BROWSER_VERSION_CONFLICT");
+    this.startupRequests.get(`${parsed.sessionId}:${parsed.executorBotId}`)?.controller.abort();
     return this.locked(parsed, async () => { this.live(parsed, context); const current = this.repository.browsers.get(parsed); if (!current) throw new AevorenBotError("BROWSER_NOT_FOUND");
       if (parsed.expectedVersion !== undefined && current.version !== parsed.expectedVersion) throw new AevorenBotError("BROWSER_VERSION_CONFLICT");
       this.viewers.revoke(parsed); await this.docker.stopBrowser(current.id, current.environmentId); this.live(parsed, context);
@@ -356,12 +431,14 @@ export class BrowserService {
   }
   private async cancelOperation(input: BrowserScope, id: string) { return schemas.browserWorkerCancelAckSchema.parse(await (await this.client(input)).request(`/v1/operations/${id}/cancel`, "POST", {})); }
   async cancelRuntime(runtimeRunId: string): Promise<void> { await Promise.allSettled([...this.active].filter(([, entry]) => entry.runtimeRunId === runtimeRunId).map(([id, entry]) => this.cancelOperation(entry.scope, id))); }
-  async release(input: BrowserScope, remove = false): Promise<void> { return this.locked(input, async () => { const record = this.repository.browsers.getInternal(input); if (!record) return;
+  async release(input: BrowserScope, remove = false): Promise<void> {
+    this.startupRequests.get(`${input.sessionId}:${input.executorBotId}`)?.controller.abort();
+    return this.locked(input, async () => { const record = this.repository.browsers.getInternal(input); if (!record) return;
     this.viewers.revoke(input); await this.docker.stopBrowser(record.id, record.environmentId, remove); const current = this.repository.browsers.get(input);
     if (current) {
       if (remove) this.repository.browsers.updateConnection(input, { imageDigest: null, imageRef: null, workerVersion: null, platform: null, workerPort: null, containerId: null });
       this.repository.browsers.update(input, this.repository.browsers.get(input)!.version, { state: "stopped" });
     }
   }); }
-  async shutdown(): Promise<void> { this.closing = true; this.demonstrationClosing.abort(); await Promise.allSettled(this.demonstrationPending); await Promise.allSettled([...this.active].map(([id, entry]) => this.cancelOperation(entry.scope, id))); await this.viewers.shutdown(); }
+  async shutdown(): Promise<void> { this.closing = true; this.startupClosing.abort(); this.demonstrationClosing.abort(); await Promise.allSettled(this.demonstrationPending); await Promise.allSettled([...this.active].map(([id, entry]) => this.cancelOperation(entry.scope, id))); await this.viewers.shutdown(); }
 }

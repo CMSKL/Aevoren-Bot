@@ -33,6 +33,7 @@ export type InternalEnvironmentRecord = Environment & {
   bootId: string | null;
 };
 export type EnvironmentProbe = {
+  dockerStatus?: "missing" | "stopped" | "ready" | "unsupported" | "error";
   available: boolean;
   dockerInstalled: boolean;
   daemonReachable: boolean;

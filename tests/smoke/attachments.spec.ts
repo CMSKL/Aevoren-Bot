@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { removeTestDirectory } from "./test-cleanup";
-import { closeInspector } from "./navigation";
+import { openComposerTools, closeInspector } from "./navigation";
 
 test("attaches a bounded text file to a direct message and restores its metadata", async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-attachments-"));
@@ -27,6 +27,7 @@ test("attaches a bounded text file to a direct message and restores its metadata
     await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
     await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await closeInspector(page);
+    await openComposerTools(page);
     await page.getByLabel("添加文本附件").click();
     await expect(page.getByRole("button", { name: /移除附件 requirements\.md/ })).toBeVisible();
     await page.getByLabel("消息").fill("请阅读这个需求文件。");

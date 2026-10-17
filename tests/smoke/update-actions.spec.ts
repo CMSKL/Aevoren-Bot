@@ -26,7 +26,7 @@ async function presentState(application: ElectronApplication, state: UpdateState
 }
 
 async function openUpdateSettings(page: Page): Promise<void> {
-  const settings = page.getByRole("region", { name: "设置", exact: true });
+  const settings = page.getByRole("dialog", { name: "设置", exact: true });
   if (!await settings.isVisible()) {
     await openBotList(page);
     await page.getByRole("button", { name: "设置", exact: true }).click();
@@ -119,7 +119,9 @@ test("excludes update actions from drag regions and handles real IPC/save failur
 
     // A stale downloaded view must reach the real backend and be rejected safely.
     await presentState(application, ready);
+    await page.getByRole("button", { name: "关闭设置", exact: true }).click();
     await page.getByRole("button", { name: "重启更新", exact: true }).click();
+    await openUpdateSettings(page);
     await expect(updates.getByRole("alert")).toContainText("更新尚未下载完成");
     await expect(page.getByText("v0.4.0 已准备好", { exact: true })).toHaveCount(0);
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);

@@ -3,10 +3,12 @@ import { useEffectEvent, useCallback, useEffect, useMemo, useRef, useState, type
 import type { Bot, ConversationBatchDeleteInput, ConversationSummary, Project, Room, Workspace } from "@shared/contracts";
 import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
 import { buildBotIdentityMap } from "../bot-identity";
+import { ChatSearchDialog } from "./ChatSearchDialog";
 import { BatchContextMenu } from "./BatchContextMenu";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { BotContextMenu } from "./BotContextMenu";
 import { BotIcon, ChatIcon, CheckIcon, CloseIcon, ContactsIcon, FolderIcon, PencilIcon, PinIcon, PlusIcon, RoomIcon, SearchIcon, SettingsIcon, TrashIcon, ChevronDownIcon } from "./Icons";
+import { RoomAvatar } from "./RoomAvatar";
 import { RoomContextMenu } from "./RoomContextMenu";
 import { UserAvatar } from "./UserAvatar";
 
@@ -50,6 +52,7 @@ type SidebarProps = {
   onCreateBot(projectId: string): void;
   onCreateRoom(projectId: string): void;
   onOpenSettings(): void;
+  onOpenApps?(): void;
   onOpenUserProfile?(): void;
   onMobileClose(): void;
   onSelectBot(bot: Bot): void;
@@ -93,18 +96,6 @@ function formatActivityTime(value: string | undefined): string {
     && activity.getMonth() === today.getMonth()
     && activity.getDate() === today.getDate();
   return isToday ? activityTimeFormatter.format(activity) : activityDateFormatter.format(activity);
-}
-
-function RoomAvatar({ bots, userProfile }: { bots: readonly Bot[] | undefined; userProfile?: { name?: string; avatarUrl?: string | null } }): React.JSX.Element {
-  const members = bots?.slice(0, 3) ?? [];
-  return (
-    <span className={`conversation-room-avatar${members.length > 0 ? " is-collage" : ""}`} data-member-count={members.length > 0 ? members.length + 1 : 0} aria-hidden="true">
-      {members.length === 0 ? <RoomIcon /> : members.map((bot) => (
-        <BotAvatarIcon key={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={23} />
-      ))}
-      {members.length > 0 ? <UserAvatar name={userProfile?.name} avatarUrl={userProfile?.avatarUrl} size={23} /> : null}
-    </span>
-  );
 }
 
 function botKey(id: string): ConversationKey {
@@ -180,6 +171,7 @@ export function Sidebar({
   onCreateBot,
   onCreateRoom,
   onOpenSettings,
+  onOpenApps,
   onOpenUserProfile,
   onMobileClose,
   onSelectBot,
@@ -205,6 +197,11 @@ export function Sidebar({
   onHideBot,
   onDeleteBot,
 }: SidebarProps): React.JSX.Element {
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const footerRef = useRef<HTMLElement>(null);
+  const accountTriggerRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState("");
   const [unreadOnly, setUnreadOnly] = useState(false);
   const summaryByKey = useMemo(() => new Map(conversations.map((item) => [item.botId ? botKey(item.botId) : roomKey(item.roomId!), item])), [conversations]);
@@ -229,7 +226,7 @@ export function Sidebar({
   const handleProductView = useEffectEvent((event: Event) => {
     const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
     const input = request.input;
-    if (input.action === "sidebar_search") { setQuery(input.query ?? ""); setUnreadOnly(input.unreadOnly ?? false); setSelectedKeys(EMPTY_SELECTION); respond({ status: "completed" }); }
+    if (input.action === "sidebar_search") { setFilterOpen(true); setQuery(input.query ?? ""); setUnreadOnly(input.unreadOnly ?? false); setSelectedKeys(EMPTY_SELECTION); respond({ status: "completed" }); }
     if (input.action === "sidebar_expand") {
       if (input.group === "hidden") setHiddenOpen(input.expanded ?? true);
       else if (input.group === "archived") setArchivedOpen(input.expanded ?? true);
@@ -784,55 +781,25 @@ export function Sidebar({
     );
   }
 
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && !settingsActive) { event.preventDefault(); setSearchOpen(true); setNavigationOpen(false); }
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [settingsActive]);
+  useEffect(() => {
+    if (!navigationOpen) return;
+    const close = (event: PointerEvent): void => { if (!footerRef.current?.contains(event.target as Node)) setNavigationOpen(false); };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [navigationOpen]);
+
   return (
     <aside className={`sidebar${mobileOpen ? " mobile-open" : ""}${settingsActive ? " settings-sidebar" : ""}`} aria-label="聊天列表">
-      <nav className="nav-rail" aria-label="主导航">
-        <button
-          className="nav-rail-profile"
-          type="button"
-          aria-label="打开个人资料"
-          title="个人资料与头像"
-          onClick={onOpenUserProfile}
-          disabled={!onOpenUserProfile}
-        >
-          <UserAvatar avatarUrl={userProfile?.avatarUrl} name={userProfile?.name} size={48} />
-          <span className="nav-profile-edit" aria-hidden="true"><PencilIcon /></span>
-        </button>
-        <div className="nav-rail-tabs" role="tablist" aria-label="导航" aria-orientation="vertical">
-          {([ ["chats", "聊天", ChatIcon], ["contacts", "联系人", ContactsIcon] ] as const).map(([value, label, Icon]) => (
-            <button
-              className={`nav-rail-button${!settingsActive && tab === value ? " active" : ""}`}
-              key={value}
-              id={`navigation-${value}`}
-              type="button"
-              role="tab"
-              aria-label={label}
-              aria-selected={!settingsActive && tab === value}
-              aria-controls="sidebar-tab-content"
-              tabIndex={tab === value ? 0 : -1}
-              onClick={() => { clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(value); }}
-              onKeyDown={(event) => {
-                if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-                event.preventDefault();
-                const values = ["chats", "contacts"] as const;
-                const forward = event.key === "ArrowDown" || event.key === "ArrowRight";
-                const index = event.key === "Home" ? 0 : event.key === "End" ? 1 : (values.findIndex((value) => value === tab) + (forward ? 1 : -1) + values.length) % values.length;
-                clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(values[index]!);
-                document.getElementById(`navigation-${values[index]}`)?.focus();
-              }}
-            >
-              <Icon weight={value === "chats" && tab === value ? "fill" : "light"} />
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>
-        <button className={`nav-rail-button nav-rail-settings sidebar-settings-button${settingsActive ? " active" : ""}`} type="button" aria-pressed={settingsActive} onClick={onOpenSettings}>
-          <SettingsIcon />
-          <span>设置</span>
-        </button>
-      </nav>
 
-      <section className="sidebar-list" hidden={settingsActive} aria-label={tab === "chats" ? "聊天" : tab === "contacts" ? "联系人" : "工作区"}>
+
+      <section className="sidebar-list" aria-label={tab === "chats" ? "聊天" : tab === "contacts" ? "联系人" : "工作区"}>
         <div className={`sidebar-header sidebar-list-header${tab === "contacts" ? " is-contacts" : ""}`}>
           {tab === "contacts" ? <h2 className="sidebar-list-title">联系人</h2> : null}
           {visibleSelectedKeys.size > 0 ? (
@@ -856,11 +823,7 @@ export function Sidebar({
           ) : (
             <>
               {tab !== "workspace" ? (
-                <div className="sidebar-search">
-                  <SearchIcon />
-                  <input type="search" aria-label={tab === "chats" ? "搜索聊天" : "搜索联系人"} placeholder={tab === "chats" ? "搜索聊天" : "搜索联系人"} value={query} onChange={(event) => { clearMultiSelection(); setQuery(event.target.value); }} />
-                  {tab === "chats" ? <button type="button" className="sidebar-unread-filter" aria-pressed={unreadOnly} title="只看未读聊天" onClick={() => { clearMultiSelection(); setUnreadOnly((current) => !current); }}>未读</button> : null}
-                </div>
+                <button className="sidebar-search-trigger" type="button" aria-label="搜索" title="搜索 · ⌘ K" onClick={() => setSearchOpen(true)}><SearchIcon /></button>
               ) : <h2 className="sidebar-list-title">工作区</h2>}
               <button ref={createButtonRef} className="new-bot-button" type="button" aria-label={tab === "workspace" ? "新建工作区" : tab === "contacts" ? "添加联系人" : "新建聊天"} title={tab === "workspace" ? "添加文件夹工作区" : tab === "contacts" ? "添加联系人" : "新建聊天"} onClick={tab === "workspace" ? onCreateProject : onCreate} disabled={busy || (tab === "workspace" && addingWorkspace)}>
                 <PlusIcon />
@@ -871,6 +834,7 @@ export function Sidebar({
             <CloseIcon />
           </button>
         </div>
+      {filterOpen || query || unreadOnly ? <div className="sidebar-active-filter" role="search" aria-label="筛选列表"><SearchIcon /><input type="search" aria-label={tab === "contacts" ? "搜索联系人" : "搜索聊天"} placeholder="筛选聊天" value={query} onChange={event => { clearMultiSelection(); setQuery(event.target.value); }} /><button type="button" aria-pressed={unreadOnly} onClick={() => setUnreadOnly(value => !value)}>未读</button><button type="button" aria-label="清除列表筛选" onClick={() => { setQuery(""); setUnreadOnly(false); setFilterOpen(false); }}><CloseIcon /></button></div> : null}
       <div className="bot-list" id="sidebar-tab-content" role="tabpanel" aria-labelledby={`navigation-${tab}`}>
         {tab === "chats" ? <>
           <div role="list" aria-label="最近聊天">
@@ -1034,6 +998,47 @@ export function Sidebar({
 
       </section>
 
+      <nav className="sidebar-footer" aria-label="主导航" ref={footerRef} onKeyDown={event => {
+        if (event.key === "Escape" && navigationOpen) { event.preventDefault(); event.stopPropagation(); setNavigationOpen(false); accountTriggerRef.current?.focus(); }
+      }}>
+        <button ref={accountTriggerRef} className="sidebar-account-trigger" type="button" aria-label="打开账户菜单" aria-controls="sidebar-account-menu" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(open => !open)}><UserAvatar avatarUrl={userProfile?.avatarUrl} name={userProfile?.name} size={36} /></button>
+        <button className="sidebar-connect-button" type="button" onClick={() => { setNavigationOpen(false); (onOpenApps ?? onOpenSettings)(); }}>连接应用</button>
+        <button className="sidebar-settings-button" type="button" aria-label="设置" title="设置" onClick={() => { setNavigationOpen(false); onOpenSettings(); }}><SettingsIcon /></button>
+        <div id="sidebar-account-menu" className="sidebar-account-menu" hidden={!navigationOpen}>
+          <button type="button" aria-label="打开个人资料" onClick={() => { setNavigationOpen(false); onOpenUserProfile?.(); }} disabled={!onOpenUserProfile}><PencilIcon /><span>个人资料</span></button>
+        <div className="nav-rail-tabs" role="tablist" aria-label="导航" aria-orientation="vertical">
+          {([ ["chats", "聊天", ChatIcon], ["contacts", "联系人", ContactsIcon], ["workspace", "工作区", FolderIcon] ] as const).map(([value, label, Icon]) => (
+            <button
+              className={`nav-rail-button${!settingsActive && tab === value ? " active" : ""}`}
+              key={value}
+              id={`navigation-${value}`}
+              type="button"
+              role="tab"
+              aria-label={label}
+              aria-selected={!settingsActive && tab === value}
+              aria-controls="sidebar-tab-content"
+              tabIndex={tab === value ? 0 : -1}
+              onClick={() => { clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(value); setNavigationOpen(false); }}
+              onKeyDown={(event) => {
+                if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                event.preventDefault();
+                const values = ["chats", "contacts", "workspace"] as const;
+                const forward = event.key === "ArrowDown" || event.key === "ArrowRight";
+                const index = event.key === "Home" ? 0 : event.key === "End" ? values.length - 1 : (values.findIndex((value) => value === tab) + (forward ? 1 : -1) + values.length) % values.length;
+                clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(values[index]!);
+                document.getElementById(`navigation-${values[index]}`)?.focus();
+              }}
+            >
+              <Icon weight={value === "chats" && tab === value ? "fill" : "light"} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+          <button type="button" onClick={() => { setFilterOpen(true); setNavigationOpen(false); }}><SearchIcon /><span>筛选聊天</span></button>
+          <button type="button" onClick={() => { setNavigationOpen(false); onOpenSettings(); }}><SettingsIcon /><span>设置</span></button>
+        </div>
+      </nav>
+      {searchOpen ? <ChatSearchDialog bots={sourceBots} rooms={sourceRooms} onSelectBot={onSelectBot} onSelectRoom={onSelectRoom} onClose={() => setSearchOpen(false)} /> : null}
       {notice ? <div className="bot-action-notice" role="status">{notice}</div> : null}
       {batchContextMenu && batchMenuInput ? (
         <BatchContextMenu

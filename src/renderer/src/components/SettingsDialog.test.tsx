@@ -26,12 +26,12 @@ function render(open = true): string {
 }
 
 describe("SettingsDialog", () => {
-  it("is a full in-app settings page rather than a modal", () => {
+  it("opens a modal settings workspace over the current conversation", () => {
     const html = render();
     expect(html).toContain("settings-page");
-    expect(html).toContain('role="region"');
-    expect(html).not.toContain("modal-backdrop");
-    expect(html).not.toContain('aria-modal="true"');
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain("modal-backdrop");
+    expect(html).toContain('aria-modal="true"');
     expect(html).toContain('aria-label="关闭设置"');
   });
 
@@ -42,14 +42,14 @@ describe("SettingsDialog", () => {
     expect(html).toContain("Bot 的资料、模型、工具与记忆范围，请在联系人中配置。");
   });
 
-  it("offers only daylight and dark themes, preserving both automation preferences", () => {
+  it("preserves the system, light and dark themes and automation preferences", () => {
     const html = render();
-    expect(html).toContain("暗黑");
-    expect(html).toContain("白昼");
-    expect(html).not.toContain("跟随系统");
+    expect(html).toContain("深色");
+    expect(html).toContain("浅色");
+    expect(html).toContain("跟随系统");
     expect(html).toContain('aria-label="自动批准公开只读工具"');
     expect(html).toContain('aria-label="登录时启动"');
-    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('value="dark" selected=""');
   });
 
   it("does not render when its page is closed", () => {

@@ -29,8 +29,8 @@ test("uses one sidebar settings entry and preserves general and model configurat
     await expect(page.getByRole("button", { name: "模型设置" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await expect(page.getByRole("region", { name: "设置", exact: true })).toBeVisible();
-    await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: /^暗黑/u }).click();
+    await expect(page.getByRole("dialog", { name: "设置", exact: true })).toBeVisible();
+    await page.getByRole("combobox", { name: "界面主题", exact: true }).selectOption("dark");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.getByLabel("自动批准公开只读工具").click();
     await expect(page.getByLabel("自动批准公开只读工具")).toBeChecked();
@@ -144,7 +144,7 @@ test("uses one sidebar settings entry and preserves general and model configurat
     page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await expect(page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: /^暗黑/u })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("combobox", { name: "界面主题", exact: true })).toHaveValue("dark");
     await expect(page.getByLabel("自动批准公开只读工具")).toBeChecked();
     await page.getByRole("button", { name: "版本更新", exact: true }).click();
     await expect(page.getByLabel("自动检查更新频率")).toHaveValue("720");

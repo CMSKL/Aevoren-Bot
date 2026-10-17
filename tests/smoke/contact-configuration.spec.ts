@@ -1,3 +1,4 @@
+import { openComposerTools, selectDetailsTab, selectNavigationTab } from "./navigation";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,7 +116,7 @@ async function sidebar(page: Page): Promise<void> {
 
 async function openContact(page: Page, name: string): Promise<void> {
   await sidebar(page);
-  await page.getByRole("tab", { name: "联系人", exact: true }).click();
+  await selectNavigationTab(page, "联系人");
   await page.locator(".sidebar").getByRole("listitem", { name, exact: true }).click();
   await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
 }
@@ -123,7 +124,7 @@ async function openContact(page: Page, name: string): Promise<void> {
 async function settings(page: Page): Promise<void> {
   await sidebar(page);
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await expect(page.getByRole("region", { name: "设置", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "设置", exact: true })).toBeVisible();
 }
 
 function sql(data: Fixture, statement: string): void {
@@ -195,7 +196,7 @@ test("contact editing and model configuration remain local, preserve a real chat
     await page.locator('.sidebar [role="listitem"]').filter({ hasText: current!.bot.name }).click();
     await expect(page.getByLabel("消息", { exact: true })).toBeVisible();
     await page.getByLabel("消息", { exact: true }).fill("保留当前对话草稿，不发送。");
-    await page.getByRole("button", { name: "添加文本附件", exact: true }).click();
+    await openComposerTools(page); await page.getByRole("button", { name: "添加文本附件", exact: true }).click();
     await expect(page.getByRole("button", { name: "移除附件 联系人验收附件.md", exact: true })).toBeVisible();
     const selection = await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"));
     await page.evaluate(async id => {
@@ -210,7 +211,7 @@ test("contact editing and model configuration remain local, preserve a real chat
     await profile.getByLabel("名称", { exact: true }).fill("资料已更新的研究助手");
     await profile.getByLabel("标签（可选）", { exact: true }).fill("用户中心研究");
     await profile.getByLabel("描述", { exact: true }).fill("真实资料配置：只基于来源证据整理研究结果。");
-    await profile.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await selectDetailsTab(profile, "模型与能力");
     await expect(profile.getByTestId("profile-save-status")).toContainText("已保存");
     expect(storedBot(data, contact!.bot.id)).toMatchObject({ name: "资料已更新的研究助手", label: "用户中心研究", description: "真实资料配置：只基于来源证据整理研究结果。" });
     await expect(profile.getByLabel("模型供应商", { exact: true })).toBeVisible();
@@ -231,9 +232,9 @@ test("contact editing and model configuration remain local, preserve a real chat
     await profile.getByRole("button", { name: "重新扫描", exact: true }).click();
     await expect(profile.getByRole("button", { name: "重新扫描", exact: true })).toBeEnabled();
     await expect(profile.getByLabel("名称", { exact: true })).toBeHidden();
-    await profile.getByRole("tab", { name: "记忆", exact: true }).click();
+    await selectDetailsTab(profile, "记忆");
     await profile.getByLabel("新增 Memory", { exact: true }).fill("用户明确要求研究结论保留来源链接。");
-    await profile.getByRole("tab", { name: "资料", exact: true }).click();
+    await selectDetailsTab(profile, "资料");
     const memory = await page.evaluate(async id => {
       const result = await (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.memories.list({ botId: id });
       if (!result.ok) throw new Error(result.error.safeMessage);
@@ -243,7 +244,7 @@ test("contact editing and model configuration remain local, preserve a real chat
     expect(memory[0]).toMatchObject({ content: "用户明确要求研究结论保留来源链接。", source: "manual-user" });
 
     await sidebar(page);
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue("保留当前对话草稿，不发送。");
     await expect(page.getByRole("button", { name: "移除附件 联系人验收附件.md", exact: true })).toBeVisible();
     expect(await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).toBe(selection);
@@ -265,9 +266,9 @@ test("contact editing and model configuration remain local, preserve a real chat
     watchErrors(page, errors);
     await openContact(page, "资料已更新的研究助手");
     await expect(page.getByLabel("名称", { exact: true })).toHaveValue("资料已更新的研究助手");
-    await page.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await selectDetailsTab(page, "模型与能力");
     await expect(page.getByLabel("模型供应商", { exact: true })).toHaveValue("claude.default");
-    await page.getByRole("tab", { name: "记忆", exact: true }).click();
+    await selectDetailsTab(page, "记忆");
     await expect(page.getByLabel("Memory 1", { exact: true })).toHaveValue("用户明确要求研究结论保留来源链接。");
     expect(unread(data, contact!.session.id)).toBe(1);
     expect(errors).toEqual([]);
@@ -289,20 +290,20 @@ test("a real SQLite write failure retains the contact draft and blocks navigatio
     sql(data, `CREATE TRIGGER reject_contact_profile_update BEFORE UPDATE ON bots WHEN NEW.id = '${contact!.bot.id}' BEGIN SELECT RAISE(ABORT, 'contact-real-write-failure'); END;`);
     await page.getByRole("button", { name: "编辑资料", exact: true }).click();
     await page.getByLabel("描述", { exact: true }).fill("写入故障时必须保留的资料草稿。");
-    await page.getByRole("tab", { name: "模型与能力", exact: true }).click();
-    await expect(page.getByRole("tab", { name: "资料", exact: true })).toHaveAttribute("aria-selected", "true");
+    await selectDetailsTab(page, "模型与能力");
+    await expect(page.getByRole("tab", { name: "详情", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByTestId("profile-save-status")).toContainText("保存失败");
     await expect(page.getByRole("textbox", { name: "描述", exact: true })).toHaveValue("写入故障时必须保留的资料草稿。");
     await page.locator('.sidebar [role="listitem"]').filter({ hasText: current!.bot.name }).click();
     await expect(page.getByLabel("名称", { exact: true })).toHaveValue(contact!.bot.name);
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await expect(page.getByRole("alert").first()).toBeVisible();
     await expect(page.getByRole("alert").first()).not.toContainText(/contact-real-write-failure|SQLITE|stack|Error:/u);
     expect(storedBot(data, contact!.bot.id)).toMatchObject({ description: "" });
     await page.screenshot({ path: test.info().outputPath("real-write-failure-retained-draft.png") });
     sql(data, "DROP TRIGGER reject_contact_profile_update;");
-    await page.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await selectDetailsTab(page, "模型与能力");
     await expect(page.getByRole("tab", { name: "模型与能力", exact: true })).toHaveAttribute("aria-selected", "true");
     expect(storedBot(data, contact!.bot.id)).toMatchObject({ description: "写入故障时必须保留的资料草稿。" });
   } finally {
@@ -325,15 +326,15 @@ test("contacts, pure chat and all six settings pages work in both themes at desk
     for (const theme of ["白昼", "暗黑"]) {
       await settings(page);
       await page.getByRole("button", { name: "通用", exact: true }).click();
-      const themeButton = page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: new RegExp(`^${theme}`, "u") });
-      await themeButton.click();
-      await expect(themeButton).toHaveAttribute("aria-pressed", "true");
+      const themeSelect = page.getByRole("combobox", { name: "界面主题", exact: true });
+      await themeSelect.selectOption(theme === "暗黑" ? "dark" : "light");
+      await expect(themeSelect).toHaveValue(theme === "暗黑" ? "dark" : "light");
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "暗黑" ? "dark" : "light");
       for (const width of [1180, 1020, 620, 390]) {
         await resize(application, page, width);
         await openContact(page, contact!.bot.name);
-        for (const tab of ["资料", "模型与能力", "记忆"]) {
-          await page.getByRole("tab", { name: tab, exact: true }).click();
+        for (const tab of ["详情", "模型与能力", "记忆"]) {
+          await selectDetailsTab(page, tab);
           await expect(page.getByRole("tab", { name: tab, exact: true })).toHaveAttribute("aria-selected", "true");
           await layout(page, ".contact-detail");
           await page.screenshot({ path: test.info().outputPath(`${theme}-${width}-contacts-${tab}.png`), scale: "css" });
@@ -348,7 +349,7 @@ test("contacts, pure chat and all six settings pages work in both themes at desk
         await expect(page.getByRole("button", { name: "检查更新", exact: true })).toBeDisabled();
         await expect(page.getByRole("button", { name: "关闭更新提示", exact: true })).toHaveCount(0);
         await sidebar(page);
-        await page.getByRole("tab", { name: "聊天", exact: true }).click();
+        await selectNavigationTab(page, "聊天");
         await sidebar(page);
         await page.locator('.sidebar [role="listitem"]').filter({ hasText: current!.bot.name }).click();
         await expect(page.getByLabel("消息", { exact: true })).toBeVisible();
@@ -371,13 +372,13 @@ test("contacts, pure chat and all six settings pages work in both themes at desk
     await expect.poll(() => page.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width: 1487, height: 1058 });
     await page.locator(".settings-nav").getByRole("button", { name: "通用", exact: true }).click();
     await page.screenshot({ path: test.info().outputPath("approved-size-dark-settings-1487x1058.png"), scale: "css" });
-    await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: /^白昼/u }).click();
+    await page.getByRole("combobox", { name: "界面主题", exact: true }).selectOption("light");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     await openContact(page, contact!.bot.name);
-    await page.getByRole("tab", { name: "资料", exact: true }).click();
+    await selectDetailsTab(page, "资料");
     await page.getByRole("button", { name: "编辑资料", exact: true }).click();
     await page.screenshot({ path: test.info().outputPath("approved-size-profile-editing-1487x1058.png"), scale: "css" });
-    await page.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await selectDetailsTab(page, "模型与能力");
     await page.screenshot({ path: test.info().outputPath("approved-size-models-1487x1058.png"), scale: "css" });
   } finally {
     if (application) await close(application);
@@ -397,7 +398,7 @@ test("the installed Codex is detected and scanned through real IPC without chang
     const page = launched.page;
     const [, contact] = await createContacts(page);
     await openContact(page, contact!.bot.name);
-    await page.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await selectDetailsTab(page, "模型与能力");
     const before = await page.getByLabel("模型供应商", { exact: true }).inputValue();
     const scan = await page.evaluate(async () => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
@@ -455,7 +456,7 @@ test("local folder management remains reachable and real session permissions wor
     await expect(page.locator(".sidebar-workspace")).toBeVisible();
     await expect(page.locator(".sidebar-project-toggle").filter({ hasText: registration.project.name })).toBeVisible();
     await expect(page.getByRole("tab", { name: "工作区", exact: true })).toHaveCount(0);
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     await page.locator('.sidebar [role="listitem"]').filter({ hasText: current!.bot.name }).click();
     await page.getByRole("button", { name: "聊天选项", exact: true }).click();
     await page.getByRole("menuitem", { name: "打开任务详情", exact: true }).click();
@@ -501,7 +502,7 @@ test("unsaved shared connection input is retained when leaving a contact and dis
     const page = launched.page;
     const [current, contact] = await createContacts(page);
     await openContact(page, contact!.bot.name);
-    await page.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await selectDetailsTab(page, "模型与能力");
     await page.getByText("本机连接设置", { exact: true }).click();
     await page.getByLabel("管理 API", { exact: true }).click();
     const baseUrl = page.getByLabel("Base URL", { exact: true });
@@ -517,7 +518,7 @@ test("unsaved shared connection input is retained when leaving a contact and dis
     await expect(page.getByRole("heading", { name: contact!.bot.name, exact: true })).toBeVisible();
     await expect(page.getByRole("tab", { name: "模型与能力", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(baseUrl).toHaveValue(draft);
-    await page.getByRole("tab", { name: "资料", exact: true }).click();
+    await selectDetailsTab(page, "资料");
     await expect(page.getByRole("tab", { name: "模型与能力", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("alert").first()).toBeVisible();
     const database = new DatabaseSync(data.databasePath, { readOnly: true });
@@ -536,7 +537,7 @@ test("unsaved shared connection input is retained when leaving a contact and dis
   }
 });
 
-test("creating a contact stays in Contacts and group management is an on-demand, keyboard-contained dialog", async () => {
+test("creating a contact stays in Contacts and group management keeps the modeless chat usable", async () => {
   test.setTimeout(60_000);
   const data = fixture();
   let application: ElectronApplication | undefined;
@@ -552,13 +553,13 @@ test("creating a contact stays in Contacts and group management is an on-demand,
     await page.getByRole("button", { name: "添加联系人", exact: true }).click();
     await page.getByRole("button", { name: "创建新 Bot", exact: true }).click();
     await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "联系人", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator("#navigation-contacts")).toHaveAttribute("aria-selected", "true");
     await expect(page.getByLabel("名称", { exact: true })).toBeEditable();
     await page.getByLabel("名称", { exact: true }).fill("事实编辑");
-    await page.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await selectDetailsTab(page, "模型与能力");
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
     expect(await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).toBe(selection);
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue("新建联系人不得丢失此聊天草稿。");
     const group = await page.evaluate(async input => {
       const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
@@ -577,17 +578,16 @@ test("creating a contact stays in Contacts and group management is an on-demand,
     await page.getByRole("menuitem", { name: "群聊管理", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "群聊设置", exact: true });
     await expect(dialog).toBeVisible();
-    await expect(dialog).toHaveAttribute("aria-modal", "true");
+    await expect(dialog).toHaveAttribute("aria-modal", "false");
     await dialog.getByLabel("名称", { exact: true }).fill("已配置的业务群聊");
     await dialog.getByRole("button", { name: "管理群聊成员 2/6", exact: true }).click();
     await dialog.getByLabel("选择要添加的 Bot", { exact: true }).selectOption(group.editorId);
     await dialog.getByRole("button", { name: "添加", exact: true }).click();
-    await expect(dialog.getByRole("button", { name: "管理群聊成员 3/6", exact: true })).toBeVisible();
+    await expect(dialog.getByRole("tab", { name: "成员", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(dialog.locator(".room-member-row")).toHaveCount(3);
     await expect(dialog.getByTestId("room-save-status")).toContainText("已保存");
-    for (let index = 0; index < 20; index += 1) {
-      await page.keyboard.press("Tab");
-      expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
-    }
+    await page.getByLabel("消息", { exact: true }).fill("抽屉打开时仍可输入群聊草稿。");
+    await expect(page.getByLabel("消息", { exact: true })).toBeFocused();
     const actual = await page.evaluate(async id => {
       const result = await (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.rooms.get(id);
       if (!result.ok) throw new Error(result.error.safeMessage);
@@ -641,7 +641,7 @@ test("real Codex contact selection produces an actual completed UI reply on the 
     }, contact!.bot.id);
     await page.reload();
     await openContact(page, contact!.bot.name);
-    await page.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await selectDetailsTab(page, "模型与能力");
     await page.getByLabel("模型供应商", { exact: true }).selectOption("codex.default");
     await page.getByLabel("Bot 模型", { exact: true }).fill(scanned.model);
     await page.getByLabel("Bot 模型", { exact: true }).blur();
@@ -748,7 +748,7 @@ test("duplicating a contact preserves the original chat, role and model and cann
     await page.locator(".sidebar").getByRole("listitem", { name: current!.bot.name, exact: true }).click();
     const draft = "创建联系人副本也必须保留此原聊天草稿。";
     await page.getByLabel("消息", { exact: true }).fill(draft);
-    await page.getByRole("button", { name: "添加文本附件", exact: true }).click();
+    await openComposerTools(page); await page.getByRole("button", { name: "添加文本附件", exact: true }).click();
     await expect(page.getByRole("button", { name: "移除附件 联系人验收附件.md", exact: true })).toBeVisible();
     const selected = await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"));
     await openContact(page, source!.bot.name);
@@ -756,7 +756,7 @@ test("duplicating a contact preserves the original chat, role and model and cann
     await page.getByRole("textbox", { name: "描述", exact: true }).fill("使用真实来源开展研究并清楚说明不确定性。");
     await page.getByText("职责与规则", { exact: true }).click();
     await page.getByLabel("Instructions", { exact: true }).fill("保留来源和风险说明，不声称执行尚未成功的工具。");
-    await page.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await selectDetailsTab(page, "模型与能力");
     await page.getByLabel("模型供应商", { exact: true }).selectOption("claude.default");
     await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
     const sourceConfiguration = await page.evaluate(async id => {
@@ -782,13 +782,13 @@ test("duplicating a contact preserves the original chat, role and model and cann
     // Existing product policy assigns a random avatar to every new Bot/copy.
     expect(BOT_AVATAR_SHAPES).toContain(copy.avatarShape);
     expect(BOT_AVATAR_COLORS).toContain(copy.avatarColor);
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     expect(await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).toBe(selected);
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);
     await expect(page.getByRole("button", { name: "移除附件 联系人验收附件.md", exact: true })).toBeVisible();
 
     await openContact(page, source!.bot.name);
-    await page.getByRole("tab", { name: "模型与能力", exact: true }).click();
+    await selectDetailsTab(page, "模型与能力");
     await page.getByText("本机连接设置", { exact: true }).click();
     await page.getByLabel("管理 API", { exact: true }).click();
     const baseUrl = page.getByLabel("Base URL", { exact: true });
@@ -805,7 +805,7 @@ test("duplicating a contact preserves the original chat, role and model and cann
     } finally { database.close(); }
     await page.screenshot({ path: test.info().outputPath("real-contact-duplicate-shared-guard.png"), scale: "css" });
     await page.getByRole("button", { name: "放弃修改", exact: true }).click();
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);
     await expect(page.getByRole("button", { name: "移除附件 联系人验收附件.md", exact: true })).toBeVisible();
     expect(await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).toBe(selected);
@@ -832,7 +832,7 @@ test("a real target snapshot failure stays local to Contacts and preserves unrea
     await page.locator(".sidebar").getByRole("listitem", { name: current!.bot.name, exact: true }).click();
     const draft = "打开另一联系人失败时，不得影响此原聊天草稿。";
     await page.getByLabel("消息", { exact: true }).fill(draft);
-    await page.getByRole("button", { name: "添加文本附件", exact: true }).click();
+    await openComposerTools(page); await page.getByRole("button", { name: "添加文本附件", exact: true }).click();
     await expect(page.getByRole("button", { name: "移除附件 联系人验收附件.md", exact: true })).toBeVisible();
     const originalSelection = await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"));
     await openContact(page, target!.bot.name);
@@ -850,7 +850,7 @@ test("a real target snapshot failure stays local to Contacts and preserves unrea
     await page.screenshot({ path: test.info().outputPath("real-contact-open-failure-local.png"), scale: "css" });
     sql(data, "ALTER TABLE runtime_runs_contact_open_fault RENAME TO runtime_runs;");
     schemaFault = false;
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     await expect(page.getByRole("heading", { name: current!.bot.name, exact: true })).toBeVisible();
     await expect(page.locator(".conversation").getByRole("alert")).toHaveCount(0);
     await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);

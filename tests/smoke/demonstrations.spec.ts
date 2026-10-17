@@ -7,7 +7,7 @@ import { _electron as electron, expect, test } from "@playwright/test";
 import type { AevorenBotApi } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { disposeTestApplication, removeTestDirectory } from "./test-cleanup";
-import { openInspector } from "./navigation";
+import { openInspector, selectDetailsTab } from "./navigation";
 test("hidden demonstration UI retains conflicts and publishes only an explicitly confirmed disabled Skill", async () => {
   // Windows used 9s for setup and reached the second v2 draft click at 28.254s, before publication.
   if (process.platform === "win32") test.setTimeout(60_000);
@@ -38,7 +38,7 @@ test("hidden demonstration UI retains conflicts and publishes only an explicitly
     }
     await page.getByRole("listitem", { name: "示范验收 Bot", exact: true }).click();
     await expect(page.getByRole("heading", { name: "示范验收 Bot", exact: true })).toBeVisible();
-    await openInspector(page); const inspector = page.getByRole("main", { name: "联系人资料", exact: true }); await inspector.getByRole("tab", { name: "电脑", exact: true }).click();
+    await openInspector(page); const inspector = page.getByRole("main", { name: "联系人资料", exact: true }); await selectDetailsTab(inspector, "电脑");
     const panel = page.getByRole("region", { name: "示范技能", exact: true }); await panel.getByRole("button", { name: "示范技能草稿", exact: false }).click();
     await expect(panel.getByRole("button", { name: "开始示范", exact: true })).toBeDisabled();
     const text = panel.getByLabel("示范 SKILL.md 草稿", { exact: true }); await expect(text).toHaveValue(draft.body); await text.fill(draft.body + "\nUSER_LOCAL_EDIT");

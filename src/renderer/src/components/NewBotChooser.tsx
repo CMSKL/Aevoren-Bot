@@ -84,7 +84,7 @@ export function NewBotChooser({
       className="new-bot-backdrop"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !creating) onClose();
+        if (!creating && (event.target === event.currentTarget || event.target instanceof HTMLElement && event.target.classList.contains("new-bot-chooser"))) onClose();
       }}
     >
       <section className="new-bot-chooser" role="dialog" aria-modal="true" aria-label={initialGroupMode ? "新建群聊" : "新建聊天"}>

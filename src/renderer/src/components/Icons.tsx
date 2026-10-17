@@ -6,7 +6,7 @@ export {
   ArrowClockwise as RefreshIcon,
   Folder as FolderIcon,
   Paperclip as AttachmentIcon,
-  PaperPlaneRight as SendIcon,
+  ArrowUp as SendIcon,
   Plus as PlusIcon,
   CaretDown as ChevronDownIcon,
   Check as CheckIcon,
@@ -32,4 +32,6 @@ export {
   FileText as DocumentIcon,
   ArrowRight as ArrowRightIcon,
   WarningCircle as WarningIcon,
+  CircleNotch as LoadingIcon,
+  Circle as StatusDotIcon,
 } from "@phosphor-icons/react";

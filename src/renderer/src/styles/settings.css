@@ -487,76 +487,9 @@
   .provider-engine-chevron { transition: none; }
 }
 
-/* Global preferences are an in-app page; Bot configuration lives in contacts. */
-.settings-dialog.settings-hub.settings-page {
-  width: 100%;
-  height: 100%;
-  max-height: none;
-  min-width: 0;
-  min-height: 0;
-  grid-template-columns: var(--list-width, 320px) minmax(0, 1fr);
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.settings-page .settings-nav { padding: 30px 16px; }
-.settings-page .settings-nav-title { margin: 0 12px 28px; font-size: 24px; -webkit-app-region: drag; }
-.settings-page .settings-nav nav { gap: 8px; }
-.settings-page .settings-nav button { min-height: 50px; gap: 14px; font-size: 16px; }
-.settings-page .settings-nav button svg { width: 24px; height: 24px; flex-basis: 24px; }
-.settings-page .settings-main { position: relative; }
-.settings-page .settings-toolbar { position: absolute; top: 20px; right: 18px; z-index: 1; min-height: 40px; padding: 0; border: 0; background: transparent; }
-.settings-page .settings-content { padding: 32px 40px; }
-.settings-page .settings-panel { max-width: 1000px; margin: 0 auto; }
-.settings-page .settings-section-heading { padding-right: 46px; margin-bottom: 32px; }
-.settings-page .settings-section-heading h2 { font-size: 24px; }
-.settings-page .settings-section-heading p { font-size: 14px; }
-.settings-page .settings-panel > h3 { margin: 32px 0 0; padding-bottom: 14px; border-bottom: 1px solid var(--border); font-size: 17px; }
-.settings-page .settings-panel > .settings-form-group { border: 0; border-radius: 0; background: transparent; }
-.settings-page .settings-row { padding: 20px 0; gap: 24px; }
-.settings-page .settings-row strong { font-size: 15px; }
-.settings-page .settings-row small { margin-top: 5px; font-size: 13px; }
-.settings-appearance-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: start; gap: 24px; padding: 24px 0 12px; }
-.settings-appearance-row > strong { padding-top: 14px; font-size: 15px; }
-.settings-theme-options { display: flex; flex-wrap: wrap; gap: 14px; }
-.settings-theme-option { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; width: min(250px, calc(50% - 7px)); min-height: 220px; padding: 16px; border: 1px solid var(--border-strong); border-radius: 8px; }
-.settings-theme-dark { color: #ededed; background: #252525; }
-.settings-theme-light { color: #20252a; background: #f4f5f5; }
-.settings-theme-option[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.settings-theme-option > strong { font-size: 16px; }
-.settings-theme-option > span { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
-.settings-theme-dark[aria-pressed="true"] > span { color: #06ca88; }
-.settings-theme-light[aria-pressed="true"] > span { color: var(--success); }
-.settings-theme-option svg { width: 16px; height: 16px; }
-.settings-theme-option > .settings-theme-preview { display: block; width: 100%; height: auto; aspect-ratio: 8 / 5; object-fit: contain; border-radius: 6px; }
-.settings-theme-option > .settings-theme-check { position: absolute; top: 10px; right: 10px; width: 26px; height: 26px; padding: 5px; border-radius: 50%; color: var(--accent-contrast); background: var(--accent-strong); }
-.settings-page .settings-row input[type="checkbox"] { appearance: none; width: 42px; height: 24px; flex-basis: 42px; border: 1px solid var(--border-strong); border-radius: 16px; background: var(--surface-soft); position: relative; cursor: pointer; }
-.settings-page .settings-row input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--panel-bg); box-shadow: 0 1px 3px rgb(0 0 0 / 18%); }
-.settings-page .settings-row input[type="checkbox"]:checked { border-color: var(--accent); background: var(--accent); }
-.settings-page .settings-row input[type="checkbox"]:checked::after { left: 20px; background: #fff; }
-.settings-page .settings-row input[type="checkbox"]:disabled { cursor: not-allowed; opacity: .5; }
 .settings-autosave-note { display: flex; align-items: center; gap: 8px; margin: 26px 0; color: var(--text-muted); font-size: 13px; }
 .settings-autosave-note svg { width: 18px; height: 18px; color: var(--success); }
 .settings-profile-note { margin: 24px 0 0; padding: 22px 0; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 13px; line-height: 1.7; }
 .settings-legacy-management { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--border); }
 .settings-legacy-management h3 { margin: 0 0 8px; }
 .settings-legacy-management p { margin: 0 0 14px; color: var(--text-muted); font-size: 13px; }
-
-@media (max-width: 1020px) {
-  .settings-dialog.settings-hub.settings-page { grid-template-columns: 210px minmax(0, 1fr); }
-  .settings-page .settings-content { padding: 28px; }
-  .settings-appearance-row { grid-template-columns: minmax(0, 1fr); gap: 16px; }
-  .settings-appearance-row > strong { padding-top: 0; }
-}
-
-@media (max-width: 760px) {
-  .settings-dialog.settings-hub.settings-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .settings-page .settings-nav { padding: 16px 18px 8px; overflow: hidden; border-right: 0; border-bottom: 1px solid var(--border); }
-  .settings-page .settings-nav-title { margin: 0 4px 12px; font-size: 22px; }
-  .settings-page .settings-nav nav { display: flex; gap: 4px; width: 100%; overflow-x: auto; }
-  .settings-page .settings-nav button { width: auto; flex: 0 0 auto; min-height: 40px; gap: 8px; font-size: 14px; }
-  .settings-page .settings-nav button svg { width: 18px; height: 18px; flex-basis: 18px; }
-  .settings-page .settings-content { padding: 24px 20px; }
-  .settings-page .settings-toolbar { top: 12px; right: 12px; }
-}

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { IconContext } from "@phosphor-icons/react";
 import { App } from "./App";
 import "./styles.css";
+import "./styles/grok.css";
 
 document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 

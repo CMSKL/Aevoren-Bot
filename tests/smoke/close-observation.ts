@@ -28,8 +28,15 @@ export async function observeTestClose(application: ElectronApplication): Promis
       const record = (phase: string, values: Record<string, number | boolean | string> = {}): void => {
         console.error("AEVOREN_MCP_CLOSE_PHASE " + JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started), ...values }));
       };
-      app.on("before-quit", () => record("before-quit", { windows: BrowserWindow.getAllWindows().length }));
+      app.on("before-quit", () => {
+        const windows = BrowserWindow.getAllWindows();
+        try {
+          const frames = windows.flatMap(window => window.webContents.isDestroyed() ? [] : window.webContents.mainFrame.framesInSubtree);
+          record("before-quit", { windows: windows.length, frames: frames.length, frameProcesses: new Set(frames.map(frame => frame.processId)).size });
+        } catch { record("before-quit", { windows: windows.length, frameStateAvailable: false }); }
+      });
       app.on("will-quit", () => record("will-quit", { windows: BrowserWindow.getAllWindows().length }));
+      app.prependListener("quit", (_event, exitCode) => record("quit-handlers-start", { exitCode }));
       app.on("quit", (_event, exitCode) => record("quit", { exitCode }));
       const observeWindow = (window: InstanceType<typeof BrowserWindow>): void => {
         record("window-observed", { windows: BrowserWindow.getAllWindows().length });

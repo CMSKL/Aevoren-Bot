@@ -36,11 +36,12 @@ async function assertViewportContained(page: Page): Promise<void> {
     const transcript = document.querySelector<HTMLElement>(".transcript");
     if (!composer || !transcript) return false;
     const composerRect = composer.getBoundingClientRect();
-    return document.documentElement.scrollWidth <= window.innerWidth
-      && transcript.scrollWidth <= transcript.clientWidth
-      && composerRect.left >= 0
-      && composerRect.right <= window.innerWidth;
-  })).toBe(true);
+    return {
+      root: document.documentElement.scrollWidth <= window.innerWidth,
+      transcript: transcript.scrollWidth <= transcript.clientWidth,
+      composer: composerRect.left >= 0 && composerRect.right <= window.innerWidth,
+    };
+  })).toEqual({ root: true, transcript: true, composer: true });
 }
 
 test("supports Grok-style Room mentions, deterministic routing, and responsive layouts", async () => {

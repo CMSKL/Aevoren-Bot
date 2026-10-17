@@ -4,7 +4,13 @@ Stage 3 adds a browser and Linux desktop beside the local Docker execution envir
 
 ## Start and use
 
-Use a running local Docker Linux engine. Prepare and start the execution environment, then open **Contacts → Bot → Browser / Computer**, or select a member in **Group settings → Browser / Computer**. The first browser image build downloads Chromium and desktop dependencies. The browser belongs to the selected conversation and executing Bot; the same Bot in another group receives a separate profile.
+The current development UI opens **Computer (电脑)** directly: the shared `browser.start` host action checks Docker, prepares the execution image for a new scope, starts/wakes its execution environment, prepares the browser and connects its screen. Preparation shows real host stages; an unavailable Docker engine presents one **Open Docker** action. On macOS/Windows this opens the existing Docker Desktop app; if absent it opens the official installation page. It never accepts installer terms or permissions. Preparation resumes after the engine becomes ready. These interface changes are not yet published.
+
+**My turn (我来操作)** performs takeover and viewer connection together; **Hand to AI (交给 AI)** explicitly returns ownership. A failed viewer connection keeps user ownership. **Enlarge (放大)** provides a larger screen. **More → Computer tools (电脑工具)** retains browser controls, downloads and demonstration recording; **Advanced tools (高级工具)** retains execution commands, files and logs. Opening a computer does not select host folders or grant additional file/account access.
+
+Duplicate starts in one scope share preparation. Cancelling that start prevents later startup steps; shared image preparation can continue for other scopes. A stopped current view does not restart itself. Reopening/explicit retry can start it again. Existing recorded images and background processes are retained, and unrelated group members are not started.
+
+**Published beta.36 manual setup:** use a running local Docker Linux engine. Prepare and start the execution environment, then open **Contacts → Bot → Browser / Computer**, or select a member in **Group settings → Browser / Computer**. The first browser image build downloads Chromium and desktop dependencies. The browser belongs to the selected conversation and executing Bot; the same Bot in another group receives a separate profile.
 
 The browser panel lists real tabs, opens HTTP(S) addresses, reads page text and exposes freshly observed element references for input. The computer panel shows actual desktop pixels. **Take over** transfers control to you; **Connect computer** opens the same Chromium desktop through noVNC. Closing the panel, an expired connection ticket or a disconnected connection keeps your control. **Return to AI** explicitly returns it and requires a new observation before the next AI input. While you hold control, AI DOM reads, screenshots and inputs are blocked.
 

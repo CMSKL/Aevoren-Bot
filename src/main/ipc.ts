@@ -1,3 +1,5 @@
+import { COMPUTER_UI_CHANNELS } from "@shared/browser-channels";
+import { browserScopeSchema } from "@shared/browser-schemas";
 import { MCP_WRITE_CHANNELS } from "@shared/mcp-write-channels";
 import { mcpWriteIdSchema } from "@shared/mcp-write-schemas";
 import { NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "@shared/native-outbound-channels";
@@ -46,6 +48,15 @@ export function registerIpc(dependencies: IpcDependencies): ProductOperationServ
     const parsed = z.object({ status: z.enum(["completed", "running", "waiting_user", "cancelled", "failed"]), result: z.unknown().optional(), reason: z.string().max(1_000).optional() }).strict().parse(result);
     return view.respond(z.string().uuid().parse(id), parsed);
   }));
+  for (const method of ["startupStatus", "cancelStartup", "openDocker"] as const) {
+    ipcMain.handle(COMPUTER_UI_CHANNELS[method], (event, input: unknown) => apiResult<unknown>(() => {
+      assertTrusted(event, window);
+      if (!dependencies.browserService) throw new AevorenBotError("BROWSER_UNAVAILABLE");
+      return method === "cancelStartup"
+        ? dependencies.browserService.cancelStartup(browserScopeSchema.extend({ attemptId: z.string().uuid() }).parse(input))
+        : dependencies.browserService[method](browserScopeSchema.parse(input));
+    }));
+  }
   for (const [channel, operation] of product.handlers) {
     ipcMain.handle(channel, (event, input: unknown) => apiResult(() => {
       assertTrusted(event, window);

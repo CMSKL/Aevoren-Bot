@@ -15,7 +15,7 @@ import type { McpWriteApi } from "../../src/shared/mcp-write-contracts";
 import { AppRepository } from "../../src/main/database";
 import { NATIVE_OUTBOUND_REQUEST_APPROVAL_CHANNEL } from "../../src/shared/native-outbound-channels";
 import { IPC } from "../../src/shared/channels";
-import { openBotList } from "./navigation";
+import { openBotList, selectNavigationTab, selectDetailsTab } from "./navigation";
 import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { observeTestClose } from "./close-observation";
 
@@ -31,7 +31,7 @@ addEventListener('message',async event=>{const value=event.data;if(value?.id&&re
  if(value?.method==='ui/notifications/tool-result')document.body.dataset.result='received';});
 let parentBlocked=false;try{void parent.document.body;}catch{parentBlocked=true;}document.body.dataset.parentBlocked=String(parentBlocked);
 document.body.dataset.preload=String(typeof window.aevorenBot);
-document.querySelector('#write').onclick=async()=>{document.body.dataset.write=JSON.stringify(await request('tools/call',{name:'change',arguments:{target:'app-target',value:'from-app'}}));};
+document.querySelector('#write').onclick=async event=>{document.body.dataset.writeHandlerEntered='true';document.body.dataset.writeTrusted=String(event.isTrusted);document.body.dataset.write=JSON.stringify(await request('tools/call',{name:'change',arguments:{target:'app-target',value:'from-app'}}));};
 document.querySelector('#unknown').onclick=async event=>{document.body.dataset.unknownHandlerEntered='true';document.body.dataset.unknownTrusted=String(event.isTrusted);
  const response=request('host/read-file',{path:'/etc/passwd'});document.body.dataset.unknownRequestPosted='true';
  const result=await response;document.body.dataset.unknownResponseReceived='true';document.body.dataset.unknown=JSON.stringify(result);};
@@ -180,9 +180,9 @@ async function withMcp(callback: (fixture: { page: Page; application: ElectronAp
 
 async function openMcp(page: Page): Promise<void> {
   await openBotList(page);
-  await page.getByRole("tab", { name: "联系人", exact: true }).click();
+  await selectNavigationTab(page, "联系人");
   await page.locator(".sidebar").getByRole("listitem", { name: "MCP 隔离验收", exact: true }).click();
-  await page.getByRole("main", { name: "联系人资料", exact: true }).getByRole("tab", { name: "应用", exact: true }).click();
+  await selectDetailsTab(page.getByRole("main", { name: "联系人资料", exact: true }), "应用");
   await expect(page.getByRole("region", { name: "聊天 MCP 工具", exact: true })).toBeVisible();
 }
 
@@ -282,12 +282,27 @@ test("MCP fixed operation uses a real approval and an opaque App sandbox with sc
     };
     f.page.on("response", responseObserved);
     try {
-      await inner.getByRole("button", { name: "Change fixture target", exact: true }).click();
+      const writeButton = inner.getByRole("button", { name: "Change fixture target", exact: true });
+      await writeButton.focus();
+      await test.info().attach("mcp-write-pointer-focus", { body: JSON.stringify(await writeButton.evaluate(button => ({
+        active: button.ownerDocument.activeElement === button, focused: button.ownerDocument.hasFocus(),
+      }))), contentType: "application/json" });
+      await writeButton.click();
+      await expect(inner.locator("body")).toHaveAttribute("data-write-handler-entered", "true");
+      await expect(inner.locator("body")).toHaveAttribute("data-write-trusted", "true");
       await expect(approval).toHaveCount(1);
       await expect(approval.getByLabel("本次 MCP 固定参数")).toContainText("app-target");
       expect(f.writes()).toBe(1);
       await approval.getByRole("button", { name: "仅允许一次", exact: true }).click();
       await expect.poll(f.writes).toBe(2);
+      // A remote write receipt can precede the response reaching the App frame.
+      // Finish the real RPC before revoking its grant and starting teardown.
+      await expect(inner.locator("body")).toHaveAttribute("data-write", /"result":/u);
+      const appReply = JSON.parse((await inner.locator("body").getAttribute("data-write"))!) as { jsonrpc?: unknown; result?: unknown; error?: unknown };
+      expect(appReply.jsonrpc).toBe("2.0");
+      expect(appReply).toHaveProperty("result");
+      expect(appReply).not.toHaveProperty("error");
+      await test.info().attach("mcp-completed-app-rpc", { body: JSON.stringify({ responseReceived: true, hasResult: true, rpcPhases }), contentType: "application/json" });
     } catch (error) {
       const receiptState = (() => { try { return f.receiptState(); } catch { return { unavailable: true }; } })();
       const dialogCount = await approval.count().catch(() => null);

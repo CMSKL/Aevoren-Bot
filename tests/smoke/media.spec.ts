@@ -14,7 +14,7 @@ import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { tinyDocx, tinyPdf } from "../fixtures/media-parser-data";
 import { disposeTestApplication, removeTestDirectory } from "./test-cleanup";
-import { closeInspector, openInspector } from "./navigation";
+import { openComposerTools, closeInspector, openInspector } from "./navigation";
 
 type Fixture = { application: ElectronApplication; page: Page; data: string; source: string; workspaceId: string; bots: { id: string; name: string; sessionId: string }[]; room: { id: string; sessionId: string; name: string }; imageSha256: string };
 type MainFixture = { mediaUiBarrier?: { entered: boolean; returned: boolean; release?: () => void }; mediaUiReads?: number };
@@ -104,7 +104,7 @@ async function barrier(f: Fixture, channel: string): Promise<void> {
 }
 async function entered(f: Fixture): Promise<void> { await expect.poll(() => f.application.evaluate(() => Boolean((globalThis as MainFixture).mediaUiBarrier?.entered)), { timeout: 30_000 }).toBe(true); }
 async function release(f: Fixture): Promise<void> { await f.application.evaluate(() => (globalThis as MainFixture).mediaUiBarrier?.release?.()); }
-async function importFromComposer(f: Fixture): Promise<void> { await f.page.getByRole("button", { name: "添加媒体", exact: true }).click(); await f.page.getByRole("menuitem", { name: "导入媒体文件", exact: true }).click(); }
+async function importFromComposer(f: Fixture): Promise<void> { await openComposerTools(f.page); await f.page.getByRole("button", { name: "添加媒体", exact: true }).click(); await f.page.getByRole("menuitem", { name: "导入媒体文件", exact: true }).click(); }
 async function setMedia(f: Fixture, refs: MessageMediaReference[]): Promise<void> {
   const current = await draft(f); const result = await view(f.page, { action: "draft_update", expectedDigest: current.digest, expectedDraftVersion: current.draftVersion, mediaRefs: refs }); expect(result.status).toBe("completed");
 }
@@ -124,7 +124,7 @@ test("imports owned pixels, preserves private media drafts and requires an expli
     await selectBot(f, 1); expect((await draft(f)).mediaRefs).toEqual([]);
     const denied = await f.page.evaluate(async input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media.metadata(input), { sessionId: f.bots[1]!.sessionId, id: first.mediaRefs[0]!.mediaId }); expect(denied.ok).toBe(false);
     const groupDenied = await f.page.evaluate(async input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media.metadata(input), { sessionId: f.room.sessionId, id: first.mediaRefs[0]!.mediaId }); expect(groupDenied.ok).toBe(false);
-    await f.page.getByRole("button", { name: "添加媒体", exact: true }).click(); await f.page.getByRole("menuitem", { name: "引用已有媒体", exact: true }).click();
+    await openComposerTools(f.page); await f.page.getByRole("button", { name: "添加媒体", exact: true }).click(); await f.page.getByRole("menuitem", { name: "引用已有媒体", exact: true }).click();
     const selector = f.page.getByRole("dialog", { name: "选择媒体引用", exact: true }); await selector.getByRole("button", { name: "添加已有媒体", exact: true }).click();
     await selector.getByRole("button", { name: "添加到当前会话", exact: true }).click(); await selector.getByRole("button", { name: "引用媒体到消息", exact: true }).click();
     expect((await draft(f)).mediaRefs).toEqual(first.mediaRefs); await expect(f.page.getByRole("button", { name: "发送", exact: true })).toBeEnabled(); await f.page.getByRole("button", { name: "发送", exact: true }).click();

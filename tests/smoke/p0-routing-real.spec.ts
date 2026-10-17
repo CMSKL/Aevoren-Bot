@@ -1,3 +1,4 @@
+import { openComposerTools, selectNavigationTab } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -132,7 +133,7 @@ test("real API respects single/all routing, uses the legacy selector, and answer
       return result.data;
     }, roomId);
     const openRoom = async (name: string): Promise<void> => {
-      await page.getByRole("tab", { name: "聊天", exact: true }).click();
+      await selectNavigationTab(page, "聊天");
       await page.locator(".bot-row").filter({ hasText: name }).click();
       await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
     };
@@ -206,6 +207,7 @@ test("real API respects single/all routing, uses the legacy selector, and answer
     await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveText(["@预算顾问"]);
     expect((await requestShapes()).some((request) => request.toolNames.includes("select_room_owner"))).toBe(false);
 
+    await openComposerTools(page);
     await page.getByLabel("群聊默认响应方式").selectOption("everyone");
     await expect(page.getByLabel("群聊默认响应方式")).toHaveValue("everyone");
     await send(page, "我们下周上线十人内部使用的会议记录工具。每人先用自己配置中的 Bot 名称说明负责的领域，再各自从本职角度提一条本周能落实的改进建议。只介绍自己，不代替其他人回答，每人简洁回答。");
@@ -225,6 +227,7 @@ test("real API respects single/all routing, uses the legacy selector, and answer
     expect((await requestShapes()).some((request) => request.toolNames.includes("select_room_owner"))).toBe(false);
 
     await openRoom(seeded.automatic.room.name);
+    await openComposerTools(page);
     await page.getByLabel("群聊默认响应方式").selectOption("automatic");
     await send(page, "小团队的首月费用预算是开发六万元、获客三万元、运维两万元，但总预算只有十万元。请先用自己配置中的 Bot 名称说明负责的领域，再从财务预算和费用控制角度指出一个优先调整点及理由；只介绍你自己，简洁回答。");
     const automatic = await finish(seeded.automatic.room.id, 1, "automatic-selector", true);
@@ -237,6 +240,7 @@ test("real API respects single/all routing, uses the legacy selector, and answer
     await expect(page.locator("article.message-user").last().locator(".message-route-chip")).toHaveText(["@预算顾问"]);
 
     await openRoom(seeded.fixed.room.name);
+    await openComposerTools(page);
     await page.getByLabel("群聊默认响应方式").selectOption("automatic");
     await send(page, "你好，请用你配置中的 Bot 名称和负责的领域简短介绍你自己，不介绍其他成员。");
     const greeting = await finish(seeded.fixed.room.id, 3, "lead-greeting");

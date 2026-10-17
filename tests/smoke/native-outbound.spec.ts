@@ -8,7 +8,7 @@ import type { ConnectorDraftResult, NativeConnection } from "../../src/shared/na
 import type { NativeOutboundIntent } from "../../src/shared/native-outbound-contracts";
 import { AppRepository } from "../../src/main/database";
 import { closeTestApplication, disposeTestApplication, removeTestDirectory } from "./test-cleanup";
-import { openInspector } from "./navigation";
+import { openInspector, selectDetailsTab, selectNavigationTab } from "./navigation";
 
 const parentId = "11111111-1111-4111-8111-111111111111";
 const accountId = "22222222-2222-4222-8222-222222222222";
@@ -156,7 +156,7 @@ async function setup(f: Fixture): Promise<NativeConnection> {
   await openApps(f, verified.id); return verified;
 }
 async function openApps(f: Fixture, connectionId: string): Promise<void> {
-  await f.page.getByRole("tab", { name: "联系人", exact: true }).click(); await f.page.locator(".sidebar").getByRole("listitem", { name: f.bot.name, exact: true }).click(); await f.page.getByRole("tab", { name: "应用", exact: true }).click(); await f.page.getByLabel("当前聊天的应用连接").selectOption(connectionId);
+  await selectNavigationTab(f.page, "联系人"); await f.page.locator(".sidebar").getByRole("listitem", { name: f.bot.name, exact: true }).click(); await selectDetailsTab(f.page, "应用"); await f.page.getByLabel("当前聊天的应用连接").selectOption(connectionId);
 }
 async function saveDraft(f: Fixture, title: string, scope = { sessionId: f.bot.sessionId, executorBotId: f.bot.id }): Promise<ConnectorDraftResult> {
   await f.page.getByRole("button", { name: "新建本地草稿", exact: true }).click(); await f.page.getByLabel("Notion 草稿父页面").fill(parentId); await f.page.getByLabel("文件草稿标题").fill(title); await f.page.getByLabel("文件草稿正文").fill("FROZEN_BODY <script>no execution</script>"); await f.page.getByRole("button", { name: "保存本地草稿", exact: true }).click(); await expect(f.page.getByText("本地草稿已保存 · 版本 1。尚未向外部应用提交。", { exact: true })).toBeVisible();
@@ -254,7 +254,7 @@ test("six group outbound approvals start together and stopping one preserves the
     const before = await snapshot();
     expect(before.runs).toHaveLength(6);
     expect(before.runs.every(run => run.route === "host-outbound" && run.state === "running")).toBe(true);
-    await f.page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(f.page, "聊天");
     await f.page.locator(".bot-row").filter({ hasText: f.room.name }).click();
     const dialog = f.page.getByTestId("tool-permission-dialog");
     await expect(dialog).toHaveCount(1);
@@ -299,15 +299,15 @@ test("six group outbound approvals start together and stopping one preserves the
   });
 });
 
-test("group Apps owns one outbound approval portal while the conversation is behind its modal", async () => {
+test("group Apps defers its approval behind modal settings and restores exactly one portal", async () => {
   test.setTimeout(90_000);
   await withOutbound(async f => {
     const connection = await setup(f);
-    await f.page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(f.page, "聊天");
     await f.page.locator(".bot-row").filter({ hasText: f.room.name }).click();
     await openInspector(f.page);
     const inspector = f.page.getByRole("dialog", { name: "群聊设置", exact: true });
-    await inspector.getByRole("tab", { name: "应用", exact: true }).click();
+    await selectDetailsTab(inspector, "应用");
     await inspector.getByLabel("应用执行成员").selectOption(f.bot.id);
     await inspector.getByLabel("当前聊天的应用连接").selectOption(connection.id);
     await inspector.getByRole("button", { name: "授权当前成员读取", exact: true }).click();
@@ -316,8 +316,20 @@ test("group Apps owns one outbound approval portal while the conversation is beh
     expect(draft.draft.sessionId).toBe(f.room.sessionId);
     expect(draft.draft.executorBotId).toBe(f.bot.id);
     await grantAndPrepare(f);
-    await inspector.getByRole("button", { name: "审阅并批准此版本", exact: true }).click();
+    await f.page.getByRole("button", { name: "设置", exact: true }).click();
+    await expect(f.page.getByRole("dialog", { name: "设置", exact: true })).toBeVisible();
+    // A real host request can arrive while Settings covers the group Apps pane.
+    const pending = unwrap(await f.page.evaluate(async scope => {
+      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+      const listed = await api.outbound.list(scope);
+      if (!listed.ok || !listed.data[0]) throw new Error("Missing fixed group intent");
+      const intent = listed.data[0];
+      return api.outbound.requestApproval({ ...scope, id: intent.id, expectedVersion: intent.version });
+    }, { sessionId: f.room.sessionId, executorBotId: f.bot.id }));
+    expect(pending.approval).toMatchObject({ state: "pending" });
     const dialog = f.page.getByTestId("tool-permission-dialog");
+    await expect(dialog).toHaveCount(0);
+    await f.page.getByRole("button", { name: "关闭设置", exact: true }).click();
     await expect(dialog).toHaveCount(1);
     await expect(dialog).toContainText(f.bot.name);
     await expect(dialog).toContainText("GROUP_MODAL_FIXED_TITLE");

@@ -85,6 +85,12 @@ Saved API keys and OAuth credentials are encrypted by Electron `safeStorage` and
 
 Open **Chats** to resume direct or group conversations and **Contacts** to message or manage an Agent. For folders, projects and archived chats, open **Settings → Capabilities and permissions → Local files and chat management → Open management**. The **+** beside Workspace selects a local folder; choosing the same folder reuses it. Agents can join groups across projects, while each chat has its own file-access scope. New ordinary chats start without a folder; select **Current chat workspace** in chat details to bind one. Existing chats retain their previous authorized-folder snapshot. Removing a chat keeps its history and contact; clearing history preserves the contact, approved Memory and local files.
 
+## Interface refactor (development)
+
+The current development change replaces the navigation rail with one compact conversation list, a centered conversation header and a closable 320px details drawer. Search opens from the magnifier or Cmd/Ctrl+K. The account menu switches Chats, Contacts and Workspace; **Connect apps** opens the existing app settings. Settings is a modal above the current conversation. **+** beside the composer contains attachments, media, mentions, Skills and group routing; selected references remain visible.
+
+Existing models, permissions, drafts and session scopes are retained. The Aevoren icon and project-owned avatars remain; system fonts and MIT Phosphor icons ship with this implementation. The published beta.36 screenshot above shows the earlier interface. This source change is not a new published installer; current checks and visual differences are recorded in [UI acceptance](docs/UI_REDESIGN_QA.md). The personal assistant inspired by Your dot is deferred until after UI acceptance and is not implemented by this presentation change.
+
 ## Connected AI capabilities
 
 Connected models can discover product actions with `product_catalog`, inspect their inputs with `product_describe`, and invoke them with `product_execute`. Actions cover settings, Bot and group creation and management, messages to other Bots, task results, Memory, Routines, workspace permissions, MCP configuration, model connections, updates, persistent documents and text Skills. Development additionally provides isolated Docker commands, background processes and environment files; mutations require real approval. Scoped view actions also support navigation, search, drafts and task details. See [AI product operations](docs/AI_PRODUCT_OPERATIONS.md) for scope, provider validation and limitations.
@@ -103,9 +109,11 @@ Choose `/Skill` or the `@` **Documents / Skill** group in the composer. The sele
 
 ## Docker execution environments (development)
 
+The development Computer view now prepares its scoped execution environment and browser when opened, shows setup progress or an actionable Docker error, and combines takeover with connection in **My turn (我来操作)**. Technical environment and browser tools remain under **More**. Existing environments keep their recorded images and background services; only the selected conversation/member starts. This UI update is not yet in a published installer.
+
 On macOS, desktop launches find Docker in standard installation locations and distinguish a missing CLI from a stopped engine.
 
-Bring your own local Docker Linux runtime and keep the same local Docker context selected while using existing environments; switching Docker engines is not validated. Open **Contacts → select Bot → Execution environment (执行环境)**, or choose a member in **Group settings → Execution environment**. Check Docker, prepare the Linux image and start the environment. Each `(conversation, executing Bot)` has its own container and persistent workspace; six group members can run independently.
+The published beta.36 uses the following manual setup; development builds also provide the automatic Computer entry above. Bring your own local Docker Linux runtime and keep the same local Docker context selected while using existing environments; switching Docker engines is not validated. Open **Contacts → select Bot → Execution environment (执行环境)**, or choose a member in **Group settings → Execution environment**. Check Docker, prepare the Linux image and start the environment. Each `(conversation, executing Bot)` has its own container and persistent workspace; six group members can run independently.
 
 Run Node, Python or shell commands, inspect real output/exit codes, stop an individual task, or start a separately managed background service. Environment files support bounded uploads/downloads and create-only writes; replacing a file requires its previously read SHA-256. Background services survive closing the app and clearing chat history while Docker remains running. Sleeping the environment interrupts its tasks and retains the workspace; waking it does not replay old commands. See [environment setup, limits and validation](docs/EXECUTION_ENVIRONMENT.md). Final unsigned macOS package scenarios passed; Windows Linux-container execution remains unverified.
 

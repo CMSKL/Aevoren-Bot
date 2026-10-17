@@ -7,7 +7,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { BOT_AVATAR_COLORS, type BotAvatarColor } from "../../src/shared/bot-avatar";
 import type { AevorenBotApi } from "../../src/shared/contracts";
 import { removeTestDirectory } from "./test-cleanup";
-import { openInspector, openWorkspaceTab } from "./navigation";
+import { openInspector, openWorkspaceTab, selectNavigationTab, openListFilter } from "./navigation";
 
 // Browser plugin not available. Use the repository's Playwright/Electron workflow.
 // The fake provider isolates UI fixtures; these tests make no model-response claims.
@@ -192,7 +192,7 @@ async function openSidebar(page: Page): Promise<void> {
 async function openSettings(page: Page): Promise<void> {
   await openSidebar(page);
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await expect(page.getByRole("region", { name: "设置", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "设置", exact: true })).toBeVisible();
 }
 
 async function checkHorizontalLayout(page: Page): Promise<void> {
@@ -201,7 +201,7 @@ async function checkHorizontalLayout(page: Page): Promise<void> {
     documentWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
   }));
   expect(viewport.documentWidth).toBeLessThanOrEqual(viewport.width + 1);
-  const dialog = page.getByRole("region", { name: "设置", exact: true });
+  const dialog = page.getByRole("dialog", { name: "设置", exact: true });
   if (!await dialog.isVisible()) return;
   const layout = await dialog.evaluate((element) => {
     const dialog = element as HTMLElement;
@@ -245,13 +245,14 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
     await checkPage(page);
     await resize(application, page, 1180);
     await seedBots(page, BOT_AVATAR_COLORS.slice(0, 7));
-    await expect.poll(() => page.locator(".sidebar img.bot-avatar-icon, .nav-rail-profile img.user-avatar").evaluateAll((images) => {
+    await expect.poll(() => page.locator(".sidebar img.bot-avatar-icon, .sidebar-account-trigger img.user-avatar").evaluateAll((images) => {
       return images.length === 8 && images.every((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth === 512 && image.naturalHeight === 512);
     })).toBe(true);
-    const assetUrls = await page.locator(".sidebar img.bot-avatar-icon, .nav-rail-profile img.user-avatar").evaluateAll((images) => images.map((image) => (image as HTMLImageElement).currentSrc));
+    const assetUrls = await page.locator(".sidebar img.bot-avatar-icon, .sidebar-account-trigger img.user-avatar").evaluateAll((images) => images.map((image) => (image as HTMLImageElement).currentSrc));
     expect(new Set(assetUrls).size).toBe(8);
     await captureScreenshot(application, page, testInfo.outputPath("all-avatar-assets.png"));
 
+    await page.getByRole("button", { name: "打开账户菜单", exact: true }).click();
     await page.getByRole("button", { name: "打开个人资料", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "个人资料", exact: true });
     await expect(dialog).toBeVisible();
@@ -292,7 +293,7 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
     const uploadedAvatar = await preview.getAttribute("src");
     await dialog.getByRole("button", { name: "保存", exact: true }).click();
     await expect(dialog).toBeHidden();
-    await expect(page.locator(".nav-rail-profile img")).toHaveAttribute("src", uploadedAvatar!);
+    await expect(page.locator(".sidebar-account-trigger img")).toHaveAttribute("src", uploadedAvatar!);
     await closeApplication(application);
     application = undefined;
 
@@ -309,7 +310,8 @@ test("loads every avatar asset and persists the actual uploaded, centered avatar
     page = launched.page;
     watchErrors(page, errors);
     await checkPage(page);
-    await expect(page.locator(".nav-rail-profile img")).toHaveAttribute("src", uploadedAvatar!);
+    await expect(page.locator(".sidebar-account-trigger img")).toHaveAttribute("src", uploadedAvatar!);
+    await page.getByRole("button", { name: "打开账户菜单", exact: true }).click();
     await page.getByRole("button", { name: "打开个人资料", exact: true }).click();
     await expect(page.getByLabel("昵称", { exact: true })).toHaveValue("头像验收用户");
     await expect(page.locator(".user-profile-avatar img")).toHaveAttribute("src", uploadedAvatar!);
@@ -364,17 +366,20 @@ for (const theme of ["light", "dark"] as const) {
           const viewport = await resize(launched.application, page, width);
           testInfo.annotations.push({ type: "viewport", description: `${theme}: ${viewport.width} × ${viewport.height}` });
           await openSettings(page);
-          const dialog = page.getByRole("region", { name: "设置", exact: true });
-          await dialog.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: theme === "dark" ? "暗黑" : "白昼", exact: true }).click();
+          const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+          await dialog.getByRole("combobox", { name: "界面主题", exact: true }).selectOption(theme);
           await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
         });
-        const dialog = page.getByRole("region", { name: "设置", exact: true });
+        const dialog = page.getByRole("dialog", { name: "设置", exact: true });
         const navigation = dialog.locator(".settings-nav nav");
         if (width <= 620) {
           await test.step("verify horizontal settings navigation scroll", async () => {
-            expect(await navigation.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
-            await navigation.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
-            await expect.poll(() => navigation.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+            if (await navigation.evaluate((element) => element.scrollWidth > element.clientWidth)) {
+              await navigation.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+              await expect.poll(() => navigation.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+            } else {
+              for (const category of await navigation.getByRole("button").all()) await expect(category).toBeInViewport();
+            }
           });
         }
         for (const section of ["通用", "能力与权限", "长期记忆", "应用连接", "MCP", "主动服务", "版本更新"]) {
@@ -426,8 +431,8 @@ for (const theme of ["light", "dark"] as const) {
               expect(geometry.scrollRemaining).toBeLessThanOrEqual(1);
               expect(geometry.closeInsideContent).toBe(false);
               expect(geometry.closeInsideToolbar).toBe(true);
-              expect(geometry.closeWidth).toBeGreaterThanOrEqual(40);
-              expect(geometry.closeHeight).toBeGreaterThanOrEqual(40);
+              expect(geometry.closeWidth).toBe(28);
+              expect(geometry.closeHeight).toBe(28);
               expect(geometry.toolbarTop).toBeGreaterThanOrEqual(geometry.regionTop - 1);
               expect(geometry.toolbarBottom).toBeLessThanOrEqual(geometry.regionBottom + 1);
               expect(geometry.editorTop).toBeGreaterThanOrEqual(geometry.contentTop - 1);
@@ -442,9 +447,10 @@ for (const theme of ["light", "dark"] as const) {
           await expect(dialog).toBeHidden();
           await checkHorizontalLayout(page);
           await openSidebar(page);
-          await page.getByRole("tab", { name: "联系人", exact: true }).click();
-          await expect(page.getByRole("tab", { name: "联系人", exact: true })).toHaveAttribute("aria-selected", "true");
+          await selectNavigationTab(page, "联系人");
+          await expect(page.locator("#navigation-contacts")).toHaveAttribute("aria-selected", "true");
           await openSidebar(page);
+          await openListFilter(page);
           await page.getByLabel("搜索联系人", { exact: true }).fill("没有这个联系人");
           await expect(page.locator(".sidebar .bot-row")).toHaveCount(0);
           await page.getByLabel("搜索联系人", { exact: true }).fill("界面验收");
@@ -453,8 +459,9 @@ for (const theme of ["light", "dark"] as const) {
           await openWorkspaceTab(page);
           await expect(page.locator(".sidebar-project").first()).toBeVisible();
           await openSidebar(page);
-          await page.getByRole("tab", { name: "聊天", exact: true }).click();
+          await selectNavigationTab(page, "聊天");
           await openSidebar(page);
+          await openListFilter(page);
           await expect(page.getByLabel("搜索聊天", { exact: true })).toHaveValue("");
           await checkHorizontalLayout(page);
         });
@@ -469,7 +476,7 @@ for (const theme of ["light", "dark"] as const) {
             await expect(page.locator(".inspector")).toBeHidden();
             await checkHorizontalLayout(page);
             await captureScreenshot(launched.application, page, testInfo.outputPath(`contact-editor-${theme}-${width}.png`));
-            await contact.getByRole("button", { name: "发消息", exact: true }).click();
+            await contact.getByRole("button", { name: "关闭详情", exact: true }).click();
             await expect(page.locator(".conversation:not(.contact-detail)")).toBeVisible();
             await expect(page.locator(".inspector")).toBeHidden();
           });
