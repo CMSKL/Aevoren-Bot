@@ -33,6 +33,10 @@
 
 ### Consolidated beta.34 development history (not separately released)
 
+- Find Docker in standard macOS installation locations when a desktop launch has a minimal PATH, preserving the existing PATH and local-context restrictions.
+- Recheck included Claude MCP image leases at the actual HTTP body write, including retained JSON batches. Revoked responses stop without cancelling independent requests; cached replies recheck authorization without executing the tool again.
+- Bound owned Windows fixture cleanup with one finite command/stdio window. Startup close uses the existing three-second normal-close contract and explicitly requires exit 0 with no signal.
+- Preserve the exact unsigned Windows NSIS after installed business and close acceptance, with version, checkout head, SHA-256 and a 30-day manual-validation artifact. Official Release assets and automatic updates retain their signing requirements.
 - Add conversation/executor-scoped MCP grants, fixed schema/configuration/credential approvals and durable send-once tool receipts. Unknown results do not replay; confirmation is explicitly server-reported.
 - Add opaque sandboxed MCP Apps with actual initialization, input/results and approved tool calls. App-only visibility is enforced and protocol metadata stays out of model and journal results.
 - Share one Apps approval owner across native and MCP actions, preserving six-member execution and exact Stop/revoke.
