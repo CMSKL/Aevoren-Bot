@@ -1,18 +1,24 @@
 # Changelog
 
-## Unreleased delivery tooling
+## v0.3.0-beta.36 (consolidated delivery candidate)
+
+- Consolidate unpublished beta.34 MCP/Apps and beta.35 Notion updates with beta.36 image/document media. Voice and Phase 6 remain outside this delivery.
+- Freeze feature expansion and preserve later branches. Reuse applicable evidence; distinguish local checks, CI, installed-package acceptance, signed publication and real third-party validation.
+- Retain strict normal-exit assertions and gated cleanup-stage evidence for the Windows post-cancellation close timeout. Controlled passing observations do not establish the original failure cause.
+
+### Delivery tooling
 
 - Correct the Windows fixture cleanup budget: preserve the 3-second graceful close, share the previous 1.5-second command plus 2-second pipe allowance as one finite 3.5-second forced-cleanup window, and require the actual owned exit and closed pipes. Keep descendant/sibling checks and distinguish forced cleanup from a normal exit.
 - Preserve the exact installed-and-accepted unsigned Windows x64 NSIS file with its SHA-256 and version/head identity after successful CI gates, for a 30-day manual validation download. Official Release signing and automatic-update requirements remain unchanged.
 
-## v0.3.0-beta.36 (development candidate)
+### Image/document media
 
 - Add owned PNG/JPEG/PDF/DOCX storage, fixed message/extraction references, conversation bindings and immutable Runtime admission snapshots; revocation blocks later reads and rebinding does not revive old tasks.
 - Add bounded PDF text/page previews and DOCX plain-text extraction in independent hidden sandbox parser jobs, explicit assets and licenses, cancellation and shutdown.
 - Share twelve media operations with the UI and AI. Actual text/pixels travel as revocable ephemeral tool attachments across API, Claude and Codex; receipts contain metadata only.
 - Preserve composer drafts across late imports, sends and navigation with monotonic versions. Earlier beta.36 snapshots recorded 1,630 ordinary passes / 45 skips, 150 hidden source scenarios / 32 skips and 34 actual unsigned macOS package scenarios after the CAS hardlink regression fix. Those receipts remain historical; the current local combination passed 106 targeted tests, six source-parser cases and ten actual unsigned macOS-package cases, including private-text response leases. Normal combined development and Beta acceptance remain pending. Final cross-platform CI and signed publication remain pending; no OCR, audio/video or voice is claimed.
 
-## v0.3.0-beta.35 (development candidate)
+### Consolidated beta.35 development history (not separately released)
 
 - Recheck retained Claude MCP image leases at the actual HTTP body write. A takeover or closed source refuses only its response; independent requests, redacted cached retries and normal cancellation errors retain their existing behavior.
 - Find the Docker CLI in standard macOS installation locations when a desktop launch has a minimal PATH, keeping an explicitly configured PATH first. Preserve local-context restrictions and distinguish an installed but stopped engine from a missing CLI.
@@ -21,7 +27,7 @@
 - Verify appended blocks by returned or committed child IDs, parent and text; ambiguous attempts remain unknown and cannot resend. Label title reconciliation based only on current state without claiming the original request caused that state.
 - Real SQLite, controlled HTTP and Renderer unit checks pass. The combined source build, 1,586 ordinary tests (45 skipped) and 14 hidden Electron source cases passed before the final MCP setup cleanup. Post-cleanup focused checks and 22 actual unsigned macOS-package business cases passed at the earlier candidate; its old cleanup helper did not establish normal exit. These remain historical receipts. The current diagnostic candidate passed Linux CI with 1,593 ordinary tests (45 skipped) and 41 real Docker checks, and a fresh unsigned macOS rebuild passed 30 package scenarios with no forced-cleanup warnings. Full cross-platform CI, validated Beta promotion and signed publication remain pending. Real Notion credentials are unavailable and unverified.
 
-## v0.3.0-beta.34 (development candidate)
+### Consolidated beta.34 development history (not separately released)
 
 - Add conversation/executor-scoped MCP grants, fixed schema/configuration/credential approvals and durable send-once tool receipts. Unknown results do not replay; confirmation is explicitly server-reported.
 - Add opaque sandboxed MCP Apps with actual initialization, input/results and approved tool calls. App-only visibility is enforced and protocol metadata stays out of model and journal results.

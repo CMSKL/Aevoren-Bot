@@ -1,6 +1,6 @@
 # Media and documents
 
-The beta.36 local integration draft adds a separate **Media** section to the existing private and Room Library panels. Use the media button beside text attachments to import or select a saved item, then send through the ordinary composer. Text/code attachments keep their existing behavior. This unit is under acceptance testing; published beta.33 does not contain it.
+The consolidated beta.36 delivery includes a separate **Media** section to the existing private and Room Library panels. Use the media button beside text attachments to import or select a saved item, then send through the ordinary composer. Text/code attachments keep their existing behavior. The earlier beta.33 release does not contain this functionality. Release availability and validation evidence are recorded in the [implementation record](IMPLEMENTATION_PLAN.md).
 
 ## Supported content
 
