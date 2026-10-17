@@ -1,8 +1,8 @@
 # User guide
 
-This guide covers the consolidated v0.3.0-beta.36 delivery candidate: documents and text/script Skills, isolated Docker execution and browser/computer use, reviewable demonstration Skills, native connections, approved external drafts and scoped MCP Apps. Native reads and writes require explicit conversation/Bot permissions; credentials remain in the host. See [Native connections](NATIVE_CONNECTORS.md), [External drafts](NATIVE_OUTBOUND.md) and [MCP Apps](MCP_APPS.md) for setup and exact boundaries.
+This guide covers the v0.3.0-beta.36 Beta release: documents and text/script Skills, local Docker execution, isolated browser/computer use, reviewable demonstration Skills, native connections, fixed external drafts, scoped MCP Apps and PNG/JPEG/PDF/DOCX media. Native reads and writes require explicit conversation/Bot permissions; credentials remain in the host. See [Native connections](NATIVE_CONNECTORS.md), [External drafts](NATIVE_OUTBOUND.md), [MCP Apps](MCP_APPS.md) and [Media](MEDIA.md).
 
-The beta.36 candidate combines scoped MCP/Apps, Notion page updates and image/document media. Earlier local source and unsigned macOS-package receipts retain their original scope; final candidate acceptance is recorded separately. Cross-platform CI and signed publication are separate gates in the [implementation record](IMPLEMENTATION_PLAN.md). Download published installers from [Beta releases](https://github.com/CMSKL/Aevoren-Bot/releases). The app targets macOS 13 or newer on Apple silicon and the Windows 10/11 x64 MVP validation build; real Windows Docker remains unverified. PNG/JPEG/PDF/DOCX media is included in this candidate; audio/video, voice and Phase 6 additions are outside this delivery. Real account authorization, external effects and cloud-model interpretation are not established by controlled fixtures or unavailable private credentials.
+Download [v0.3.0-beta.36](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.36) for signed/notarized macOS Apple silicon. [Windows x64 manual validation](https://github.com/CMSKL/Aevoren-Bot/actions/runs/39001788239/artifacts/12090189139) is unsigned, requires GitHub sign-in and expires 2026-11-16 UTC. The [implementation record](IMPLEMENTATION_PLAN.md) separates local checks, CI, installation, database migration, signed publication and real-provider evidence. Real third-party accounts/cloud interpretation, Windows Docker and actual automatic-update installation remain unverified. Audio/video, speech, realtime voice and Phase 6 are outside this release.
 
 ## First run
 
@@ -50,7 +50,7 @@ The message pins `resourceId`, `revisionId` and `digest`. Editing the resource l
 
 Connected models discover the 38 new `library.*`, `documents.*` and `skills.*` operations through `product_catalog`, `product_describe` and `product_execute`. `skills.load` returns an authorized text Skill to the current Runtime; `skills.readFile` reads accepted auxiliary text, with paging and truncation information. Binary assets return metadata only. File imports from AI must use the current conversation's authorized Workspace; selecting arbitrary native import/export locations requires the user's file dialog interaction. Mutations and sharing continue through the existing permission and approval rules.
 
-Text Skill metadata, including declared tool names, does not grant tool permissions. The current development candidate adds [script Skills](SCRIPT_SKILLS.md): review a fixed entry, grant it access to the selected environment image, then confirm each run's arguments. Scripts use Bash, Python or Node inside that environment, with real execution output and cancellation. The separate approved Docker command workflow below and isolated [browser/computer tools](BROWSER_COMPUTER.md) remain available. [Demonstration drafts](SKILL_DEMONSTRATIONS.md), [native connections](NATIVE_CONNECTORS.md) and [approved external writes](NATIVE_OUTBOUND.md) are retained in beta.36 with separate grants and fixed reviews. See [Media](MEDIA.md) for image/document references and previews; voice remains later work.
+Text Skill metadata, including declared tool names, does not grant tool permissions. Use [script Skills](SCRIPT_SKILLS.md): review a fixed entry, grant it access to the selected environment image, then confirm each run's arguments. Scripts use Bash, Python or Node inside that environment, with real execution output and cancellation. The separate approved Docker command workflow below and isolated [browser/computer tools](BROWSER_COMPUTER.md) remain available. [Demonstration drafts](SKILL_DEMONSTRATIONS.md), [native connections](NATIVE_CONNECTORS.md) and [approved external writes](NATIVE_OUTBOUND.md) are retained in beta.36 with separate grants and fixed reviews. See [Media](MEDIA.md) for image/document references and previews; voice remains later work.
 
 ## Docker execution environments (development)
 
@@ -131,13 +131,13 @@ In a member's **Computer** panel, take over and connect the isolated computer, t
 
 Stop to create an editable `SKILL.md` draft. Save changes before publishing; a conflict preserves the local editor. Publish the saved fixed version only after reviewing placeholders and coordinates. The result is initially disabled in this conversation's Library / Skill; enable it explicitly when ready. This creates no execution grant and starts no task. AI publication uses the saved full-body approval snapshot, and edits invalidate the old approval.
 
-This development unit requires Browser Worker 1.1.0. Older environments continue running; explicitly stop and rebuild when ready. See [Skill demonstrations](SKILL_DEMONSTRATIONS.md) for limits, scope and pending Docker/cross-platform validation.
+This development unit requires Browser Worker 1.1.0. Older environments continue running; explicitly stop and rebuild when ready. See [Skill demonstrations](SKILL_DEMONSTRATIONS.md) for limits, scope and controlled Linux Docker evidence. Actual Windows Docker remains unverified.
 
 ## Scoped MCP tools and Apps
 
-The beta.36 delivery candidate includes [scoped MCP tools and isolated Apps](MCP_APPS.md) in the existing Contact/Room Applications sections. Grant specific tools, approve fixed JSON arguments and targets, and query unknown results without resending. Server-reported results and real third-party verification remain distinct.
+The beta.36 release includes [scoped MCP tools and isolated Apps](MCP_APPS.md) in the existing Contact/Room Applications sections. Grant specific tools, approve fixed JSON arguments and targets, and query unknown results without resending. Server-reported results and real third-party verification remain distinct.
 
 
-## 图片与文档（beta.36 开发候选）
+## 图片与文档（beta.36）
 
-在私聊或群的资料库中打开媒体区，或点击输入框文本附件旁的媒体入口，导入／选择图片、PDF 或 DOCX。只发送媒体也走原有任务流程；引用固定原始摘要及解析版本，群成员可并行读取同一已授权引用。预览、撤销、停用、删除和恢复均按当前会话权限检查；导入期间继续编辑不会被旧结果覆盖。PDF 支持逐页预览和文字提取，扫描件无 OCR；DOCX 显示纯文本分节。图片实际传输和模型是否支持视觉分别标识。当前仍在验收，完整限制见[媒体与文档](MEDIA.md)。
+在私聊或群的资料库中打开媒体区，或点击输入框文本附件旁的媒体入口，导入／选择图片、PDF 或 DOCX。只发送媒体也走原有任务流程；引用固定原始摘要及解析版本，群成员可并行读取同一已授权引用。预览、撤销、停用、删除和恢复均按当前会话权限检查；导入期间继续编辑不会被旧结果覆盖。PDF 支持逐页预览和文字提取，扫描件无 OCR；DOCX 显示纯文本分节。图片实际传输和模型是否支持视觉分别标识。完整限制见[媒体与文档](MEDIA.md)。
