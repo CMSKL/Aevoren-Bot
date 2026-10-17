@@ -8,6 +8,8 @@
 
 ### Delivery tooling
 
+- Use native full-byte Buffer equality for the two large media CAS assertions, removing measured generic object-comparison overhead without changing data, product I/O, assertions of byte equality or timeout budgets.
+
 - Correct the Windows fixture cleanup budget: preserve the 3-second graceful close, share the previous 1.5-second command plus 2-second pipe allowance as one finite 3.5-second forced-cleanup window, and require the actual owned exit and closed pipes. Keep descendant/sibling checks and distinguish forced cleanup from a normal exit.
 - Preserve the exact installed-and-accepted unsigned Windows x64 NSIS file with its SHA-256 and version/head identity after successful CI gates, for a 30-day manual validation download. Official Release signing and automatic-update requirements remain unchanged.
 

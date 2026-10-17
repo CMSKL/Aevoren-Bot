@@ -51,7 +51,7 @@ describe("owned media CAS", () => {
     await expect(new LibraryBlobStore(join(root, "library")).put(bytes)).rejects.toMatchObject({ code: "LIBRARY_IMPORT_TOO_LARGE" });
     const sha = await store.put(bytes);
     expect(sha).toBe(mediaBytesDigest(bytes)); expect(await store.put(bytes)).toBe(sha);
-    expect(await store.read(sha, bytes.length)).toEqual(bytes);
+    expect((await store.read(sha, bytes.length)).equals(bytes)).toBe(true);
     expect(readdirSync(join(root, "media", sha.slice(0, 2)))).toEqual([sha]);
     await expect(store.put(Buffer.alloc(MEDIA_PDF_MAX_BYTES + 1))).rejects.toMatchObject({ code: "MEDIA_IMPORT_TOO_LARGE" });
   });
@@ -92,7 +92,7 @@ describe("owned media CAS", () => {
   it("publishes equal blobs concurrently without rejecting a sibling's valid content", async () => {
     const root = await fixture(), store = new MediaBlobStore(join(root, "media")), bytes = Buffer.alloc(1_048_576, 87);
     const values = await Promise.all(Array.from({ length: 6 }, () => store.put(bytes)));
-    expect(new Set(values)).toEqual(new Set([mediaBytesDigest(bytes)])); expect(await store.read(values[0]!, bytes.length)).toEqual(bytes);
+    expect(new Set(values)).toEqual(new Set([mediaBytesDigest(bytes)])); expect((await store.read(values[0]!, bytes.length)).equals(bytes)).toBe(true);
   });
   it.skipIf(process.platform === "win32")("does not follow source or CAS symlinks", async () => {
     const root = await fixture(), outside = join(root, "outside.pdf"), alias = join(root, "alias.pdf"); writeFileSync(outside, "%PDF-1.7\nprivate"); symlinkSync(outside, alias);
