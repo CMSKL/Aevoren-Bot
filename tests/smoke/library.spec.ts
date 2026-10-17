@@ -9,7 +9,7 @@ import type { LibraryApi, LibraryContent, LibraryExportResult, LibraryImportResu
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { openInspector } from "./navigation";
-import { removeTestDirectory } from "./test-cleanup";
+import { disposeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { IPC } from "../../src/shared/channels";
 import { LIBRARY_CHANNELS } from "../../src/shared/library-channels";
 
@@ -190,7 +190,7 @@ async function withLibrary(callback: (fixture: LibraryFixture) => Promise<void>)
     expect(await application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
   } finally {
     server.closeAllConnections();
-    if (application!) await application.close().catch(() => application.process().kill("SIGKILL"));
+    if (application!) await disposeTestApplication(application);
     await new Promise<void>(resolve => server.close(() => resolve()));
     removeTestDirectory(data);
   }

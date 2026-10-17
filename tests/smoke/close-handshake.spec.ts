@@ -1,5 +1,5 @@
 import { IPC } from "../../src/shared/channels";
-import { closeTestApplication, removeTestDirectory } from "./test-cleanup";
+import { disposeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { openInspector } from "./navigation";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -114,7 +114,7 @@ async function requestWindowClose(application: ElectronApplication, timeoutMs = 
     if (!didExit) {
       await test.info().attach("close-phase-diagnostics", { body: JSON.stringify({ timeoutMs, phases: probe?.phases ?? [] }), contentType: "application/json" });
       probe?.record("window-close-cleanup-start");
-      await closeTestApplication(application);
+      await disposeTestApplication(application);
       await exited;
       probe?.record("window-close-cleanup-resolved");
     }
@@ -141,7 +141,7 @@ async function requestAppQuit(application: ElectronApplication, timeoutMs = 3_00
     if (!didExit) {
       await test.info().attach("close-phase-diagnostics", { body: JSON.stringify({ timeoutMs, phases: probe?.phases ?? [] }), contentType: "application/json" });
       probe?.record("app-quit-cleanup-start");
-      await closeTestApplication(application);
+      await disposeTestApplication(application);
       await exited;
       probe?.record("app-quit-cleanup-resolved");
     }
@@ -214,7 +214,7 @@ test("flushes a dirty profile and preserves its database hash across three resta
       application = undefined;
     }
   } finally {
-    if (application) await closeTestApplication(application);
+    if (application) await disposeTestApplication(application);
     removeTestDirectory(userDataDir);
   }
 });
@@ -245,7 +245,7 @@ test("keeps the window open when a dirty profile cannot be saved, then closes af
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
   } finally {
-    if (application) await closeTestApplication(application);
+    if (application) await disposeTestApplication(application);
     removeTestDirectory(userDataDir);
   }
 });
@@ -271,7 +271,7 @@ test("flushes a dirty profile through the application quit path", async () => {
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
   } finally {
-    if (application) await closeTestApplication(application);
+    if (application) await disposeTestApplication(application);
     removeTestDirectory(userDataDir);
   }
 });
@@ -311,7 +311,7 @@ test("flushes a dirty profile after an embedded frame loads and is removed", asy
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
   } finally {
-    if (application) await closeTestApplication(application);
+    if (application) await disposeTestApplication(application);
     removeTestDirectory(userDataDir);
   }
 });
@@ -348,7 +348,7 @@ for (const navigation of ["same-document", "main-document"] as const) {
       expect(await requestWindowClose(application)).toBe(true);
       application = undefined;
     } finally {
-      if (application) await closeTestApplication(application);
+      if (application) await disposeTestApplication(application);
       removeTestDirectory(userDataDir);
     }
   });
@@ -398,7 +398,7 @@ test("flushes a dirty profile after a main-frame navigation is blocked", async (
     expect(await requestWindowClose(application)).toBe(true);
     application = undefined;
   } finally {
-    if (application) await closeTestApplication(application);
+    if (application) await disposeTestApplication(application);
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
     removeTestDirectory(userDataDir);

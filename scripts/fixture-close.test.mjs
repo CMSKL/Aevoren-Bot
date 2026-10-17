@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
-import { closeTestApplication } from "../tests/smoke/test-cleanup.ts";
+import { closeTestApplication, disposeTestApplication } from "../tests/smoke/test-cleanup.ts";
 
 // 3s normal grace + 3.5s forced cleanup + 1s descendant check + 0.5s runner allowance.
 const forcedFixtureBoundMs = 8_000;
@@ -63,8 +63,8 @@ test("a stalled Electron-shaped fixture closes its inherited pipes and owned des
   let failed = false;
   record("close-request");
   try {
-    await closeTestApplication({ process: () => owned, close: () => new Promise(() => {}) });
-    record("close-returned");
+    assert.equal(await disposeTestApplication({ process: () => owned, close: () => new Promise(() => {}) }), false);
+    record("failed-close-disposed");
     assert.equal(pipesClosed, true, "the owned exit and inherited stdio must finish before teardown returns");
     const deadline = performance.now() + 1_000;
     while (alive(descendantPid) && performance.now() < deadline) await delay(10);
@@ -98,9 +98,9 @@ test("waits for delayed graceful fixture exit without killing its sibling", asyn
   const owned = await child(), sibling = await child();
   const ended = once(owned, "exit");
   try {
-    await closeTestApplication({ process: () => owned, close: async () => {
+    assert.equal(await disposeTestApplication({ process: () => owned, close: async () => {
       await delay(1_250); owned.kill("SIGTERM"); await ended;
-    } });
+    } }), true);
     assert.equal((await ended)[1], "SIGTERM");
     assert.equal(sibling.exitCode, null); assert.equal(sibling.signalCode, null);
     assert.equal(globalThis.process.kill(sibling.pid, 0), true);
@@ -112,7 +112,8 @@ test("a stalled close terminates only its owned fixture and returns within the t
   const ended = once(owned, "exit");
   const started = performance.now();
   try {
-    await closeTestApplication({ process: () => owned, close: () => new Promise(() => {}) });
+    const graceful = await disposeTestApplication({ process: () => owned, close: () => new Promise(() => {}) });
+    assert.equal(graceful, false, "forced disposal must be distinguishable from graceful application close");
     assertForcedExit(await ended);
     assert.ok(performance.now() - started < forcedFixtureBoundMs, "bounded close must leave time for temporary-directory cleanup");
     assert.equal(sibling.exitCode, null); assert.equal(sibling.signalCode, null);
@@ -123,7 +124,17 @@ test("a stalled close terminates only its owned fixture and returns within the t
 test("a close transport failure still releases its exact fixture process", async () => {
   const owned = await child(); const ended = once(owned, "exit");
   try {
-    await closeTestApplication({ process: () => owned, close: async () => { throw new Error("fixture close transport failed"); } });
+    assert.equal(await disposeTestApplication({ process: () => owned, close: async () => { throw new Error("fixture close transport failed"); } }), false);
     assertForcedExit(await ended);
+  } finally { await stop(owned); }
+});
+
+
+test("strict close never reports forced disposal as a successful application exit", async () => {
+  const owned = await child(), ended = once(owned, "exit");
+  try {
+    await assert.rejects(closeTestApplication({ process: () => owned, close: async () => { throw new Error("controlled close transport failure"); } }), /did not close gracefully/u);
+    assertForcedExit(await ended);
+    assert.ok(owned.stdio.every(stream => !stream || stream.destroyed));
   } finally { await stop(owned); }
 });

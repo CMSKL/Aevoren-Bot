@@ -6,13 +6,14 @@ import type { ElectronApplication } from "@playwright/test";
 
 const run = promisify(execFile);
 
-/** Bound teardown of the isolated fixture; never signal an unrelated process. */
-export async function closeTestApplication(application: Pick<ElectronApplication, "close" | "process">): Promise<void> {
+/** Cleanup only: false means graceful close failed and the owned fixture was disposed. */
+export async function disposeTestApplication(application: Pick<ElectronApplication, "close" | "process">): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([application.close(), new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => reject(new Error("Isolated Electron close timed out")), 3_000);
     })]);
+    return true;
   } catch {
     if (timer) clearTimeout(timer);
     // Successful close disposes Playwright's process channel; read it only when
@@ -68,9 +69,15 @@ export async function closeTestApplication(application: Pick<ElectronApplication
     } finally {
       owned.removeListener("close", onClose);
     }
+    return false;
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/** Require graceful close; owned-fixture disposal cannot satisfy normal-exit acceptance. */
+export async function closeTestApplication(application: Pick<ElectronApplication, "close" | "process">): Promise<void> {
+  if (!await disposeTestApplication(application)) throw new Error("Isolated Electron did not close gracefully; owned fixture was disposed");
 }
 
 /** Best-effort cleanup for macOS temporary directories after Electron is killed. */
