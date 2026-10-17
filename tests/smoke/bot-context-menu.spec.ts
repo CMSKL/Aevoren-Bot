@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { closeInspector, openBotList, openInspector } from "./navigation";
+import { closeInspector, openBotList, openInspector, selectNavigationTab } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -96,7 +96,7 @@ test("supports Grok-style Bot context actions and restores their sidebar state",
     await expect(row(page, "研究 助手")).toBeVisible();
     await expect(page.getByRole("heading", { name: "研究 助手" })).toBeVisible();
 
-    await page.getByRole("tab", { name: "联系人", exact: true }).click();
+    await selectNavigationTab(page, "联系人");
     menu = await menuFor(page, "Beta");
     await menu.getByRole("menuitem", { name: "编辑资料" }).click();
     await expect(page.getByRole("heading", { name: "Beta" })).toBeVisible();

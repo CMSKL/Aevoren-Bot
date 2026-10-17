@@ -14,6 +14,10 @@ This inventory records the disposition of visual and research assets before the 
 
 References to third-party product names in source code should be limited to interoperability and accompanied by the notice in [TRADEMARKS.md](../TRADEMARKS.md).
 
+## Compact interface research — 2026-10-17
+
+The development interface uses measured layout, spacing and color relationships from the maintainer-selected reference. Extracted renderer bundles, screenshots, comparison composites, avatar algorithms, proprietary X VF/X Mono fonts and the cursor-icons font remain outside this repository and outside application packages. The examined fonts carry third-party copyright notices without a redistribution grant. The implementation uses the existing platform font stack, MIT-licensed Phosphor React icons and the project's own avatar assets. Font shapes, icon silhouettes and avatar artwork therefore have explicit visual differences from that reference. No new runtime dependency or asset license is introduced by this refactor.
+
 ## Maintainer redistribution attestation
 
 On 2026-09-18, the project maintainer explicitly directed the repository to retain and redistribute the legacy Aevoren Bot face icon after the left-facing adjustment. This records project-level permission to include the asset with Aevoren Bot; it is not a legal opinion, independent-authorship certificate, or trademark clearance. Before a public binary release, the maintainer should retain any source/permission evidence available and complete the trademark review described in the open-source checklist.

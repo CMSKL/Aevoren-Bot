@@ -24,11 +24,9 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
     await closeInspector(page);
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    const themes = page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button");
-    await expect(themes).toHaveCount(2);
-    await expect(themes.nth(0)).toContainText("暗黑");
-    await expect(themes.nth(1)).toContainText("白昼");
-    await themes.nth(1).click();
+    const themes = page.getByRole("combobox", { name: "界面主题", exact: true });
+    await expect(themes.getByRole("option")).toHaveCount(3);
+    await themes.selectOption("light");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     await page.getByRole("button", { name: "关闭设置", exact: true }).click();
     await page.getByLabel("消息").fill("请用 Markdown 给出简短分析。");
@@ -71,20 +69,20 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     });
     expect(desktopLayout.userRatio).toBeLessThan(0.76);
     expect(desktopLayout.assistantWidth).toBeGreaterThan(0);
-    expect(desktopLayout.assistantWidth).toBeLessThanOrEqual(720);
+    expect(desktopLayout.assistantWidth).toBeLessThanOrEqual(560);
     expect(desktopLayout.userIsRight).toBe(true);
     expect(desktopLayout.bubblesContained).toBe(true);
     expect(desktopLayout.backgroundsDiffer).toBe(true);
-    expect(desktopLayout.userRadius).toBe(8);
-    expect(desktopLayout.assistantRadius).toBe(8);
-    expect(desktopLayout.composerRadius).toBe(8);
-    expect(desktopLayout.composerEditorHeight).toBeGreaterThanOrEqual(60);
-    expect(desktopLayout.composerEditorHeight).toBeLessThanOrEqual(160);
-    expect(desktopLayout.headerHeight).toBe(88);
-    expect(desktopLayout.selectedChatHeight).toBe(82);
-    await expect(page.locator("article.message-assistant .message-avatar img.bot-avatar-icon")).toHaveCSS("width", "56px");
-    await expect(page.locator("article.message-user .message-avatar img.user-avatar")).toHaveCSS("width", "56px");
-    await expect(page.getByRole("button", { name: "发送", exact: true })).toHaveCSS("height", "44px");
+    expect(desktopLayout.userRadius).toBe(18);
+    expect(desktopLayout.assistantRadius).toBe(18);
+    expect(desktopLayout.composerRadius).toBe(22);
+    expect(desktopLayout.composerEditorHeight).toBe(28);
+    expect(desktopLayout.headerHeight).toBe(64);
+    expect(desktopLayout.selectedChatHeight).toBe(54);
+    await expect(page.locator("article.message-assistant .message-avatar")).toBeHidden();
+    await expect(page.locator("article.message-user .message-avatar")).toBeHidden();
+    await expect(page.getByRole("button", { name: "发送", exact: true })).toHaveCSS("height", "28px");
+    await expect(page.getByRole("button", { name: "发送", exact: true })).toHaveCSS("width", "28px");
     await transcript.evaluate((element) => element.scrollTo({ top: 0 }));
     await page.screenshot({ path: "/tmp/aevoren-bot-chat-bubbles-desktop.png", fullPage: true });
 
@@ -131,7 +129,7 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     await expect(assistants.nth(1).locator(".message-meta")).toHaveCount(0);
 
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: /^暗黑/u }).click();
+    await page.getByRole("combobox", { name: "界面主题", exact: true }).selectOption("dark");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "关闭设置", exact: true }).click();
     const darkColors = await page.evaluate(() => {
@@ -149,7 +147,8 @@ test("renders grouped role bubbles across desktop, dark mode and a narrow window
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(430);
     await expect(page.getByRole("button", { name: "聊天选项", exact: true })).toBeVisible();
     await expect(page.locator(".conversation-header")).toHaveCSS("height", "64px");
-    await expect(page.locator("article.message-assistant .message-avatar img.bot-avatar-icon").first()).toHaveCSS("width", "34px");
+    await expect(page.locator("article.message-assistant .message-avatar").first()).toBeHidden();
+    await expect(page.locator(".conversation-identity .bot-avatar-icon")).toHaveCSS("width", "24px");
     await expect(page.locator(".sidebar")).not.toBeVisible();
     await expect(page.locator(".inspector")).not.toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

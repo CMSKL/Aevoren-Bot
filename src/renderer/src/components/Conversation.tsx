@@ -39,7 +39,7 @@ import { latestRuntimeAttempts, runtimeTaskKey } from "../runtime-state";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { UserAvatar } from "./UserAvatar";
 import { AssistantMarkdown } from "./AssistantMarkdown";
-import { AtIcon, AttachmentIcon, CheckIcon, CloseIcon, DocumentIcon, FolderIcon, MoreIcon, PanelIcon, StopIcon } from "./Icons";
+import { PlusIcon, SendIcon, AtIcon, AttachmentIcon, CheckIcon, CloseIcon, DocumentIcon, FolderIcon, MoreIcon, PanelIcon, StopIcon } from "./Icons";
 import { ExpandableTrace, type ExpandableTraceKind, type ExpandableTraceTone } from "./ExpandableTrace";
 import { ToolPermissionDialog } from "./ToolPermissionDialog";
 import { LibraryResourcePicker } from "./LibraryResourcePicker";
@@ -376,6 +376,8 @@ const TranscriptItem = memo(function TranscriptItem({
   return (
     <article
       className={`message message-${entry.role}${longAssistant ? " message-long" : ""}${groupedWithPrevious ? " message-group-continuation" : ""}${groupedWithNext ? " message-group-has-next" : ""}${isSuperseded ? " message-superseded" : ""}`}
+      data-origin={entry.origin?.kind}
+      title={`${speakerName} · ${timeFormatter.format(new Date(entry.createdAt))}`}
       data-status={entry.status}
       data-runtime-run-id={run?.id}
       data-turn-purpose={turnPurpose}
@@ -567,6 +569,7 @@ type ConversationProps = {
   closeNotice: string | null;
   onOpenBots(): void;
   onOpenRoomSettings(): void;
+  onOpenDetails?(): void;
   onOpenWorkspaces(): void;
   onPickAttachments(): Promise<AttachmentDraft[]>;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
@@ -610,6 +613,7 @@ export function Conversation({
   closeNotice,
   onOpenBots,
   onOpenRoomSettings,
+  onOpenDetails,
   onOpenWorkspaces,
   onPickAttachments,
   onResolveApproval,
@@ -662,6 +666,15 @@ export function Conversation({
   const mediaMenuRef = useRef<HTMLDivElement>(null);
   const mediaTriggerRef = useRef<HTMLButtonElement>(null);
   const mediaPickerCloseRef = useRef<HTMLButtonElement>(null);
+  const composerToolsRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (event: PointerEvent): void => {
+      const tools = composerToolsRef.current;
+      if (tools?.open && !tools.contains(event.target as Node)) tools.open = false;
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, []);
   useEffect(() => {
     if (!mediaMenuOpen) return;
     const close = (event: PointerEvent): void => { if (!mediaMenuRef.current?.contains(event.target as Node)) setMediaMenuOpen(false); };
@@ -1151,18 +1164,15 @@ export function Conversation({
   });
   useEffect(() => { const handler = (event: Event): void => { void handleProductView(event); }; window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   return (
-    <main className="conversation">
+    <main className={`conversation${room ? " conversation-room" : ""}`}>
       <header className="conversation-header">
-        {room ? (
-          <span className="conversation-group-avatar" aria-label={`${room.members.length} 位 Agent 和你`}>
-            {room.members.slice(0, 3).map((member) => <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={24} key={member.botId} />)}
-            <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={24} />
-          </span>
-        ) : bot ? <span className="conversation-bot-avatar"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span> : null}
-        <div className="conversation-title">
-          <h1>{subjectName}</h1>
-          {room ? <p className="conversation-header-counts">{room.members.length} 位 Agent</p> : bot ? <p className="conversation-header-counts">Bot</p> : null}
-        </div>
+        <h1 className="conversation-heading" aria-label={subjectName}><button className="conversation-identity" type="button" aria-label="查看对话详情" aria-controls="conversation-inspector" onClick={onOpenDetails ?? (room ? onOpenRoomSettings : onOpenBots)} disabled={!bot && !room}>
+          {room ? <span className="conversation-group-avatar" aria-label={`${room.members.length} 位 Agent 和你`}>
+            {room.members.slice(0, 3).map(member => <BotAvatarIcon shape={member.bot.avatarShape} color={member.bot.avatarColor} size={13} key={member.botId} />)}
+            <UserAvatar name={userProfile.name} avatarUrl={userProfile.avatarUrl} size={13} />
+          </span> : bot ? <span className="conversation-bot-avatar"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={24} /></span> : null}
+          <span>{subjectName}</span>
+        </button></h1>
         <div className="conversation-menu-anchor" ref={menuRef}>
           <button
             className="conversation-menu-trigger"
@@ -1450,7 +1460,10 @@ export function Conversation({
               </div>}
             </div>
           ) : null}
-          <div className="composer-toolbar">
+          <div className="composer-toolbar"><details ref={composerToolsRef} className="composer-tools-disclosure" onKeyDown={event => { if (event.key === "Escape" && event.currentTarget.open) { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary className="composer-tools-trigger" aria-label="输入框操作" title="附件、资料与 Skill"><PlusIcon /></summary><div className="composer-tools" onClick={event => {
+            const action = (event.target as Element).closest("button:not([aria-haspopup])");
+            if (action && composerToolsRef.current) composerToolsRef.current.open = false;
+          }}>
             <button
               className="attachment-button"
               type="button"
@@ -1459,7 +1472,7 @@ export function Conversation({
               disabled={busy || attachments.length >= 6 || (!bot && !room)}
               onClick={() => void pickTextAttachments()}
             ><AttachmentIcon /></button>
-            <div className="composer-media-menu" ref={mediaMenuRef} onKeyDown={event => { if (event.key === "Escape") { setMediaMenuOpen(false); mediaTriggerRef.current?.focus(); } }}>
+            <div className="composer-media-menu" ref={mediaMenuRef} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMediaMenuOpen(false); mediaTriggerRef.current?.focus(); } }}>
               <button ref={mediaTriggerRef} className="attachment-button" type="button" aria-label="添加媒体" title="添加图片或文档" aria-haspopup="menu" aria-expanded={mediaMenuOpen} disabled={busy || mediaImporting || mediaRefs.length >= 6 || !sessionId} onClick={() => setMediaMenuOpen(current => !current)}><DocumentIcon /></button>
               {mediaMenuOpen ? <div role="menu" aria-label="添加媒体方式"><button className="text-button" role="menuitem" type="button" onClick={() => void importMedia()}>导入媒体文件</button><button className="text-button" role="menuitem" type="button" onClick={() => { setMediaMenuOpen(false); setMediaPickerOpen(true); }}>引用已有媒体</button></div> : null}
             </div>
@@ -1492,6 +1505,7 @@ export function Conversation({
                 </label>
               </>
             ) : null}
+          </div></details></div>
             {sessionId && resourceRefs.length > 0 ? <div className="attachment-chips" aria-label="已引用的资源">{resourceRefs.map(reference => <ResourceReferenceBadge key={`${reference.resourceId}:${reference.revisionId}`} sessionId={sessionId} reference={reference} onRemove={() => setResourceRefs(current => current.filter(item => item.resourceId !== reference.resourceId))} />)}</div> : null}
             {sessionId && mediaRefs.length > 0 ? <div className="attachment-chips" aria-label="已引用的媒体">{mediaRefs.map(reference => <MediaReferenceBadge key={JSON.stringify(reference)} sessionId={sessionId} reference={reference} onRemove={() => setMediaRefs(current => current.filter(item => item.mediaId !== reference.mediaId))} />)}</div> : null}
             {mediaImporting ? <p className="field-help" role="status">正在导入媒体；继续编辑会保留新草稿，导入结果仍留在原会话资料库。</p> : null}
@@ -1531,7 +1545,6 @@ export function Conversation({
                 );
               })}
             </div> : null}
-          </div>
           {resourceError ? <p className="library-error" role="alert">{resourceError}</p> : null}
           <div className="composer-editor">
             <textarea
@@ -1608,7 +1621,7 @@ export function Conversation({
                 }
               }}
               disabled={!bot && !room}
-              rows={3}
+              rows={1}
             />
           </div>
           <div className="composer-footer-actions">
@@ -1632,7 +1645,7 @@ export function Conversation({
               disabled={(!bot && !room) || (!draft.trim() && mediaRefs.length === 0) || busy || hasInvalidRoomMentions || explicitRoutingBlocked}
               aria-label="发送"
             >
-              发送
+              <SendIcon />
             </button>
           )}
           </div>

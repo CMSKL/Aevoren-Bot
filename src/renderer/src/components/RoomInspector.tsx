@@ -1,11 +1,13 @@
 import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
 import { useEffectEvent, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { AppError, Bot, ProviderInstanceInfo, RoomDetail, RoomPatch } from "@shared/contracts";
+import type { AppError, Bot, ProviderInstanceInfo, RoomDetail, RoomPatch, UserProfile } from "@shared/contracts";
 import type { ResourceReference } from "@shared/library-contracts";
 import type { MessageMediaReference } from "@shared/media-contracts";
 import type { EnvironmentScope } from "@shared/environment-contracts";
 import { eligibleRoomLeads } from "../room-leads";
 import { buildBotIdentityMap } from "../bot-identity";
+import { DetailsTabs } from "./DetailsTabs";
+import { RoomAvatar } from "./RoomAvatar";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { CheckIcon, CloseIcon } from "./Icons";
 import { ConversationWorkspace, type ConversationWorkspaceProps } from "./ConversationWorkspace";
@@ -19,7 +21,7 @@ import { ScopedAppsApprovalHost } from "./ScopedAppsApprovalHost";
 
 type Draft = Pick<RoomDetail["room"], "name" | "description"> & { leadBotId: string | null };
 type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed";
-type InspectorTab = "details" | "library" | "skill" | "environment" | "browser" | "computer" | "apps";
+type InspectorTab = "details" | "members" | "library" | "skill" | "environment" | "browser" | "computer" | "apps";
 
 export type RoomInspectorHandle = { flush(): Promise<boolean> };
 
@@ -27,9 +29,11 @@ type Props = {
   id?: string;
   detail: RoomDetail | null;
   bots: Bot[];
+  userProfile?: UserProfile;
   conversationWorkspace: ConversationWorkspaceProps;
   active: boolean;
   mobileOpen: boolean;
+  surfaceActive?: boolean;
   error?: AppError | null;
   onDetailUpdated(detail: RoomDetail): void;
   onError(error: AppError | null): void;
@@ -48,14 +52,13 @@ function same(left: Draft, right: Draft): boolean {
 }
 
 export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function RoomInspector(
-  { id, detail, bots, conversationWorkspace, active, mobileOpen, error, onDetailUpdated, onError, onOpenBot, onMobileClose, onUseResource, onUseMedia },
+  { id, detail, bots, userProfile, conversationWorkspace, active, mobileOpen, surfaceActive = true, error, onDetailUpdated, onError, onOpenBot, onMobileClose, onUseResource, onUseMedia },
   ref,
 ) {
   const [draft, setDraft] = useState<Draft | null>(detail ? toDraft(detail) : null);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [selectedBotId, setSelectedBotId] = useState("");
   const [memberPending, setMemberPending] = useState(false);
-  const [membersExpanded, setMembersExpanded] = useState(false);
   const [tab, setTab] = useState<InspectorTab>("details");
   const [environmentBotId, setEnvironmentBotId] = useState("");
   const [previewPageId, setPreviewPageId] = useState<string>();
@@ -68,9 +71,8 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   const handleProductView = useEffectEvent((event: Event) => {
     const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
     if (request.input.action !== "room_members") return;
-    if (!detail || request.input.roomId && request.input.roomId !== detail.room.id) { respond({ status: "waiting_user", reason: "请先打开指定群聊设置。" }); return; }
-    if (tab !== "details") { respond({ status: "waiting_user", reason: "请先保存或丢弃资料草稿，并打开群聊设置的资料页。" }); return; }
-    setMembersExpanded(request.input.expanded ?? true); respond({ status: "completed" });
+    if (!surfaceActive || !detail || request.input.roomId && request.input.roomId !== detail.room.id) { respond({ status: "waiting_user", reason: "请先打开指定群聊设置。" }); return; }
+    void changeTab(request.input.expanded === false ? "details" : "members").then(changed => respond(changed ? { status: "completed" } : { status: "waiting_user", reason: "当前编辑尚未保存，请完成后重试。" }));
   });
   useEffect(() => { const handler = (event: Event): void => handleProductView(event); window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
   const [providers, setProviders] = useState<ProviderInstanceInfo[] | null>(null);
@@ -224,14 +226,7 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
   </aside>;
 
   return (
-    <aside ref={dialogRef} id={id} className={`inspector${mobileOpen ? " mobile-open" : ""}`} role="dialog" aria-modal="true" aria-label="群聊设置" onKeyDown={(event) => {
-      if (event.key !== "Tab") return;
-      const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary')].filter((element) => element.getClientRects().length > 0);
-      const first = controls[0];
-      const last = controls.at(-1);
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-    }}>
+    <aside ref={dialogRef} id={id} className={`inspector${mobileOpen ? " mobile-open" : ""}`} role="dialog" aria-modal="false" aria-label="群聊设置">
       <header className="inspector-header">
         <h2>群聊详情</h2>
         <div className="inspector-header-actions">
@@ -245,16 +240,11 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
         </div>
       </header>
       {error ? <div className="dialog-error" role="alert">{error.safeMessage}</div> : null}
-      <div className="library-tabs" role="tablist" aria-label="群聊配置">
-        {([["details", "资料"], ["library", "资料库"], ["skill", "Skill"], ["environment", "执行环境"], ["browser", "浏览器"], ["computer", "电脑"], ["apps", "应用"]] as const).map(([value, label]) => <button id={`room-${detail.room.id}-${value}-tab`} key={value} type="button" role="tab" tabIndex={tab === value ? 0 : -1} disabled={changingTab} aria-selected={tab === value} aria-controls={`room-${detail.room.id}-${value}-panel`} onClick={() => void changeTab(value)} onKeyDown={event => {
-          const tabs: InspectorTab[] = ["details", "library", "skill", "environment", "browser", "computer", "apps"];
-          const index = tabs.indexOf(value);
-          const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : null;
-          if (!next) return;
-          event.preventDefault();
-          void changeTab(next).then(changed => { if (changed) document.getElementById(`room-${detail.room.id}-${next}-tab`)?.focus(); });
-        }}>{label}</button>)}
-      </div>
+      <div className="room-detail-identity"><RoomAvatar bots={detail.members.map(member => member.bot)} userProfile={userProfile} size={64} /><h3>{detail.room.name}</h3></div>
+      <DetailsTabs idPrefix={`room-${detail.room.id}`} label="群聊配置" tabs={[
+        { id: "details", label: "详情" }, { id: "library", label: "资料库" }, { id: "members", label: "成员" },
+        { id: "skill", label: "Skill" }, { id: "environment", label: "执行环境" }, { id: "browser", label: "浏览器" }, { id: "computer", label: "电脑" }, { id: "apps", label: "应用" },
+      ]} primary={["details", "library", "members"]} value={tab} disabled={changingTab} onChange={next => changeTab(next as InspectorTab)} />
       <div id={`room-${detail.room.id}-details-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-details-tab`} hidden={tab !== "details"}>
       <ConversationWorkspace {...conversationWorkspace} />
       <section className="inspector-group inspector-profile-fields" aria-label="群聊资料">
@@ -277,9 +267,9 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
         className="room-avatar-stack"
         type="button"
         aria-label={`管理群聊成员 ${detail.members.length}/6`}
-        aria-expanded={membersExpanded}
+        aria-expanded={tab === "members"}
         aria-controls={`room-members-${detail.room.id}`}
-        onClick={() => setMembersExpanded((expanded) => !expanded)}
+        onClick={() => void changeTab("members")}
       >
         {detail.members.slice(0, 3).map((member) => (
           <BotAvatarIcon key={member.botId} shape={member.bot.avatarShape} color={member.bot.avatarColor} size={60} title={member.bot.name} />
@@ -296,7 +286,10 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
       </label>
       </section>
       {status === "failed" ? <button className="secondary-button full-width" type="button" onClick={() => void flush()}>重试保存</button> : null}
-      <section className="room-members-manager settings-list" id={`room-members-${detail.room.id}`} hidden={!membersExpanded} aria-label="群聊成员">
+
+      </div>
+      <div id={`room-${detail.room.id}-members-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-members-tab`} hidden={tab !== "members"}>
+      <section className="room-members-manager settings-list" id={`room-members-${detail.room.id}`} aria-label="群聊成员">
             <h3 className="inspector-section-title">成员</h3>
             {detail.members.map((member) => {
               const identity = botIdentities.get(member.botId)!;
@@ -326,26 +319,26 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
       </section>
       </div>
       <div id={`room-${detail.room.id}-library-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-library-tab`} hidden={tab !== "library"}>
-        <LibraryPanel ref={documentsRef} sessionId={detail.session.id} kind="document" active={tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} />
-        <MediaLibraryPanel key={detail.session.id} sessionId={detail.session.id} active={mobileOpen && tab === "library"} busy={!onUseMedia} onUse={reference => onUseMedia?.(reference)} />
+        <LibraryPanel ref={documentsRef} sessionId={detail.session.id} kind="document" active={surfaceActive && tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} />
+        <MediaLibraryPanel key={detail.session.id} sessionId={detail.session.id} active={surfaceActive && mobileOpen && tab === "library"} busy={!onUseMedia} onUse={reference => onUseMedia?.(reference)} />
       </div>
       <div id={`room-${detail.room.id}-skill-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-skill-tab`} hidden={tab !== "skill"}>
         <label className="field environment-member-selector"><span>Skill 脚本执行成员</span><select aria-label="Skill 脚本执行成员" value={environmentMember?.botId ?? ""} onChange={event => setEnvironmentBotId(event.target.value)}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>
-        <LibraryPanel ref={skillsRef} sessionId={detail.session.id} executorBotId={environmentMember?.botId} ownerName={`${detail.room.name} · ${environmentMember ? botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name : "未选择成员"}`} kind="skill" active={tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} onOpenExecution={execution => { if (execution.sessionId !== detail.session.id || execution.executorBotId !== environmentMember?.botId) return; setScriptExecution(execution); void changeTab("environment"); }} />
+        <LibraryPanel ref={skillsRef} sessionId={detail.session.id} executorBotId={environmentMember?.botId} ownerName={`${detail.room.name} · ${environmentMember ? botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name : "未选择成员"}`} kind="skill" active={surfaceActive && tab === "skill"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} onOpenExecution={execution => { if (execution.sessionId !== detail.session.id || execution.executorBotId !== environmentMember?.botId) return; setScriptExecution(execution); void changeTab("environment"); }} />
       </div>
       <div id={`room-${detail.room.id}-environment-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-environment-tab`} hidden={tab !== "environment"}>
         <label className="field environment-member-selector"><span>查看成员的执行环境</span><select aria-label="执行环境成员" value={environmentMember?.botId ?? ""} onChange={event => setEnvironmentBotId(event.target.value)}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>
-        {environmentMember ? <EnvironmentPanel sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "environment"} initialExecutionId={scriptExecution?.sessionId === detail.session.id && scriptExecution.executorBotId === environmentMember.botId ? scriptExecution.id : undefined} onOpenPreview={pageId => { setPreviewPageId(pageId); void changeTab("browser"); }} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
+        {environmentMember ? <EnvironmentPanel sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={surfaceActive && tab === "environment"} initialExecutionId={scriptExecution?.sessionId === detail.session.id && scriptExecution.executorBotId === environmentMember.botId ? scriptExecution.id : undefined} onOpenPreview={pageId => { setPreviewPageId(pageId); void changeTab("browser"); }} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
       </div>
       <div id={`room-${detail.room.id}-apps-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-apps-tab`} hidden={tab !== "apps"}>
         <label className="field environment-member-selector"><span>应用执行成员</span><select aria-label="应用执行成员" value={environmentMember?.botId ?? ""} disabled={changingTab} onChange={event => { const botId = event.target.value; void appsRef.current?.flush().then(saved => { if (saved) setEnvironmentBotId(botId); }); }}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>
-        {environmentMember ? <ConnectorPanel ref={appsRef} sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "apps"} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
-        {environmentMember ? <McpToolPanel key={`mcp:${detail.session.id}:${environmentMember.botId}`} sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "apps"} /> : null}
-        {environmentMember ? <ScopedAppsApprovalHost key={`approvals:${detail.session.id}:${environmentMember.botId}`} sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={tab === "apps"} /> : null}
+        {environmentMember ? <ConnectorPanel ref={appsRef} sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={surfaceActive && tab === "apps"} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
+        {environmentMember ? <McpToolPanel key={`mcp:${detail.session.id}:${environmentMember.botId}`} sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={surfaceActive && tab === "apps"} /> : null}
+        {environmentMember ? <ScopedAppsApprovalHost key={`approvals:${detail.session.id}:${environmentMember.botId}`} sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} active={surfaceActive && tab === "apps"} /> : null}
       </div>
       {(["browser", "computer"] as const).map(mode => <div key={mode} id={`room-${detail.room.id}-${mode}-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-${mode}-tab`} hidden={tab !== mode}>
         <label className="field environment-member-selector"><span>查看成员的{mode === "browser" ? "浏览器" : "电脑"}</span><select aria-label={mode === "browser" ? "浏览器成员" : "电脑成员"} value={environmentMember?.botId ?? ""} onChange={event => setEnvironmentBotId(event.target.value)}>{detail.members.map(member => <option key={member.botId} value={member.botId}>{botIdentities.get(member.botId)?.inline ?? member.bot.name}</option>)}</select></label>
-        {environmentMember ? <ComputerPanel sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} mode={mode} initialPageId={previewPageId} active={tab === mode} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
+        {environmentMember ? <ComputerPanel sessionId={detail.session.id} executorBotId={environmentMember.botId} ownerName={`${detail.room.name} · ${botIdentities.get(environmentMember.botId)?.inline ?? environmentMember.bot.name}`} mode={mode} initialPageId={previewPageId} active={surfaceActive && tab === mode} /> : <p className="library-empty">当前群聊没有可用成员。</p>}
       </div>)}
     </aside>
   );

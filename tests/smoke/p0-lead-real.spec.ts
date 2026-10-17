@@ -8,7 +8,7 @@ import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { copyRealApiProfile } from "./real-api-profile";
 import { removeTestDirectory } from "./test-cleanup";
-import { openMessageEvidence } from "./navigation";
+import { openMessageEvidence, selectNavigationTab } from "./navigation";
 
 for (const { workerSource, restoreMissingSource } of [
   { workerSource: "openai-compatible.default", restoreMissingSource: false },
@@ -86,7 +86,7 @@ for (const { workerSource, restoreMissingSource } of [
         expect(switched.ok).toBe(true);
         await page.reload();
       }
-      await page.getByRole("tab", { name: "聊天", exact: true }).click();
+      await selectNavigationTab(page, "聊天");
       await page.locator(".bot-row").filter({ hasText: "公开资料协作" }).click();
       await expect(page.getByRole("heading", { name: "公开资料协作", exact: true })).toBeVisible();
       await page.getByLabel("消息", { exact: true }).fill("请你协调两位成员连续完成这个任务：许可证研究员先真实读取当前工作区的 LICENSE.md，将许可证名称和第一段摘要新建为 license-note.md；然后发布编辑真实读取 license-note.md 和 USER_GUIDE.md，将该产品的三个用途整理为 guide-note.md。两人完成后由项目协调员汇总两份真实文件路径与完成情况，不再重复读写。只创建这两个文件，不联网、不发布，不需要我再手工指定成员或补充路径。");

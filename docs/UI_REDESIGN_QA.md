@@ -1,4 +1,44 @@
-# UI 改版验收
+# Compact messenger UI acceptance — 2026-10-17
+
+**Current result: local acceptance passed; cross-platform CI pending.** The maintainer approved the new compact messenger preview. The older 2026-10-09 report below describes the superseded interface and does not certify this implementation.
+
+## Current scope
+
+- Single 280px conversation sidebar; 54px rows and 36px avatars; account menu retains Chats, Contacts and Workspace.
+- Search dialog from the magnifier or Cmd/Ctrl+K; real existing Bot/group selection and retained list filters.
+- Centered conversation capsule; modeless 320px Bot/group drawer with primary tabs and a More menu for existing capabilities.
+- Modal settings, a growing composer with a 44px initial shell, 28px send action, 18px message corners and 14/22px body text.
+- Existing business handlers, save/conflict guards, approval/cancel/retry, scoped documents, Skills, media and group parallel execution remain the acceptance targets.
+
+## Evidence and boundaries
+
+- Local unit suite: **1,655 passed / 45 skipped**, 138 passing files. Skipped Docker/opt-in cases are not claimed as verified.
+- TypeScript, ESLint, production build, documentation links, dependency licenses, open-source file gate and diff checks passed locally. No runtime dependency or database migration was added.
+- Initial hidden Electron diagnostics passed chat geometry/theme and delayed contact focus; a missing accessible conversation name was corrected on the actual heading. Old navigation assertions are migrated to actual new UI actions without changing business outcomes or timeouts.
+- Hidden Electron regression was executed in batches. Failed old navigation/geometry selectors were migrated to the new actual controls; draft conflicts, resource scope, write approvals, cancellation, restore/retry and six-member parallel outcomes retain their assertions and timeouts. The final chat/search/modal/composer and two-theme folder-control group passed 4/4; the 200% layout and long-name regression passed 2/2. Initial failures and targeted repairs remain in separate local logs.
+- The locally built **unsigned macOS arm64 application** passed 24 package scenarios: eight normal-close paths, three document/media cases, four six-member concurrency/cancellation cases and nine avatar/theme/settings cases. A separate actual-package search/drawer/modal/multiline scenario passed. This is execution of the packaged app from a local directory, not a signed installer, notarization, auto-update or Windows result.
+- Actual renderer screenshots use a 1041 × 713 CSS viewport. The local visual fixture has nine contacts, one user message and one assistant message; those messages are explicitly seeded and are not model-execution evidence. Same-size sRGB comparison boards for settings, computer and search were opened and checked. The reference and Aevoren retain different product settings, account state, avatar artwork and tool panels; exact pixel identity is not claimed.
+- CI, Windows/Linux native UI, signed installer and real third-party account behavior remain unverified for this change until their own receipts exist. The published beta.36 installers are unchanged.
+- The target's proprietary fonts, icon font, avatar artwork and raw bundles are not distributed. Platform fonts, MIT Phosphor and existing Aevoren avatars have explicit visual differences. Unavailable cloud screens are not claimed as exact reproductions.
+- Your dot-style assistant behavior remains a later delivery after UI acceptance.
+
+## Closed regressions in this implementation
+
+- A title button's action label hid the accessible conversation name; the actual heading now retains the name.
+- A narrow-sidebar backdrop survived a resize to desktop and blocked navigation; it now participates only in narrow layouts.
+- A full-pane new-chat surface lost blank-area dismissal; both close/cancel and unchanged database checks pass.
+- The composer menu covered imported media; selecting a tool action dismisses it and reference chips remain visible.
+- Chat-drawer resource insertion used the separate Contacts selection; it now checks the correct origin and still rejects late responses after navigation or a draft change.
+- Conversation and group Apps rendered two portals for one approval; the existing single-owner presentation rule is retained. Group panels also pause their presentation behind modal settings, so a newly queued host approval waits until Settings closes and then appears once.
+- Long speaker names overflowed the transcript and 200% layout could obstruct the drawer close action; bounded metadata and a non-wrapping header fix both without hiding transcript overflow.
+- The group hero now uses the same saved user avatar/name as the sidebar collage; a real profile update/reload regression verifies the identity.
+
+One hidden MCP frame pointer action originally returned without entering the fixture handler or sending RPC. The original dev baseline and a standalone nested-frame case were checked separately. Explicitly focusing the intended opaque-frame button before one native pointer click passes the strengthened trusted-handler, fixed-target, single-approval and write-count assertions. This identifies a controlled test-input prerequisite; it does not establish a general Electron input root cause or third-party service effect.
+
+---
+
+## Historical report: superseded 2026-10-09 layout
+
 
 final result: passed（本机 macOS UI 与真实业务回归；不代表 Windows/Linux 原生复验已完成）
 

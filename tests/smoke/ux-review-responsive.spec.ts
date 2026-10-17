@@ -7,7 +7,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Loc
 import type { AevorenBotApi } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
-import { openBotList, openConversationFiles, openConversationMenu } from "./navigation";
+import { openComposerTools, openBotList, openConversationFiles, openConversationMenu } from "./navigation";
 import { removeTestDirectory } from "./test-cleanup";
 
 // Current-run UI verification only: real isolated SQLite, files and production
@@ -177,6 +177,7 @@ test("UX-01 current folder, missing grant and keyboard controls remain reachable
       const created = after.data.filter(room => !before.data.some(previous => previous.id === room.id));
       expect(created).toHaveLength(1); expect(created[0]!.leadBotId).toBeNull();
       await expect(page.getByRole("heading", { name: created[0]!.name, exact: true })).toBeVisible();
+      await openComposerTools(page);
       const mode = page.getByLabel("群聊默认响应方式", { exact: true });
       await expect(mode.locator("option[value=automatic]")).toHaveText("自动 · 单人");
       const metrics = await mode.evaluate(element => {
@@ -191,11 +192,11 @@ test("UX-01 current folder, missing grant and keyboard controls remain reachable
         const rect = select.getBoundingClientRect();
         const mention = select.closest(".composer-toolbar")?.querySelector(".composer-mention-button")?.getBoundingClientRect();
         const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-        return { label, actualWidth: rect.width, requiredWidth, mentionRight: mention?.right, left: rect.left, hit: hit === select || select.contains(hit) };
+        return { label, actualWidth: rect.width, requiredWidth, separated: !mention || rect.left >= mention.right || rect.right <= mention.left || rect.top >= mention.bottom || rect.bottom <= mention.top, hit: hit === select || select.contains(hit) };
       });
       expect(metrics.label).toBe("自动 · 单人");
       expect(metrics.actualWidth).toBeGreaterThanOrEqual(metrics.requiredWidth);
-      if (metrics.mentionRight !== undefined) expect(metrics.left).toBeGreaterThanOrEqual(metrics.mentionRight);
+      expect(metrics.separated).toBe(true);
       expect(metrics.hit).toBe(true);
       modeMetrics.push({ theme, width, label: metrics.label, actualWidth: metrics.actualWidth, requiredWidth: metrics.requiredWidth });
       await checkSurface(page, page.locator(".composer"));

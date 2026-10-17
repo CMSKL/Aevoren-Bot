@@ -1,3 +1,4 @@
+import { selectNavigationTab } from "./navigation";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,7 +38,7 @@ test("delayed contact autofocus preserves the user's chosen field and persisted 
     // Readiness is tied to the real document, not the early BrowserWindow event.
     await page.waitForURL(rendererUrl, { waitUntil: "domcontentloaded" });
     await expect(page.locator(".app-shell")).toBeVisible();
-    await page.getByRole("tab", { name: "联系人", exact: true }).click();
+    await selectNavigationTab(page, "联系人");
     await page.locator(".sidebar").getByRole("listitem", { name: "研究员", exact: true }).click();
     const contact = page.getByRole("main", { name: "联系人资料", exact: true });
     await expect(contact).toBeVisible();

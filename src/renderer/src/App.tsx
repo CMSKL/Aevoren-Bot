@@ -72,6 +72,8 @@ function mergeToolEvents(
   }), { invocations, approvals });
 }
 
+type ResourceUseTarget = { bot: Bot; fromConversation?: boolean } | { room: Room };
+
 type RoomOpenResult = { status: "opened" | "blocked" | "superseded" } | { status: "failed"; message: string };
 
 export function App(): React.JSX.Element {
@@ -134,6 +136,7 @@ export function App(): React.JSX.Element {
   const [closeNotice, setCloseNotice] = useState<string | null>(null);
   const [roomSettingsError, setRoomSettingsError] = useState<AppError | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsEntry, setSettingsEntry] = useState({ section: "general" as "general" | "apps", request: 0 });
   const [userProfileOpen, setUserProfileOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile>({ name: "我", avatarUrl: null });
   const [roomMemberIds, setRoomMemberIds] = useState<Record<string, string[]>>({});
@@ -154,7 +157,6 @@ export function App(): React.JSX.Element {
   const [updateActionError, setUpdateActionError] = useState<string | null>(null);
   const updateActionInFlightRef = useRef(false);
   const [appearanceTheme, setAppearanceTheme] = useState<AppearanceTheme>("system");
-  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => document.documentElement.dataset.theme === "dark" ? "dark" : "light");
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
   const [launchAtLoginStatus, setLaunchAtLoginStatus] = useState<LoginItemStatus>("unsupported");
@@ -444,7 +446,6 @@ export function App(): React.JSX.Element {
         ? systemTheme.matches ? "dark" : "light"
         : appearanceTheme;
       document.documentElement.dataset.theme = theme;
-      setResolvedTheme(theme);
     };
     applyTheme();
     if (appearanceTheme !== "system") return;
@@ -726,7 +727,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     if (!mobilePanel) return;
     function closeOnEscape(event: KeyboardEvent): void {
-      if (event.key === "Escape") void closeMobilePanel();
+      if (event.key === "Escape" && !event.defaultPrevented) void closeMobilePanel();
     }
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
@@ -1259,7 +1260,13 @@ export function App(): React.JSX.Element {
     return true;
   }
 
-  async function prepareLibraryResource(reference: ResourceReference, text: string | undefined, expectedSessionId: string, target: { bot: Bot } | { room: Room }): Promise<void> {
+  function resourceTargetIsCurrent(target: ResourceUseTarget, expectedSessionId: string): boolean {
+    if ("room" in target) return selectedRoomIdRef.current === target.room.id;
+    if (!target.fromConversation) return selectedContactIdRef.current === target.bot.id;
+    return sessionIdRef.current === expectedSessionId && sidebarTabRef.current !== "contacts";
+  }
+
+  async function prepareLibraryResource(reference: ResourceReference, text: string | undefined, expectedSessionId: string, target: ResourceUseTarget): Promise<void> {
     const request = ++resourceUseRequestRef.current;
     const originalOpenRequest = openRequestRef.current;
     const expectedDraftVersion = composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0;
@@ -1267,7 +1274,7 @@ export function App(): React.JSX.Element {
     if (!(await flushActive())) return;
     const stillCurrent = (): boolean => request === resourceUseRequestRef.current && originalOpenRequest === openRequestRef.current
       && (composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) === expectedDraftVersion
-      && ("bot" in target ? selectedContactIdRef.current === target.bot.id : selectedRoomIdRef.current === target.room.id);
+      && resourceTargetIsCurrent(target, expectedSessionId);
     if (!stillCurrent()) return;
     const result = await window.aevorenBot.library.read({ sessionId: expectedSessionId, id: reference.resourceId, revisionId: reference.revisionId });
     if (!stillCurrent()) return;
@@ -1276,7 +1283,7 @@ export function App(): React.JSX.Element {
       const opened = "bot" in target ? await openBot(target.bot, false, true) : (await openRoom(target.room, false, true)).status === "opened";
       if (!opened || request !== resourceUseRequestRef.current) return;
     }
-    if ("bot" in target ? selectedContactIdRef.current !== target.bot.id : selectedRoomIdRef.current !== target.room.id) return;
+    if (!resourceTargetIsCurrent(target, expectedSessionId)) return;
     if (sessionIdRef.current !== expectedSessionId) return;
     if ((composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) !== expectedDraftVersion) return;
     setResourceInsertion({ id: crypto.randomUUID(), sessionId: expectedSessionId, reference, expectedDraftVersion, ...(text ? { text } : {}) });
@@ -1284,12 +1291,12 @@ export function App(): React.JSX.Element {
     } catch { if (request === resourceUseRequestRef.current) setCloseNotice("无法准备资源引用，草稿仍然保留，请重试。"); }
   }
 
-  async function prepareMediaResource(reference: MessageMediaReference, expectedSessionId: string, target: { bot: Bot } | { room: Room }): Promise<void> {
+  async function prepareMediaResource(reference: MessageMediaReference, expectedSessionId: string, target: ResourceUseTarget): Promise<void> {
     const request = ++resourceUseRequestRef.current, originalOpenRequest = openRequestRef.current;
     const expectedDraftVersion = composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0;
     const stillCurrent = (): boolean => request === resourceUseRequestRef.current && originalOpenRequest === openRequestRef.current
       && (composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) === expectedDraftVersion
-      && ("bot" in target ? selectedContactIdRef.current === target.bot.id : selectedRoomIdRef.current === target.room.id);
+      && resourceTargetIsCurrent(target, expectedSessionId);
     try {
       if (!(await flushActive()) || !stillCurrent()) return;
       const result = await window.aevorenBot.media.metadata({ sessionId: expectedSessionId, id: reference.mediaId });
@@ -1300,7 +1307,7 @@ export function App(): React.JSX.Element {
         if (!opened || request !== resourceUseRequestRef.current) return;
       }
       if (sessionIdRef.current !== expectedSessionId || (composerDraftsRef.current.get(expectedSessionId)?.draftVersion ?? 0) !== expectedDraftVersion) return;
-      if ("bot" in target ? selectedContactIdRef.current !== target.bot.id : selectedRoomIdRef.current !== target.room.id) return;
+      if (!resourceTargetIsCurrent(target, expectedSessionId)) return;
       setMediaInsertion({ id: crypto.randomUUID(), sessionId: expectedSessionId, reference, expectedDraftVersion });
       setSettingsOpen(false); setSidebarTab("chats"); setMobilePanel(null); setCloseNotice(null);
     } catch { if (request === resourceUseRequestRef.current) setCloseNotice("无法准备媒体引用，草稿仍然保留，请重试。"); }
@@ -1516,6 +1523,11 @@ export function App(): React.JSX.Element {
   });
   useEffect(() => window.aevorenBot.events.subscribeProductView((request) => { void handleProductView(request); }), []);
 
+  const botDetailsOpen = mobilePanel === "profile" && !!selectedBot && sidebarTab !== "contacts";
+  const detailsOpen = mobilePanel === "profile" && !!(selectedBot || selectedRoom) && sidebarTab !== "contacts";
+  const detailsBot = botDetailsOpen ? selectedBot : selectedContact;
+  const detailsSessionId = botDetailsOpen ? session?.id : detailsBot && contactLibraryScope?.botId === detailsBot.id ? contactLibraryScope.sessionId : undefined;
+
   return (
     <div className={`app-shell${settingsOpen ? " settings-active" : ""}`}>
       <Sidebar
@@ -1580,16 +1592,23 @@ export function App(): React.JSX.Element {
           setCreationMode("room");
           setNewBotOpen(true);
         }}
+        onOpenApps={() => {
+          void flushActive().then(saved => {
+            if (!saved) return;
+            setSettingsEntry(current => ({ section: "apps", request: current.request + 1 }));
+            setSettingsOpen(true);
+          });
+        }}
         onOpenSettings={() => {
           void flushActive().then((saved) => {
             if (!saved) return;
-            setMobilePanel(null);
+            setSettingsEntry(current => ({ section: "general", request: current.request + 1 }));
             setSettingsOpen(true);
           });
         }}
         onMobileClose={() => setMobilePanel(null)}
-        onSelectBot={(bot) => void openBot(bot)}
-        onSelectRoom={(room) => void openRoom(room)}
+        onSelectBot={(bot) => { setNewBotOpen(false); void openBot(bot); }}
+        onSelectRoom={(room) => { setNewBotOpen(false); void openRoom(room); }}
         onRenameRoom={renameRoom}
         onCopyRoomId={copyRoomId}
         onArchiveRoom={archiveRoom}
@@ -1611,20 +1630,21 @@ export function App(): React.JSX.Element {
         onOpenRestoredRoom={openRestoredRoom}
         onDismissRestore={dismissRestore}
       />
-      <div className="app-main">
+      <div className={`app-main${detailsOpen ? " has-conversation-details" : ""}`}>
       {closeNotice && (settingsOpen || sidebarTab === "contacts") ? <div className="dialog-error app-close-notice" role="alert">{closeNotice}</div> : null}
-      <div className="app-surface" hidden={settingsOpen || sidebarTab !== "contacts"}>
+      <div className={`app-surface contact-surface${botDetailsOpen ? " is-drawer" : ""}`} hidden={!botDetailsOpen && sidebarTab !== "contacts"}>
       <ContactDetail
         ref={contactRef}
-        active={!settingsOpen && sidebarTab === "contacts"}
-        bot={selectedContact}
+        active={!settingsOpen && (sidebarTab === "contacts" || botDetailsOpen)}
+        onClose={botDetailsOpen ? () => void closeInspector() : undefined}
+        bot={detailsBot}
         rooms={rooms}
         busy={loading || creatingBot}
-        workspaceIds={conversations.find((conversation) => conversation.botId === selectedContact?.id)?.workspaceIds ?? []}
+        workspaceIds={conversations.find((conversation) => conversation.botId === detailsBot?.id)?.workspaceIds ?? []}
         editingRequested={contactEditingRequested}
-        librarySessionId={selectedContact && contactLibraryScope?.botId === selectedContact.id ? contactLibraryScope.sessionId : undefined}
-        onUseResource={(reference, text) => { if (selectedContact && contactLibraryScope?.botId === selectedContact.id) void prepareLibraryResource(reference, text, contactLibraryScope.sessionId, { bot: selectedContact }); }}
-        onUseMedia={reference => { if (selectedContact && contactLibraryScope?.botId === selectedContact.id) void prepareMediaResource(reference, contactLibraryScope.sessionId, { bot: selectedContact }); }}
+        librarySessionId={detailsSessionId}
+        onUseResource={(reference, text) => { if (detailsBot && detailsSessionId) void prepareLibraryResource(reference, text, detailsSessionId, { bot: detailsBot, fromConversation: botDetailsOpen }); }}
+        onUseMedia={reference => { if (detailsBot && detailsSessionId) void prepareMediaResource(reference, detailsSessionId, { bot: detailsBot, fromConversation: botDetailsOpen }); }}
         onBotUpdated={updateBot}
         onOpenBots={() => setMobilePanel("bots")}
         onSend={async (bot) => {
@@ -1636,7 +1656,7 @@ export function App(): React.JSX.Element {
         onAddToRoom={addContactToRoom}
       />
       </div>
-      <div className="app-surface" hidden={settingsOpen || sidebarTab === "contacts"}>
+      <div className="app-surface conversation-surface" hidden={sidebarTab === "contacts"}>
       <Conversation
         sessionId={session?.id}
         approvalVisible={!settingsOpen && sidebarTab !== "contacts" && mobilePanel !== "profile"}
@@ -1664,6 +1684,7 @@ export function App(): React.JSX.Element {
         error={error}
         closeNotice={settingsOpen || sidebarTab === "contacts" ? null : closeNotice}
         onOpenBots={() => setMobilePanel("bots")}
+        onOpenDetails={() => { void flushActive().then(saved => { if (saved) { setRoomSettingsError(null); setMobilePanel(current => current === "profile" ? null : "profile"); } }); }}
         onOpenRoomSettings={() => { void flushActive().then((saved) => { if (saved) { setRoomSettingsError(null); setMobilePanel("profile"); } }); }}
         onOpenWorkspaces={() => {
           setManagingConversationWorkspaces(true);
@@ -1774,7 +1795,7 @@ export function App(): React.JSX.Element {
       />
       </div>
       {selectedRoom && mobilePanel === "profile" ? (
-        <div className="modal-backdrop room-settings-modal-backdrop" role="presentation" onMouseDown={(event) => {
+        <div className="modal-backdrop room-settings-modal-backdrop conversation-details-room" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) void closeInspector();
         }}>
         <RoomInspector
@@ -1783,9 +1804,11 @@ export function App(): React.JSX.Element {
           id="conversation-inspector"
           detail={selectedRoom}
           bots={bots}
+          userProfile={userProfile}
           conversationWorkspace={conversationWorkspace}
           active={activeRoomBatch}
           mobileOpen={true}
+          surfaceActive={!settingsOpen && sidebarTab !== "contacts"}
           error={roomSettingsError}
           onDetailUpdated={updateRoom}
           onError={setRoomSettingsError}
@@ -1808,9 +1831,10 @@ export function App(): React.JSX.Element {
         }}
       /> : null}
       <SettingsDialog
+        key={settingsEntry.request}
+        initialSection={settingsEntry.section}
         open={settingsOpen}
         theme={appearanceTheme}
-        resolvedTheme={resolvedTheme}
         launchAtLogin={launchAtLogin}
         launchAtLoginSupported={launchAtLoginSupported}
         launchAtLoginStatus={launchAtLoginStatus}

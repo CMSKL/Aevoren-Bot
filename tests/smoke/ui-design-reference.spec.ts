@@ -1,3 +1,4 @@
+import { openComposerTools } from "./navigation";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -219,7 +220,7 @@ async function captureReference(page: Page, theme: "dark" | "light", outputDir: 
   await expect(page.locator("article.message-user").first()).toBeInViewport();
   await expect(page.locator("article.message-user").last()).toBeInViewport();
   await page.screenshot({ path: join(outputDir, `${theme}.png`), scale: "css", animations: "disabled", caret: "hide" });
-  for (const [name, selector] of [["chat", ".conversation"], ["rail", ".nav-rail"]] as const) {
+  for (const [name, selector] of [["chat", ".conversation"], ["sidebar", ".sidebar"]] as const) {
     const clip = await page.locator(selector).boundingBox();
     expect(clip).not.toBeNull();
     await page.screenshot({ path: join(outputDir, `${theme}-${name}.png`), clip: clip!, scale: "css", animations: "disabled", caret: "hide" });
@@ -273,9 +274,9 @@ test("UI-only approved light/dark reference: real avatars and journal-backed fil
     expect(page.url()).toMatch(/^(file:|https?:)/u);
     await page.locator('.sidebar-list .bot-row[aria-label="个人网站小组"]').click();
     await expect(page.locator(".conversation-header h1")).toHaveText("个人网站小组");
-    await expect(page.locator(".conversation-header-counts")).toHaveText("3 位 Agent");
+    await expect(page.locator(".conversation-group-avatar")).toHaveAttribute("aria-label", "3 位 Agent 和你");
     await expect(page.locator(".sidebar-list .bot-row")).toHaveCount(8);
-    await expect(page.locator(".conversation-header button")).toHaveCount(1);
+    await expect(page.locator(".conversation-header button")).toHaveCount(2);
     await expect(page.locator("article.message-user")).toHaveCount(2);
     await expect(page.locator("article.message-assistant")).toHaveCount(1);
     await expect(page.locator(".artifact-card")).toHaveCount(2);
@@ -289,16 +290,17 @@ test("UI-only approved light/dark reference: real avatars and journal-backed fil
       { path: "个人网站建议书.md", state: "succeeded" },
       { path: "上线清单.md", state: "succeeded" },
     ]);
-    await page.getByRole("button", { name: "添加文本附件", exact: true }).click();
+    await openComposerTools(page); await page.getByRole("button", { name: "添加文本附件", exact: true }).click();
     await expect(page.locator(".attachment-chip")).toHaveCount(1);
+    if (await page.locator(".composer-tools-disclosure").getAttribute("open") !== null) await page.locator(".composer-tools-disclosure summary").click();
     await page.getByLabel("消息", { exact: true }).fill("继续讨论这份文件…");
     for (const theme of ["dark", "light"] as const) {
       await page.getByRole("button", { name: "设置", exact: true }).click();
-      await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: theme === "dark" ? /^暗黑/u : /^白昼/u }).click();
+      await page.getByRole("combobox", { name: "界面主题", exact: true }).selectOption(theme);
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
       await page.getByRole("button", { name: "关闭设置", exact: true }).click();
-      await expect.poll(() => page.locator(".nav-rail img, .sidebar-list img, .conversation img").evaluateAll((images) => images.every((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);
-      const uniqueAvatars = await page.locator(".nav-rail img, .sidebar-list img, .conversation img").evaluateAll((images) => new Set(images.map((image) => (image as HTMLImageElement).currentSrc)).size);
+      await expect.poll(() => page.locator(".sidebar-footer img, .sidebar-list img, .conversation img").evaluateAll((images) => images.every((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);
+      const uniqueAvatars = await page.locator(".sidebar-footer img, .sidebar-list img, .conversation img").evaluateAll((images) => new Set(images.map((image) => (image as HTMLImageElement).currentSrc)).size);
       expect(uniqueAvatars).toBe(8);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await expect(page.locator("vite-error-overlay, #webpack-dev-server-client-overlay")).toHaveCount(0);

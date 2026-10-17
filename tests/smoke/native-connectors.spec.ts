@@ -7,7 +7,7 @@ import type { AevorenBotApi, ApiResult } from "../../src/shared/contracts";
 import type { ConnectorBinding, NativeConnection } from "../../src/shared/native-connector-contracts";
 import { AppRepository } from "../../src/main/database";
 import { disposeTestApplication, removeTestDirectory } from "./test-cleanup";
-import { openInspector } from "./navigation";
+import { openInspector, selectDetailsTab, selectNavigationTab } from "./navigation";
 
 const pageId = "11111111-1111-4111-8111-111111111111";
 const accountId = "22222222-2222-4222-8222-222222222222";
@@ -115,9 +115,9 @@ async function configureNotion(page: Page): Promise<NativeConnection> {
 }
 
 async function privateApps(page: Page, bot: Fixture["bots"][number], connection: NativeConnection): Promise<void> {
-  await page.getByRole("tab", { name: "联系人", exact: true }).click();
+  await selectNavigationTab(page, "联系人");
   await page.locator(".sidebar").getByRole("listitem", { name: bot.name, exact: true }).click();
-  await page.getByRole("tab", { name: "应用", exact: true }).click();
+  await selectDetailsTab(page, "应用");
   await page.getByLabel("当前聊天的应用连接").selectOption(connection.id);
 }
 
@@ -183,11 +183,11 @@ test("late native reads cannot replace another member's pane or reappear after r
     const { page, bots, room } = fixture;
     const connection = await configureNotion(page);
     for (const bot of bots) unwrap(await page.evaluate(async input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.connectors.bind(input), { sessionId: room.sessionId, executorBotId: bot.id, connectionId: connection.id, expectedAuthVersion: connection.authVersion }));
-    await page.getByRole("tab", { name: "聊天", exact: true }).click();
+    await selectNavigationTab(page, "聊天");
     await page.locator(".sidebar").getByRole("listitem", { name: room.name, exact: true }).click();
     await openInspector(page);
-    await expect.poll(() => page.getByRole("tablist", { name: "群聊配置" }).evaluate(element => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(40);
-    await page.getByRole("tab", { name: "应用", exact: true }).click();
+    await expect.poll(() => page.getByRole("tablist", { name: "群聊配置" }).evaluate(element => element.getBoundingClientRect().height)).toBe(26);
+    await selectDetailsTab(page, "应用");
     await page.getByLabel("应用执行成员").selectOption(bots[0]!.id);
     await page.getByLabel("当前聊天的应用连接").selectOption(connection.id);
     await page.getByRole("button", { name: "搜索应用内容", exact: true }).click();

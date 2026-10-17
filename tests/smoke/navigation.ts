@@ -1,6 +1,4 @@
 import { expect, type Locator, type Page } from "@playwright/test";
-import type { AevorenBotApi } from "../../src/shared/contracts";
-import { buildBotIdentityMap } from "../../src/renderer/src/bot-identity";
 
 export async function closeInspector(page: Page): Promise<void> {
   await expect(page.locator(".new-bot-chooser")).toBeHidden();
@@ -9,6 +7,8 @@ export async function closeInspector(page: Page): Promise<void> {
     await room.getByRole("button", { name: "关闭群聊设置", exact: true }).click();
     await expect(room).toBeHidden();
   }
+  const detailClose = page.getByRole("button", { name: "关闭详情", exact: true });
+  if (await detailClose.isVisible()) { await detailClose.click(); await expect(detailClose).toBeHidden(); }
   const contact = page.getByRole("main", { name: "联系人资料", exact: true });
   if (await contact.isVisible()) {
     // Completing the old edit flow now explicitly enters this contact's chat.
@@ -19,7 +19,7 @@ export async function closeInspector(page: Page): Promise<void> {
       await expect(contact).toBeHidden();
     } else {
       await openBotList(page);
-      await page.getByRole("tab", { name: "聊天", exact: true }).click();
+      await selectNavigationTab(page, "聊天");
     }
   }
 }
@@ -79,35 +79,20 @@ export async function openMessageEvidence(page: Page): Promise<void> {
 export async function openInspector(page: Page, tab: "profile" | "models" | "memory" = "profile"): Promise<void> {
   await expect(page.locator(".app-shell")).toBeVisible();
   await expect(page.locator(".new-bot-chooser")).toBeHidden();
-  if (await page.getByRole("dialog", { name: "群聊设置", exact: true }).isVisible()) return;
+  const openGroup = page.getByRole("dialog", { name: "群聊设置", exact: true });
+  if (await openGroup.isVisible()) { await selectDetailsTab(openGroup, "详情"); return; }
   const contact = page.getByRole("main", { name: "联系人资料", exact: true });
   if (!await contact.isVisible()) {
-    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).not.toBeNull();
-    const selected = await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"));
-    const menu = await openConversationMenu(page);
-    const group = menu.getByRole("menuitem", { name: "群聊管理", exact: true });
-    if (await group.isVisible()) {
-      await group.click();
-      await expect(page.getByRole("dialog", { name: "群聊设置", exact: true })).toBeVisible();
-      return;
-    }
-    await page.keyboard.press("Escape");
-    const bots = await page.evaluate(async () => {
-      const result = await (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.bots.list();
-      if (!result.ok) throw new Error(result.error.safeMessage);
-      return result.data;
-    });
-    const selectedBot = bots.find(bot => selected === `bot:${bot.id}`);
-    if (!selectedBot) throw new Error("A Bot must be selected before opening its contact profile.");
-    const identity = buildBotIdentityMap(bots).get(selectedBot.id);
-    if (!identity) throw new Error("Selected Bot identity is unavailable.");
-    await openBotList(page);
-    await page.getByRole("tab", { name: "联系人", exact: true }).click();
-    await page.locator(".sidebar").getByRole("listitem", { name: identity.inline, exact: true }).click();
-    await expect(page.locator(".sidebar.mobile-open")).toHaveCount(0);
+    await page.getByRole("button", { name: "查看对话详情", exact: true }).click();
+    const group = page.getByRole("dialog", { name: "群聊设置", exact: true });
+    if (await group.isVisible()) return;
   }
   await expect(contact).toBeVisible();
-  const label = { profile: "资料", models: "模型与能力", memory: "记忆" }[tab];
+  const label = { profile: "详情", models: "模型与能力", memory: "记忆" }[tab];
+  if (!await contact.getByRole("tab", { name: label, exact: true }).isVisible()) {
+    await contact.getByRole("button", { name: "更多详情功能", exact: true }).click();
+    await contact.getByRole("menuitem", { name: label, exact: true }).click();
+  }
   const target = contact.getByRole("tab", { name: label, exact: true });
   if (await target.getAttribute("aria-selected") !== "true") await target.click();
   await expect(target).toHaveAttribute("aria-selected", "true");
@@ -119,22 +104,36 @@ export async function openInspector(page: Page, tab: "profile" | "models" | "mem
 }
 
 export async function openWorkspaceTab(page: Page): Promise<void> {
-  await expect(page.locator(".app-shell")).toBeVisible();
-  if (await page.locator(".sidebar-workspace").isVisible()) return;
-  const room = page.getByRole("dialog", { name: "群聊设置", exact: true });
-  if (await room.isVisible()) {
-    await room.getByRole("button", { name: "关闭群聊设置", exact: true }).click();
-    await expect(room).toBeHidden();
-  }
-  const settings = page.getByRole("region", { name: "设置", exact: true });
-  if (!await settings.isVisible()) {
-    await openBotList(page);
-    await page.getByRole("button", { name: "设置", exact: true }).click();
-  }
-  await expect(settings).toBeVisible();
-  await settings.getByRole("button", { name: "能力与权限", exact: true }).click();
-  await settings.getByRole("button", { name: "打开管理", exact: true }).click();
-  await expect(settings).toBeHidden();
-  await openBotList(page);
+  await closeInspector(page);
+  await selectNavigationTab(page, "工作区");
   await expect(page.locator(".sidebar-workspace")).toBeVisible();
+}
+
+export async function selectNavigationTab(page: Page, name: "聊天" | "联系人" | "工作区"): Promise<void> {
+  await openBotList(page);
+  const tab = page.getByRole("tab", { name, exact: true });
+  if (!await tab.isVisible()) await page.getByRole("button", { name: "打开账户菜单", exact: true }).click();
+  await tab.click();
+}
+
+export async function selectDetailsTab(scope: Page | Locator, name: string): Promise<void> {
+  const label = name === "资料" ? "详情" : name;
+  const tab = scope.getByRole("tab", { name: label, exact: true });
+  if (!await tab.isVisible()) {
+    await scope.getByRole("button", { name: "更多详情功能", exact: true }).click();
+    await scope.getByRole("menuitem", { name: label, exact: true }).click();
+  } else await tab.click();
+}
+
+export async function openListFilter(page: Page): Promise<void> {
+  await openBotList(page);
+  await page.getByRole("button", { name: "打开账户菜单", exact: true }).click();
+  await page.getByRole("button", { name: "筛选聊天", exact: true }).click();
+  await expect(page.getByRole("search", { name: "筛选列表", exact: true })).toBeVisible();
+}
+
+export async function openComposerTools(page: Page): Promise<void> {
+  const disclosure = page.locator(".composer-tools-disclosure");
+  if (await disclosure.getAttribute("open") === null) await disclosure.locator("summary").click();
+  await expect(disclosure).toHaveAttribute("open", "");
 }

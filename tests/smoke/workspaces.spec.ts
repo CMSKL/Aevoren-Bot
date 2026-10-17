@@ -39,7 +39,7 @@ test("shows only public Workspace identity and revokes access without touching d
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await page.getByRole("group", { name: "外观主题", exact: true }).getByRole("button", { name: /^暗黑/u }).click();
+    await page.getByRole("combobox", { name: "界面主题", exact: true }).selectOption("dark");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.getByRole("button", { name: "关闭设置" }).click();
     await openWorkspaceTab(page);

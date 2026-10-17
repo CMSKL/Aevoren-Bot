@@ -8,7 +8,7 @@ import type { AevorenBotApi, ApiResult, RoomRuntimeSnapshot, SessionRuntimeSnaps
 import type { LibraryApi, LibraryContent, LibraryExportResult, LibraryImportResult, LibraryResource, ResourceRevisionSummary } from "../../src/shared/library-contracts";
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
-import { openInspector } from "./navigation";
+import { openInspector, selectNavigationTab } from "./navigation";
 import { disposeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { IPC } from "../../src/shared/channels";
 import { LIBRARY_CHANNELS } from "../../src/shared/library-channels";
@@ -225,7 +225,7 @@ test("delayed resource opening preserves the later contact selection and existin
     value(await libraryCall<LibraryContent>(f.page, "create", { sessionId: source.sessionId, kind: "document", name: "迟到引用资料", body: "DELAYED_RESOURCE_BODY" }));
     await selectBot(f.page, existing);
     await f.page.getByLabel("消息", { exact: true }).fill("EXISTING_CHAT_DRAFT_MUST_REMAIN");
-    await f.page.getByRole("tab", { name: "联系人", exact: true }).click();
+    await selectNavigationTab(f.page, "联系人");
     await f.page.getByRole("listitem", { name: source.name, exact: true }).click();
     const contact = f.page.getByRole("main", { name: "联系人资料", exact: true });
     await contact.getByRole("tab", { name: "资料库", exact: true }).click();
@@ -242,7 +242,7 @@ test("delayed resource opening preserves the later contact selection and existin
       await expect.poll(() => f.page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).toBe(`bot:${source.id}`);
       await settleLibraryView(f.page);
       await expect(contact.getByRole("heading", { name: later.name, exact: true })).toBeVisible();
-      await f.page.getByRole("tab", { name: "聊天", exact: true }).click();
+      await selectNavigationTab(f.page, "聊天");
       await selectBot(f.page, existing);
       await expect(f.page.getByLabel("消息", { exact: true })).toHaveValue("EXISTING_CHAT_DRAFT_MUST_REMAIN");
       await expect(f.page.getByLabel("已引用的资源", { exact: true })).toHaveCount(0);
@@ -331,6 +331,9 @@ test("edits documents through the UI, preserves conflicting drafts and restores 
     expect(restored.resource.version).toBe(3);
     expect(value(await libraryCall<ResourceRevisionSummary[]>(f.page, "versions", { sessionId: bot.sessionId, id: content.resource.id }))).toHaveLength(3);
     await captureEvidence(f.page, "library-document-restored.png");
+    await panel.getByRole("button", { name: "引用到消息", exact: true }).click();
+    await expect(f.page.getByRole("button", { name: "移除资源 资料：冲突保留测试 · v3", exact: true })).toBeVisible();
+    await expect(f.page.getByRole("main", { name: "联系人资料", exact: true })).toBeHidden();
   });
 });
 
