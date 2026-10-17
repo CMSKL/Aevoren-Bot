@@ -2,9 +2,23 @@
 
 基线为 0.3.0-beta.26。实施依据为 [功能对照](FEATURE_ADOPTION.md)，按六阶段补齐界面与 AI 能力，共用宿主校验、真实审批、执行记录、取消和恢复，保留 `@所有人` 六成员并行。产品登录注册、多人云协作、支付、完整会议助手和专属邮箱不进入首轮。
 
-当前开发候选为 **v0.3.0-beta.36**。PR #65 的准确源提交 `f1629278fdbf4fdb3e1b0bda1dcf75f959ddea7c` 通过自身四项正常 CI 后，正常合入实际 dev `d0c2ec4d28507b8707420b5a424b516e240cc3d7`，合并树与已验收源完全相同；beta.35 固定快照已建立。本候选已正常整合这个实际 dev 身份，整合前后整棵内容树相同，本机专测、解析器与真实 Mac 包证据保持原范围。它自身的新组合 CI 和合入 dev 仍待完成；实际 dev 的推送 CI 38874946550 也仍在运行，不能当作已通过。beta 仍为 beta.34，最新公开版本仍是 **v0.3.0-beta.33**，master 暂不晋级。本单元仅包含图片／PDF／DOCX；音视频、语音与阶段 6 属于后续交付。
+## 本轮收敛交付：v0.3.0-beta.36
+
+保留六阶段目标，本轮冻结新增功能及向后续开发分支的批量传播。将尚未发布的 beta.34（MCP／交互 Apps）、beta.35（Notion 页面更新）和 beta.36（PNG／JPEG／PDF／DOCX）合并为一个 Beta；不逐个发布中间版本。音视频、转写／朗读、实时语音和阶段 6 不进入本轮。各开发分支及本地未提交工作保留。
+
+2026-10-16 核对 GitHub：公开基线为 [v0.3.0-beta.33](https://github.com/CMSKL/Aevoren-Bot/releases/tag/v0.3.0-beta.33)，beta 为 `e7511346`（未发布 beta.34），dev 为 `86a9dc83`（已合入 beta.36 和审批有效性修复）；尚无 beta.34–36 标签或 Release。beta.36 大于公开版本及此前提供的 Windows 手动测试包版本，沿用现有 Beta 更新通道；不覆盖标签、安装包或已有 Release。master 暂不晋级。
+
+当前公共阻塞是 [dev Windows CI 38926440451](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38926440451)：MCP 取消场景业务断言完成后，原 3 秒正常关闭超时，强制清理所得 code=1 被严格断言拒绝。原失败日志没有 Main 阶段信息，不能归因为产品、驱动或运行器。真实 SDK 持有远端处理器的最小控制已通过；[诊断 CI 38935039006](https://github.com/CMSKL/Aevoren-Bot/actions/runs/38935039006) 的六个独立 Windows 场景均正常退出（137–2260ms），两个较慢场景的主要延迟发生在 Renderer 保存确认之后。保留这些证据，同时补充仅测试启用的服务关闭阶段记录；不改审批、关闭顺序、断言或时间预算，不把强制清理算作成功。后续候选的验证结果单独记录，不能以这些对照消除原失败。
+
+候选 PR #73 首轮 Linux CI 38995346880 保留为失败记录：1,649 项通过、50 项跳过，媒体 CAS 的大 Buffer 比较用例在原 5 秒内未完成。定点测量中，存储／去重／读取共 16ms，通用结构比较额外耗时 795ms；改用原生 Buffer.equals 完整比较长度与所有字节后，该段不足 1ms、七项 CAS 测试通过。仅替换两个大 Buffer 的等价字节断言，不改产品、测试数据、超时或其余断言；原失败不被重跑覆盖，新提交正常执行必需 CI。
+
+升级专测：从公开 beta.33 所用 schema 40 与未发布 schema 41 分别升级到 schema 42，本机两项真实 SQLite 检查通过。原聊天、Memory、附件、Runtime 和资料快照一致；唯一迁移备份保持原结构、原内容且 integrity_check=ok。这是本地迁移证据，不代表已完成 Windows 或实际自动更新安装。
+
+验证按变更范围执行；相同代码与构建输入的有效证据复用，最终候选运行仓库必需 CI、安装包及升级检查。macOS 签名／公证／公开更新与普通 CI、未签名包分开记录。Windows 当前没有配置签名凭据，也未启用正式 Windows Release；沿用已有 30 天 Actions 未签名 NSIS 手动测试包，不将其附入签名 Release 或自动更新清单。真实第三方账号、云模型视觉、Windows Docker 仍须单独验证。
 
 下文验收段落保留各自原始提交和安装包的历史证据；旧候选的 CI 或本机通过不代表当前本地组合已验收，也不代替实际 Beta／签名发行门禁。
+
+### 历史定位记录：MCP 隐藏窗口输入
 
 PR #67 的首个完整组合 CI（`0444b749`／38875596148）保留为失败记录：Linux、macOS、Secret 检查通过；Windows 单元 1,632 项通过、66 项跳过，源码场景 49／50。唯一失败为 MCP App 的不支持能力请求：隐藏 iframe 中按钮处理器没有进入，`requestPosted=false`，尚无 RPC 请求，不能据此认定宿主拒绝响应或产品权限错误。Windows 指针投递的具体原因仍未确定。
 
@@ -38,8 +52,8 @@ PR #67 的首个完整组合 CI（`0444b749`／38875596148）保留为失败记�
 | 1 资料库与文本 Skill | 持久资料、版本、文本检索、绑定；SKILL.md 导入、启停、结构引用、按需加载 | 已纳入 v0.3.0-beta.29 签名发行 | 开发与跨平台安装包验证通过，之前签名 fixture 失败保留为历史记录 |
 | 2 执行环境 | Docker 探测、镜像、Worker、生命周期；命令与输出、文件、后台进程、日志与端口 | 已纳入 v0.3.0-beta.29 签名发行 | 33 项专项、源码与真实 macOS 包验证通过；真实 Windows Docker 未验证 |
 | 3 浏览器与电脑 | 独立 profile、Playwright、截图图像传输、noVNC 接管及服务预览 | v0.3.0-beta.29 已公开发布，master 未晋级 | 最终开发／Beta CI 全绿，签名工作流成功；此前 13 项真实未签名 macOS 包验收与 Linux Docker 证据保留 |
-| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本／读取／外发／示范已纳入 beta.33；MCP34 与 Notion35 按序待发布 | 历史组合 `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
-| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1 本地整合中；5.2–5.3 不在本单元 | 固定引用、CAS、会话／任务准入与隔离解析保留原单元证据；当前组合本机专测 106／可选跳过 1、源码解析器 6、实际 Mac 包 10 通过；正常 CI 待执行，不宣称阶段验收完成 |
+| 4 技能包与应用连接 | Bash/Python/Node 脚本、资源、示范草稿；Gmail/Drive/Notion、写 MCP、外发草稿与 Apps | 脚本／读取／外发／示范已纳入 beta.33；MCP／Apps 与 Notion 更新合并进本轮 beta.36 候选 | 历史组合 `4178157`：Linux 普通 1,593／45 跳过与真实 Docker 41；macOS 源码 139、实际功能包 21、关闭 8；Windows 普通 1,578／60 跳过、源码 40＋关闭 8、安装包 38＋关闭 8；真实第三方账号写入未验证 |
+| 5 多模态与语音 | 图片/PDF/DOCX/音视频；STT/TTS、实时语音、打断与转录 | 5.1 已合入 dev，本轮交付候选；5.2–5.3 留到下一批 | 固定引用、CAS、会话／任务准入与隔离解析保留原单元证据；当前组合本机专测 106／可选跳过 1、源码解析器 6、实际 Mac 包 10 通过；正常 CI 待执行，不宣称阶段验收完成 |
 | 6 自动化、搜索与分享 | 全资源搜索、TASK 线程、分区/默认助理/头像/通知；事件/Webhook、群 Routine、模板及导出 | 后续交付，未纳入本单元 | 待按对应单元补充 |
 
 ## 阶段 1 交付记录：v0.3.0-beta.27（历史快照）
@@ -659,3 +673,24 @@ The stronger corrected source case passed (9.2s);27 focused approval/foundation 
 A fresh local unsigned package used the verified installed Electron44.3.0/arm64 distribution after an incomplete network download stalled; the local override is supported by the installed builder and does not change repository release policy. All five strict package cases failed only native exit checks after their business assertions. The standalone no-approval quit trace recorded flush ACK, closed window and app-quit code0 promptly, then no process exit before the original3s deadline and owned SIGKILL cleanup. A control using the previously validated e7cf package failed the same strict no-approval quit check under this host. Native/OS cause remains undetermined; no shutdown code or budget was changed. Logs and phase traces are preserved as epoch36-integration-actual-package.log, approval-epoch-strict-package-diagnostics and approval-epoch-old-package-close-control.log. This local exit limitation must not be recorded as installation acceptance.
 
 The earlier UI-state package receipts and old364 CI remain historical and do not validate this corrected generation implementation. A new exact-head normal CI must independently verify macOS/Windows source and actual installed packages, including strict MCP exit assertions, before any normal dev acceptance, Beta backport or publication. Public beta33/no34tag/master deferral remain.
+
+
+### Windows cancellation close observation after normal dev acceptance
+
+PR71 source76e5ada had passed all four jobs in38918904604 and normally merged to actual dev86a9dc8 with exact tree equality. That actual dev push38926440451 passed Linux, macOS and secret checks but failed Windows source50/51: the cancelled-dispatched MCP case completed its business assertions, then the unchanged3s normal-close helper forced its owned tree; the new strict exit assertion correctly rejected code1/no signal. Source and installed close stages after that failed source step were not reached. Raw run/jobs/Windows log and artifact metadata are retained externally as dev-generation-86a9dc8-*. This is not a demonstrated native crash or a claim the generation fix failed.
+
+Development now begins on a fresh feature branch from actual dev86a9dc8. It adds only passive, bounded numeric/boolean lifecycle observations in the isolated MCP fixture: actual flush/quit/window/process phases and a debugger-disconnect-wait marker, without raw stderr, content, credentials or extra input. Owned listeners are detached, all existing assertions/deadlines remain, and normal/failed phase attachments are preserved. A fresh hidden local cancelled-operation case passed1/1(3.9s) with normal exit; a real SDK/HTTP service-level held-handler shutdown control also passed before releasing the remote handler. Neither establishes the Windows failure cause.
+
+The diagnostic branch's Windows CI additionally runs six independent fresh-profile instances of the existing cancellation case with its original90s whole-case and3s close contracts. All six must pass; no retry or failing result is discarded. A branch-scoped artifact is preserved before the unchanged full source/install suites. This temporary diagnostic step does not change application code, release/signing policy or any existing gate. Normal Beta34/Voice37 acceptance and publication remain held while this failed actual-dev gate is investigated; master remains deferred.
+
+
+The original Windows diagnostic ZIP12059175447 was verified at1,425,838 bytes with SHA-256c3b6cd6722a9a72156c510cc5c85455115b1bc4ea8b537d73d74de22b1bdc8d7 and safely extracted. Its test trace confirms every cancellation/unknown/no-resend/count assertion plus page-error and hidden-window checks completed before the failed close; the close helper then took4,577ms including forced cleanup. It contains no original Main shutdown phases, so native/service/inspector cause remains unproven. The new recorder explicitly persists business-completed and normally-closed booleans, rather than inferring them from a teardown exception.
+
+Final local observation validation passed Node TypeScript, targeted lint, all14 real SDK foundation tests and one hidden source cancellation control(3.7s). Its persisted metadata proves renderer readiness, real flush ACK, window close/closed, app-quit0, owned exit0/no signal and pipe closure, with48ms from close request to owned exit. Existing and subsequently created windows are observed, with bounded records and no raw stderr. The Windows six-case diagnostic and fresh normal CI remain pending; this local success is not the Windows cause or a product fix. YAML parsing and a full parsed comparison confirm every original CI step, permission, command, deadline and concurrency setting is unchanged after excluding the two branch-scoped observation steps.
+
+
+### Windows observation outcome and retained service-stage diagnostics
+
+Initial diagnostic source3010e3a normal CI38935039006 completed all four jobs successfully, including six independent Windows cancellation cases and the full source/installed business and exit gates. The dedicated ZIP12061540917 was verified at8,754 bytes/SHA-256940f52d240dc291f3314b0df1327d8c25a8fce680bd978da4fdf0764ff10c51b. All six records show business completion, native exit0/no signal and no observed debugger-disconnect marker. Close-to-exit times were137,1767,118,219,2260 and139ms. In the two slower controls, the longer interval followed the real flush ACK(1681/1517ms until app-quit); those passing observations do not prove the historical failed close's cause.
+
+The temporary branch-scoped repeat/upload steps are now removed, restoring CI byte-for-byte to actual dev86; all original gates remain. A small service-stage diagnostic is retained in Main, enabled only when both the isolated hidden-test flag and an explicit close-diagnostic flag are set. It emits only fixed phase names and elapsed numbers around the existing shutdown awaits, without changing their order, promises, timeouts or error handling. Ordinary application launches emit nothing. The isolated MCP fixture enables this flag and persists the records, so a later slow/failing cleanup can identify its service. Its local full-type/build and recorded cancellation control passed; each cleanup stage completed within1ms in that control, which is not Windows or a claimed production fix. Fresh exact-head normal CI remains required before dev acceptance; the original dev86 failure stays recorded.

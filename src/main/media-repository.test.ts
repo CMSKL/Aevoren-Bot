@@ -115,7 +115,7 @@ describe("media records and fixed Runtime admissions in real SQLite", () => {
     for (const scope of scopes.slice(1)) expect(f.repository.media.resolveRuntimeRead(scope, item.asset.reference.id).item.reference).toEqual(item.reference);
     expect(f.repository.media.list({ sessionId: f.session.id })).toEqual([]);
   });
-  it("upgrades a real v41 database with content, Memory, attachments and Runtime intact and backs it up", () => {
+  it.each([40, 41])("upgrades a real v%i database with content, Memory, attachments and Runtime intact and backs it up", sourceVersion => {
     const directory = mkdtempSync(join(tmpdir(), "aevoren-media-migration-")); directories.push(directory);
     const filename = join(directory, "old.sqlite"), seed = fixture(), nonce = randomUUID(), body = "old attachment";
     seed.repository.prepareMessage({ sessionId: seed.session.id, clientNonce: nonce, text: "OLD_MESSAGE", attachments: [{ id: randomUUID(), name: "old.txt", size: Buffer.byteLength(body), mimeType: "text/plain", sha256: createHash("sha256").update(body).digest("hex"), kind: "text", content: body }] });
@@ -123,7 +123,7 @@ describe("media records and fixed Runtime admissions in real SQLite", () => {
     seed.repository.library.create({ sessionId: seed.session.id, kind: "document", name: "old", body: "OLD_LIBRARY" });
     seed.repository.createRuntimeRun(nonce, "fake", { schemaVersion: 1, botId: seed.bot.id, profileVersion: 1, sessionId: seed.session.id, generation: 1, inputSeq: 1, blocks: [], digest: "old" });
     const raw = new DatabaseSync(filename); raw.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)");
-    for (const migration of MIGRATIONS.filter(value => value.version <= 41)) {
+    for (const migration of MIGRATIONS.filter(value => value.version <= sourceVersion)) {
       raw.exec("BEGIN"); raw.exec(migration.sql); raw.prepare("INSERT INTO schema_migrations VALUES(?,?)").run(migration.version, "2026-10-01T00:00:00Z"); raw.exec("COMMIT");
     }
     const source = Reflect.get(seed.repository, "database") as DatabaseSync;
@@ -144,6 +144,13 @@ describe("media records and fixed Runtime admissions in real SQLite", () => {
     const item = upgraded.media.publishImport(seed.session.id, [content("AFTER_UPGRADE")])[0]!;
     const legacyRun = upgraded.listRuntimeRuns(seed.session.id)[0]!;
     expect(() => upgraded.media.resolveRuntimeRead({ sessionId: seed.session.id, executorBotId: seed.bot.id, runtimeRunId: legacyRun.id }, item.asset.reference.id)).toThrowError(expect.objectContaining({ code: "MEDIA_NOT_GRANTED" }));
-    expect(readdirSync(join(directory, "Backups")).some(name => name.endsWith(".sqlite"))).toBe(true);
+    const backups = readdirSync(join(directory, "Backups")).filter(name => name.endsWith(".sqlite"));
+    expect(backups).toHaveLength(1);
+    const backup = new DatabaseSync(join(directory, "Backups", backups[0]!), { readOnly: true });
+    try {
+      expect(snapshot(backup)).toBe(before);
+      expect(backup.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: sourceVersion });
+      expect(backup.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    } finally { backup.close(); }
   });
 });

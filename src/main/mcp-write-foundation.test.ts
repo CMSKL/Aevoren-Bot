@@ -73,6 +73,15 @@ describe("MCP scoped write foundation with a real local SDK server",()=>{
  const resolutions=approvals.map((approval,index)=>f.coordinator.resolve(values[index]!.scope.sessionId,approval.approval.id,approval.approval.version,"allow-once"));await vi.waitFor(()=>expect(f.writes()).toBe(6),{timeout:10000});expect(values.map(value=>f.ledger.current(value.scope,value.intent.id).state)).toEqual(Array(6).fill("dispatching"));
  f.service.revokeTool({...values[0]!.scope,id:values[0]!.grant.id,expectedVersion:values[0]!.grant.version});expect(approvals.slice(1).map(value=>f.repository.getRuntimeRun(value.approval.runtimeRunId).state)).toEqual(Array(5).fill("running"));f.release();await Promise.all(resolutions);expect(f.ledger.current(values[0]!.scope,values[0]!.intent.id).state).toBe("unknown");for(const value of values.slice(1))expect(f.ledger.current(value.scope,value.intent.id).state).toBe("confirmed");expect(f.writePosts()).toBe(6);
  },20000);
+ it("shuts down a cancelled dispatched request before its remote handler is released",async()=>{
+ const f=await fixture();await f.mcp.initialize();const value=await f.intentFor(),prepared=await f.service.requestApproval({...f.scope,id:value.intent.id,expectedVersion:1},f.coordinator);
+ f.hold();const resolution=f.coordinator.resolve(f.scope.sessionId,prepared.approval.id,prepared.approval.version,"allow-once");let shutdown:Promise<void>|undefined;
+ try{await vi.waitFor(()=>expect(f.writes()).toBe(1),{timeout:10000});const current=f.ledger.current(f.scope,value.intent.id);
+ f.service.cancelTool({...f.scope,id:current.id,expectedVersion:current.version});let stopped=false;
+ shutdown=(async()=>{await f.service.shutdown();await f.mcp.dispose();stopped=true;})();
+ await vi.waitFor(()=>expect(stopped).toBe(true),{timeout:3000});expect(f.ledger.current(f.scope,value.intent.id).state).toBe("unknown");expect(f.writePosts()).toBe(1);
+ }finally{f.release();await resolution;await shutdown;}
+ },20000);
  it("invalidates a fixed review when its grant is revoked and never dispatches stale approval",async()=>{const f=await fixture(),value=await f.intentFor(),prepared=await f.service.requestApproval({...f.scope,id:value.intent.id,expectedVersion:1},f.coordinator);f.service.revokeTool({...f.scope,id:value.grant.id,expectedVersion:value.grant.version});
  const current=f.repository.getApprovalRequest(prepared.approval.id);expect(await f.product.handlers.get(IPC.approvalsReview)!({...f.scope,id:current.id,expectedVersion:current.version})).toMatchObject({executable:false,snapshot:{kind:"mcp-write"}});await expect(f.coordinator.resolve(f.scope.sessionId,current.id,current.version,"allow-once")).rejects.toThrow();expect(f.writePosts()).toBe(0);
  });
